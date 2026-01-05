@@ -1,5 +1,6 @@
 pyproject.toml
 src/ebb/__init__.py
+src/ebb/hello.py
 src/ebb.egg-info/PKG-INFO
 src/ebb.egg-info/SOURCES.txt
 src/ebb.egg-info/dependency_links.txt

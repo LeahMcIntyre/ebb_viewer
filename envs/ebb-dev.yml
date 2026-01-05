@@ -1,8 +1,8 @@
 name: ebb-dev
 channels: [conda-forge]
 dependencies:
-  - python=3.11
-  - numpy
+  - python=3.10
+  - numpy == 1.22.3
   - scipy
   - pandas
   - matplotlib

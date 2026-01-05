@@ -1,0 +1,310 @@
+"""
+Combine prematurely-stopped EDF files and corresponding SWD timestamp .mat files.
+
+Library functions:
+- locate: find EDFs shorter than expected duration
+- pair: group related files by token pattern
+- combine_edf: combine EDF chunks into a new *_COMBINED.edf
+- combine_swd: combine SWD timestamp .mat files into *_COMBINED.mat
+
+CLI:
+    ebb-combine edf --dir ... --fs 5000
+    ebb-combine swd --dir .../swd_ts/short
+"""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import re
+import reprlib
+from operator import attrgetter
+from pathlib import Path
+from typing import Iterable, List, Optional, Pattern, Sequence, Tuple, Union
+
+import numpy as np
+from scipy.io import loadmat, savemat
+
+from openseize.file_io import edf
+
+# -------------------------
+# Core helpers
+# -------------------------
+def locate(dirpath: Union[str, Path], fs: float, expected_hours: float) -> List[Path]:
+    """Return EDF paths whose duration (hours) is less than expected_hours."""
+    dirpath = Path(dirpath)
+    result: List[Path] = []
+    for fp in dirpath.glob("*.edf"):
+        with edf.Reader(fp) as reader:
+            hours = reader.shape[-1] / (3600.0 * fs)
+            if hours < expected_hours:
+                result.append(reader.path)
+    return result
+
+#TODO: make this more flexible to handle different patterns
+def pair(paths: Sequence[Path], pattern: Union[str, Pattern[str]] = r"[^_]+") -> List[Tuple[Path, ...]]:
+    """Group files whose stems share the same token (matched by regex)."""
+    pat = re.compile(pattern) if isinstance(pattern, str) else pattern
+
+    result: List[Tuple[Path, ...]] = []
+    cpaths = list(paths)
+
+    while cpaths:
+        path = cpaths.pop(0)
+        m = pat.search(path.stem)
+        if not m:
+            raise ValueError(f"Pattern {pat.pattern!r} did not match: {path.stem}")
+
+        token = m.group()
+        matches = [other for other in cpaths if token in other.stem]
+
+        if not matches:
+            raise ValueError(f"No match found for token {token!r} from {path.name}")
+
+        for mm in matches:
+            cpaths.remove(mm)
+
+        result.append((path, *matches))
+
+    return result
+
+
+def move_files(new_dir: Path, paths: Sequence[Path], *, exist_ok: bool = False) -> None:
+    """Move each file in paths into new_dir."""
+    new_dir.mkdir(parents=True, exist_ok=exist_ok)
+    for path in paths:
+        path.rename(new_dir / path.name)
+
+
+# -------------------------
+# EDF combine
+# -------------------------
+def combine_edf(
+    dirpath: Union[str, Path],
+    *,
+    fs: float,
+    amount_hours: float = 24,
+    nominal_hours: float = 72,
+    pattern: Union[str, Pattern[str]] = r"[^_]+",
+    verbose: bool = True,
+    move_short_files: bool = False,
+    short_dirname: str = "short_files",
+    overwrite: bool = False,
+) -> List[Path]:
+    """Combine EDF files whose duration is less than nominal_hours.
+
+    Returns a list of created combined EDF paths.
+    """
+    dirpath = Path(dirpath)
+
+    short_files = locate(dirpath, fs, nominal_hours)
+    if not short_files:
+        if verbose:
+            print("No short EDF files found.")
+        return []
+
+    path_tuples = pair(short_files, pattern)
+
+    created: List[Path] = []
+    aRepr = reprlib.Repr()
+    samples = int(amount_hours * fs * 3600)
+
+    for tup in path_tuples:
+        readers = [edf.Reader(fp) for fp in tup]
+        readers = sorted(readers, key=attrgetter("header.start_date"))
+
+        if verbose:
+            msg = aRepr.repr([r.path.stem for r in readers])
+            print("Combining EDFs:\n" + msg)
+
+        # allocate (channels, samples_total)
+        arr = np.zeros((*readers[0].shape[:-1], samples * len(readers)), dtype=float)
+
+        for idx, r in enumerate(readers):
+            start, stop = idx * samples, (idx + 1) * samples
+            arr[..., start:stop] = r.read(0, samples)
+            r.close()
+
+        header = copy.deepcopy(readers[0].header)
+        header["num_records"] = arr.shape[-1] // header.samples_per_record[0]
+
+        out_fp = readers[0].path.with_stem(readers[0].path.stem + "_COMBINED")
+        if out_fp.exists() and not overwrite:
+            raise FileExistsError(f"Refusing to overwrite existing file: {out_fp}")
+
+        with edf.Writer(out_fp) as writer:
+            writer.write(header, arr, readers[0].channels, verbose=verbose)
+
+        created.append(out_fp)
+
+    if move_short_files:
+        move_files(dirpath / short_dirname, short_files, exist_ok=True)
+
+    return created
+
+
+# -------------------------
+# SWD combine
+# -------------------------
+#TODO: make this more flexible to handle different patterns
+#TODO: figure out how to best incorporate this into pipeline (e.g., SWD files may not always be present)
+def combine_swd(
+    swd_dir: Union[str, Path],
+    *,
+    amount_hours: float = 24,
+    pattern: Union[str, Pattern[str]] = r"final_ts_([^_]+)",
+    verbose: bool = True,
+    label_preference: str = "final_ts",
+    overwrite: bool = False,
+) -> List[Path]:
+    """Combine SWD timestamp .mat files corresponding to short EDFs.
+
+    Returns a list of created combined MAT paths.
+    """
+    swd_dir = Path(swd_dir)
+    short_files = list(swd_dir.glob("*.mat"))
+    if not short_files:
+        if verbose:
+            print("No .mat files found.")
+        return []
+
+    path_tuples = pair(short_files, pattern)
+    amount_sec = float(amount_hours) * 3600.0
+
+    def extract_pnum(path: Path) -> int:
+        m = re.search(r"_P(\d+)", path.name)
+        if not m:
+            # If this is too strict for your naming, we can soften it later
+            raise ValueError(f"No _P### pattern found in: {path.name}")
+        return int(m.group(1))
+
+    created: List[Path] = []
+
+    for tup in path_tuples:
+        swd_paths = sorted(tup, key=extract_pnum)
+
+        if verbose:
+            stems = [p.stem for p in swd_paths]
+            print(f"Combining SWD files: {stems}")
+
+        combined_swds = []
+        label = None
+        first_data_dict = None
+
+        for idx, path in enumerate(swd_paths):
+            data = loadmat(path, squeeze_me=True, struct_as_record=False)
+            keys = [k for k in data.keys() if not k.startswith("__")]
+
+            if label is None:
+                label = label_preference if label_preference in keys else keys[0]
+            key = label if label in keys else keys[0]
+
+            if first_data_dict is None:
+                first_data_dict = {k: v for k, v in data.items() if not k.startswith("__")}
+
+            swds = np.asarray(data[key])
+
+            # normalize to (N, 2)
+            if swds.size == 0:
+                continue
+            if swds.ndim == 1 and swds.shape[0] == 2:
+                swds = swds[np.newaxis, :]
+            elif swds.ndim == 2 and swds.shape[1] >= 2:
+                swds = swds[:, 0:2]
+            else:
+                raise ValueError(f"Unexpected SWD array shape {swds.shape} in {path}")
+
+            # keep intervals with start < amount_sec
+            swds = swds[swds[:, 0] < amount_sec].copy()
+
+            # shift
+            offset = idx * amount_sec
+            swds += offset
+
+            if swds.size:
+                combined_swds.append(swds)
+
+        if not combined_swds:
+            if verbose:
+                print(f"No SWDs found in first {amount_hours}h for {swd_paths}")
+            continue
+
+        out_swds = np.vstack(combined_swds)
+        out_swds = out_swds[np.argsort(out_swds[:, 0])]
+
+        out_path = swd_paths[0].with_stem(swd_paths[0].stem + "_COMBINED")
+        if out_path.exists() and not overwrite:
+            raise FileExistsError(f"Refusing to overwrite existing file: {out_path}")
+
+        out_data = dict(first_data_dict or {})
+        out_data[label] = out_swds
+
+        if verbose:
+            print(f"Writing combined SWD file to: {out_path}")
+
+        savemat(out_path, out_data)
+        created.append(out_path)
+
+    return created
+
+
+# -------------------------
+# CLI
+# -------------------------
+# CREDIT --> Chatgpt 
+# DO NOT USE THIS AS-IS WITHOUT TESTING AND POSSIBLY MODIFYING IT, I DID NOT WRITE IT/VERIFY IT MYSELF - Leah
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    p = argparse.ArgumentParser(prog="ebb-combine")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    p_edf = sub.add_parser("edf", help="Combine short EDF restarts")
+    p_edf.add_argument("--dir", type=Path, required=True, help="Directory containing EDF files")
+    p_edf.add_argument("--fs", type=float, required=True, help="Sampling rate (Hz)")
+    p_edf.add_argument("--amount-hours", type=float, default=24)
+    p_edf.add_argument("--nominal-hours", type=float, default=72)
+    p_edf.add_argument("--pattern", type=str, default=r"[^_]+")
+    p_edf.add_argument("--move-short-files", action="store_true")
+    p_edf.add_argument("--short-dirname", type=str, default="short_files")
+    p_edf.add_argument("--overwrite", action="store_true")
+    p_edf.add_argument("--quiet", action="store_true")
+
+    p_swd = sub.add_parser("swd", help="Combine SWD timestamp .mat files")
+    p_swd.add_argument("--dir", type=Path, required=True, help="Directory containing .mat files")
+    p_swd.add_argument("--amount-hours", type=float, default=24)
+    p_swd.add_argument("--pattern", type=str, default=r"final_ts_([^_]+)")
+    p_swd.add_argument("--label-preference", type=str, default="final_ts")
+    p_swd.add_argument("--overwrite", action="store_true")
+    p_swd.add_argument("--quiet", action="store_true")
+
+    args = p.parse_args(argv)
+
+    if args.cmd == "edf":
+        combine_edf(
+            args.dir,
+            fs=args.fs,
+            amount_hours=args.amount_hours,
+            nominal_hours=args.nominal_hours,
+            pattern=args.pattern,
+            verbose=not args.quiet,
+            move_short_files=args.move_short_files,
+            short_dirname=args.short_dirname,
+            overwrite=args.overwrite,
+        )
+        return 0
+
+    if args.cmd == "swd":
+        combine_swd(
+            args.dir,
+            amount_hours=args.amount_hours,
+            pattern=args.pattern,
+            verbose=not args.quiet,
+            label_preference=args.label_preference,
+            overwrite=args.overwrite,
+        )
+        return 0
+
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

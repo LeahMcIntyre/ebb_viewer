@@ -1,0 +1,2 @@
+[console_scripts]
+ebb-viewer = ebb_viewer.__main__:main
