@@ -1,0 +1,64 @@
+# --------------------
+# Python / build
+# --------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+
+build/
+dist/
+*.egg-info/
+
+# --------------------
+# Virtual envs
+# --------------------
+.env
+.venv
+venv/
+conda-env/
+*.conda
+
+# --------------------
+# Editors / OS
+# --------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --------------------
+# Logs
+# --------------------
+*.log
+
+# --------------------
+# Runtime artifacts
+# --------------------
+runs/
+outputs/
+figures/
+tables/
+
+# --------------------
+# Data (never commit raw data)
+# --------------------
+data/
+raw/
+*.edf
+*.csv
+*.mat
+*.npy
+*.npz
+
+# --------------------
+# Qt / viewer cruft
+# --------------------
+*.qmlc
+*.qrc
+
+# --------------------
+# Local configs
+# --------------------
+*.local.yaml
+*.local.yml

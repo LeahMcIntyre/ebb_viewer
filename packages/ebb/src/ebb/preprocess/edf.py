@@ -5,14 +5,15 @@ import time
 from functools import partial
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Callable, Iterable, Sequence, Union
+from typing import Callable, Iterable, Sequence, Union, Optional
 
 import numpy as np
 from openseize.file_io import edf
 from openseize.resampling import resampling
 
 from ebb.core.concurrency import set_cores 
-from ebb.io.utils import between_pro         
+from ebb.io.utils import between_pro
+from ebb.io.sleepyrat import SleepyRatAPI         
 
 
 def compute_trim_stop_samples(
@@ -36,22 +37,29 @@ def standard(
     savedir: Union[str, Path],
     fs: float,
     downsample: int,
-    trim_to_hours: Sequence[float] = (48, 72),
+    trim_to: Sequence[float] = (48, 72),
     chunksize: int = int(30e5),
     axis: int = -1,
     verbose: bool = True,
 ) -> Path:
     """Downsample and trim an EDF; write *_PREPROCESSED.edf and return its path."""
-    fp = Path(path)
-    savedir = Path(savedir)
-
     #TODO: Do I want exist_ok to be True? Best procedure
+    savedir = Path(savedir)
     savedir.mkdir(parents=True, exist_ok=True)
 
+    fp = Path(path)
     reader = edf.Reader(fp)
 
-    stop = compute_trim_stop_samples(reader.shape[axis], fs, trim_to_hours)
-    stop = int(np.ceil(stop / fs) * fs)  # keep multiple-of-1sec (as you had)
+    # Trim data with floor chosen from trim_to
+    trim_samples = np.array(trim_to) * 3600 * fs
+    idx = np.searchsorted(trim_samples, reader.shape[axis], side='right') - 1
+    if idx < 0:
+        hrs = reader.shape[axis] / (3600 * fs)
+        msg = f'{path.stem} is {hrs} hrs, a value below all trim_to {trim_to}'
+        raise ValueError(msg)
+    stop = trim_samples[idx]
+    # ensure stop is integer multiple of samples per record / downsample
+    stop = int(np.ceil(stop / fs) * fs)
 
     pro = between_pro(reader, 0, stop, chunksize, axis)
     result = resampling.downsample(pro, downsample, fs, chunksize, axis)
@@ -59,11 +67,11 @@ def standard(
 
     header = copy.deepcopy(reader.header)
     m = downsample
-    header["samples_per_record"] = [x // m for x in header.samples_per_record]
-    header["num_records"] = int(processed.shape[axis] / (fs / m))
-    header["reserved_0"] = ""
-    header["digital_min"] = [int(x) for x in header["digital_min"]]
-    header["digital_max"] = [int(x) for x in header["digital_max"]]
+    header['samples_per_record'] = [x // m for x in header.samples_per_record]
+    header['num_records'] = int(processed.shape[axis] / (fs / m))
+    header['reserved_0'] = ''
+    header['digital_min'] = [int(x) for x in header['digital_min']]
+    header['digital_max'] = [int(x) for x in header['digital_max']]
 
     out = savedir / f"{fp.stem}_PREPROCESSED{fp.suffix}"
     with edf.Writer(out) as writer:
@@ -144,3 +152,50 @@ def batch(
         print(f"Saved {len(paths)} files to {target} in {elapsed:.2f}s")
 
     return outs
+
+# TODO: Make more flexible - check for project/folder existence, how to manage if not all EDFs process in time limit, etc.
+# Integrate with the spindle batch process for ease? 
+def process_sleepyrat(
+    edf_dir: Path,
+    project: str,
+    folder: str,
+    *,
+    threshold: float = 0.5,
+    outdir: Optional[Path] = None,
+    username: str = "REDACTED_1",
+    password: str = "REDACTED_2",
+    base_url: str = "https://sleepyrat.ai/api",
+) -> Path:
+    """
+    High-level helper for the GUI:
+
+    - Logs into SleepyRat
+    - Uploads a single EDF to project/folder
+    - Waits for processing to finish
+    - Downloads that EDF's labels as CSV
+    - Saves CSV locally (default: next to the EDF)
+    - Returns the local CSV path
+    """
+    if outdir is None:
+        outdir = edf_dir.parent / f"{edf_dir.stem}_outputs"
+    else:
+        outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=False)
+
+    api = SleepyRatAPI(username=username, password=password, base_url=base_url)
+
+    # 1. Upload the EDF
+    print(f"[SleepyRat] Uploading {edf_dir.name} to {project}/{folder}...")
+    api.upload_dir(project, folder, edf_dir)
+
+    # 2. Wait for processing
+    print(f"[SleepyRat] Waiting for processing to finish...")
+    ok = api.wait_for_processing(project, folder)
+    if not ok:
+        raise RuntimeError(
+            f"Processing did not finish within wait limit for {project}/{folder}"
+        )
+
+    api.download_labels_all(project, folder, outdir, threshold=threshold)
+    print(f"[SleepyRat] Labels downloaded to {outdir}")
+

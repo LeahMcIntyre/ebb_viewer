@@ -109,7 +109,7 @@ def commutator_threshold(pro: Producer,
     axis = pro.axis
 
     mask = np.ones(pro.shape[axis], dtype=bool)
-
+    
     for idx, arr in enumerate(pro):
 
         x = np.abs(arr) if two_sided else arr

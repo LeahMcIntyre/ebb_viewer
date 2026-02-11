@@ -34,6 +34,8 @@ class PSDResult:
     comm_out_frac: float
     sd_out_frac: float
     swd_out_frac: float
+    used_swd: bool
+    used_drink: bool
     freqs: npt.NDArray[np.floating]
     psd: npt.NDArray[np.floating]
 
@@ -44,35 +46,10 @@ def out_fraction(mask: npt.NDArray[np.bool_], state_mask: npt.NDArray[np.bool_])
         return float("nan")
     return 1.0 - float(kept.mean())
 
-def match_paths(
-    eeg_paths: Sequence[Path],
-    state_paths: Sequence[Path],
-    swd_paths: Sequence[Path] = None,
-    drink_paths: Optional[Sequence[Path]] = None,
-    *,
-    eeg_state_pat: str = r"\w+_",
-    eeg_swd_pat: str = r"^(?:[A-Za-z0-9]*ts_)?([^_]+)", #TODO: Fix this regex to be more general
-    eeg_drink_pat: str = r"\w+_",
-) -> List[Tuple[Path, Path, Path, Optional[Path]]]:
-    """Match EEG EDFs to state CSV + SWD MAT + optional drink npy by filename regex."""
-    a = path_utils.re_match(eeg_paths, state_paths, eeg_state_pat)
-    b = path_utils.re_match(eeg_paths, swd_paths, eeg_swd_pat)
-
-    if drink_paths is None:
-        c = [(eeg, None) for eeg in eeg_paths]
-    else:
-        c = path_utils.re_match(eeg_paths, drink_paths, eeg_drink_pat)
-
-    paired: List[Tuple[Path, Path, Path, Optional[Path]]] = []
-    for (ep1, st), (ep2, swd_p), (ep3, dr) in zip(a, b, c):
-        assert ep1 == ep2 == ep3
-        paired.append((ep1, st, swd_p, dr))
-    return paired
 
 def estimate_psd(
     path: Union[str, Path],
     state_path: Union[str, Path],
-    *,
     swd_path: Union[str, Path] = None,
     drink_path: Union[str, Path] = None,
     offset_path: Union[str, Path] = None,
@@ -130,7 +107,7 @@ def estimate_psd(
     path, state_path = Path(path), Path(state_path)
     # get the mouse id from path
     animal = path.stem.split('_')[0]
-
+    print(animal)
     with edf.Reader(path) as reader:
 
         # build a producer
@@ -142,7 +119,7 @@ def estimate_psd(
         for label, code in labels.items():
             state_masks[label] = (masking.state(state_path, code, fs, winsize=4))
 
-
+        print(f"{animal}: {reader.shape}")
         #Compute commutator artifact threshold mask
         comm_mask = masking.commutator_threshold(pro, value=2000,
                 radius=250,pad=250, min_to_pad=10)[0]
@@ -157,17 +134,19 @@ def estimate_psd(
             radius=125,
             mask_pro=comm_pro,
         )[0]
-
-        swd_mask = masking.swd(path=swd_path, n_samples=pro.shape[-1], label='DEL_ts')
+        print(f"{animal} SD threshold mask computed")
 
         #Compute SWD mask if path provided
-        if swd_path:
+        if swd_path is not None:
             swd_mask = masking.swd(path=swd_path, n_samples=pro.shape[-1], fs=fs, pad_sec=0)
         else:
             swd_mask = np.ones(pro.shape[-1], dtype=bool)
+        
+        
         #Get offset and drink mask
         #TODO: FIX THIS MESS LEAH
         if drink_path:
+            print(f"Drink Mask For Animal {animal}")
             if offset_path:
                 offset = masking.get_offset(drink_path, offset_path)
             drink_mask = masking.drinking_mask(drink_path, offset, fs=fs)
@@ -222,6 +201,8 @@ def estimate_psd(
                     comm_out_frac=float(comm_out),
                     sd_out_frac=float(sd_out),
                     swd_out_frac=float(swd_out),
+                    used_swd=bool(swd_path is not None),
+                    used_drink=bool(drink_path is not None),
                     freqs=freqs,
                     psd=psds,
                 )
@@ -229,12 +210,73 @@ def estimate_psd(
             result.append(r)
     return result
 
+import re
+from pathlib import Path
+
+def _animal_id(p: Path, pattern: str = r"[^_]+") -> str:
+    """Join key used across EDF/CSV/MAT/NPY: everything before first underscore."""
+    m = re.match(pattern, p.stem)
+    return m.group(0) if m else p.stem
+
+
+
+def match_paths(
+    eeg_paths: Sequence[Path],
+    state_paths: Sequence[Path],
+    swd_paths: Optional[Sequence[Path]] = None,
+    drink_paths: Optional[Sequence[Path]] = None,
+    *,
+    eeg_state_pat: str = r"[^_]+",
+    eeg_swd_pat: str = r"^(?:[A-Za-z0-9]*ts_)?([^_]+)",
+) -> List[Tuple[Path, Path, Optional[Path], Optional[Path]]]:
+    """
+    Match EEG EDFs to:
+      - required state CSV
+      - optional SWD MAT (if swd_paths provided, requires all EEGs to have SWD)
+      - optional per-file drink NPY (may be missing)
+
+    Returns list of tuples:
+        (eeg_path, state_path, swd_path_or_None, drink_path_or_None)
+    """
+
+    eeg_paths = list(eeg_paths)
+
+    # re_match is fine here because it's required to be complete
+    eeg_state_pairs = path_utils.re_match(eeg_paths, state_paths, eeg_state_pat)
+    state_by_eeg: Dict[Path, Path] = {ep: sp for ep, sp in eeg_state_pairs}
+
+    # ---- OPTIONAL EEG <-> SWD (Applied to all or to none) ----
+    if swd_paths is not None:
+        eeg_swd_pairs = path_utils.re_match(eeg_paths, swd_paths, eeg_swd_pat)
+        swd_by_eeg: Dict[Path, Path] = {ep: sp for ep, sp in eeg_swd_pairs}
+    else:
+        swd_by_eeg = {ep: None for ep in eeg_paths}
+
+    # ---- OPTIONAL (per-file sparse OK): drink masks via animal-id dict ----
+    drink_by_animal: Dict[str, Path] = {}
+    if drink_paths is not None:
+        drink_by_animal = {_animal_id(p): p for p in drink_paths}
+
+    # ---- Build final paired list (no zip truncation) ----
+    paired: List[Tuple[Path, Path, Optional[Path], Optional[Path]]] = []
+    for ep in eeg_paths:
+        animal = _animal_id(ep)
+        paired.append((
+            ep,
+            state_by_eeg[ep],
+            swd_by_eeg[ep],
+            drink_by_animal.get(animal, None),
+        ))
+
+    return paired
+
 def batch_estimate(
     eeg_dir: Union[str, Path],
     state_dir: Union[str, Path],
     swd_dir: Union[str, Path] = None,
-    mask_dir: Union[str, Path] = None,
+    drink_dir: Union[str, Path] = None,
     ncores: Optional[int] = None,
+    verbose: bool = True,
     **kwargs,
 ) -> List[PSDResult]:
     """Concurrently estimates PSDResults from a directories of EEG files and
@@ -266,29 +308,14 @@ def batch_estimate(
     [kwargs.pop(x, None) for x in ('path', 'state_path')]
 
     # pair the eeg paths with the state paths
-    eeg_paths = list(Path(eeg_dir).glob('*PROCESSED.edf'))
-    state_paths = list(Path(state_dir).glob('*.csv'))
+    eeg_paths = sorted(Path(eeg_dir).glob('*PROCESSED.edf'))
+    state_paths = sorted(Path(state_dir).glob('*.csv'))
+    swd_paths = sorted(Path(swd_dir).glob("*.mat")) if swd_dir else None
+    drink_paths = sorted(Path(drink_dir).glob("*.npy")) if drink_dir else None
 
-    # Match paths by animal name
-    a = path_utils.re_match(eeg_paths, state_paths, r"\w+_")
 
-    if swd_dir:
-        swd_paths = list(Path(swd_dir).glob('*.mat'))
-        b = path_utils.re_match(eeg_paths, swd_paths, r"^(?:[A-Za-z0-9]*ts_)?([^_]+)")
-    else:
-        b = [(eeg_path, None) for eeg_path in eeg_paths]
+    paired = match_paths(eeg_paths, state_paths, swd_paths, drink_paths)
 
-    if mask_dir:
-        mask_paths = list(Path(mask_dir).glob('*.npy'))
-        c = path_utils.re_match(eeg_paths, mask_paths, r"\w+_")
-    else:
-        c = [(eeg_path, None) for eeg_path in eeg_paths]
-
-    paired = []
-    for (epath1, state_path), (epath2, swd_path), (epath3, mask_path) in zip(a, b, c):
-        # All epaths should match
-        assert epath1 == epath2 == epath3
-        paired.append((epath1, state_path, swd_path, mask_path))
     
     # set number of cpu workers and print to stdout
     workers = concurrency.set_cores(ncores, len(paired))
@@ -296,7 +323,7 @@ def batch_estimate(
     print(msg)
 
     # construct a partial to pass to Multiprocess pool
-    estimator = functools.partial(estimate_psd, verbose=True, **kwargs)
+    estimator = functools.partial(estimate_psd, **kwargs)
     t0 = time.perf_counter()
     with Pool(workers) as pool:
         results = pool.starmap(estimator, paired)
@@ -305,23 +332,5 @@ def batch_estimate(
 
     # flatten the list of list of PSDResult data instances
     return [obj for sublist in results for obj in sublist]
-          # whatever defines PSDResult
 
-
-
-if __name__ == '__main__':
-
-    import pickle
-    
-    eeg_dir = '/media/matt/Data_A/leah/RNA KO/standard'
-    state_dir = '/media/matt/Data_A/leah/RNA KO/spindle_LFC_RSC_outputs'
-    swd_dir = '/home/matt/Desktop/Artifact_Detection/SWD_timestamps_Stxbp1_Characterization_EEG/RNA KO/Combined'
-
-    # batch compute psds and save to a metaarray
-    results = batch(eeg_dir, state_dir, swd_dir, ncores=5)
-
-    r = [dataclasses.asdict(result) for result in results]
-    fp = '/media/matt/Data_A/leah/RNA KO/RNA_KO_spindle_artifact_final.pkl'
-    with open(fp, 'wb') as outfile:
-        pickle.dump(r, outfile)
 
