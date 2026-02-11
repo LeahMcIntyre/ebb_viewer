@@ -41,7 +41,7 @@ figures/
 tables/
 
 # --------------------
-# Data (never commit raw data)
+# Data 
 # --------------------
 data/
 raw/
