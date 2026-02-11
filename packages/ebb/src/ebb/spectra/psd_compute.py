@@ -252,12 +252,12 @@ def match_paths(
     else:
         swd_by_eeg = {ep: None for ep in eeg_paths}
 
-    # ---- OPTIONAL (per-file sparse OK): drink masks via animal-id dict ----
+    # per-file sparse OK): drink masks via animal-id dict
     drink_by_animal: Dict[str, Path] = {}
     if drink_paths is not None:
         drink_by_animal = {_animal_id(p): p for p in drink_paths}
 
-    # ---- Build final paired list (no zip truncation) ----
+    # Build final paired list (no zip truncation) 
     paired: List[Tuple[Path, Path, Optional[Path], Optional[Path]]] = []
     for ep in eeg_paths:
         animal = _animal_id(ep)
