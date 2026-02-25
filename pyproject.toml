@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ebb-suite"
+version = "0.1.0"
+description = "EEG processing pipeline (ebb) and GUI viewer (ebb_viewer)"
+requires-python = ">=3.10"
+
+dependencies = [
+  "numpy",
+  "scipy",
+  "pandas",
+  "PyQt6",
+  "openseize",
+]
+
+# Command-line entry point to launch your viewer
+[project.scripts]
+ebb-viewer = "ebb_viewer.__main__:main"
+
+[tool.setuptools]
+# Tell setuptools that all packages live under src/
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
