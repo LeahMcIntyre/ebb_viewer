@@ -1,7 +1,0 @@
-Metadata-Version: 2.4
-Name: ebb-viewer
-Version: 0.1.0
-Summary: GUI application for the ebb EEG processing pipeline
-Requires-Python: >=3.10
-Requires-Dist: ebb
-Requires-Dist: PyQt6
