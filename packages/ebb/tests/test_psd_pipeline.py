@@ -1,6 +1,6 @@
 import numpy as np
 from pathlib import Path
-from ebb.spectra.psd_compute import _animal_id, out_fraction, match_paths
+from ebb.process.psd_compute import _animal_id, out_fraction, match_paths
 
 
 #TO BE CHANGED LATER WHEN MORE FLEXIBILITY IS ADDED

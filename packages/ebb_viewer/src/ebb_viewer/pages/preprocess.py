@@ -78,7 +78,6 @@ class PreprocessPage(QWidget):
         root.addWidget(settings_gb)
 
         self.btn_run = QPushButton("Run preprocessing")
-        self.btn_run.setEnabled(False)
         root.addWidget(self.btn_run)
 
         # ----------- Set Style Sheets -----------
@@ -141,8 +140,7 @@ class PreprocessPage(QWidget):
                 preprocessor=standard,
                 dirpath=self.project_root,
                 target=target_dir,
-                settings=params,
-
+                **params,
             )
             QMessageBox.information(
                 self,

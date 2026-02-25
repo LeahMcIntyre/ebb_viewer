@@ -3,7 +3,7 @@ from pathlib import Path
 import pickle
 import dataclasses
 
-from ebb.spectra.psd_compute import batch_estimate
+from ebb.process.psd_compute import batch_estimate
 
 def main():
     eeg_dir = Path("/media/matt/Data_A/leah/Pipeline_test/standard")

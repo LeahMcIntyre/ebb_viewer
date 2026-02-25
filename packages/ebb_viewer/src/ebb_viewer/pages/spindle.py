@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from ebb.preprocess.edf import batch, spindle
+# from ebb.preprocess.edf.spindle import preprocess_folder_spindle  # or wherever it lives
 
 
 class SpindleWritePage(QWidget):
@@ -21,13 +22,18 @@ class SpindleWritePage(QWidget):
 
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
-        self.project_root = project_root
-        self.standard_folder = project_root / "standard"
-        if self.standard_folder.exists(): self.standard_folder = None  # will be set when project_paths is available
+        self.project_root = Path(project_root)
 
+        # Will be updated by _refresh_standard_dir
+        self.standard_folder: Optional[Path] = None
 
-        # Standard folder is derived from AppState.project_paths.standard_dir
-        self._validate()  # make sure initial channels are valid
+        self._build_ui()
+        self._wire()
+
+        # Initial refresh + validation
+        self._refresh_standard_dir()
+        self._update_target_path()
+        self._validate()
 
     # ---------------- UI ----------------
     def _build_ui(self):
@@ -40,28 +46,22 @@ class SpindleWritePage(QWidget):
 
         top_form = QFormLayout(folder_gb)
 
-
-
-        # Standard folder (read-only, driven by project)
-        self.lbl_standard = QLineEdit("No standard folder selected")
+        # Standard folder (read-only, driven by project_root/standard)
+        self.lbl_standard = QLineEdit("Checking for standard folder…")
         self.lbl_standard.setReadOnly(True)
         top_form.addRow("Standard EDF Folder:", self.lbl_standard)
-
-        # Spindle root label (readonly)
-        self.lbl_spindle_root = QLabel("Spindle root: (no project)")
-        self.lbl_spindle_root.setStyleSheet("color: #666;")
-        top_form.addRow("Spindle Root:", self.lbl_spindle_root)
 
         # Channel combo name (read-only, derived from selected EEG channels)
         self.combo_name_edit = QLineEdit("")
         self.combo_name_edit.setReadOnly(True)
         top_form.addRow("Channel Combo:", self.combo_name_edit)
 
-        # Target spindle EDF folder (editable, prefilled from ProjectPaths)
+        # Target spindle EDF folder (editable but prefilled from project_root)
         self.target_name_edit = QLineEdit()
         self.target_name_edit.setStyleSheet(
             "QLineEdit { padding-top: 0px; padding-bottom: 0px; }"
         )
+        self.target_name_edit.setReadOnly(True)
         top_form.addRow("Target Directory:", self.target_name_edit)
 
         # ----- Channel selection group -----
@@ -137,49 +137,50 @@ class SpindleWritePage(QWidget):
     # ------------ Wiring / Signals ------------
     def _wire(self):
         # Channels drive validation + combo/target updates
-        self.cb_ch0.toggled.connect(self._validate)
-        self.cb_ch1.toggled.connect(self._validate)
-        self.cb_ch2.toggled.connect(self._validate)
+        self.cb_ch0.toggled.connect(self._on_channels_changed)
+        self.cb_ch1.toggled.connect(self._on_channels_changed)
+        self.cb_ch2.toggled.connect(self._on_channels_changed)
         self.btn_apply.clicked.connect(self._run_spindle_btn)
 
-    # ------------ React to project changes ------------
-    def _on_project_changed(self, p: Optional[Path]) -> None:
-        """When project changes, point standard_folder to paths.standard_dir."""
-        paths: Optional[ProjectPaths] = getattr(self.state, "project_paths", None)
-
-        if paths is not None:
-            std = paths.standard_dir
-            self.standard_folder = std
-            if std.exists():
-                self.lbl_standard.setText(str(std))
-            else:
-                # Folder might not exist yet (e.g. preprocess not run)
-                self.lbl_standard.setText(f"{std} (does not exist yet)")
-        else:
-            self.standard_folder = None
-            self.lbl_standard.setText("No standard folder selected")
-
+    def _on_channels_changed(self, _checked: bool):
         self._update_target_path()
         self._validate()
+
+    # ------------ Refresh when page is shown ------------
+    def showEvent(self, event):
+        """Whenever the page is shown, re-check if 'standard' exists."""
+        super().showEvent(event)
+        self._refresh_standard_dir()
+        self._update_target_path()
+        self._validate()
+
+    def _refresh_standard_dir(self) -> None:
+        """
+        Look for a folder named 'standard' in project_root.
+        If it exists, use it; otherwise show 'Run preprocessing first'.
+        """
+        candidate = self.project_root / "standard"
+
+        if candidate.exists() and candidate.is_dir():
+            self.standard_folder = candidate
+            self.lbl_standard.setText(str(candidate))
+            self.lbl_standard.setToolTip(str(candidate))
+        else:
+            self.standard_folder = None
+            self.lbl_standard.setText("No standard folder available. Run preprocessing first.")
+            self.lbl_standard.setToolTip("")
 
     # ------------ Actions ------------
     def _run_spindle_btn(self):
         channels = self._selected_indices()
 
-        paths: Optional[ProjectPaths] = getattr(self.state, "project_paths", None)
-        if paths is None:
-            QMessageBox.critical(
-                self,
-                "No Project",
-                "Please choose a project folder first."
-            )
-            return
-
         if self.standard_folder is None:
             QMessageBox.critical(
                 self,
                 "No Standard EDF Folder",
-                "Standard folder is not set. Run preprocessing first."
+                "Standard folder is not set.\n\n"
+                "Make sure preprocessing has been run and a 'standard' folder "
+                "exists in your project root."
             )
             return
 
@@ -201,9 +202,12 @@ class SpindleWritePage(QWidget):
             )
             return
 
-        combo_name = paths.combo_to_str(eeg_labels)  # e.g. "LFC_RSC"
-        # Default target dir based on our canonical structure
-        default_target = paths.spindle_dir_for_combo(combo_name)
+        # Simple combo name, e.g. "LFC_RSC"
+        combo_name = "_".join(eeg_labels)
+
+        # Default target dir based on our canonical structure under project_root
+        spindle_root = self.project_root / "spindle_edfs"
+        default_target = spindle_root / combo_name
 
         # Allow user to override target path if they really want
         target_text = self.target_name_edit.text().strip()
@@ -226,31 +230,22 @@ class SpindleWritePage(QWidget):
             self.target_name_edit.setToolTip(str(default_target))
             target_dir = default_target
 
-        # --- NEW: ensure directories exist ---
-        spindle_root = paths.spindle_root
+        # Ensure directories exist
         try:
             spindle_root.mkdir(parents=True, exist_ok=True)
+            target_dir.mkdir(parents=True, exist_ok=False)  # Don't overwrite existing
         except Exception as e:
             QMessageBox.critical(
                 self,
                 "Folder Error",
-                f"Could not create spindle root folder:\n{spindle_root}\n\n{e}",
+                f"Could not create spindle folder(s):\n{target_dir}\n\n{e}",
             )
             return
-        """
-        try:
-            target_dir.mkdir(parents=True, exist_ok=True)
-        except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Folder Error",
-                f"Could not create target folder:\n{target_dir}\n\n{e}",
-            )
-            return"""
 
         try:
-            preprocess_folder_spindle(
-                standard_dir=self.standard_folder,
+            # adjust call as appropriate for your spindle module
+            batch(preprocessor=spindle,
+                dirpath=self.standard_folder,
                 target=target_dir,
                 channels=channels
             )
@@ -324,9 +319,7 @@ class SpindleWritePage(QWidget):
         Update suggested combo name and target folder whenever project,
         standard folder, or channel selection changes.
         """
-        paths: Optional[ProjectPaths] = getattr(self.state, "project_paths", None)
-
-        if paths is None or self.standard_folder is None:
+        if self.standard_folder is None:
             self.combo_name_edit.setText("")
             self.combo_name_edit.setToolTip("")
             self.target_name_edit.setText("")
@@ -336,11 +329,13 @@ class SpindleWritePage(QWidget):
         eeg_labels = self._current_eeg_labels()
         if not eeg_labels:
             self.combo_name_edit.setText("")
+            self.combo_name_edit.setToolTip("")
             self.target_name_edit.setText("")
+            self.target_name_edit.setToolTip("")
             return
 
-        combo_name = paths.combo_to_str(eeg_labels)  # e.g. "LFC_RSC"
-        target = paths.spindle_dir_for_combo(combo_name)
+        combo_name = "_".join(eeg_labels)  # e.g. "LFC_RSC"
+        target = self.project_root / "spindle_edfs" / combo_name
 
         self.combo_name_edit.setText(combo_name)
         self.combo_name_edit.setToolTip(combo_name)
