@@ -7,6 +7,8 @@ from PyQt6 import QtWidgets, QtGui
 from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 
+from ebb_viewer.edf_viewer.masks import MaskSet
+
 pg.setConfigOption("background", "w")
 pg.setConfigOption("foreground", "k")
 
@@ -46,6 +48,9 @@ class TraceView(QtWidgets.QWidget):
         self.vlabels: list[QtWidgets.QLabel] = []
         self.vsliders: list[QtWidgets.QSlider] = []
 
+        # Mask overlays
+        self.mask_set: MaskSet = MaskSet()
+        self._overlay_items: list[tuple[pg.PlotWidget, pg.LinearRegionItem]] = []
 
         self._build_ui()
         self._set_window(0)
@@ -253,8 +258,49 @@ class TraceView(QtWidgets.QWidget):
         self.jump.blockSignals(False)
 
         self._apply_all_y()
-    
-    
+        if t.size:
+            self._update_mask_overlays(t[0], t[-1])
+
+
+    def set_masks(self, mask_set: MaskSet) -> None:
+        self.mask_set = mask_set
+        self._set_window(self.start)
+
+    def refresh_overlays(self) -> None:
+        stop = min(self.start + self.win, self.n)
+        t = np.arange(self.start, stop) / self.fs
+        if t.size:
+            self._update_mask_overlays(t[0], t[-1])
+
+    def _update_mask_overlays(self, t_start: float, t_stop: float) -> None:
+        for pw, item in self._overlay_items:
+            pw.removeItem(item)
+        self._overlay_items.clear()
+
+        s0 = int(t_start * self.fs)
+        s1 = int(np.ceil(t_stop * self.fs))
+
+        for mask in self.mask_set:
+            if not mask.enabled:
+                continue
+            brush = pg.mkBrush(*mask.color)
+            for span_start, span_end in mask.spans:
+                if span_end <= s0 or span_start >= s1:
+                    continue
+                t_a = span_start / self.fs
+                t_b = span_end / self.fs
+                for pw in self.plots:
+                    item = pg.LinearRegionItem(
+                        values=(t_a, t_b),
+                        movable=False,
+                        brush=brush,
+                        pen=pg.mkPen(None),
+                    )
+                    item.setZValue(-10)
+                    pw.addItem(item)
+                    self._overlay_items.append((pw, item))
+
+
     def reset_zooms(self):
         for ch in range(self.nch):
             self.y_zoom[ch] = 1.0

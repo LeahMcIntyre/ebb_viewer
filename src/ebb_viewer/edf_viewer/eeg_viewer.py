@@ -1,25 +1,19 @@
 import sys
 
 from pathlib import Path
-from typing import Sequence
-from dataclasses import dataclass
 from datetime import datetime
 
-import numpy as np
-
 from PyQt6 import QtWidgets, QtGui
+from PyQt6.QtCore import Qt
 from openseize.file_io import edf
 
-from trace_view import TraceView
-from file_openers import pick_edf_csv
+from ebb_viewer.edf_viewer.recording import Recording
+from ebb_viewer.edf_viewer.trace_view import TraceView
+from ebb_viewer.edf_viewer.file_openers import pick_edf_csv
+from ebb_viewer.edf_viewer.mask_builder import build_default_masks
+from ebb_viewer.edf_viewer.masks_dock import MasksDock
 
 
-@dataclass
-class Recording:
-    data: np.ndarray
-    fs: int
-    start_time: datetime
-    ch_names: Sequence[str]
 
 
 class EegMainWindow(QtWidgets.QMainWindow):
@@ -27,6 +21,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         super().__init__(parent)
         self.rec = recording
         self.initial_dir = initial_dir
+        self.mask_set = build_default_masks(recording)
 
         self.setWindowTitle("EEG Viewer")
         self.resize(1200, 800)
@@ -39,6 +34,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
             ch_names=recording.ch_names,
         )
         self.setCentralWidget(self.trace_view)
+        self.trace_view.set_masks(self.mask_set)
 
         # actions/toolbars/menus
         self._build_actions()
@@ -95,9 +91,12 @@ class EegMainWindow(QtWidgets.QMainWindow):
         #tools_tb.addAction(self.act_psd)
 
     def _build_docks(self):
-        # For now, just placeholders so you see layout.
-        # Later you can plug in your masks dock + STFT viewer dock.
-        pass
+        self.masks_dock = MasksDock(
+            refresh_overlays=self.trace_view.refresh_overlays,
+            parent=self,
+        )
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.masks_dock)
+        self.masks_dock.rebuild(self.mask_set)
 
     # ---------- behavior ----------
 
@@ -122,6 +121,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
                 fs=fs,
                 start_time=start_time,
                 ch_names=ch_names,
+                csv_path=csv_path,
             )
 
             # launch a *new* window with the new recording
@@ -170,6 +170,7 @@ def main():
         fs=fs,
         start_time=start_time,
         ch_names=ch_names,
+        csv_path=csv_path,
     )
 
     w = EegMainWindow(rec, initial_dir=initial_dir)
