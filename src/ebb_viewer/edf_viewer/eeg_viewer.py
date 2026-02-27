@@ -10,8 +10,8 @@ import numpy as np
 from PyQt6 import QtWidgets, QtGui
 from openseize.file_io import edf
 
-from trace_view import TraceView
-from file_openers import pick_edf_csv
+from ebb_viewer.edf_viewer.trace_view import TraceView
+from ebb_viewer.edf_viewer.file_openers import pick_edf_csv
 
 
 @dataclass
