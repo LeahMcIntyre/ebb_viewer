@@ -6,7 +6,7 @@ import numpy.typing as npt
 from openseize.core.producer import producer, Producer
 from ebb.core import arraytools
 
-def threshold(pro: Producer,
+def sd_threshold(pro: Producer,
               nstds: List[float],
               winsize: int,
               mask_pro: Optional[Producer] = None,

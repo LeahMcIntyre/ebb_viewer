@@ -1,0 +1,28 @@
+from pathlib import Path
+
+from PyQt6.QtWidgets import QFileDialog
+
+def pick_edf_csv(parent=None, dir=""):
+    """
+    Prompts the user to select an EDF file (required) and a CSV file (optional).
+    Returns (edf_path, csv_path) or (None, None) if cancelled.
+    """
+    edf_path, _ = QFileDialog.getOpenFileName(
+        parent,
+        "Select EDF file",
+        dir,
+        "EDF files (*.edf);;All files (*)"
+    )
+    if not edf_path:
+        return None, None
+
+    csv_path, _ = QFileDialog.getOpenFileName(
+        parent,
+        "Select state/labels CSV (optional)",
+        dir,
+        "CSV files (*.csv);;All files (*)"
+    )
+    if not csv_path:
+        csv_path = None
+
+    return Path(edf_path), (Path(csv_path) if csv_path else None)

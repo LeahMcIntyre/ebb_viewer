@@ -49,8 +49,8 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.lbl_project)
 
         self.pagelist = QListWidget()
-        self.pagelist.addItems(["Home", "Preprocess", "Spindle EDFs", "Spindle Upload", "PSD Computation", 
-                                "PSD Visualizer", "Sleep Visualizer"])
+        self.pagelist.addItems(["Home", "Preprocess", "Spindle EDFs", "Spindle Upload", "Sleep Visualizer", "PSD Computation", 
+                                "PSD Visualizer"])
         self.pagelist.setFixedWidth(140)
         sidebar_layout.addWidget(self.pagelist)
         sidebar_layout.addStretch(1)
@@ -60,14 +60,14 @@ class MainWindow(QMainWindow):
         self.preprocess_page = PreprocessPage(parent=self, project_root=self.project_root)
         self.spindle_write_page = SpindleWritePage(parent=self, project_root=self.project_root)
         self.spindle_upload_page = SpindleUploadPage(parent=self, project_root=self.project_root)
+        self.sleep_combine_page = SleepQCGridPage(parent=self, project_root=self.project_root)
         self.psd_page = PSDPage(parent=self, project_root=self.project_root)
         self.psd_visualizer_page = PSDVisualizer(parent=self, project_root=self.project_root)
         #self.sleep_visualizer_page = SleepMetricsPage(parent=self, project_root=self.project_root)
-        self.sleep_combine_page = SleepQCGridPage(parent=self, project_root=self.project_root)
 
 
-        for w in (self.home_page, self.preprocess_page, self.spindle_write_page,self.spindle_upload_page, 
-                  self.psd_page, self.psd_visualizer_page, self.sleep_combine_page):
+        for w in (self.home_page, self.preprocess_page, self.spindle_write_page,self.spindle_upload_page, self.sleep_combine_page, 
+                  self.psd_page, self.psd_visualizer_page):
             self.stacklayout.addWidget(w)
         
 

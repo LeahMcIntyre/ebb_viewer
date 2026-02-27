@@ -48,7 +48,6 @@ def out_fraction(mask: npt.NDArray[np.bool_], state_mask: npt.NDArray[np.bool_])
         return float("nan")
     return 1.0 - float(kept.mean())
 
-
 def estimate_psd(
     path: Union[str, Path],
     state_path: Union[str, Path],
@@ -56,8 +55,8 @@ def estimate_psd(
     drink_path: Union[str, Path] = None,
     offset_path: Union[str, Path] = None,
     channels: List = [0, 1, 2],
-    winsize: int = 4.5e4,
-    radius: int = 125,
+    winsize: int = 180,
+    radius: float = 0.5,
     nstd: int = 5,
     fs: float = 250,
     chunksize: int = int(30e5),
@@ -67,7 +66,8 @@ def estimate_psd(
     drink_pad: int = 2,
     **kwargs,
 ) -> List[PSDResult]:
-    """Estimates the Power spectral density of EEG data stored to an EDF at path
+    """
+    Estimates the Power spectral density of EEG data stored to an EDF at path
     for each state in a states path CSV file.
 
     Args:
@@ -109,6 +109,7 @@ def estimate_psd(
         A list of PSDResult instances one per file and state in paths and
         labels.
     """
+    
 
     path, state_path = Path(path), Path(state_path)
     # get the mouse id from path
@@ -125,19 +126,21 @@ def estimate_psd(
         for label, code in labels.items():
             state_masks[label] = (masking.state(state_path, code, fs, winsize=4))
 
-        print(f"{animal}: {reader.shape}")
+        #print(f"{animal}: {reader.shape}")
         #Compute commutator artifact threshold mask
         comm_mask = masking.commutator_threshold(pro, value=2000,
                 radius=250,pad=250, min_to_pad=10)[0]
         
         spindle_mask = masking.spindle_noise(state_path, noise_thresh=noise_thresh, fs=fs, winsize=4, include=False)
 
+        wsize, rad = (winsize*fs), (radius*fs)
+
         comm_pro = producer(comm_mask, chunksize=4.5e4, axis=-1)
-        sd_threshold_mask = masking.threshold(
+        sd_threshold_mask = masking.sd_threshold(
             pro,
             [nstd],
-            winsize=winsize,
-            radius=radius,
+            winsize=wsize,
+            radius=rad,
             mask_pro=comm_pro,
         )[0]
         print(f"{animal} SD threshold mask computed")
@@ -181,201 +184,6 @@ def estimate_psd(
             if 'wake' in combo_state:
                 # Only apply sd thresholding during wake
                 mask &= sd_threshold_mask
-
-
-            st_mask = state_masks[state_name]
-            spindle_out = out_fraction(spindle_mask, st_mask)
-            comm_out = out_fraction(comm_mask, st_mask)
-            sd_out = out_fraction(sd_threshold_mask, st_mask)
-            swd_out = out_fraction(swd_mask, st_mask)
-
-
-            if verbose:
-                print(f'Computing PSD for producer with mask: {combo_state}',
-                      end='\n')
-                
-            masked_pro = producer(pro, chunksize, axis=-1, mask=mask)
-            cnt, freqs, psds = estimators.psd(masked_pro, fs=fs, **kwargs)
-
-            r = PSDResult(
-                    path=path,
-                    channels=channels,
-                    behavior=combo_state,
-                    n_estimates=int(cnt),
-                    spindle_out_frac=float(spindle_out),
-                    comm_out_frac=float(comm_out),
-                    sd_out_frac=float(sd_out),
-                    swd_out_frac=float(swd_out),
-                    used_swd=bool(swd_path is not None),
-                    used_drink=bool(drink_path is not None),
-                    freqs=freqs,
-                    psd=psds,
-                )
-
-            result.append(r)
-    reader.close()
-    return result
-
-def estimate_psd_test(
-    path: Union[str, Path],
-    state_path: Union[str, Path],
-    swd_path: Union[str, Path] = None,
-    drink_path: Union[str, Path] = None,
-    offset_path: Union[str, Path] = None,
-    channels: List = [0, 1, 2],
-    nstd: int = 5,
-    fs: float = 250,
-    chunksize: int = int(30e5),
-    labels: Dict = {'wake': ['w'], 'nrem': ['n'], 'rem': ['r']},
-    verbose: bool = True,
-    noise_thresh: float = 0.5,
-    notch_filter: bool = False, 
-    use_comm_mask: bool = True, 
-    sd_mask: bool = True, 
-    **kwargs,
-) -> List[PSDResult]:
-    """Estimates the Power spectral density of EEG data stored to an EDF at path
-    for each state in a states path CSV file.
-
-    Args:
-        path:
-            Path to an EDF file whose PSD will be estimated.
-        state_path:
-            Path to a Spindle generated CSV file of states.For the updated SleepyRat web service, artifact slider can be set as desired: 
-            'rawstate' column is used. 
-        drink_path:
-            Path to a .npy file containing 1Hz 1D-Boolean array as a drink mask (drinking events
-            are true).
-        offset_path:
-            Path to a .csv file containing the animal ID and the offset between the eeg start 
-            and vidoe (drink mask) start. 
-        channels:
-            The channels for which PSDs will be estimated.
-        fs:
-            The sampling rate of the data in the EDF.
-        labels:
-            A dict of label names and spindle codes one per state for which PSDs
-            will be computed.
-        winsize:
-            The size of the window for threshold artifact detection using the
-            threshold mask. This value has units of seconds. Please see
-            ebb.masking.threshold
-        nstds:
-            The number of standard deviations a deflection must cross to be
-            considered an artifact. Please see ebb.masking.threshold
-        radius:
-            The number of secs below which two detected artifacts will be merged
-            into a single artifact. Please see ebb.masking.threshold.
-        verbose:
-            Boolean indicating if information about which PSD is currently being
-            computed should print to stdout.
-        **kwargs:
-            All kwargs are passed to openseize's psd estimator function.
-
-    Returns:
-        A list of PSDResult instances one per file and state in paths and
-        labels.
-    """
-
-    path, state_path = Path(path), Path(state_path)
-    # get the mouse id from path
-    animal = path.stem.split('_')[0]
-    print(animal)
-    with edf.Reader(path) as reader:
-
-        # build a producer
-        reader.channels = list(channels)
-        pro = producer(reader, chunksize=chunksize, axis=-1)
-
-        if notch_filter:
-            # Notch filter the producer
-            notch = Notch(fstop=60, width=6, fs=fs)
-            result = notch(pro, chunksize, axis=-1, dephase=False)
-            pro = result
-
-        # build state masks
-        state_masks = {}
-        for label, code in labels.items():
-            state_masks[label] = (masking.state(state_path, code, fs, winsize=4))
-
-        print(f"{animal}: {reader.shape}")
-        #Compute commutator artifact threshold mask
-        if use_comm_mask:
-            comm_mask = masking.commutator_threshold(pro, value=2000,
-                    radius=250,pad=250, min_to_pad=10)[0]
-        else:
-            comm_mask = np.ones(pro.shape[-1], dtype=bool)
-        
-        spindle_mask = masking.spindle_noise(state_path, noise_thresh=noise_thresh, fs=fs, winsize=4, include=False)
-
-        comm_pro = producer(comm_mask, chunksize=4.5e4, axis=-1)
-
-        if sd_mask:
-            sd_threshold_mask = masking.threshold(
-                pro,
-                [nstd],
-                winsize=4.5e4,
-                radius=125,
-                mask_pro=comm_pro,
-            )[0]
-            print(f"{animal} SD threshold mask computed")
-
-        else:
-            sd_threshold_mask = np.ones(pro.shape[-1], dtype=bool)
-
-        #Compute SWD mask if path provided
-        if swd_path is not None:
-            swd_mask = masking.swd(path=swd_path, n_samples=pro.shape[-1], fs=fs, pad_sec=0)
-        else:
-            swd_mask = np.ones(pro.shape[-1], dtype=bool)
-        
-        
-        #Get offset and drink mask
-        #TODO: FIX THIS MESS LEAH
-        if drink_path:
-            print(f"Drink Mask For Animal {animal}")
-            offset = masking.get_offset(drink_path, offset_path) if offset_path is not None else None
-            drink_mask = masking.drinking_mask(drink_path, offset, fs=fs)
-        else:
-            drink_mask = np.ones(pro.shape[-1], dtype=bool)
-        """
-        data = pro.to_array()
-
-        sb_mask = masking.detect_sideband_mask(
-            data=data[:3],   # maybe exclude EMG if you want: EEG only
-            fs=250,
-            nperseg=125,
-            band50=(50, 55),
-            band70=(65, 70),
-            z_thr=3.0,
-            min_dur_sec=2,
-            gap_sec=0.5,
-            require_both=True,
-            combine_channels="any",
-            win_sec_ref=1000,
-        )"""
-        #Combine all artifact masks
-        #artifact_mask = comm_mask & spindle_mask & swd_mask & drink_mask & sb_mask
-        artifact_mask = comm_mask & spindle_mask & swd_mask & drink_mask
-        metamask = metastores.MetaMask(threshold=artifact_mask, **state_masks)
-        # compute psd estimates for each mask combination
-        result = []
-        for combo_state, mask in metamask.combinations():
-
-            state_name = combo_state[1]
-
-            if 'threshold' not in combo_state:
-                # only compute psds for mask that include the threshold
-                continue
-
-            if not np.any(mask):
-                # some mice may not exhibit all behavior states
-                print(f'mask {combo_state} has no data ... skipping')
-                continue
-                
-            #if 'wake' in combo_state:
-                # Only apply sd thresholding during wake
-            mask &= sd_threshold_mask
 
 
             st_mask = state_masks[state_name]
@@ -482,6 +290,7 @@ def batch_estimate(
     savepath: Union[str, Path] = None,
     **kwargs,
 ) -> List[PSDResult]:
+
     """Concurrently estimates PSDResults from a directories of EEG files and
     Spindle state files.
 
@@ -507,6 +316,11 @@ def batch_estimate(
         A list of lists of PSDResults, one PSD result for each file and state.
     """
 
+    import warnings, tracemalloc
+
+    tracemalloc.start()
+    warnings.filterwarnings("ignore", category=ResourceWarning)
+
     # remove any path arguments from kwargs
     [kwargs.pop(x, None) for x in ('path', 'state_path')]
 
@@ -528,12 +342,17 @@ def batch_estimate(
     # construct a partial to pass to Multiprocess pool
     estimator = functools.partial(estimate_psd, **kwargs)
     t0 = time.perf_counter()
-    with Pool(workers) as pool:
-        results = pool.starmap(estimator, paired)
+    if workers == 1:
+            # ---- SEQUENTIAL PATH (no multiprocessing) ----
+        results_nested = [estimator(*args) for args in paired]
+    else:
+        with Pool(workers) as pool:
+            results_nested = pool.starmap(estimator, paired)
+
     elapsed = time.perf_counter() - t0
     print(f'Batch processed {len(paired)} files in {elapsed} secs')
 
-    results = [obj for sublist in results for obj in sublist]
+    results = [obj for sublist in results_nested for obj in sublist]
 
     if savepath is not None:
         r = [dataclasses.asdict(result) for result in results]

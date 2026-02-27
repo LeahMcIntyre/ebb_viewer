@@ -55,6 +55,7 @@ def get_offset(mask_path, offset_path):
     #Get the offset between the mask from video and the eeg recording
     return offsets[offsets['Animal']==animal]['Offset'].values[0]
 
+
 def swd(path: Union[str, Path], 
         n_samples: int, 
         fs: int = 250, 
@@ -81,7 +82,12 @@ def swd(path: Union[str, Path],
         A 1-D boolean array where drinking events and padding are False.
     """
 
-    data = loadmat(path, squeeze_me=True, struct_as_record=False)
+    path = Path(path)
+
+    # Explicitly manage the file resource
+    with path.open("rb") as f:
+        data = loadmat(f, squeeze_me=True, struct_as_record=False)
+
 
     # pick key
     keys = [k for k in data.keys() if not k.startswith('__')]
