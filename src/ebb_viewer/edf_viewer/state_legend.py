@@ -1,5 +1,5 @@
 from PyQt6 import QtWidgets, QtGui
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSize
 
 from ebb_viewer.edf_viewer.masks import MaskSet
 
@@ -13,7 +13,7 @@ class StateLegend(QtWidgets.QWidget):
     """
 
     SWATCH = 10   # square size in px
-    GAP    = 1    # gap between swatch and text, and between entries
+    GAP    = 3    # gap between swatch and text, and between entries
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -22,10 +22,19 @@ class StateLegend(QtWidgets.QWidget):
 
     # ------------------------------------------------------------------
 
+    def sizeHint(self) -> QSize:
+        if not self._entries:
+            return QSize(0, 0)
+        fm = QtGui.QFontMetrics(self.font())
+        entry_w = self.SWATCH + self.GAP + fm.horizontalAdvance("W")
+        total_w = len(self._entries) * entry_w + (len(self._entries) - 1) * self.GAP
+        return QSize(total_w, 20)
+
     def rebuild(self, state_set: MaskSet) -> None:
         """Populate entries from *state_set* and make the widget visible."""
         self._entries = [(m.color, m.name[0].upper()) for m in state_set]
         self.setVisible(bool(self._entries))
+        self.updateGeometry()
         self.update()
 
     # ------------------------------------------------------------------
