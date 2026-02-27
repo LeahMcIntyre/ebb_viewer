@@ -4,7 +4,7 @@ from typing import Sequence
 import numpy as np
 
 from PyQt6 import QtWidgets, QtGui
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 
 from ebb_viewer.edf_viewer.masks import MaskSet
@@ -106,6 +106,7 @@ class TraceView(QtWidgets.QWidget):
             pw.showGrid(x=True, y=True, alpha=0.15)
             pw.setLabel("left", "µV")
             pw.getAxis("left").setWidth(60)
+
             if i < self.nch - 1:
                 pw.getAxis("bottom").setStyle(showValues=False)
 
@@ -123,9 +124,7 @@ class TraceView(QtWidgets.QWidget):
             self.curves.append(curve)
             grid.addWidget(pw, i + 1, 1)
 
-        
-
-        # link X across channels and state bar
+        # link X across all channels and state bar
         for i in range(1, self.nch):
             self.plots[i].setXLink(self.plots[0])
         self.state_bar.link_x(self.plots[0])
@@ -233,22 +232,6 @@ class TraceView(QtWidgets.QWidget):
         self.start = int(np.clip(start, 0, max(0, self.n - self.win)))
         self._set_window(self.start)
 
-
-    def showEvent(self, event: QtGui.QShowEvent) -> None:
-        super().showEvent(event)
-        QTimer.singleShot(0, self._sync_state_bar_viewport)
-
-    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
-        super().resizeEvent(event)
-        self._sync_state_bar_viewport()
-
-    def _sync_state_bar_viewport(self) -> None:
-        """Read the first plot's ViewBox pixel bounds and pass them to StateBar."""
-        if not self.plots:
-            return
-        vb = self.plots[0].getPlotItem().getViewBox()
-        rect = vb.sceneBoundingRect()
-        self.state_bar.sync_viewport(int(rect.left()), int(rect.right()))
 
     def keyPressEvent(self, ev: QtGui.QKeyEvent):
         key = ev.key()
