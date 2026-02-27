@@ -58,6 +58,7 @@ _STATE_LABELS = {
 
 def load_state_masks(csv_path, fs: int) -> MaskSet:
     """Build a MaskSet of Wake / NREM / REM spans from a SleepyRat CSV."""
+    import numpy as np
     mask_set = MaskSet()
     for name, labels in _STATE_LABELS.items():
         arr = masking.state(csv_path, labels, fs=fs, winsize=4, include=True)

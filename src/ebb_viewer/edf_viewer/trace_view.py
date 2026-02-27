@@ -4,11 +4,12 @@ from typing import Sequence
 import numpy as np
 
 from PyQt6 import QtWidgets, QtGui
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 import pyqtgraph as pg
 
 from ebb_viewer.edf_viewer.masks import MaskSet
 from ebb_viewer.edf_viewer.state_bar import StateBar
+from ebb_viewer.edf_viewer.state_legend import StateLegend
 
 pg.setConfigOption("background", "w")
 pg.setConfigOption("foreground", "k")
@@ -53,8 +54,9 @@ class TraceView(QtWidgets.QWidget):
         self.mask_set: MaskSet = MaskSet()
         self._overlay_items: list[tuple[pg.PlotWidget, pg.LinearRegionItem]] = []
 
-        # State bar (hidden until set_state_masks is called)
-        self.state_bar = StateBar(self)
+        # State bar + legend (both hidden until set_state_masks is called)
+        self.state_bar    = StateBar(self)
+        self.state_legend = StateLegend(self)
 
         self._build_ui()
         self._set_window(0)
@@ -66,12 +68,14 @@ class TraceView(QtWidgets.QWidget):
         outer.setContentsMargins(6, 6, 6, 6)
         outer.setSpacing(6)
 
-        # State bar sits above traces; hidden until states are loaded
-        outer.addWidget(self.state_bar, 0)
-
         grid = QtWidgets.QGridLayout()
         grid.setColumnStretch(1, 1)
         outer.addLayout(grid, 1)
+
+        # Row 0: state legend (col 0) + state bar (col 1).
+        # Both hidden until set_state_masks is called; grid collapses row when hidden.
+        grid.addWidget(self.state_legend, 0, 0)
+        grid.addWidget(self.state_bar, 0, 1)
 
         for i in range(self.nch):
             col_left = QtWidgets.QWidget()
@@ -94,13 +98,14 @@ class TraceView(QtWidgets.QWidget):
             self.vsliders.append(sl)
 
 
-            grid.addWidget(col_left, i, 0)
+            grid.addWidget(col_left, i + 1, 0)
 
             # plot
             pw = pg.PlotWidget(title=self.ch_names[i])
             pw.setMenuEnabled(False)
             pw.showGrid(x=True, y=True, alpha=0.15)
             pw.setLabel("left", "µV")
+            pw.getAxis("left").setWidth(60)
             if i < self.nch - 1:
                 pw.getAxis("bottom").setStyle(showValues=False)
 
@@ -116,7 +121,9 @@ class TraceView(QtWidgets.QWidget):
 
             self.plots.append(pw)
             self.curves.append(curve)
-            grid.addWidget(pw, i, 1)
+            grid.addWidget(pw, i + 1, 1)
+
+        
 
         # link X across channels and state bar
         for i in range(1, self.nch):
@@ -227,6 +234,22 @@ class TraceView(QtWidgets.QWidget):
         self._set_window(self.start)
 
 
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        QTimer.singleShot(0, self._sync_state_bar_viewport)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._sync_state_bar_viewport()
+
+    def _sync_state_bar_viewport(self) -> None:
+        """Read the first plot's ViewBox pixel bounds and pass them to StateBar."""
+        if not self.plots:
+            return
+        vb = self.plots[0].getPlotItem().getViewBox()
+        rect = vb.sceneBoundingRect()
+        self.state_bar.sync_viewport(int(rect.left()), int(rect.right()))
+
     def keyPressEvent(self, ev: QtGui.QKeyEvent):
         key = ev.key()
         if key == Qt.Key.Key_Right:
@@ -277,6 +300,7 @@ class TraceView(QtWidgets.QWidget):
 
     def set_state_masks(self, state_set: MaskSet) -> None:
         self.state_bar.set_state_masks(state_set, self.fs)
+        self.state_legend.rebuild(state_set)
         self._set_window(self.start)
 
     def refresh_overlays(self) -> None:
