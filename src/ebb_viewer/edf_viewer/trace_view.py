@@ -8,6 +8,8 @@ from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 
 from ebb_viewer.edf_viewer.masks import MaskSet
+from ebb_viewer.edf_viewer.state_bar import StateBar
+#from ebb_viewer.edf_viewer.state_legend import StateLegend
 
 pg.setConfigOption("background", "w")
 pg.setConfigOption("foreground", "k")
@@ -52,6 +54,10 @@ class TraceView(QtWidgets.QWidget):
         self.mask_set: MaskSet = MaskSet()
         self._overlay_items: list[tuple[pg.PlotWidget, pg.LinearRegionItem]] = []
 
+        # State bar + legend (both hidden until set_state_masks is called)
+        self.state_bar    = StateBar(self)
+        #self.state_legend = StateLegend(self)
+
         self._build_ui()
         self._set_window(0)
         self.reset_zooms()
@@ -65,6 +71,11 @@ class TraceView(QtWidgets.QWidget):
         grid = QtWidgets.QGridLayout()
         grid.setColumnStretch(1, 1)
         outer.addLayout(grid, 1)
+
+        # Row 0: state legend (col 0) + state bar (col 1).
+        # Both hidden until set_state_masks is called; grid collapses row when hidden.
+        #grid.addWidget(self.state_legend, 0, 0)
+        grid.addWidget(self.state_bar, 0, 1)
 
         for i in range(self.nch):
             col_left = QtWidgets.QWidget()
@@ -87,13 +98,15 @@ class TraceView(QtWidgets.QWidget):
             self.vsliders.append(sl)
 
 
-            grid.addWidget(col_left, i, 0)
+            grid.addWidget(col_left, i + 1, 0)
 
             # plot
             pw = pg.PlotWidget(title=self.ch_names[i])
             pw.setMenuEnabled(False)
             pw.showGrid(x=True, y=True, alpha=0.15)
             pw.setLabel("left", "µV")
+            pw.getAxis("left").setWidth(60)
+
             if i < self.nch - 1:
                 pw.getAxis("bottom").setStyle(showValues=False)
 
@@ -109,11 +122,12 @@ class TraceView(QtWidgets.QWidget):
 
             self.plots.append(pw)
             self.curves.append(curve)
-            grid.addWidget(pw, i, 1)
+            grid.addWidget(pw, i + 1, 1)
 
-        # link X across channels
+        # link X across all channels and state bar
         for i in range(1, self.nch):
             self.plots[i].setXLink(self.plots[0])
+        self.state_bar.link_x(self.plots[0])
 
         # bottom controls (nav)
         controls = self._build_controls_row()
@@ -260,10 +274,16 @@ class TraceView(QtWidgets.QWidget):
         self._apply_all_y()
         if t.size:
             self._update_mask_overlays(t[0], t[-1])
+            self.state_bar.update_window(t[0], t[-1])
 
 
     def set_masks(self, mask_set: MaskSet) -> None:
         self.mask_set = mask_set
+        self._set_window(self.start)
+
+    def set_state_masks(self, state_set: MaskSet) -> None:
+        self.state_bar.set_state_masks(state_set, self.fs)
+        #self.state_legend.rebuild(state_set)
         self._set_window(self.start)
 
     def refresh_overlays(self) -> None:
