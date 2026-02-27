@@ -40,3 +40,26 @@ def build_default_masks(rec: Recording) -> MaskSet:
         mask_set.add(Mask.from_bool("spindle_noise", (0, 200, 120, 60), ~spindle_mask))
 
     return mask_set
+
+
+# Wake: amber, NREM: steel-blue, REM: coral — fully opaque since the state bar
+# is a dedicated strip (not overlaid on traces).
+_STATE_COLORS = {
+    "wake": (255, 200, 50,  255),
+    "nrem": (70,  130, 200, 255),
+    "rem":  (200, 70,  70,  255),
+}
+_STATE_LABELS = {
+    "wake": ["w"],
+    "nrem": ["n"],
+    "rem":  ["r"],
+}
+
+
+def load_state_masks(csv_path, fs: int) -> MaskSet:
+    """Build a MaskSet of Wake / NREM / REM spans from a SleepyRat CSV."""
+    mask_set = MaskSet()
+    for name, labels in _STATE_LABELS.items():
+        arr = masking.state(csv_path, labels, fs=fs, winsize=4, include=True)
+        mask_set.add(Mask.from_bool(name, _STATE_COLORS[name], arr))
+    return mask_set

@@ -10,7 +10,7 @@ from openseize.file_io import edf
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
 from ebb_viewer.edf_viewer.file_openers import pick_edf_csv
-from ebb_viewer.edf_viewer.mask_builder import build_default_masks
+from ebb_viewer.edf_viewer.mask_builder import build_default_masks, load_state_masks
 from ebb_viewer.edf_viewer.masks_dock import MasksDock
 
 
@@ -35,6 +35,10 @@ class EegMainWindow(QtWidgets.QMainWindow):
         )
         self.setCentralWidget(self.trace_view)
         self.trace_view.set_masks(self.mask_set)
+
+        if recording.csv_path is not None:
+            self.state_set = load_state_masks(recording.csv_path, int(recording.fs))
+            self.trace_view.set_state_masks(self.state_set)
 
         # actions/toolbars/menus
         self._build_actions()

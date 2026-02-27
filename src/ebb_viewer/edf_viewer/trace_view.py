@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt
 import pyqtgraph as pg
 
 from ebb_viewer.edf_viewer.masks import MaskSet
+from ebb_viewer.edf_viewer.state_bar import StateBar
 
 pg.setConfigOption("background", "w")
 pg.setConfigOption("foreground", "k")
@@ -52,6 +53,9 @@ class TraceView(QtWidgets.QWidget):
         self.mask_set: MaskSet = MaskSet()
         self._overlay_items: list[tuple[pg.PlotWidget, pg.LinearRegionItem]] = []
 
+        # State bar (hidden until set_state_masks is called)
+        self.state_bar = StateBar(self)
+
         self._build_ui()
         self._set_window(0)
         self.reset_zooms()
@@ -61,6 +65,9 @@ class TraceView(QtWidgets.QWidget):
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(6, 6, 6, 6)
         outer.setSpacing(6)
+
+        # State bar sits above traces; hidden until states are loaded
+        outer.addWidget(self.state_bar, 0)
 
         grid = QtWidgets.QGridLayout()
         grid.setColumnStretch(1, 1)
@@ -111,9 +118,10 @@ class TraceView(QtWidgets.QWidget):
             self.curves.append(curve)
             grid.addWidget(pw, i, 1)
 
-        # link X across channels
+        # link X across channels and state bar
         for i in range(1, self.nch):
             self.plots[i].setXLink(self.plots[0])
+        self.state_bar.link_x(self.plots[0])
 
         # bottom controls (nav)
         controls = self._build_controls_row()
@@ -260,10 +268,15 @@ class TraceView(QtWidgets.QWidget):
         self._apply_all_y()
         if t.size:
             self._update_mask_overlays(t[0], t[-1])
+            self.state_bar.update_window(t[0], t[-1])
 
 
     def set_masks(self, mask_set: MaskSet) -> None:
         self.mask_set = mask_set
+        self._set_window(self.start)
+
+    def set_state_masks(self, state_set: MaskSet) -> None:
+        self.state_bar.set_state_masks(state_set, self.fs)
         self._set_window(self.start)
 
     def refresh_overlays(self) -> None:
