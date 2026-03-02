@@ -10,7 +10,7 @@ from openseize.file_io import edf
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
 from ebb_viewer.edf_viewer.file_openers import pick_edf_csv
-from ebb_viewer.edf_viewer.mask_builder import build_default_masks
+from ebb_viewer.edf_viewer.mask_builder import build_default_masks, load_state_masks
 from ebb_viewer.edf_viewer.masks_dock import MasksDock
 
 
@@ -36,6 +36,10 @@ class EegMainWindow(QtWidgets.QMainWindow):
         )
         self.setCentralWidget(self.trace_view)
         self.trace_view.set_masks(self.mask_set)
+
+        if recording.csv_path is not None:
+            self.state_set = load_state_masks(recording.csv_path, int(recording.fs))
+            self.trace_view.set_state_masks(self.state_set)
 
         # actions/toolbars/menus
         self._build_actions()
@@ -143,13 +147,14 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
-
+    """
     # initial dir and one dataset load (as you already do)
     initial_dir = "/media/matt/Data_A/leah/SRA/SRA_6_week"
-    """
     edf_path, csv_path = pick_edf_csv(None, initial_dir)
     if not edf_path:
-        return"""
+        return
+    """
+    initial_dir = "/media/matt/Data_A/leah/SRA/SRA_6_week"
 
     edf_path = '/media/matt/Data_A/leah/SRA/SRA_6_week/standard/AM0806_P103_SRA_82_9_2dayEEG_2021-12-21_09_38_24_Sheldon_PREPROCESSED.edf'
     csv_path = '/media/matt/Data_A/leah/SRA/SRA_6_week/spindle_outputs/LFC_RSC/AM0806_P103_SRA_82_9_2dayEEG_2021-12-21_09_38_24_Sheldon_PREPROCESSED_SPINDLE_labels.csv'

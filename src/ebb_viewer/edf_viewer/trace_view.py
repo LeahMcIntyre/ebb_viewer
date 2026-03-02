@@ -4,10 +4,12 @@ from typing import Sequence
 import numpy as np
 
 from PyQt6 import QtWidgets, QtGui
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QPoint, QTimer
 import pyqtgraph as pg
 
 from ebb_viewer.edf_viewer.masks import MaskSet
+from ebb_viewer.edf_viewer.state_bar import StateBar
+from ebb_viewer.edf_viewer.state_legend import StateLegend
 
 pg.setConfigOption("background", "w")
 pg.setConfigOption("foreground", "k")
@@ -52,6 +54,10 @@ class TraceView(QtWidgets.QWidget):
         self.mask_set: MaskSet = MaskSet()
         self._overlay_items: list[tuple[pg.PlotWidget, pg.LinearRegionItem]] = []
 
+        # State bar + legend (both hidden until set_state_masks is called)
+        self.state_bar    = StateBar(self)
+        self.state_legend = StateLegend(self)
+
         self._build_ui()
         self._set_window(0)
         self.reset_zooms()
@@ -66,6 +72,17 @@ class TraceView(QtWidgets.QWidget):
         grid.setColumnStretch(1, 1)
         outer.addLayout(grid, 1)
 
+        # Row 0: legend + state bar in a single container spanning both columns.
+        # This lets the legend extend into the axis dead-space to the left of
+        # where the state bar starts drawing.  Hidden until set_state_masks is called.
+        self._state_row = QtWidgets.QWidget(self)
+        self._state_row.setVisible(False)
+        _row_hb = QtWidgets.QHBoxLayout(self._state_row)
+        _row_hb.setContentsMargins(0, 0, 0, 0)
+        _row_hb.setSpacing(0)
+        _row_hb.addWidget(self.state_legend)
+        _row_hb.addWidget(self.state_bar, 1)
+        grid.addWidget(self._state_row, 0, 0, 1, 2)
 
         for i in range(self.nch):
             col_left = QtWidgets.QWidget()
@@ -88,7 +105,7 @@ class TraceView(QtWidgets.QWidget):
             self.vsliders.append(sl)
 
 
-            grid.addWidget(col_left, i, 0)
+            grid.addWidget(col_left, i + 1, 0)
 
             # plot
             pw = pg.PlotWidget(title=self.ch_names[i])
@@ -112,11 +129,12 @@ class TraceView(QtWidgets.QWidget):
 
             self.plots.append(pw)
             self.curves.append(curve)
-            grid.addWidget(pw, i, 1)
+            grid.addWidget(pw, i + 1, 1)
 
         # link X across all channels and state bar
         for i in range(1, self.nch):
             self.plots[i].setXLink(self.plots[0])
+        self.state_bar.link_x(self.plots[0])
 
         # bottom controls (nav)
         controls = self._build_controls_row()
@@ -222,6 +240,32 @@ class TraceView(QtWidgets.QWidget):
         self._set_window(self.start)
 
 
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        QTimer.singleShot(0, self._sync_state_bar_viewport)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._sync_state_bar_viewport()
+
+    def _sync_state_bar_viewport(self) -> None:
+        """Map the first plot's ViewBox pixel bounds into StateBar local coords.
+
+        Uses global screen coordinates as the bridge so the result is correct
+        regardless of where in the container the state bar sits.
+        """
+        if not self.plots or not self._state_row.isVisible():
+            return
+        vb   = self.plots[0].getPlotItem().getViewBox()
+        rect = vb.sceneBoundingRect()
+        pw   = self.plots[0]
+        left_g  = pw.mapToGlobal(QPoint(int(rect.left()),  0))
+        right_g = pw.mapToGlobal(QPoint(int(rect.right()), 0))
+        self.state_bar.sync_viewport(
+            self.state_bar.mapFromGlobal(left_g).x(),
+            self.state_bar.mapFromGlobal(right_g).x(),
+        )
+
     def keyPressEvent(self, ev: QtGui.QKeyEvent):
         key = ev.key()
         if key == Qt.Key.Key_Right:
@@ -264,12 +308,18 @@ class TraceView(QtWidgets.QWidget):
         self._apply_all_y()
         if t.size:
             self._update_mask_overlays(t[0], t[-1])
+            self.state_bar.update_window(t[0], t[-1])
 
 
     def set_masks(self, mask_set: MaskSet) -> None:
         self.mask_set = mask_set
         self._set_window(self.start)
 
+    def set_state_masks(self, state_set: MaskSet) -> None:
+        self.state_bar.set_state_masks(state_set, self.fs)
+        self.state_legend.rebuild(state_set)
+        self._state_row.setVisible(True)
+        self._set_window(self.start)
 
     def refresh_overlays(self) -> None:
         stop = min(self.start + self.win, self.n)
