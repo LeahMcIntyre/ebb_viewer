@@ -21,6 +21,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         super().__init__(parent)
         self.rec = recording
         self.initial_dir = initial_dir
+
         self.mask_set = build_default_masks(recording)
 
         self.setWindowTitle("EEG Viewer")
@@ -145,9 +146,13 @@ def main():
 
     # initial dir and one dataset load (as you already do)
     initial_dir = "/media/matt/Data_A/leah/SRA/SRA_6_week"
+    """
     edf_path, csv_path = pick_edf_csv(None, initial_dir)
     if not edf_path:
-        return
+        return"""
+
+    edf_path = '/media/matt/Data_A/leah/SRA/SRA_6_week/standard/AM0806_P103_SRA_82_9_2dayEEG_2021-12-21_09_38_24_Sheldon_PREPROCESSED.edf'
+    csv_path = '/media/matt/Data_A/leah/SRA/SRA_6_week/spindle_outputs/LFC_RSC/AM0806_P103_SRA_82_9_2dayEEG_2021-12-21_09_38_24_Sheldon_PREPROCESSED_SPINDLE_labels.csv'
 
     with edf.Reader(str(edf_path)) as reader:
         data = reader.read(start=0)

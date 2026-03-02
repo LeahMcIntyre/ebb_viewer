@@ -171,6 +171,8 @@ def estimate_psd(
         for combo_state, mask in metamask.combinations():
 
             state_name = combo_state[1]
+            st_mask = state_masks[state_name]
+
 
             if 'threshold' not in combo_state:
                 # only compute psds for mask that include the threshold
@@ -184,13 +186,15 @@ def estimate_psd(
             if 'wake' in combo_state:
                 # Only apply sd thresholding during wake
                 mask &= sd_threshold_mask
+                sd_out = out_fraction(sd_threshold_mask, st_mask)
+            else:
+                sd_out = 0.0
 
 
-            st_mask = state_masks[state_name]
             spindle_out = out_fraction(spindle_mask, st_mask)
             comm_out = out_fraction(comm_mask, st_mask)
-            sd_out = out_fraction(sd_threshold_mask, st_mask)
             swd_out = out_fraction(swd_mask, st_mask)
+
 
 
             if verbose:
