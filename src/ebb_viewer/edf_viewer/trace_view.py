@@ -289,7 +289,6 @@ class TraceView(QtWidgets.QWidget):
 
         for ch in range(self.nch):
             y = self.data[ch, self.start:stop]
-            print(y.min(), y.max())
             self.curves[ch].setData(t, y)
 
         if t.size:

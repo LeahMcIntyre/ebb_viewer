@@ -5,6 +5,18 @@ from ebb import masking
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.masks import Mask, MaskSet
 
+# Wake: amber, NREM: steel-blue, REM: coral — fully opaque since the state bar
+# is a dedicated strip (not overlaid on traces).
+_STATE_COLORS = {
+    "wake": (255, 200, 50,  255),
+    "nrem": (70,  130, 200, 255),
+    "rem":  (200, 70,  70,  255),
+}
+_STATE_LABELS = {
+    "wake": ["w"],
+    "nrem": ["n"],
+    "rem":  ["r"],
+}
 
 
 def build_default_masks(rec: Recording) -> MaskSet:
@@ -42,18 +54,6 @@ def build_default_masks(rec: Recording) -> MaskSet:
     return mask_set
 
 
-# Wake: amber, NREM: steel-blue, REM: coral — fully opaque since the state bar
-# is a dedicated strip (not overlaid on traces).
-_STATE_COLORS = {
-    "wake": (255, 200, 50,  255),
-    "nrem": (70,  130, 200, 255),
-    "rem":  (200, 70,  70,  255),
-}
-_STATE_LABELS = {
-    "wake": ["w"],
-    "nrem": ["n"],
-    "rem":  ["r"],
-}
 
 
 def load_state_masks(csv_path, fs: int) -> MaskSet:
@@ -64,3 +64,7 @@ def load_state_masks(csv_path, fs: int) -> MaskSet:
         arr = masking.state(csv_path, labels, fs=fs, winsize=4, include=True)
         mask_set.add(Mask.from_bool(name, _STATE_COLORS[name], arr))
     return mask_set
+
+def load_swd_mask(swd_path, fs:int, n_samples:int) -> Mask:
+    arr = masking.swd(swd_path, fs=fs, n_samples=n_samples)
+    return Mask.from_bool("swd", (178, 170, 248, 60), ~arr)

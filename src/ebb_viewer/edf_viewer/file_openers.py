@@ -26,3 +26,19 @@ def pick_edf_csv(parent=None, dir=""):
         csv_path = None
 
     return Path(edf_path), (Path(csv_path) if csv_path else None)
+
+
+def pick_mat(parent=None, dir=""):
+    """Prompt the user to select a .mat file.
+
+    Returns the selected Path, or None if cancelled.
+    """
+    mat_path, _ = QFileDialog.getOpenFileName(
+        parent,
+        "Select SWD mask .mat file",
+        dir,
+        "MAT files (*.mat);;All files (*)",
+    )
+    if not mat_path:
+        return None
+    return Path(mat_path)

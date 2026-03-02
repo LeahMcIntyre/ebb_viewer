@@ -37,6 +37,30 @@ class Mask:
 
         spans: List[Span] = [(int(s), int(e)) for s, e in zip(starts, stops)]
         return cls(name=name, color=color, spans=spans)
+    
+    @property
+    def total_samples(self) -> int:
+        """Total number of samples spanned by this mask."""
+        return sum(e - s for s, e in self.spans)
+
+    def overlap_samples(self, other: "Mask") -> int:
+        """Number of samples where this mask and `other` both have spans."""
+        total = 0
+        i, j = 0, 0
+        while i < len(self.spans) and j < len(other.spans):
+            #Get the next span that starts latest (lo) and then the span that ends first (hi)
+            lo = max(self.spans[i][0], other.spans[j][0])
+            hi = min(self.spans[i][1], other.spans[j][1])
+            # If lo > hi then one span ends before the other starts 
+            if lo < hi:
+                total += hi - lo
+            # Advance the span tracker of whichever span ends first
+            if self.spans[i][1] < other.spans[j][1]:
+                i += 1
+            else:
+                j += 1
+        return total
+
 
 
 @dataclass

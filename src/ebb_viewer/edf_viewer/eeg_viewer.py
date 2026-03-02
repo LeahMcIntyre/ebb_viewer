@@ -9,8 +9,8 @@ from openseize.file_io import edf
 
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
-from ebb_viewer.edf_viewer.file_openers import pick_edf_csv
-from ebb_viewer.edf_viewer.mask_builder import build_default_masks, load_state_masks
+from ebb_viewer.edf_viewer.file_openers import pick_edf_csv, pick_mat
+from ebb_viewer.edf_viewer.mask_builder import build_default_masks, load_state_masks, load_swd_mask
 from ebb_viewer.edf_viewer.masks_dock import MasksDock
 
 
@@ -23,6 +23,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.initial_dir = initial_dir
 
         self.mask_set = build_default_masks(recording)
+        self.state_set = None
 
         self.setWindowTitle("EEG Viewer")
         self.resize(1200, 800)
@@ -61,6 +62,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.act_quit.setShortcut("Ctrl+Q")
         self.act_quit.triggered.connect(self.close)
 
+        self.act_load_swd = QtGui.QAction("Load SWD mask (.mat)…", self)
+        self.act_load_swd.triggered.connect(self.on_load_swd)
+
         # stub actions for future tools
         self.act_stft = QtGui.QAction("Plot STFT", self)
         #self.act_psd = QtGui.QAction("Plot PSD", self)
@@ -73,6 +77,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         m_file = mb.addMenu("&File")
         m_file.addAction(self.act_open)
+        m_file.addAction(self.act_load_swd)
         m_file.addSeparator()
         m_file.addAction(self.act_quit)
 
@@ -88,6 +93,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         nav_tb.setObjectName("NavigationToolbar")
         # example: add open action here too
         nav_tb.addAction(self.act_open)
+        nav_tb.addAction(self.act_load_swd)
         # later, add zoom / “go to next mask” etc.
 
         tools_tb = self.addToolBar("Tools")
@@ -101,9 +107,24 @@ class EegMainWindow(QtWidgets.QMainWindow):
             parent=self,
         )
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.masks_dock)
-        self.masks_dock.rebuild(self.mask_set)
+
+
+        self.masks_dock.rebuild(self.mask_set, self.state_set)
 
     # ---------- behavior ----------
+
+    def on_load_swd(self):
+        mat_path = pick_mat(self, self.initial_dir)
+        if mat_path is None:
+            return
+        try:
+            _, n_samples = self.rec.data.shape
+            self.mask_set.add(load_swd_mask(mat_path, fs=self.rec.fs, n_samples=n_samples))
+            self.trace_view.refresh_overlays()
+            self.masks_dock.rebuild(self.mask_set, self.state_set)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
+        
 
     def on_open(self):
         # reuse your existing pick_edf_csv_npy
@@ -154,14 +175,14 @@ def main():
     if not edf_path:
         return
     """
-    initial_dir = "/media/matt/Data_A/leah/SRA/SRA_6_week"
+    initial_dir = "/media/matt/Data_A/leah/Stxbp1 characterization"
 
-    edf_path = '/media/matt/Data_A/leah/SRA/SRA_6_week/standard/AM0806_P103_SRA_82_9_2dayEEG_2021-12-21_09_38_24_Sheldon_PREPROCESSED.edf'
-    csv_path = '/media/matt/Data_A/leah/SRA/SRA_6_week/spindle_outputs/LFC_RSC/AM0806_P103_SRA_82_9_2dayEEG_2021-12-21_09_38_24_Sheldon_PREPROCESSED_SPINDLE_labels.csv'
+    edf_path = '/media/matt/Data_A/leah/Stxbp1 characterization/standard/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED.edf'
+    csv_path = '/media/matt/Data_A/leah/Stxbp1 characterization/spindle_outputs/LFC_RSC/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED_SPINDLE_labels.csv'
 
     with edf.Reader(str(edf_path)) as reader:
         data = reader.read(start=0)
-        fs = float(reader.header.samples_per_record[0])
+        fs = int(reader.header.samples_per_record[0])
         if fs != 250:
             print(f"Sampling frequency of selected file is {fs}. Please pick a file with a frequency of 250.")
             return

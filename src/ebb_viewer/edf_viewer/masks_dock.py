@@ -3,7 +3,7 @@ from typing import Callable
 from PyQt6 import QtWidgets, QtGui
 from PyQt6.QtCore import Qt
 
-from ebb_viewer.edf_viewer.masks import MaskSet
+from ebb_viewer.edf_viewer.masks import Mask, MaskSet
 
 
 class MasksDock(QtWidgets.QDockWidget):
@@ -40,7 +40,7 @@ class MasksDock(QtWidgets.QDockWidget):
 
     # ------------------------------------------------------------------
 
-    def rebuild(self, mask_set: MaskSet) -> None:
+    def rebuild(self, mask_set: MaskSet, state_set: MaskSet=None) -> None:
         """Clear and repopulate the row list from mask_set."""
         # Remove all existing rows
         while self._layout.count():
@@ -49,12 +49,12 @@ class MasksDock(QtWidgets.QDockWidget):
                 item.widget().deleteLater()
 
         for mask in mask_set:
-            row = self._make_row(mask_set, mask.name)
+            row = self._make_row(mask_set, mask.name, state_set)
             self._layout.addWidget(row)
 
     # ------------------------------------------------------------------
 
-    def _make_row(self, mask_set: MaskSet, name: str) -> QtWidgets.QWidget:
+    def _make_row(self, mask_set: MaskSet, name: str, state_set: MaskSet=None) -> QtWidgets.QWidget:
         mask = mask_set.get(name)
 
         row = QtWidgets.QWidget()
@@ -70,6 +70,8 @@ class MasksDock(QtWidgets.QDockWidget):
         cb.stateChanged.connect(
             lambda state, m=mask: self._on_toggle(m, state)
         )
+        if state_set is not None:
+            cb.setToolTip(self._state_overlap(mask, state_set))
 
         hb.addWidget(cb)
         return row
@@ -89,3 +91,10 @@ class MasksDock(QtWidgets.QDockWidget):
     def _on_toggle(self, mask, state: int) -> None:
         mask.enabled = state == Qt.CheckState.Checked.value
         self._refresh()
+
+    def _state_overlap(self, mask: Mask, state_set: MaskSet) -> str:
+        msg = []
+        for state_mask in state_set:
+            overlap = state_mask.overlap_samples(mask) / state_mask.total_samples
+            msg.append(f"{state_mask.name[0].upper()}: {100 * overlap:.2f}%")
+        return '\n'.join(msg)
