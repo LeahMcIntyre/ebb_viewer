@@ -41,7 +41,7 @@ def drinking_mask(mask_path: Union[str, Path],
 
 
     # --- apply offset as a right shift (insert False at start, drop tail) ---
-    if (offset_sec):
+    if (offset_sec) and (offset_sec > 0):
         shift = int(round(offset_sec * fs))
         mask_samples = np.pad(mask_samples, (shift, 0), constant_values=False)[:-shift]
     

@@ -68,3 +68,7 @@ def load_state_masks(csv_path, fs: int) -> MaskSet:
 def load_swd_mask(swd_path, fs:int, n_samples:int) -> Mask:
     arr = masking.swd(swd_path, fs=fs, n_samples=n_samples)
     return Mask.from_bool("swd", (178, 170, 248, 60), ~arr)
+
+def load_drink_mask(drink_path, fs:int, offset_sec:float, pad_sec:int) -> Mask:
+    arr = masking.drinking_mask(drink_path, fs=fs, offset_sec=offset_sec, pad_sec=pad_sec)
+    return Mask.from_bool("drink", (0, 140, 255, 60), ~arr)

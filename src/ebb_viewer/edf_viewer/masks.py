@@ -1,4 +1,5 @@
 # model.py (or top of file for now)
+import bisect
 from dataclasses import dataclass, field
 from typing import Iterator, List, Tuple, Dict
 import numpy as np
@@ -42,6 +43,29 @@ class Mask:
     def total_samples(self) -> int:
         """Total number of samples spanned by this mask."""
         return sum(e - s for s, e in self.spans)
+
+    def next_span_after(self, sample: int) -> "Span | None":
+        """First span that starts after `sample`, or None.
+
+        If `sample` falls inside a span, the span after it is returned.
+        """
+        if not self.spans:
+            return None
+        starts = [s for s, _ in self.spans]
+        idx = bisect.bisect_right(starts, sample)
+        return self.spans[idx] if idx < len(self.spans) else None
+
+    def prev_span_before(self, sample: int) -> "Span | None":
+        """Last span whose start is strictly before `sample`, or None.
+
+        If `sample` is exactly at a span's start, the span before it is returned.
+        If `sample` falls inside a span, that span is returned (jump to its start).
+        """
+        if not self.spans:
+            return None
+        starts = [s for s, _ in self.spans]
+        idx = bisect.bisect_left(starts, sample) - 1
+        return self.spans[idx] if idx >= 0 else None
 
     def overlap_samples(self, other: "Mask") -> int:
         """Number of samples where this mask and `other` both have spans."""

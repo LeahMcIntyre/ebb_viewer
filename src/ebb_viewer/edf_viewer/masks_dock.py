@@ -6,6 +6,14 @@ from PyQt6.QtCore import Qt
 from ebb_viewer.edf_viewer.masks import Mask, MaskSet
 
 
+def _mask_key(mask_set: MaskSet, name: str) -> str:
+    """Return the 1-based keyboard shortcut key for this mask, or '' if beyond 9."""
+    for idx, mask in enumerate(mask_set):
+        if mask.name == name:
+            return str(idx + 1) if idx < 9 else ""
+    return ""
+
+
 class MasksDock(QtWidgets.QDockWidget):
     """Dock panel showing each mask as a colored swatch + name + toggle checkbox.
 
@@ -17,11 +25,13 @@ class MasksDock(QtWidgets.QDockWidget):
             Parent widget.
     """
 
-    def __init__(self, refresh_overlays: Callable[[], None], parent=None):
+    def __init__(self, refresh_overlays: Callable[[], None],
+                 navigate_mask: Callable[["Mask", bool], None], parent=None):
         super().__init__("Masks", parent)
         self.setObjectName("MasksDock")
         self.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
         self._refresh = refresh_overlays
+        self._navigate = navigate_mask
 
         # Scroll area so the list can grow without clipping
         scroll = QtWidgets.QScrollArea()
@@ -36,7 +46,7 @@ class MasksDock(QtWidgets.QDockWidget):
 
         scroll.setWidget(self._container)
         self.setWidget(scroll)
-        self.setMaximumHeight(60)
+        self.setMaximumHeight(80)
 
     # ------------------------------------------------------------------
 
@@ -73,7 +83,19 @@ class MasksDock(QtWidgets.QDockWidget):
         if state_set is not None:
             cb.setToolTip(self._state_overlap(mask, state_set))
 
+        btn_prev = QtWidgets.QPushButton("◀")
+        btn_prev.setFixedWidth(24)
+        btn_prev.setToolTip(f"Previous {name} span  (Shift+{_mask_key(mask_set, name)})")
+        btn_prev.clicked.connect(lambda _, m=mask: self._navigate(m, False))
+
+        btn_next = QtWidgets.QPushButton("▶")
+        btn_next.setFixedWidth(24)
+        btn_next.setToolTip(f"Next {name} span  ({_mask_key(mask_set, name)})")
+        btn_next.clicked.connect(lambda _, m=mask: self._navigate(m, True))
+
         hb.addWidget(cb)
+        hb.addWidget(btn_prev)
+        hb.addWidget(btn_next)
         return row
 
     def _swatch_icon(self, rgba, size=14) -> QtGui.QIcon:

@@ -4,7 +4,7 @@ from typing import Sequence
 import numpy as np
 
 from PyQt6 import QtWidgets, QtGui
-from PyQt6.QtCore import Qt, QPoint, QTimer
+from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal
 import pyqtgraph as pg
 
 from ebb_viewer.edf_viewer.masks import MaskSet
@@ -14,9 +14,42 @@ from ebb_viewer.edf_viewer.state_legend import StateLegend
 pg.setConfigOption("background", "w")
 pg.setConfigOption("foreground", "k")
 
-class TraceView(QtWidgets.QWidget):
+# Shift+1..9 produces different key codes on most platforms (!, @, # …).
+# Map them back to 0-based mask indices.
+_STATE_KEYS = {
+    Qt.Key.Key_W: "wake",
+    Qt.Key.Key_N: "nrem",
+    Qt.Key.Key_R: "rem",
+}
 
-    def __init__(self, 
+_SHIFT_NUM_KEYS = {
+    Qt.Key.Key_Exclam:      0,  # Shift+1
+    Qt.Key.Key_At:          1,  # Shift+2
+    Qt.Key.Key_NumberSign:  2,  # Shift+3
+    Qt.Key.Key_Dollar:      3,  # Shift+4
+    Qt.Key.Key_Percent:     4,  # Shift+5
+    Qt.Key.Key_AsciiCircum: 5,  # Shift+6
+    Qt.Key.Key_Ampersand:   6,  # Shift+7
+    Qt.Key.Key_Asterisk:    7,  # Shift+8
+    Qt.Key.Key_ParenLeft:   8,  # Shift+9
+}
+
+class TimeClickViewBox(pg.ViewBox):
+    timeDoubleClicked = pyqtSignal(float)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            pt = self.mapSceneToView(event.scenePos())
+            self.timeDoubleClicked.emit(float(pt.x()))
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+
+class TraceView(QtWidgets.QWidget):
+    timeDoubleClicked = pyqtSignal(float)
+
+    def __init__(self,
                  data: np.ndarray, 
                  fs: int, 
                  start_time: datetime, 
@@ -52,6 +85,7 @@ class TraceView(QtWidgets.QWidget):
 
         # Mask overlays
         self.mask_set: MaskSet = MaskSet()
+        self.state_set: MaskSet | None = None
         self._overlay_items: list[tuple[pg.PlotWidget, pg.LinearRegionItem]] = []
 
         # State bar + legend (both hidden until set_state_masks is called)
@@ -108,7 +142,10 @@ class TraceView(QtWidgets.QWidget):
             grid.addWidget(col_left, i + 1, 0)
 
             # plot
-            pw = pg.PlotWidget(title=self.ch_names[i])
+            vb = TimeClickViewBox()
+            vb.timeDoubleClicked.connect(self.timeDoubleClicked)
+            plot_item = pg.PlotItem(viewBox=vb, title=self.ch_names[i])
+            pw = pg.PlotWidget(plotItem=plot_item)
             pw.setMenuEnabled(False)
             pw.showGrid(x=True, y=True, alpha=0.15)
             pw.setLabel("left", "µV")
@@ -117,7 +154,6 @@ class TraceView(QtWidgets.QWidget):
             if i < self.nch - 1:
                 pw.getAxis("bottom").setStyle(showValues=False)
 
-            vb = pw.getPlotItem().getViewBox()
             try:
                 vb.enableAutoRange(axis=pg.ViewBox.XAxis, enable=True)
                 vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
@@ -239,6 +275,10 @@ class TraceView(QtWidgets.QWidget):
         self.start = int(np.clip(start, 0, max(0, self.n - self.win)))
         self._set_window(self.start)
 
+    @property
+    def center_sample(self):
+        return int(np.clip(self.start + self.win // 2, 0, max(0, self.n - self.win // 2)))
+
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         super().showEvent(event)
@@ -266,6 +306,12 @@ class TraceView(QtWidgets.QWidget):
             self.state_bar.mapFromGlobal(right_g).x(),
         )
 
+
+    def jump_to_sample(self, sample: int) -> None:
+        """Center the view on `sample`."""
+        start = int(np.clip(sample - self.win // 2, 0, max(0, self.n - self.win)))
+        self.slider.setValue(start)
+
     def keyPressEvent(self, ev: QtGui.QKeyEvent):
         key = ev.key()
         if key == Qt.Key.Key_Right:
@@ -276,6 +322,33 @@ class TraceView(QtWidgets.QWidget):
         if key == Qt.Key.Key_Left:
             # triggers _on_slide
             self.slider.setValue(self.start - max(1, self.win // 2))
+            ev.accept()
+            return
+        if Qt.Key.Key_1 <= key <= Qt.Key.Key_9:
+            idx = key - Qt.Key.Key_1
+            masks = list(self.mask_set)
+            if idx < len(masks):
+                span = masks[idx].next_span_after(self.center_sample)
+                if span is not None:
+                    self.jump_to_sample(span[0])
+            ev.accept()
+            return
+        if key in _SHIFT_NUM_KEYS:
+            idx = _SHIFT_NUM_KEYS[key]
+            masks = list(self.mask_set)
+            if idx < len(masks):
+                span = masks[idx].prev_span_before(self.center_sample)
+                if span is not None:
+                    self.jump_to_sample(span[0])
+            ev.accept()
+            return
+        if key in _STATE_KEYS and self.state_set is not None:
+            mask = self.state_set.get(_STATE_KEYS[key])
+            if mask is not None:
+                forward = not (ev.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+                span = mask.next_span_after(self.center_sample) if forward else mask.prev_span_before(self.center_sample)
+                if span is not None:
+                    self.jump_to_sample(span[0])
             ev.accept()
             return
         super().keyPressEvent(ev)
@@ -315,6 +388,7 @@ class TraceView(QtWidgets.QWidget):
         self._set_window(self.start)
 
     def set_state_masks(self, state_set: MaskSet) -> None:
+        self.state_set = state_set
         self.state_bar.set_state_masks(state_set, self.fs)
         self.state_legend.rebuild(state_set)
         self._state_row.setVisible(True)

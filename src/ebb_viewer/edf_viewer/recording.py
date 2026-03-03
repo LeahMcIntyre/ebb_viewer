@@ -13,3 +13,6 @@ class Recording:
     start_time: datetime
     ch_names: Sequence[str]
     csv_path: Optional[Path] = None
+    swd_path: Optional[Path] = None
+    drink_path: Optional[Path] = None
+    video_offset: Optional[float] = None
