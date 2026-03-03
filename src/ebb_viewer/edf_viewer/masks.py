@@ -1,10 +1,21 @@
 # model.py (or top of file for now)
 import bisect
 from dataclasses import dataclass, field
-from typing import Iterator, List, Tuple, Dict
+from typing import Iterator, List, Tuple, Dict, Optional
 import numpy as np
 
 Span = Tuple[int, int]  # [start_sample, end_sample)
+
+
+@dataclass
+class ParamSpec:
+    """UI constraints for a single metadata parameter."""
+    min: Optional[float] = None
+    max: Optional[float] = None
+    step: Optional[float] = None
+    decimals: int = 4        # for float widgets only
+    units: Optional[str] = None  # displayed as spinbox suffix, e.g. " s", " Hz"
+    desc: Optional[str] = None
 
 
 @dataclass
@@ -14,6 +25,8 @@ class Mask:
     color: tuple[int, int, int, int]  # RGBA
     spans: List[Span] = field(default_factory=list)
     enabled: bool = True  # we'll use this later for toggling
+    metadata: Dict = field(default_factory=dict)
+    param_specs: Dict[str, ParamSpec] = field(default_factory=dict)
 
     @classmethod
     def from_bool(cls, name: str, color, arr: np.ndarray) -> "Mask":

@@ -38,7 +38,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.stft_fmax = 120
         self.nperseg = 125  # 0.5 s at 250 Hz
         self._stft_popup = STFTPopup(self, title="EEG STFT")
-        self._stft_popup.resize(12000, 800)
+        self._stft_popup.resize(1200, 800)
 
 
         self.setWindowTitle("EEG Viewer")

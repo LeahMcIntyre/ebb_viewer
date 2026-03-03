@@ -3,7 +3,81 @@ from typing import Callable
 from PyQt6 import QtWidgets, QtGui
 from PyQt6.QtCore import Qt
 
-from ebb_viewer.edf_viewer.masks import Mask, MaskSet
+from ebb_viewer.edf_viewer.masks import Mask, MaskSet, ParamSpec
+
+
+class MaskParamsDialog(QtWidgets.QDialog):
+    def __init__(self, mask: Mask, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{mask.name} — Parameters")
+        self.setModal(True)
+        self._widgets: dict[str, tuple[QtWidgets.QWidget, type]] = {}
+
+        form = QtWidgets.QFormLayout()
+        for k, v in mask.metadata.items():
+            spec = mask.param_specs.get(k)
+            w = self._make_widget(v, spec)
+            if spec and spec.desc is not None:
+                w.setToolTip(spec.desc)
+            self._widgets[k] = (w, type(v))
+            form.addRow(k + ":", w)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok |
+            QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.addLayout(form)
+        lay.addWidget(buttons)
+
+    def _make_widget(self, v, spec: ParamSpec | None = None) -> QtWidgets.QWidget:
+        if isinstance(v, bool):          # must come before int (bool subclasses int)
+            w = QtWidgets.QCheckBox()
+            w.setChecked(v)
+            return w
+        if isinstance(v, int):
+            w = QtWidgets.QSpinBox()
+            lo = int(spec.min) if spec and spec.min is not None else -(10 ** 9)
+            hi = int(spec.max) if spec and spec.max is not None else 10 ** 9
+            w.setRange(lo, hi)
+            if spec and spec.step is not None:
+                w.setSingleStep(int(spec.step))
+            if spec and spec.units is not None:
+                w.setSuffix(f" {spec.units}")
+            w.setValue(v)
+            return w
+        if isinstance(v, float):
+            w = QtWidgets.QDoubleSpinBox()
+            lo = spec.min if spec and spec.min is not None else -(10 ** 9)
+            hi = spec.max if spec and spec.max is not None else 10 ** 9
+            w.setRange(lo, hi)
+            if spec and spec.step is not None:
+                w.setSingleStep(spec.step)
+            w.setDecimals(spec.decimals if spec else 4)
+            if spec and spec.units is not None:
+                w.setSuffix(f" {spec.units}")
+            w.setValue(v)
+            return w
+        w = QtWidgets.QLineEdit(str(v))
+        return w
+
+    def values(self) -> dict:
+        out = {}
+        for k, (w, t) in self._widgets.items():
+            if isinstance(w, QtWidgets.QCheckBox):
+                out[k] = w.isChecked()
+            elif isinstance(w, (QtWidgets.QSpinBox, QtWidgets.QDoubleSpinBox)):
+                out[k] = w.value()
+            else:
+                text = w.text()
+                try:
+                    out[k] = t(text)
+                except (ValueError, TypeError):
+                    out[k] = text
+        return out
 
 
 def _mask_key(mask_set: MaskSet, name: str) -> str:
@@ -96,7 +170,24 @@ class MasksDock(QtWidgets.QDockWidget):
         hb.addWidget(cb)
         hb.addWidget(btn_prev)
         hb.addWidget(btn_next)
+
+        row.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        row.customContextMenuRequested.connect(
+            lambda pos, m=mask: self._show_context_menu(row, pos, m)
+        )
+
         return row
+
+    def _show_context_menu(self, widget, pos, mask: Mask) -> None:
+        menu = QtWidgets.QMenu(self)
+        act = menu.addAction("Parameters…")
+        act.triggered.connect(lambda: self._show_metadata_dialog(mask))
+        menu.exec(widget.mapToGlobal(pos))
+
+    def _show_metadata_dialog(self, mask: Mask) -> None:
+        dlg = MaskParamsDialog(mask, parent=self)
+        if dlg.exec():
+            mask.metadata.update(dlg.values())
 
     def _swatch_icon(self, rgba, size=14) -> QtGui.QIcon:
         r, g, b, a = rgba
