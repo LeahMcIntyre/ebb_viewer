@@ -76,6 +76,7 @@ class TraceView(QtWidgets.QWidget):
         # Zoom states
         self.y_zoom = np.ones(self.nch, dtype=float)
         self.base_y: list[tuple[float | None, float | None]] = [(None, None)] * self.nch
+        self._ch_centers: list[float | None] = [None] * self.nch
 
 
         self.plots: list[pg.PlotWidget] = []
@@ -254,6 +255,10 @@ class TraceView(QtWidgets.QWidget):
         z = self._slider_to_zoom(val)
         self.y_zoom[idx] = z
         self.vlabels[idx].setText(f"{self.ch_names[idx]}\n{z:.2f}×")
+        start, stop = self.start, min(self.start + self.win, self.n)
+        seg = self.data[idx, start:stop]
+        if seg.size > 0:
+            self._ch_centers[idx] = float(np.median(seg))
         self._apply_y(idx)
 
 
@@ -438,6 +443,9 @@ class TraceView(QtWidgets.QWidget):
             self.vlabels[ch].setText(f"{self.ch_names[ch]}\n1.00×")
 
             self.base_y[ch] = self._fit_base_y(ch)
+            #start, stop = self.start, min(self.start + self.win, self.n)
+            #seg = self.data[ch, start:stop]
+            #self._ch_centers[ch] = float(np.median(seg)) if seg.size > 0 else None
             self._apply_y(ch)
 
 
@@ -459,7 +467,12 @@ class TraceView(QtWidgets.QWidget):
             y0, y1 = self._fit_base_y(ch)
             self.base_y[ch] = (y0, y1)
         z = max(self.y_zoom[ch], 1e-6)
-        center = 0 if zero_centered else 0.5 * (y0 + y1)
+        if zero_centered:
+            center = 0.0
+        elif self._ch_centers[ch] is not None:
+            center = self._ch_centers[ch]
+        else:
+            center = 0.5 * (y0 + y1)
         half = 0.5 * (y1 - y0)
         half_eff = half / z
         self.plots[ch].getPlotItem().getViewBox().setYRange(
