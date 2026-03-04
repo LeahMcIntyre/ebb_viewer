@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 )
 from ebb_viewer.data_stores.psd_store import PSDStore
 from ebb_viewer.widgets.psd_graph_widget import PSDGridPage
+from ebb_viewer.pipeline.manifest import Manifest
 
 
 class PSDVisualizer(QWidget):
@@ -72,7 +73,8 @@ class PSDVisualizer(QWidget):
             )
         self.psd_page = PSDGridPage(self, store=self.psd_store,
                                     channel_names=channel_names,
-                                    states=['wake', 'nrem', 'rem'])
+                                    states=['wake', 'nrem', 'rem'],
+                                    manifest=Manifest.load(self.project_root))
         self.root.addWidget(self.psd_page)
 
 

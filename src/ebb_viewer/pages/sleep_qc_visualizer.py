@@ -10,8 +10,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QComboBox, QLabel, QPushButton, QSizePolicy,
-    QFileDialog, QMessageBox, QSpinBox, QFrame
+    QFileDialog, QMessageBox, QSpinBox, QFrame, QInputDialog
 )
+from ebb_viewer.pipeline.manifest import Manifest
 
 import pyqtgraph as pg
 import matplotlib as mpl
@@ -35,6 +36,13 @@ class SleepQCGridPage(QWidget):
 
     MICE_PER_PAGE = 10
 
+    _STATUS_BG = {
+        "ok": "#d4edda",
+        "needs_review": "#fff3cd",
+        "rerun_channels": "#fde8ce",
+    }
+    _CHANNEL_COMBOS = ["LFC_RSC", "LFC_LSC", "RSC_LSC", "LFC", "RSC", "LSC"]
+
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
         self.project_root = Path(project_root)
@@ -47,6 +55,7 @@ class SleepQCGridPage(QWidget):
 
         self._plots: Dict[Tuple[str, str], pg.PlotItem] = {}
         self._legend_items: Dict[int, Tuple[pg.GraphicsObject, str]] = {}
+        self._manifest = Manifest.load(project_root)
 
         self._build_ui()
         self._wire()
@@ -433,8 +442,10 @@ class SleepQCGridPage(QWidget):
 
         for mid in mice:
             color = mouse_colors[mid]
+            manifest_entry = self._manifest.get(mid)
+            status = manifest_entry.sleep_qc if manifest_entry else None
 
-            # Small colored line box
+            # Small colored line swatch
             swatch = QFrame()
             swatch.setFixedSize(30, 4)
             swatch.setStyleSheet(
@@ -443,15 +454,67 @@ class SleepQCGridPage(QWidget):
 
             label = QLabel(str(mid))
 
+            btn_ok = QPushButton("OK")
+            btn_ok.setFixedHeight(22)
+            btn_ok.setCheckable(True)
+            btn_ok.setChecked(status == "ok")
+            btn_ok.clicked.connect(lambda _, m=mid: self._flag_sleep_qc(m, "ok"))
+
+            btn_review = QPushButton("Review")
+            btn_review.setFixedHeight(22)
+            btn_review.setCheckable(True)
+            btn_review.setChecked(status == "needs_review")
+            btn_review.clicked.connect(lambda _, m=mid: self._flag_sleep_qc(m, "needs_review"))
+
+            btn_rerun = QPushButton("Rerun Ch")
+            btn_rerun.setFixedHeight(22)
+            btn_rerun.setCheckable(True)
+            btn_rerun.setChecked(status == "rerun_channels")
+            btn_rerun.clicked.connect(lambda _, m=mid: self._flag_rerun(m))
+
             entry_layout = QHBoxLayout()
-            entry_layout.setContentsMargins(0, 0, 0, 0)
-            entry_layout.setSpacing(6)
+            entry_layout.setContentsMargins(4, 2, 4, 2)
+            entry_layout.setSpacing(4)
             entry_layout.addWidget(swatch)
             entry_layout.addWidget(label)
+            entry_layout.addWidget(btn_ok)
+            entry_layout.addWidget(btn_review)
+            entry_layout.addWidget(btn_rerun)
 
             entry_widget = QWidget()
             entry_widget.setLayout(entry_layout)
+            bg = self._STATUS_BG.get(status)
+            if bg:
+                entry_widget.setStyleSheet(
+                    f"background-color: {bg}; border-radius: 3px;"
+                )
 
             self.legend_layout.addWidget(entry_widget)
 
         self.legend_layout.addStretch(1)
+
+    def _flag_sleep_qc(self, mid: str, status: str) -> None:
+        if self._manifest.get(mid) is None:
+            return
+        self._manifest.flag_sleep_qc(mid, status)
+        mice = self._get_mice_for_current_page()
+        mouse_colors = self._build_mouse_color_map(mice)
+        self._update_color_legend(mice, mouse_colors)
+
+    def _flag_rerun(self, mid: str) -> None:
+        entry = self._manifest.get(mid)
+        current = entry.spindle_channels if entry else None
+        default_idx = (
+            self._CHANNEL_COMBOS.index(current)
+            if current in self._CHANNEL_COMBOS
+            else 0
+        )
+        choice, ok = QInputDialog.getItem(
+            self, f"Rerun: {mid}", "Select new channel combo:",
+            self._CHANNEL_COMBOS, default_idx, editable=False,
+        )
+        if ok:
+            self._manifest.flag_sleep_qc(mid, "rerun_channels", rerun_channels=choice)
+            mice = self._get_mice_for_current_page()
+            mouse_colors = self._build_mouse_color_map(mice)
+            self._update_color_legend(mice, mouse_colors)

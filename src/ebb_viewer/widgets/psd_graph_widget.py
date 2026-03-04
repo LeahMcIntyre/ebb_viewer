@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QAction, QKeySequence
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-    QToolBar, QToolButton, QSizePolicy, QStyle, QMenu
+    QToolBar, QToolButton, QSizePolicy, QStyle, QMenu, QPushButton
 )
 import pyqtgraph as pg
 from fooof.utils import interpolate_spectrum
@@ -26,12 +26,14 @@ class PSDGridPage(QWidget):
         *,
         store,                    # PSDStore-like: animals() -> List[str], states(animal) -> List[str], get(animal, state) -> Dict[ch,(f,y)]
         channel_names: List[str], # e.g., ["LFC","RSC","LSC"]
-        states: List[str] = None  # e.g., ["wake","nrem","rem"]
+        states: List[str] = None, # e.g., ["wake","nrem","rem"]
+        manifest=None,            # optional Manifest for per-animal flagging
     ):
         super().__init__(parent)
         self.store = store
         self.channel_names = list(channel_names)
         self.states = list(states or ["wake", "nrem", "rem"])
+        self.manifest = manifest
 
         # View preferences
         self.xrange: Tuple[float, float] = (0.5, 110)  # default window to show
@@ -111,6 +113,7 @@ class PSDGridPage(QWidget):
         self.cmb_animal = QComboBox()
         self.cmb_animal.addItems(self.store.animals())
         self.cmb_animal.currentTextChanged.connect(self._render)
+        self.cmb_animal.currentTextChanged.connect(lambda _: self._update_flag_status())
         tb.addWidget(_labeled_combo(self, "Animal:", self.cmb_animal))
 
         tb.addSeparator()
@@ -126,6 +129,29 @@ class PSDGridPage(QWidget):
         m.triggered.connect(self._on_reset_zoom)
         more.setMenu(m)
         tb.addWidget(more)
+
+        # Flag buttons (only useful when manifest is provided)
+        tb.addSeparator()
+        self._btn_flag_ok = QPushButton("✓ OK")
+        self._btn_flag_ok.setFixedHeight(26)
+        self._btn_flag_ok.setToolTip("Mark current animal's PSD as OK in manifest")
+        self._btn_flag_ok.clicked.connect(self._flag_psd_ok)
+        tb.addWidget(self._btn_flag_ok)
+
+        self._btn_flag_drink = QPushButton("Drink Mask")
+        self._btn_flag_drink.setFixedHeight(26)
+        self._btn_flag_drink.setToolTip("Flag current animal as needing a drink mask PSD rerun")
+        self._btn_flag_drink.clicked.connect(self._flag_drink_mask)
+        tb.addWidget(self._btn_flag_drink)
+
+        self._status_label = QLabel("")
+        self._status_label.setMinimumWidth(90)
+        tb.addWidget(self._status_label)
+
+        if self.manifest is None:
+            self._btn_flag_ok.setVisible(False)
+            self._btn_flag_drink.setVisible(False)
+            self._status_label.setVisible(False)
 
         self.root.addWidget(tb)
 
@@ -298,6 +324,50 @@ class PSDGridPage(QWidget):
 
 
 
+
+    # ---------------- MANIFEST FLAGGING ----------------
+
+    def _manifest_animal_id(self) -> str | None:
+        """Strip _artifact/_drink suffixes from store key to get manifest animal_id."""
+        key = self.cmb_animal.currentText()
+        if not key:
+            return None
+        return key.replace("_artifact", "").replace("_drink", "")
+
+    def _flag_psd_ok(self) -> None:
+        if self.manifest is None:
+            return
+        animal_id = self._manifest_animal_id()
+        if animal_id is None:
+            return
+        self.manifest.flag_psd(animal_id, "ok")
+        self._update_flag_status()
+
+    def _flag_drink_mask(self) -> None:
+        if self.manifest is None:
+            return
+        animal_id = self._manifest_animal_id()
+        if animal_id is None:
+            return
+        drink_rel = f"drink_masks/{animal_id}.npy"
+        self.manifest.flag_psd(animal_id, "needs_drink_mask", drink_mask=drink_rel)
+        self._update_flag_status()
+
+    def _update_flag_status(self) -> None:
+        if self.manifest is None:
+            return
+        animal_id = self._manifest_animal_id()
+        entry = self.manifest.get(animal_id) if animal_id else None
+        status = entry.psd_status if entry else None
+        if status == "ok":
+            self._status_label.setText("✓ OK")
+            self._status_label.setStyleSheet("color: green; font-weight: bold;")
+        elif status == "needs_drink_mask":
+            self._status_label.setText("⚠ Drink Mask")
+            self._status_label.setStyleSheet("color: orange; font-weight: bold;")
+        else:
+            self._status_label.setText("")
+            self._status_label.setStyleSheet("")
 
     def _clear_all(self):
         for curve in self.curves.values():
