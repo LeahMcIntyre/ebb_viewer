@@ -100,12 +100,15 @@ class MasksDock(QtWidgets.QDockWidget):
     """
 
     def __init__(self, refresh_overlays: Callable[[], None],
-                 navigate_mask: Callable[["Mask", bool], None], parent=None):
+                 navigate_mask: Callable[[Mask, bool], None],
+                 on_mask_rebuild: Callable[[Mask], None] | None = None,
+                 parent=None):
         super().__init__("Masks", parent)
         self.setObjectName("MasksDock")
         self.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
         self._refresh = refresh_overlays
         self._navigate = navigate_mask
+        self._on_rebuild = on_mask_rebuild
 
         # Scroll area so the list can grow without clipping
         scroll = QtWidgets.QScrollArea()
@@ -188,6 +191,8 @@ class MasksDock(QtWidgets.QDockWidget):
         dlg = MaskParamsDialog(mask, parent=self)
         if dlg.exec():
             mask.metadata.update(dlg.values())
+            if self._on_rebuild:
+                self._on_rebuild(mask)
 
     def _swatch_icon(self, rgba, size=14) -> QtGui.QIcon:
         r, g, b, a = rgba

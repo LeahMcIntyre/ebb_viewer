@@ -8,6 +8,13 @@ def parse_animal_from_path(path: Union[str, Path]) -> str:
     stem = Path(path).stem
     return stem.split('_')[0] if "_" in stem else stem
 
+def parse_animal_from_path_masks(rec: Dict) -> str:
+    stem = Path(rec['path']).stem
+    animal = stem.split('_')[0] if "_" in stem else stem
+    a_mask = "_artifact" if rec.get('used_artifact', False) else ""
+    d_mask = "_drink" if rec.get('used_drink', False) else ""
+    return f"{animal}{a_mask}{d_mask}"
+
 class PSDStore:
     # by_animal[animal][state][channel_name] -> (freqs, psd)
     def __init__(
@@ -15,7 +22,7 @@ class PSDStore:
         pkl_path: Union[str, Path],
         *,
         channel_names: Optional[Sequence[str]] = None,
-        parse_animal = parse_animal_from_path,
+        parse_animal = parse_animal_from_path_masks,
     ):
         self.pkl_path = Path(pkl_path)
         self.channel_names = list(channel_names) if channel_names else None
@@ -35,7 +42,7 @@ class PSDStore:
 
         self.first_freqs = np.asarray(items[0]["freqs"], float)
         for rec in items:
-            animal = self.parse_animal(rec["path"])
+            animal = self.parse_animal(rec)
             # behavior like ('threshold','wake') -> we care about state='wake'
             bhv = rec.get("behavior", (None, None))
 

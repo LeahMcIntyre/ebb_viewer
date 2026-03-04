@@ -17,7 +17,10 @@ from ebb_viewer.widgets.stft_viewer import STFTPopup, STFTBoundsDialog
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
 from ebb_viewer.edf_viewer.file_openers import pick_edf_csv, pick_mat, pick_npy_csv
-from ebb_viewer.edf_viewer.mask_builder import build_default_masks, load_state_masks, load_swd_mask, load_drink_mask
+from ebb_viewer.edf_viewer.mask_builder import (
+    build_default_masks, load_state_masks, load_swd_mask, load_drink_mask,
+    rebuild_artifact_masks, rebuild_spindle_mask, rebuild_drink_mask,
+)
 from ebb_viewer.edf_viewer.masks_dock import MasksDock
 
 
@@ -82,6 +85,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.act_quit.setShortcut("Ctrl+Q")
         self.act_quit.triggered.connect(self.close)
 
+        self.act_info = QtGui.QAction("Session Information", self)
+        self.act_info.triggered.connect(self.on_view_session_info)
+
         self.act_load_swd = QtGui.QAction("Load SWD mask (.mat)", self)
         self.act_load_swd.triggered.connect(self.on_load_swd)
 
@@ -106,6 +112,8 @@ class EegMainWindow(QtWidgets.QMainWindow):
         m_file.addAction(self.act_load_drink)
         m_file.addSeparator()
         m_file.addAction(self.act_quit)
+        m_file.addAction(self.act_info)
+
 
         m_view = mb.addMenu("&View")
 
@@ -162,11 +170,29 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.masks_dock = MasksDock(
             refresh_overlays=self.trace_view.refresh_overlays,
             navigate_mask=self._navigate_mask,
+            on_mask_rebuild=self._on_mask_rebuild,
             parent=self,
         )
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.masks_dock)
 
+        self.masks_dock.rebuild(self.mask_set, self.state_set)
 
+    def _on_mask_rebuild(self, mask) -> None:
+        name = mask.name
+        if name in ("commutator", "sd"):
+            comm_meta = self.mask_set.get("commutator").metadata
+            sd_meta = self.mask_set.get("sd").metadata
+            new_c, new_sd = rebuild_artifact_masks(self.rec, comm_meta, sd_meta)
+            self.mask_set.add(new_c)
+            self.mask_set.add(new_sd)
+        elif name == "spindle_noise" and self.rec.csv_path:
+            new_sp = rebuild_spindle_mask(self.rec.csv_path, int(self.rec.fs), mask.metadata)
+            self.mask_set.add(new_sp)
+        elif name == "drink" and self.rec.drink_path:
+            new_drink = rebuild_drink_mask(self.rec.drink_path, self.rec.fs, mask.metadata)
+            self.mask_set.add(new_drink)
+
+        self.trace_view.refresh_overlays()
         self.masks_dock.rebuild(self.mask_set, self.state_set)
 
     # ---------- behavior ----------
@@ -233,6 +259,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
             start_time = datetime.strptime(f"{date_str} {start_str}", fmt_eeg)
             ch_names = ("LFC", "RSC", "LSC", "EMG")
             rec = Recording(
+                edf_path=edf_path,
                 data=data,
                 fs=fs,
                 start_time=start_time,
@@ -246,6 +273,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
             win.show()
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
+
     def on_time_double_clicked(self, t_sec: float):
         if self.state_df is None:
             return
@@ -257,12 +285,22 @@ class EegMainWindow(QtWidgets.QMainWindow):
         msg.setText(self.state_df.iloc[row].to_string())
         msg.exec()
     
+    def on_view_session_info(self):
+        dlg = QtWidgets.QDialog(self)
+        dlg.setWindowTitle("Session Information")
+        text = QtWidgets.QPlainTextEdit(str(self.rec), dlg)
+        text.setReadOnly(True)
+        text.setMinimumWidth(1200)
+        text.setFont(QtGui.QFont("Monospace"))
+        lay = QtWidgets.QVBoxLayout(dlg)
+        lay.addWidget(text)
+        dlg.exec()
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
     
     # initial dir and one dataset load (as you already do)
-    initial_dir = "/media/matt/Data_A/leah/SRA/SRA_6_mo"
+    initial_dir = "/media/matt/Data_A/leah/SRA/SRA_pre"
     edf_path, csv_path = pick_edf_csv(None, initial_dir)
     if not edf_path:
         return
@@ -295,6 +333,7 @@ def main():
         fs=fs,
         start_time=start_time,
         ch_names=ch_names,
+        edf_path=edf_path,
         csv_path=csv_path,
     )
 
