@@ -111,22 +111,54 @@ class Manifest:
 
     @classmethod
     def build_from_standard(cls, project_root: Path) -> "Manifest":
-        """Load existing manifest, then add entries for any new EDFs in standard/.
+        """Load existing manifest, scan standard/ + spindle folders, and sync.
 
-        New entries are created with only animal_id + preprocessed_edf set.
-        Existing entries are untouched.
+        - Adds entries for any new EDFs found in standard/ (animal_id + preprocessed_edf).
+        - For entries where spindle_channels is None, scans spindle_edfs/ and
+          spindle_outputs/ to infer the channel combo from the folder structure.
+        - Existing non-None fields are never overwritten.
         """
         m = cls.load(project_root)
+
+        # 1. Add new entries from standard/
         standard = project_root / "standard"
-        if not standard.is_dir():
-            return m
-        for edf in sorted(standard.glob("*.edf")):
-            animal_id = edf.stem.split("_")[0]
-            if animal_id not in m._entries:
-                m._entries[animal_id] = ManifestEntry(
-                    animal_id=animal_id,
-                    preprocessed_edf=str(edf.relative_to(project_root)),
-                )
+        if standard.is_dir():
+            for edf in sorted(standard.glob("*.edf")):
+                animal_id = edf.stem.split("_")[0]
+                if animal_id not in m._entries:
+                    m._entries[animal_id] = ManifestEntry(
+                        animal_id=animal_id,
+                        preprocessed_edf=str(edf.relative_to(project_root)),
+                    )
+
+        # 2. Infer spindle_channels for entries that don't have it set yet.
+        #    Scan spindle_edfs/<COMBO>/ and spindle_outputs/<COMBO>/ for files
+        #    matching the animal_id prefix.  Prefer spindle_outputs if found there
+        #    (more likely to be the completed run), fall back to spindle_edfs.
+        #    If both contain multiple combos for the same animal, pick the most
+        #    recently modified file's combo.
+        for subdir in ("spindle_outputs", "spindle_edfs"):
+            root_dir = project_root / subdir
+            if not root_dir.is_dir():
+                continue
+            # Build: animal_id -> [(mtime, combo), ...]
+            found: dict[str, list[tuple[float, str]]] = {}
+            for combo_dir in root_dir.iterdir():
+                if not combo_dir.is_dir():
+                    continue
+                combo = combo_dir.name
+                for f in combo_dir.iterdir():
+                    animal_id = f.stem.split("_")[0]
+                    if animal_id in m._entries:
+                        found.setdefault(animal_id, []).append(
+                            (f.stat().st_mtime, combo)
+                        )
+            # Apply: pick the combo from the most recently modified file
+            for animal_id, hits in found.items():
+                if m._entries[animal_id].spindle_channels is None:
+                    best_combo = max(hits, key=lambda x: x[0])[1]
+                    m._entries[animal_id].spindle_channels = best_combo
+
         m.save()
         return m
 

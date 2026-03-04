@@ -8,9 +8,9 @@ import pandas as pd
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
+    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QComboBox, QLabel, QPushButton, QSizePolicy,
-    QFileDialog, QMessageBox, QSpinBox, QFrame, QInputDialog
+    QFileDialog, QMessageBox, QSpinBox, QFrame, QInputDialog,
 )
 from ebb_viewer.pipeline.manifest import Manifest
 
@@ -149,11 +149,14 @@ class SleepQCGridPage(QWidget):
 
         layout.addWidget(self.grid, stretch=1)
 
-        # --- legend area ---
+        # --- legend area (2-column grid) ---
         self.legend_container = QWidget()
-        self.legend_layout = QHBoxLayout(self.legend_container)
-        self.legend_layout.setContentsMargins(0, 0, 0, 0)
-        self.legend_layout.setSpacing(12)
+        self.legend_layout = QGridLayout(self.legend_container)
+        self.legend_layout.setContentsMargins(2, 2, 2, 2)
+        self.legend_layout.setVerticalSpacing(4)
+        self.legend_layout.setHorizontalSpacing(40)
+        self.legend_layout.setColumnStretch(0, 1)
+        self.legend_layout.setColumnStretch(1, 1)
 
         layout.addWidget(self.legend_container)
 
@@ -430,7 +433,7 @@ class SleepQCGridPage(QWidget):
 
         return color_map
 
-    def _update_color_legend(self, mice: List[str], mouse_colors: dict) -> None:        
+    def _update_color_legend(self, mice: List[str], mouse_colors: dict) -> None:
         """Rebuild color legend for the currently displayed mice."""
 
         # Clear old legend entries
@@ -440,12 +443,11 @@ class SleepQCGridPage(QWidget):
             if widget is not None:
                 widget.deleteLater()
 
-        for mid in mice:
+        for i, mid in enumerate(mice):
             color = mouse_colors[mid]
             manifest_entry = self._manifest.get(mid)
             status = manifest_entry.sleep_qc if manifest_entry else None
 
-            # Small colored line swatch
             swatch = QFrame()
             swatch.setFixedSize(30, 4)
             swatch.setStyleSheet(
@@ -466,12 +468,6 @@ class SleepQCGridPage(QWidget):
             btn_review.setChecked(status == "needs_review")
             btn_review.clicked.connect(lambda _, m=mid: self._flag_sleep_qc(m, "needs_review"))
 
-            btn_rerun = QPushButton("Rerun Ch")
-            btn_rerun.setFixedHeight(22)
-            btn_rerun.setCheckable(True)
-            btn_rerun.setChecked(status == "rerun_channels")
-            btn_rerun.clicked.connect(lambda _, m=mid: self._flag_rerun(m))
-
             entry_layout = QHBoxLayout()
             entry_layout.setContentsMargins(4, 2, 4, 2)
             entry_layout.setSpacing(4)
@@ -479,7 +475,6 @@ class SleepQCGridPage(QWidget):
             entry_layout.addWidget(label)
             entry_layout.addWidget(btn_ok)
             entry_layout.addWidget(btn_review)
-            entry_layout.addWidget(btn_rerun)
 
             entry_widget = QWidget()
             entry_widget.setLayout(entry_layout)
@@ -489,9 +484,7 @@ class SleepQCGridPage(QWidget):
                     f"background-color: {bg}; border-radius: 3px;"
                 )
 
-            self.legend_layout.addWidget(entry_widget)
-
-        self.legend_layout.addStretch(1)
+            self.legend_layout.addWidget(entry_widget, i // 2, i % 2)
 
     def _flag_sleep_qc(self, mid: str, status: str) -> None:
         if self._manifest.get(mid) is None:

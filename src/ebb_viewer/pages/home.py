@@ -68,9 +68,10 @@ class HomePage(QWidget):
         self.btn_refresh.clicked.connect(self._refresh)
         hdr.addWidget(self.btn_refresh)
 
-        self.btn_build = QPushButton("Build from standard/")
+        self.btn_build = QPushButton("Sync from filesystem")
         self.btn_build.setToolTip(
-            "Scan standard/ folder and add any new EDFs to the manifest"
+            "Scan standard/, spindle_edfs/, and spindle_outputs/ to add new "
+            "animals and infer channel combos for any entries not yet set"
         )
         self.btn_build.clicked.connect(self._build_manifest)
         hdr.addWidget(self.btn_build)
