@@ -60,6 +60,10 @@ class SleepQCGridPage(QWidget):
         self._build_ui()
         self._wire()
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._manifest = Manifest.load(self.project_root)
+
     # ------------------------------------------------------------------
     # UI
     # ------------------------------------------------------------------
