@@ -23,14 +23,18 @@ from ebb_viewer.edf_viewer.mask_builder import (
 )
 from ebb_viewer.edf_viewer.masks_dock import MasksDock
 
+_CHANNEL_COMBOS = ["LFC_RSC", "LFC_LSC", "RSC_LSC", "LFC", "RSC", "LSC"]
+
 
 
 
 class EegMainWindow(QtWidgets.QMainWindow):
-    def __init__(self, recording: Recording, initial_dir: str = "", parent=None):
+    def __init__(self, recording: Recording, initial_dir: str = "", manifest=None, animal_id: str | None = None, parent=None):
         super().__init__(parent)
         self.rec = recording
         self.initial_dir = initial_dir
+        self.manifest = manifest
+        self.animal_id = animal_id
 
         self.mask_set = build_default_masks(recording)
         self.state_set = None
@@ -70,6 +74,8 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self._build_actions()
         self._build_menus()
         self._build_toolbars()
+        if self.manifest is not None and self.animal_id is not None:
+            self._build_qc_toolbar()
         self._build_docks()
 
         self.trace_view.timeDoubleClicked.connect(self.on_time_double_clicked)
@@ -176,6 +182,58 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.masks_dock)
 
         self.masks_dock.rebuild(self.mask_set, self.state_set)
+
+    def _build_qc_toolbar(self):
+        qc_tb = self.addToolBar("QC")
+        qc_tb.setObjectName("QCToolbar")
+        qc_tb.setMovable(False)
+
+        self._qc_status_label = QtWidgets.QLabel()
+        self._qc_status_label.setMinimumWidth(130)
+        qc_tb.addWidget(self._qc_status_label)
+        qc_tb.addSeparator()
+
+        act_ok = QtGui.QAction("✓ Mark OK", self)
+        act_ok.triggered.connect(self._flag_qc_ok)
+        qc_tb.addAction(act_ok)
+
+        qc_tb.addSeparator()
+
+        self._ch_combo = QtWidgets.QComboBox()
+        self._ch_combo.addItems(_CHANNEL_COMBOS)
+        entry = self.manifest.get(self.animal_id)
+        if entry:
+            current = entry.rerun_channels or entry.spindle_channels
+            if current in _CHANNEL_COMBOS:
+                self._ch_combo.setCurrentText(current)
+        qc_tb.addWidget(self._ch_combo)
+
+        act_rerun = QtGui.QAction("Rerun Channels", self)
+        act_rerun.triggered.connect(self._flag_qc_rerun)
+        qc_tb.addAction(act_rerun)
+
+        self._update_qc_status()
+
+    def _flag_qc_ok(self) -> None:
+        self.manifest.flag_sleep_qc(self.animal_id, "ok")
+        self._update_qc_status()
+
+    def _flag_qc_rerun(self) -> None:
+        ch = self._ch_combo.currentText()
+        self.manifest.flag_sleep_qc(self.animal_id, "rerun_channels", rerun_channels=ch)
+        self._update_qc_status()
+
+    def _update_qc_status(self) -> None:
+        entry = self.manifest.get(self.animal_id)
+        status = entry.sleep_qc if entry else None
+        _STYLE = {
+            "ok": "color: green; font-weight: bold;",
+            "needs_review": "color: #b8860b; font-weight: bold;",
+            "rerun_channels": "color: darkorange; font-weight: bold;",
+        }
+        txt = (status or "unflagged").replace("_", " ")
+        self._qc_status_label.setText(f"QC: {txt}")
+        self._qc_status_label.setStyleSheet(_STYLE.get(status, ""))
 
     def _on_mask_rebuild(self, mask) -> None:
         name = mask.name
@@ -296,11 +354,38 @@ class EegMainWindow(QtWidgets.QMainWindow):
         lay.addWidget(text)
         dlg.exec()
 
+def launch_edf_window(
+    edf_path: Path,
+    csv_path: Path | None = None,
+    manifest=None,
+    animal_id: str | None = None,
+    initial_dir: str = "",
+) -> EegMainWindow:
+    """Load an EDF file and return a configured (not yet shown) EegMainWindow."""
+    with edf.Reader(str(edf_path)) as reader:
+        data = reader.read(start=0)
+        fs = int(reader.header.samples_per_record[0])
+        start_str = reader.header.start_time
+        date_str = reader.header.start_date
+    start_time = datetime.strptime(f"{date_str} {start_str}", "%d.%m.%y %H.%M.%S")
+    rec = Recording(
+        data=data,
+        fs=fs,
+        start_time=start_time,
+        ch_names=("LFC", "RSC", "LSC", "EMG"),
+        edf_path=edf_path,
+        csv_path=csv_path,
+    )
+    win = EegMainWindow(rec, initial_dir=initial_dir, manifest=manifest, animal_id=animal_id)
+    win.setWindowTitle(f"{edf_path.stem} — EEG Viewer")
+    return win
+
+
 def main():
     app = QtWidgets.QApplication(sys.argv)
     
     # initial dir and one dataset load (as you already do)
-    initial_dir = "/media/matt/Data_A/leah/SRA/SRA_pre"
+    initial_dir = "/media/matt/Data_A/leah/SRA/SRA_6_mo"
     edf_path, csv_path = pick_edf_csv(None, initial_dir)
     if not edf_path:
         return

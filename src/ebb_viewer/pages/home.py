@@ -5,10 +5,13 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QWidget,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy,
+    QComboBox, QMessageBox,
 )
 
 from ebb_viewer.widgets.tree_view import ProjectTree
-from ebb_viewer.pipeline.manifest import Manifest, psd_path
+from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, psd_path, spindle_output_dir
+
+_CHANNEL_COMBOS = ["LFC_RSC", "LFC_LSC", "RSC_LSC", "LFC", "RSC", "LSC"]
 
 
 # Pipeline stage columns
@@ -46,6 +49,7 @@ class HomePage(QWidget):
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
         self.project_root = Path(project_root)
+        self._open_windows: list = []
         self._build_ui()
         self._refresh()
 
@@ -94,6 +98,17 @@ class HomePage(QWidget):
             hh.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
 
         root_layout.addWidget(self.table)
+
+        # --- review queue ---
+        queue_lbl = QLabel("Review Queue")
+        queue_lbl.setStyleSheet("font-weight: bold; font-size: 13px;")
+        root_layout.addWidget(queue_lbl)
+
+        self._queue_container = QWidget()
+        self._queue_layout = QVBoxLayout(self._queue_container)
+        self._queue_layout.setContentsMargins(0, 2, 0, 4)
+        self._queue_layout.setSpacing(3)
+        root_layout.addWidget(self._queue_container)
 
         # --- file tree ---
         file_lbl = QLabel("Project Files")
@@ -184,3 +199,111 @@ class HomePage(QWidget):
         for r in range(self.table.rowCount()):
             total_h += self.table.rowHeight(r)
         self.table.setMaximumHeight(total_h + 4)
+        self._refresh_review_queue(manifest)
+
+    # ---------------------------------------------------------------
+    # Review queue
+    # ---------------------------------------------------------------
+    def _refresh_review_queue(self, manifest: Manifest) -> None:
+        while self._queue_layout.count():
+            item = self._queue_layout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.setParent(None)
+
+        entries = manifest.needs_review()
+        if not entries:
+            lbl = QLabel("No animals pending review.")
+            lbl.setStyleSheet("color: #888;")
+            self._queue_layout.addWidget(lbl)
+            return
+
+        for entry in entries:
+            self._queue_layout.addWidget(self._make_queue_row(entry))
+
+    def _make_queue_row(self, entry: ManifestEntry) -> QWidget:
+        edf_name = Path(entry.preprocessed_edf).name if entry.preprocessed_edf else "—"
+
+        row_w = QWidget()
+        row_w.setStyleSheet("background-color: #fff3cd; border-radius: 3px;")
+        h = QHBoxLayout(row_w)
+        h.setContentsMargins(6, 3, 6, 3)
+        h.setSpacing(8)
+
+        h.addWidget(QLabel(f"<b>{entry.animal_id}</b>"))
+
+        lbl_file = QLabel(edf_name)
+        lbl_file.setStyleSheet("color: #555;")
+        h.addWidget(lbl_file, stretch=1)
+
+        btn_open = QPushButton("Open EDF")
+        btn_open.setFixedHeight(24)
+        btn_open.clicked.connect(lambda _, e=entry: self._open_edf_for_animal(e))
+        h.addWidget(btn_open)
+
+        btn_ok = QPushButton("✓ OK")
+        btn_ok.setFixedHeight(24)
+        btn_ok.clicked.connect(lambda _, mid=entry.animal_id: self._queue_flag_ok(mid))
+        h.addWidget(btn_ok)
+
+        ch_combo = QComboBox()
+        ch_combo.addItems(_CHANNEL_COMBOS)
+        if entry.spindle_channels and entry.spindle_channels in _CHANNEL_COMBOS:
+            ch_combo.setCurrentText(entry.spindle_channels)
+        h.addWidget(ch_combo)
+
+        btn_rerun = QPushButton("Rerun Ch")
+        btn_rerun.setFixedHeight(24)
+        btn_rerun.clicked.connect(
+            lambda _, mid=entry.animal_id, c=ch_combo: self._queue_flag_rerun(mid, c.currentText())
+        )
+        h.addWidget(btn_rerun)
+
+        return row_w
+
+    def _queue_flag_ok(self, animal_id: str) -> None:
+        Manifest.load(self.project_root).flag_sleep_qc(animal_id, "ok")
+        self._refresh()
+
+    def _queue_flag_rerun(self, animal_id: str, channels: str) -> None:
+        Manifest.load(self.project_root).flag_sleep_qc(
+            animal_id, "rerun_channels", rerun_channels=channels
+        )
+        self._refresh()
+
+    def _open_edf_for_animal(self, entry: ManifestEntry) -> None:
+        if not entry.preprocessed_edf:
+            QMessageBox.warning(self, "No EDF", f"No preprocessed EDF set for {entry.animal_id}.")
+            return
+        edf_path = self.project_root / entry.preprocessed_edf
+        if not edf_path.is_file():
+            QMessageBox.warning(self, "File not found", f"EDF not found:\n{edf_path}")
+            return
+
+        csv_path = self._find_spindle_csv(entry)
+        manifest = Manifest.load(self.project_root)
+
+        from ebb_viewer.edf_viewer.eeg_viewer import launch_edf_window
+        try:
+            win = launch_edf_window(
+                edf_path=edf_path,
+                csv_path=csv_path,
+                manifest=manifest,
+                animal_id=entry.animal_id,
+                initial_dir=str(self.project_root),
+            )
+            win.resize(1200, 800)
+            win.show()
+            self._open_windows.append(win)
+        except Exception as e:
+            QMessageBox.critical(self, "Error opening EDF", f"{type(e).__name__}: {e}")
+
+    def _find_spindle_csv(self, entry: ManifestEntry) -> Path | None:
+        if entry.spindle_channels is None:
+            return None
+        try:
+            d = spindle_output_dir(entry, self.project_root)
+            hits = sorted(d.glob(f"{entry.animal_id}*labels.csv"))
+            return hits[0] if hits else None
+        except Exception:
+            return None
