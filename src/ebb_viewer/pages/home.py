@@ -5,7 +5,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QWidget,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy,
-    QComboBox, QMessageBox,
+    QComboBox, QMessageBox, QScrollArea,
 )
 
 from ebb_viewer.widgets.tree_view import ProjectTree
@@ -111,7 +111,13 @@ class HomePage(QWidget):
         self._queue_layout = QVBoxLayout(self._queue_container)
         self._queue_layout.setContentsMargins(0, 2, 0, 4)
         self._queue_layout.setSpacing(3)
-        root_layout.addWidget(self._queue_container)
+
+        queue_scroll = QScrollArea()
+        queue_scroll.setWidget(self._queue_container)
+        queue_scroll.setWidgetResizable(True)
+        queue_scroll.setFixedHeight(160)
+        queue_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        root_layout.addWidget(queue_scroll)
 
         # --- file tree ---
         file_lbl = QLabel("Project Files")
@@ -234,7 +240,9 @@ class HomePage(QWidget):
         edf_name = Path(entry.preprocessed_edf).name if entry.preprocessed_edf else "—"
 
         row_w = QWidget()
-        row_w.setStyleSheet("background-color: #fff3cd; border-radius: 3px;")
+        row_w.setObjectName("queueRow")
+        row_w.setMaximumHeight(42)
+        row_w.setStyleSheet("QWidget#queueRow { background-color: #fff3cd; border-radius: 3px; }")
         h = QHBoxLayout(row_w)
         h.setContentsMargins(6, 3, 6, 3)
         h.setSpacing(8)
@@ -245,9 +253,10 @@ class HomePage(QWidget):
         lbl_ch.setStyleSheet("color: #555;")
         h.addWidget(lbl_ch)
 
-        lbl_file = QLabel(edf_name)
-        lbl_file.setStyleSheet("color: #888;")
-        h.addWidget(lbl_file, stretch=1)
+        h.addStretch(3)
+        #lbl_file = QLabel(edf_name)
+        #lbl_file.setStyleSheet("color: #888;")
+        #h.addWidget(lbl_file, stretch=1)
 
         btn_open = QPushButton("Open EDF")
         btn_open.setFixedHeight(24)
@@ -263,10 +272,12 @@ class HomePage(QWidget):
 
         rerun_combo = QComboBox()
         rerun_combo.addItems(_CHANNEL_COMBOS)
-        # Pre-select a sensible default (not the current combo)
         others = [c for c in _CHANNEL_COMBOS if c != channels]
         if others:
             rerun_combo.setCurrentText(others[0])
+
+        h.addStretch(1)
+        h.addWidget(QLabel("Rerun as:"))
         h.addWidget(rerun_combo)
 
         btn_rerun = QPushButton("Needs Rerun")

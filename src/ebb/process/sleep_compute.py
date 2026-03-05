@@ -16,7 +16,7 @@ def seconds_until_target(t: time,
     now = datetime.combine(datetime.today(), t)
     target_today = datetime.combine(datetime.today(), time(h, 0))
 
-    if now < target_today:
+    if now <= target_today:
         target = target_today
     else:
         target = target_today + timedelta(days=1)
@@ -111,19 +111,17 @@ def compute_sleep_bins_df(
         with open(state_path, 'r') as infile:
             reader = csv.reader(infile)
             header = next(reader)
-            try:
-                idx = header.index('rawstate')
-            except Exception as e:
-                print(f'Error: {e}\nEnsure \'rawstate\' in spindle csv files')
-                return
+            if 'rawstate' not in header:
+                raise ValueError(f"'rawstate' column not found in {state_path.name}")
+            idx = header.index('rawstate')
             states = [row[idx] for row in reader]
-        df_mouse = compute_sleep_metrics_per_mouse(states, 
-                                                    mouse_id=animal, 
-                                                    bin_hours=bin_hours, 
+        df_mouse = compute_sleep_metrics_per_mouse(states,
+                                                    mouse_id=animal,
+                                                    bin_hours=bin_hours,
                                                     sample_rate_hz=0.25)
         sleep_dfs.append(df_mouse)
 
-    return pd.concat(sleep_dfs, ignore_index=True)        
+    return pd.concat(sleep_dfs, ignore_index=True)
 
 def compute_sleep_bins_df_offset(
         state_dir: Union[str,Path],
@@ -140,20 +138,17 @@ def compute_sleep_bins_df_offset(
         animal = state_path.stem.split('_')[0]
         s = str(state_path)
         match = re.search(r"_(\d{2})_(\d{2})_(\d{2})_", s)
-        if match:
-            hh, mm, ss = map(int, match.groups())
-            t = time(hh, mm, ss)
-        else:
-            print(f"Error getting time from {state_path}")
+        if not match:
+            raise ValueError(f"Could not parse start time from filename: {state_path.name}")
+        hh, mm, ss = map(int, match.groups())
+        t = time(hh, mm, ss)
 
         with open(state_path, 'r') as infile:
             reader = csv.reader(infile)
             header = next(reader)
-            try:
-                idx = header.index('rawstate')
-            except Exception as e:
-                print(f'Error: {e}\nEnsure \'rawstate\' in spindle csv files')
-                return
+            if 'rawstate' not in header:
+                raise ValueError(f"'rawstate' column not found in {state_path.name}")
+            idx = header.index('rawstate')
             states = [row[idx] for row in reader]
             expanded_states = [state for state in states for _ in range(4)]
 

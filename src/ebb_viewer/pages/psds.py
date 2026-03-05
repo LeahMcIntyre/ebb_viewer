@@ -251,10 +251,7 @@ class PSDPage(QWidget):
         if self.swd_folder is None:
             self.lbl_swd.setText("No SWD folder selected")
 
-        # PSD root: always project_root / "psd"
-        psd_root = self.project_root / "psd" 
-        file_name = f'{self.spindle_folder.stem}.pkl' if self.spindle_folder is not None else "psds.pkl"
-        self.target_name_edit.setText(str(psd_root / file_name))
+        self.target_name_edit.setText(str(self._target_path()))
 
     # ------------- Actions -------------
     def _run_clicked(self):
@@ -288,11 +285,8 @@ class PSDPage(QWidget):
              )
              return
 
-        # PSD root from target line
-        psd_root = Path(self.target_name_edit.text().strip() or
-                        (self.project_root / "psd"))
-        psd_root.mkdir(parents=True, exist_ok=True)
-        self.savepath = psd_root / f'psds_{self.spindle_folder.stem}.pkl'
+        self.savepath = self._target_path()
+        self.savepath.parent.mkdir(parents=True, exist_ok=True)
 
         self.params = {
             "fs": int(self.spin_fs.value()),
@@ -344,6 +338,10 @@ class PSDPage(QWidget):
     def channel_labels(self):
         return [cb.text() for cb in self._channel_boxes]
 
+    def _target_path(self) -> Path:
+        stem = self.spindle_folder.stem if self.spindle_folder is not None else "psds"
+        return self.project_root / "psd" / f"psds_{stem}.pkl"
+
     # ---------- Internals ----------
     def _toggle_all_channels(self, checked):
         for cb in self._channel_boxes:
@@ -371,6 +369,7 @@ class PSDPage(QWidget):
         folder = Path(folder).expanduser().resolve()
         self.spindle_folder = folder
         self.lbl_spindle.setText(str(folder))
+        self.target_name_edit.setText(str(self._target_path()))
         self._validate()
 
     def _choose_swd_folder(self):

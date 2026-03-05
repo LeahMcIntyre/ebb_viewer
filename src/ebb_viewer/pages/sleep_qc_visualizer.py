@@ -6,11 +6,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QComboBox, QLabel, QPushButton, QSizePolicy,
-    QFileDialog, QMessageBox, QSpinBox, QFrame, QInputDialog,
+    QMessageBox, QSpinBox, QFrame,
 )
 from ebb_viewer.pipeline.manifest import Manifest
 
@@ -19,15 +18,18 @@ import matplotlib as mpl
 from ebb.process.sleep_compute import compute_sleep_bins_df, compute_sleep_bins_df_offset
 
 
-
 class SleepQCGridPage(QWidget):
     """
-    QC page: 3x3 grid (states x metrics), showing ~10 mice at a time.
-    Each panel: x = time (h), y = metric, colored by mouse_id.
+    QC page: 3×3 grid (states × metrics).
+
+    Group mode: shows up to MICE_PER_PAGE animals for one channel combo at a time,
+    with optional mean ± SD reference band.
+
+    Animal mode: shows all available channel combos overlaid for one selected animal.
     """
 
     STATE_ORDER = ["w", "n", "r"]
-    STATE_DEF = {"w": 'Wake', "n": 'NREM', "r": 'REM'}
+    STATE_DEF = {"w": "Wake", "n": "NREM", "r": "REM"}
     METRIC_ORDER = [
         ("frac_time", "Fraction of time"),
         ("n_bouts", "# bouts"),
@@ -37,26 +39,33 @@ class SleepQCGridPage(QWidget):
     MICE_PER_PAGE = 10
 
     _STATUS_BG = {
-        "ok": "#d4edda",
+        "ok":           "#d4edda",
         "needs_review": "#fff3cd",
-        "rerun_channels": "#fde8ce",
+        "needs_rerun":  "#fde8ce",
     }
-    _CHANNEL_COMBOS = ["LFC_RSC", "LFC_LSC", "RSC_LSC", "LFC", "RSC", "LSC"]
+
+    _COMBO_COLORS = {
+        "LFC_RSC": (31,  119, 180),
+        "LFC_LSC": (255, 127, 14),
+        "RSC_LSC": (44,  160, 44),
+        "LFC":     (214, 39,  40),
+        "RSC":     (148, 103, 189),
+        "LSC":     (140, 86,  75),
+    }
 
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
         self.project_root = Path(project_root)
 
-        self._df: Optional[pd.DataFrame] = None
-        self._df_offset: Optional[pd.DataFrame] = None
-        self._current_dir: Optional[Path] = None
+        self._available_combos: List[str] = []
+        self._data_cache: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]] = {}
         self._mouse_ids: List[str] = []
-        self._current_page: int = 0  # 0-based
+        self._current_page: int = 0
+        self._mode: str = "group"
 
         self._plots: Dict[Tuple[str, str], pg.PlotItem] = {}
-        self._legend_items: Dict[int, Tuple[pg.GraphicsObject, str]] = {}
+
         self._manifest = Manifest.load(project_root)
-        self._current_channels: Optional[str] = None  # inferred from selected dir
 
         self._build_ui()
         self._wire()
@@ -64,6 +73,7 @@ class SleepQCGridPage(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._manifest = Manifest.load(self.project_root)
+        self._refresh_combos()
 
     # ------------------------------------------------------------------
     # UI
@@ -71,90 +81,93 @@ class SleepQCGridPage(QWidget):
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
+        layout.setSpacing(4)
 
-        # --- directory chooser row ---
-        dir_row = QHBoxLayout()
-        self.dir_button = QPushButton("Select spindle outputs directory…")
-        self.dir_label = QLabel("No directory selected")
-        self.dir_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        # --- top bar ---
+        top = QHBoxLayout()
 
-        dir_row.addWidget(self.dir_button)
-        dir_row.addWidget(self.dir_label, stretch=1)
-        layout.addLayout(dir_row)
+        top.addWidget(QLabel("Combo:"))
+        self.cmb_combo = QComboBox()
+        self.cmb_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.cmb_combo.setMinimumWidth(100)
+        top.addWidget(self.cmb_combo)
 
-        # --- top controls: group filter + page controls ---
-        ctrl_row = QHBoxLayout()
+        top.addWidget(_vsep(self))
 
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.btn_group = QPushButton("Group")
+        self.btn_group.setCheckable(True)
+        self.btn_group.setChecked(True)
+        self.btn_animal = QPushButton("Animal")
+        self.btn_animal.setCheckable(True)
+        top.addWidget(self.btn_group)
+        top.addWidget(self.btn_animal)
 
-        # Optional group filter (or "All groups")
-        self.group_combo = QComboBox()
-        self.group_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
-        form.addRow(QLabel("Group filter:"), self.group_combo)
+        top.addWidget(_vsep(self))
 
-        # Page controls
-        page_ctrl = QHBoxLayout()
-        self.offset_btn = QPushButton("6 AM Start")
-        self.offset_btn.setCheckable(True)   # makes it toggle-able
-        self.offset_btn.setChecked(False)    # start as False
+        self.btn_offset = QPushButton("6AM Start")
+        self.btn_offset.setCheckable(True)
+        self.btn_offset.setChecked(False)
+        top.addWidget(self.btn_offset)
 
-        self.prev_button = QPushButton("Prev mice")
-        self.next_button = QPushButton("Next mice")
+        top.addStretch(1)
+        layout.addLayout(top)
 
-        self.page_spin = QSpinBox()
-        self.page_spin.setMinimum(1)
-        self.page_spin.setMaximum(1)
-        self.page_spin.setValue(1)
+        # --- group-mode controls ---
+        self._group_controls = QWidget()
+        gc = QHBoxLayout(self._group_controls)
+        gc.setContentsMargins(0, 0, 0, 0)
+        self.btn_prev = QPushButton("◄ Prev")
+        self.btn_next = QPushButton("Next ►")
+        self.spin_page = QSpinBox()
+        self.spin_page.setMinimum(1)
+        self.spin_page.setMaximum(1)
+        self.lbl_page = QLabel("Page 1 / 1")
+        gc.addWidget(self.btn_prev)
+        gc.addWidget(self.btn_next)
+        gc.addWidget(QLabel("Go to:"))
+        gc.addWidget(self.spin_page)
+        gc.addWidget(self.lbl_page)
+        gc.addStretch(1)
+        layout.addWidget(self._group_controls)
 
-        self.page_label = QLabel("Page 1 / 1")
+        # --- animal-mode controls ---
+        self._animal_controls = QWidget()
+        ac = QHBoxLayout(self._animal_controls)
+        ac.setContentsMargins(0, 0, 0, 0)
+        ac.addWidget(QLabel("Animal:"))
+        self.cmb_animal = QComboBox()
+        self.cmb_animal.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.cmb_animal.setMinimumWidth(150)
+        self.btn_prev_animal = QPushButton("◄ Prev")
+        self.btn_next_animal = QPushButton("Next ►")
+        ac.addWidget(self.cmb_animal)
+        ac.addWidget(self.btn_prev_animal)
+        ac.addWidget(self.btn_next_animal)
+        ac.addStretch(1)
+        self._animal_controls.setVisible(False)
+        layout.addWidget(self._animal_controls)
 
-        page_ctrl.addWidget(self.offset_btn)
-        page_ctrl.addWidget(self.prev_button)
-        page_ctrl.addWidget(self.next_button)
-        page_ctrl.addWidget(QLabel("Go to:"))
-        page_ctrl.addWidget(self.page_spin)
-        page_ctrl.addWidget(self.page_label)
-
-        # Put group + page widgets together
-        ctrl_row.addLayout(form)
-        ctrl_row.addStretch(1)
-        ctrl_row.addLayout(page_ctrl)
-
-        layout.addLayout(ctrl_row)
-
-        # --- grid of plots ---
+        # --- plot grid ---
         self.grid = pg.GraphicsLayoutWidget()
         self.grid.setBackground("w")
         self.grid.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        # Create 3x3 PlotItems and remember them in dict keyed by (state, metric_name)
-        self._plots.clear()
         for si, state in enumerate(self.STATE_ORDER):
             for mi, (metric, metric_label) in enumerate(self.METRIC_ORDER):
                 p: pg.PlotItem = self.grid.addPlot(row=mi, col=si)
                 p.showGrid(x=True, y=True, alpha=0.3)
-                if mi == len(self.METRIC_ORDER) - 1:
-                    p.setLabel("bottom", "Time (h)")
-                else:
+                if mi < len(self.METRIC_ORDER) - 1:
                     p.getAxis("bottom").setStyle(showValues=False)
-
+                else:
+                    p.setLabel("bottom", "Time (h)")
                 if si == 0:
                     p.setLabel("left", metric_label)
-                #else:
-                    # hide values but maybe keep ticks
-                    #p.getAxis("left").setStyle(showValues=False)
-
-                # title = metric label
-                p.setTitle(f'{self.STATE_DEF[state]}: {metric_label}', size="10pt")
+                p.setTitle(f"{self.STATE_DEF[state]}: {metric_label}", size="10pt")
                 self._plots[(metric, state)] = p
 
         layout.addWidget(self.grid, stretch=1)
 
-        # --- legend area (2-column grid) ---
+        # --- legend ---
         self.legend_container = QWidget()
         self.legend_layout = QGridLayout(self.legend_container)
         self.legend_layout.setContentsMargins(2, 2, 2, 2)
@@ -162,138 +175,170 @@ class SleepQCGridPage(QWidget):
         self.legend_layout.setHorizontalSpacing(40)
         self.legend_layout.setColumnStretch(0, 1)
         self.legend_layout.setColumnStretch(1, 1)
-
         layout.addWidget(self.legend_container)
 
     def _wire(self) -> None:
-        self.dir_button.clicked.connect(self._on_choose_directory)
-        self.group_combo.currentIndexChanged.connect(self._on_group_changed)
-        self.offset_btn.toggled.connect(self._update_all_plots)
+        self.cmb_combo.currentTextChanged.connect(self._on_combo_changed)
+        self.btn_group.clicked.connect(lambda: self._set_mode("group"))
+        self.btn_animal.clicked.connect(lambda: self._set_mode("animal"))
+        self.btn_offset.toggled.connect(self._update_all_plots)
 
-        self.prev_button.clicked.connect(self._on_prev_page)
-        self.next_button.clicked.connect(self._on_next_page)
-        self.page_spin.valueChanged.connect(self._on_page_spin_changed)
+        self.btn_prev.clicked.connect(self._on_prev_page)
+        self.btn_next.clicked.connect(self._on_next_page)
+        self.spin_page.valueChanged.connect(self._on_page_spin_changed)
+
+        self.cmb_animal.currentTextChanged.connect(self._on_animal_changed)
+        self.btn_prev_animal.clicked.connect(self._on_prev_animal)
+        self.btn_next_animal.clicked.connect(self._on_next_animal)
 
     # ------------------------------------------------------------------
-    # Directory selection + loading
+    # Mode switching
     # ------------------------------------------------------------------
-    def _on_choose_directory(self) -> None:
-        spindle_root = self.project_root / "spindle_outputs"
-        if spindle_root.exists() and spindle_root.is_dir():
-            start_dir = spindle_root
+    def _set_mode(self, mode: str) -> None:
+        self._mode = mode
+        is_group = (mode == "group")
+        self.btn_group.setChecked(is_group)
+        self.btn_animal.setChecked(not is_group)
+        self.cmb_combo.setEnabled(is_group)
+        self._group_controls.setVisible(is_group)
+        self._animal_controls.setVisible(not is_group)
+
+        if not is_group:
+            self._ensure_all_combos_loaded()
+            self._refresh_animal_combo()
+
+        self._update_all_plots()
+
+    # ------------------------------------------------------------------
+    # Combo discovery + loading
+    # ------------------------------------------------------------------
+    def _discover_combos(self) -> List[str]:
+        d = self.project_root / "spindle_outputs"
+        if not d.is_dir():
+            return []
+        return sorted(p.name for p in d.iterdir() if p.is_dir())
+
+    def _refresh_combos(self) -> None:
+        combos = self._discover_combos()
+        self._available_combos = combos
+
+        self.cmb_combo.blockSignals(True)
+        current = self.cmb_combo.currentText()
+        self.cmb_combo.clear()
+        self.cmb_combo.addItems(combos)
+        if current in combos:
+            self.cmb_combo.setCurrentText(current)
+        elif "LFC_RSC" in combos:
+            self.cmb_combo.setCurrentText("LFC_RSC")
+        self.cmb_combo.blockSignals(False)
+
+        # Trigger a load for the now-selected combo
+        selected = self.cmb_combo.currentText()
+        if selected:
+            self._on_combo_changed(selected)
         else:
-            start_dir = self.project_root
+            self._update_all_plots()
 
-        dirname = QFileDialog.getExistingDirectory(
-            self,
-            "Select spindle outputs directory",
-            str(start_dir),
-        )
-        if not dirname:
-            return
-
-        self._current_dir = Path(dirname)
-        self._current_channels = self._current_dir.name  # e.g. "LFC_RSC"
-        self.dir_label.setText(str(self._current_dir))
-
+    def _load_combo(self, combo: str) -> bool:
+        """Load and cache data for combo. Returns True on success."""
+        if combo in self._data_cache:
+            return True
+        d = self.project_root / "spindle_outputs" / combo
+        if not d.is_dir():
+            return False
         try:
-            df = compute_sleep_bins_df(self._current_dir)
-            df_offset = compute_sleep_bins_df_offset(self._current_dir)
+            df = compute_sleep_bins_df(d)
+            df_offset = compute_sleep_bins_df_offset(d)
         except Exception as e:
-            QMessageBox.critical(
-                self,
-                "Error loading sleep metrics",
-                f"Could not load sleep metrics from:\n{self._current_dir}\n\n{e}",
-            )
-            self._df = None
-            self._df_offset = None
+            QMessageBox.critical(self, "Error loading sleep metrics",
+                                 f"Could not load {combo}:\n{e}")
+            return False
+        self._data_cache[combo] = (df, df_offset)
+        return True
 
-            self._mouse_ids = []
-            self._update_group_combo()
-            self._update_page_controls()
-            self._clear_plots()
+    def _ensure_all_combos_loaded(self) -> None:
+        for combo in self._available_combos:
+            self._load_combo(combo)
+
+    def _on_combo_changed(self, combo: str) -> None:
+        if not combo:
             return
-
-        self._df = df
-        self._df_offset = df_offset
-        self._update_group_combo()
-        self._reset_mouse_list()
+        self._load_combo(combo)
+        pair = self._data_cache.get(combo)
+        if pair is not None:
+            self._mouse_ids = sorted(pair[0]["mouse_id"].unique())
+        else:
+            self._mouse_ids = []
+        self._current_page = 0
         self._update_page_controls()
         self._update_all_plots()
 
     # ------------------------------------------------------------------
-    # Group filter / mouse pagination
+    # Animal combo (animal mode)
     # ------------------------------------------------------------------
-    def _update_group_combo(self) -> None:
-        self.group_combo.blockSignals(True)
-        self.group_combo.clear()
-        self.group_combo.addItem("All groups", userData=None)
+    def _refresh_animal_combo(self) -> None:
+        all_mice = sorted({
+            mid
+            for df, _ in self._data_cache.values()
+            for mid in df["mouse_id"].unique()
+        })
+        self.cmb_animal.blockSignals(True)
+        current = self.cmb_animal.currentText()
+        self.cmb_animal.clear()
+        self.cmb_animal.addItems(all_mice)
+        if current in all_mice:
+            self.cmb_animal.setCurrentText(current)
+        self.cmb_animal.blockSignals(False)
+        self._sync_animal_nav()
 
-        df = self._df
-        if df is not None and not df.empty and "group" in df.columns:
-            for g in sorted(df["group"].dropna().unique()):
-                self.group_combo.addItem(str(g), userData=g)
+    def _on_animal_changed(self, _: str) -> None:
+        self._sync_animal_nav()
+        self._update_all_plots()
 
-        self.group_combo.blockSignals(False)
+    def _sync_animal_nav(self) -> None:
+        i = self.cmb_animal.currentIndex()
+        n = self.cmb_animal.count()
+        self.btn_prev_animal.setEnabled(i > 0)
+        self.btn_next_animal.setEnabled(i < n - 1)
 
-    def _current_group_filter(self):
-        idx = self.group_combo.currentIndex()
-        if idx < 0:
-            return None
-        return self.group_combo.currentData()
+    def _on_prev_animal(self) -> None:
+        i = self.cmb_animal.currentIndex()
+        if i > 0:
+            self.cmb_animal.setCurrentIndex(i - 1)
 
-    def _reset_mouse_list(self) -> None:
-        df = self._df
-        if df is None or df.empty:
-            self._mouse_ids = []
-            self._current_page = 0
-            return
+    def _on_next_animal(self) -> None:
+        i = self.cmb_animal.currentIndex()
+        if i < self.cmb_animal.count() - 1:
+            self.cmb_animal.setCurrentIndex(i + 1)
 
-        g = self._current_group_filter()
-        if g is None or "group" not in df.columns:
-            sub = df
-        else:
-            sub = df[df["group"] == g]
-
-        self._mouse_ids = sorted(sub["mouse_id"].unique())
-        self._current_page = 0
-
+    # ------------------------------------------------------------------
+    # Pagination (group mode)
+    # ------------------------------------------------------------------
     def _update_page_controls(self) -> None:
-        n_mice = len(self._mouse_ids)
-        if n_mice == 0:
-            self.page_spin.setMaximum(1)
-            self.page_spin.setValue(1)
-            self.page_label.setText("Page 0 / 0")
-            self.prev_button.setEnabled(False)
-            self.next_button.setEnabled(False)
+        n = len(self._mouse_ids)
+        if n == 0:
+            self.spin_page.setMaximum(1)
+            self.spin_page.setValue(1)
+            self.lbl_page.setText("Page 0 / 0")
+            self.btn_prev.setEnabled(False)
+            self.btn_next.setEnabled(False)
             return
 
-        # Show Mice Per Page amount of mice per group
-        n_pages = int(np.ceil(n_mice / self.MICE_PER_PAGE))
-        # Ensure current page is in bounds
+        n_pages = max(1, int(np.ceil(n / self.MICE_PER_PAGE)))
         self._current_page = max(0, min(self._current_page, n_pages - 1))
 
-        self.page_spin.blockSignals(True)
-        self.page_spin.setMaximum(n_pages)
-        self.page_spin.setValue(self._current_page + 1)  # 1-based for user
-        self.page_spin.blockSignals(False)
+        self.spin_page.blockSignals(True)
+        self.spin_page.setMaximum(n_pages)
+        self.spin_page.setValue(self._current_page + 1)
+        self.spin_page.blockSignals(False)
 
-        self.page_label.setText(f"Page {self._current_page + 1} / {n_pages}")
+        self.lbl_page.setText(f"Page {self._current_page + 1} / {n_pages}")
+        self.btn_prev.setEnabled(self._current_page > 0)
+        self.btn_next.setEnabled(self._current_page < n_pages - 1)
 
-        self.prev_button.setEnabled(self._current_page > 0)
-        self.next_button.setEnabled(self._current_page < n_pages - 1)
-
-    def _get_mice_for_current_page(self) -> List[str]:
+    def _get_page_mice(self) -> List[str]:
         start = self._current_page * self.MICE_PER_PAGE
-        end = start + self.MICE_PER_PAGE
-        return self._mouse_ids[start:end]
-
-    def _on_group_changed(self) -> None:
-        if self._df is None:
-            return
-        self._reset_mouse_list()
-        self._update_page_controls()
-        self._update_all_plots()
+        return self._mouse_ids[start:start + self.MICE_PER_PAGE]
 
     def _on_prev_page(self) -> None:
         if self._current_page > 0:
@@ -302,165 +347,135 @@ class SleepQCGridPage(QWidget):
             self._update_all_plots()
 
     def _on_next_page(self) -> None:
-        n_mice = len(self._mouse_ids)
-        if n_mice == 0:
-            return
-        n_pages = int(np.ceil(n_mice / self.MICE_PER_PAGE))
+        n_pages = max(1, int(np.ceil(len(self._mouse_ids) / self.MICE_PER_PAGE)))
         if self._current_page < n_pages - 1:
             self._current_page += 1
             self._update_page_controls()
             self._update_all_plots()
 
     def _on_page_spin_changed(self, value: int) -> None:
-        # spinbox is 1-based; internal page is 0-based
         self._current_page = max(0, value - 1)
         self._update_page_controls()
         self._update_all_plots()
 
-        
     # ------------------------------------------------------------------
-    # Plotting
+    # Plotting helpers
     # ------------------------------------------------------------------
-    def _clear_plots(self) -> None:
-        for p in self._plots.values():
-            p.clear()
-        #self.legend_label.setText("Mice on this page:")
+    def _get_df(self, combo: str) -> Optional[pd.DataFrame]:
+        pair = self._data_cache.get(combo)
+        if pair is None:
+            return None
+        return pair[1] if self.btn_offset.isChecked() else pair[0]
 
-    def _update_all_plots(self) -> None:
+    @staticmethod
+    def _ensure_x_col(df: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
+        if "bin_start_hr" in df.columns:
+            return df, "bin_start_hr"
+        return df.assign(bin_start_hr=df["bin_start_sec"] / 3600.0), "bin_start_hr"
 
-        if self.offset_btn.isChecked():
-            df = self._df_offset
-        else:
-            df = self._df
-
-        if df is None or df.empty:
-            self._clear_plots()
-            return
-
-        mice = self._get_mice_for_current_page()
-        if not mice:
-            self._clear_plots()
-            return
-
-        # Filter by group (if any) and mice on this page
-        g = self._current_group_filter()
-        sub = df.copy()
-        if g is not None and "group" in sub.columns:
-            sub = sub[sub["group"] == g]
-        sub = sub[sub["mouse_id"].isin(mice)]
-
-        if sub.empty:
-            self._clear_plots()
-            return
-
-        # Ensure we have time column
-        if "bin_start_hr" in sub.columns:
-            x_col = "bin_start_hr"
-        elif "bin_start_sec" in sub.columns:
-            sub = sub.assign(bin_start_hr=sub["bin_start_sec"] / 3600.0)
-            x_col = "bin_start_hr"
-        else:
-            raise ValueError("sleep metrics df must have bin_start_hr or bin_start_sec")
-
-        # Clear all plots before drawing
+    def _prepare_plots(self) -> None:
         for p in self._plots.values():
             p.clear()
 
-        """# Update legend label: list mice on this page with their colors
-        legend_lines = []
-        for mid in mice:
-            color = color_from_mouse_id(mid)
-            legend_lines.append(f"{mid} (rgb{color})")"""
+    def _update_all_plots(self, *_) -> None:
+        if self._mode == "group":
+            self._render_group()
+        else:
+            self._render_animal()
+
+    def _render_group(self) -> None:
+        combo = self.cmb_combo.currentText()
+        df = self._get_df(combo)
+        mice = self._get_page_mice()
+
+        self._prepare_plots()
+
+        if df is None or df.empty or not mice:
+            self._update_legend_group([], {})
+            return
+
+        df, x_col = self._ensure_x_col(df)
+        sub = df[df["mouse_id"].isin(mice)]
         mouse_colors = self._build_mouse_color_map(mice)
-        self._update_color_legend(mice, mouse_colors)
 
-
-
-
-        # Draw: loop over state x metric; within each panel, draw lines for each mouse
         for state in self.STATE_ORDER:
-            for metric, _metric_label in self.METRIC_ORDER:
-                p = self._plots.get((metric, state))
-                if p is None:
-                    continue
+            for metric, _ in self.METRIC_ORDER:
+                p = self._plots[(metric, state)]
                 if metric == self.METRIC_ORDER[-1][0]:
-                    label = "Time (h)" if self.offset_btn.isChecked() else "Time (h) From EEG Start"
+                    label = "Time (h)" if self.btn_offset.isChecked() else "Time (h) From EEG Start"
                     p.setLabel("bottom", label)
-
-                #panel_df = sub[(sub["state"] == state) & sub[metric].notna()]
-                panel_df = sub[(sub["state"] == state)]
-
-                if panel_df.empty:
-                    continue
-
-                
+                panel = sub[sub["state"] == state]
                 for mid in mice:
-                    df_mouse = panel_df[panel_df["mouse_id"] == mid].copy()
-                    if df_mouse.empty:
+                    dm = panel[panel["mouse_id"] == mid].copy()
+                    if dm.empty:
                         continue
-                    df_mouse[metric] = df_mouse[metric].fillna(0)
-                    df_mouse = df_mouse.sort_values(x_col)
-                    x = df_mouse[x_col].to_numpy()
-                    y = df_mouse[metric].to_numpy()
+                    dm[metric] = dm[metric].fillna(0)
+                    dm = dm.sort_values(x_col)
+                    p.plot(dm[x_col].to_numpy(), dm[metric].to_numpy(),
+                           pen=pg.mkPen(color=mouse_colors[mid], width=1.5))
 
-                    color = mouse_colors[mid]
-                    pen = pg.mkPen(color=color, width=1.5)
-                    p.plot(x, y, pen=pen)
+        self._update_legend_group(mice, mouse_colors)
 
-        """# Optional: link x-axes across plots for synchronized zoom/pan
-        # (link all plots to the top-left one, for example)
-        base_plot = self._plots.get((self.STATE_ORDER[0], self.METRIC_ORDER[0][0]))
-        if base_plot is not None:
-            for key, p in self._plots.items():
-                if p is base_plot:
-                    continue
-                p.setXLink(base_plot)"""
-        
+    def _render_animal(self) -> None:
+        animal = self.cmb_animal.currentText()
 
+        self._prepare_plots()
 
+        if not animal:
+            self._update_legend_animal([])
+            return
 
-    def _build_mouse_color_map(self, mice: List[str]) -> dict:
-        """
-        Build a color map for the given list of mice using tab10 or tab20.
-        Returns: {mouse_id: (r, g, b)}
-        """
-        n = len(mice)
+        drawn_combos = []
+        for combo in self._available_combos:
+            df = self._get_df(combo)
+            if df is None or df.empty:
+                continue
+            df, x_col = self._ensure_x_col(df)
+            adf = df[df["mouse_id"] == animal]
+            if adf.empty:
+                continue
+            color = self._COMBO_COLORS.get(combo, (100, 100, 100))
+            pen = pg.mkPen(color=color, width=2.0)
+            for state in self.STATE_ORDER:
+                for metric, _ in self.METRIC_ORDER:
+                    dm = adf[adf["state"] == state].copy()
+                    if dm.empty:
+                        continue
+                    dm[metric] = dm[metric].fillna(0)
+                    dm = dm.sort_values(x_col)
+                    self._plots[(metric, state)].plot(
+                        dm[x_col].to_numpy(), dm[metric].to_numpy(), pen=pen
+                    )
+            drawn_combos.append(combo)
 
-        if n <= 10:
-            cmap = mpl.colormaps["tab10"]
-        else:
-            cmap = mpl.colormaps["tab20"]
+        self._update_legend_animal(drawn_combos)
 
-        color_map = {}
-        for i, mid in enumerate(mice):
-            rgba = cmap(i)
-            rgb = tuple(int(255 * c) for c in rgba[:3])
-            color_map[mid] = rgb
-
-        return color_map
-
-    def _update_color_legend(self, mice: List[str], mouse_colors: dict) -> None:
-        """Rebuild color legend for the currently displayed mice."""
-
-        # Clear old legend entries
+    # ------------------------------------------------------------------
+    # Legend
+    # ------------------------------------------------------------------
+    def _clear_legend(self) -> None:
         while self.legend_layout.count():
             item = self.legend_layout.takeAt(0)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
+            w = item.widget()
+            if w:
+                w.deleteLater()
 
+    def _build_mouse_color_map(self, mice: List[str]) -> dict:
+        n = len(mice)
+        cmap = mpl.colormaps["tab10"] if n <= 10 else mpl.colormaps["tab20"]
+        return {mid: tuple(int(255 * c) for c in cmap(i)[:3]) for i, mid in enumerate(mice)}
+
+    def _update_legend_group(self, mice: List[str], mouse_colors: dict) -> None:
+        self._clear_legend()
+        combo = self.cmb_combo.currentText()
         for i, mid in enumerate(mice):
             color = mouse_colors[mid]
-            run = self._manifest.get_run(mid, self._current_channels) if self._current_channels else None
+            run = self._manifest.get_run(mid, combo) if combo else None
             status = run.sleep_qc if run else None
 
             swatch = QFrame()
             swatch.setFixedSize(30, 4)
-            swatch.setStyleSheet(
-                f"background-color: rgb({color[0]}, {color[1]}, {color[2]});"
-            )
-
-            label = QLabel(str(mid))
+            swatch.setStyleSheet(f"background-color: rgb({color[0]}, {color[1]}, {color[2]});")
 
             btn_ok = QPushButton("OK")
             btn_ok.setFixedHeight(22)
@@ -474,49 +489,57 @@ class SleepQCGridPage(QWidget):
             btn_review.setChecked(status == "needs_review")
             btn_review.clicked.connect(lambda _, m=mid: self._flag_sleep_qc(m, "needs_review"))
 
-            entry_layout = QHBoxLayout()
-            entry_layout.setContentsMargins(4, 2, 4, 2)
-            entry_layout.setSpacing(4)
-            entry_layout.addWidget(swatch)
-            entry_layout.addWidget(label)
-            entry_layout.addWidget(btn_ok)
-            entry_layout.addWidget(btn_review)
+            row_w = QWidget()
+            row_l = QHBoxLayout(row_w)
+            row_l.setContentsMargins(4, 2, 4, 2)
+            row_l.setSpacing(4)
+            row_l.addWidget(swatch)
+            row_l.addWidget(QLabel(str(mid)))
+            row_l.addWidget(btn_ok)
+            row_l.addWidget(btn_review)
 
-            entry_widget = QWidget()
-            entry_widget.setLayout(entry_layout)
             bg = self._STATUS_BG.get(status)
             if bg:
-                entry_widget.setStyleSheet(
-                    f"background-color: {bg}; border-radius: 3px;"
-                )
+                row_w.setStyleSheet(f"background-color: {bg}; border-radius: 3px;")
 
-            self.legend_layout.addWidget(entry_widget, i // 2, i % 2)
+            self.legend_layout.addWidget(row_w, i // 2, i % 2)
 
+    def _update_legend_animal(self, combos: List[str]) -> None:
+        self._clear_legend()
+        for i, combo in enumerate(combos):
+            color = self._COMBO_COLORS.get(combo, (100, 100, 100))
+            swatch = QFrame()
+            swatch.setFixedSize(30, 4)
+            swatch.setStyleSheet(f"background-color: rgb({color[0]}, {color[1]}, {color[2]});")
+            row_w = QWidget()
+            row_l = QHBoxLayout(row_w)
+            row_l.setContentsMargins(4, 2, 4, 2)
+            row_l.setSpacing(4)
+            row_l.addWidget(swatch)
+            row_l.addWidget(QLabel(combo))
+            row_l.addStretch(1)
+            self.legend_layout.addWidget(row_w, i // 2, i % 2)
+
+    # ------------------------------------------------------------------
+    # Manifest flagging
+    # ------------------------------------------------------------------
     def _flag_sleep_qc(self, mid: str, status: str) -> None:
-        if self._current_channels is None or self._manifest.get(mid) is None:
+        combo = self.cmb_combo.currentText()
+        if not combo or self._manifest.get(mid) is None:
             return
-        # Ensure a RunEntry exists for this (animal, channels) pair
-        if self._manifest.get_run(mid, self._current_channels) is None:
-            self._manifest.add_run(mid, self._current_channels)
-        self._manifest.flag_sleep_qc(mid, self._current_channels, status)
-        mice = self._get_mice_for_current_page()
-        mouse_colors = self._build_mouse_color_map(mice)
-        self._update_color_legend(mice, mouse_colors)
+        if self._manifest.get_run(mid, combo) is None:
+            self._manifest.add_run(mid, combo)
+        self._manifest.flag_sleep_qc(mid, combo, status)
+        mice = self._get_page_mice()
+        self._update_legend_group(mice, self._build_mouse_color_map(mice))
 
-    def _flag_rerun(self, mid: str) -> None:
-        entry = self._manifest.get(mid)
-        current = entry.spindle_channels if entry else None
-        default_idx = (
-            self._CHANNEL_COMBOS.index(current)
-            if current in self._CHANNEL_COMBOS
-            else 0
-        )
-        choice, ok = QInputDialog.getItem(
-            self, f"Rerun: {mid}", "Select new channel combo:",
-            self._CHANNEL_COMBOS, default_idx, editable=False,
-        )
-        if ok:
-            self._manifest.flag_sleep_qc(mid, "rerun_channels", rerun_channels=choice)
-            mice = self._get_mice_for_current_page()
-            mouse_colors = self._build_mouse_color_map(mice)
-            self._update_color_legend(mice, mouse_colors)
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _vsep(parent: QWidget) -> QFrame:
+    f = QFrame(parent)
+    f.setFrameShape(QFrame.Shape.VLine)
+    f.setFrameShadow(QFrame.Shadow.Sunken)
+    return f

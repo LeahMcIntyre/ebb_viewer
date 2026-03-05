@@ -13,6 +13,7 @@ from ebb.masking import get_offset
 
 from ebb_viewer.widgets.drink_mask_dialog import DrinkMaskDialogue
 from ebb_viewer.widgets.stft_viewer import STFTPopup, STFTBoundsDialog
+from ebb_viewer.widgets.sleep_viewer import SleepPopup
 
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
@@ -108,6 +109,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.act_stft_bounds = QtGui.QAction("STFT Bounds…", self)
         self.act_stft_bounds.triggered.connect(self.on_stft_bounds)
 
+        self.act_plot_sleep = QtGui.QAction("Plot Sleep Data", self)
+        self.act_plot_sleep.triggered.connect(self.on_plot_sleep)
+
     # ---------- menus / toolbars / docks ----------
 
     def _build_menus(self):
@@ -123,6 +127,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
 
         m_view = mb.addMenu("&View")
+        m_view.addAction(self.act_plot_sleep)
 
         m_tools = mb.addMenu("&Tools")
         m_tools.addAction(self.act_stft)
@@ -167,6 +172,18 @@ class EegMainWindow(QtWidgets.QMainWindow):
         )
         if dlg.exec():
             self.stft_fmin, self.stft_fmax = dlg.values()
+
+    def on_plot_sleep(self):
+        if not self.rec.csv_path:
+            return
+
+        self._sleep_popup = SleepPopup(parent=self)
+        self._sleep_popup.plot_sleep(self.rec.csv_path)
+        self._sleep_popup.resize(1000, 800)
+        self._sleep_popup.show()
+        self._sleep_popup.raise_()
+        
+        
 
     def _navigate_mask(self, mask, forward: bool) -> None:
         span = mask.next_span_after(self.trace_view.center_sample) if forward else mask.prev_span_before(self.trace_view.center_sample)
@@ -396,20 +413,19 @@ def launch_edf_window(
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
-    
+    """
     # initial dir and one dataset load (as you already do)
     initial_dir = "/media/matt/Data_A/leah/SRA/SRA_6_mo"
     edf_path, csv_path = pick_edf_csv(None, initial_dir)
     if not edf_path:
-        return
+        return"""
     
 
-    """
     initial_dir = "/media/matt/Data_A/leah/Stxbp1 characterization"
 
     edf_path = '/media/matt/Data_A/leah/Stxbp1 characterization/standard/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED.edf'
     csv_path = '/media/matt/Data_A/leah/Stxbp1 characterization/spindle_outputs/LFC_RSC/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED_SPINDLE_labels.csv'
-    """
+
     with edf.Reader(str(edf_path)) as reader:
         data = reader.read(start=0)
         fs = int(reader.header.samples_per_record[0])
