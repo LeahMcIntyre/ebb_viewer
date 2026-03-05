@@ -67,14 +67,22 @@ class PSDVisualizer(QWidget):
             return
 
         channel_names = ["LFC", "RSC", "LSC"]
+        # Infer run_channels from the PKL filename: psds_<COMBO>.pkl
+        stem = Path(psd_file).stem  # e.g. "psds_LFC_RSC"
+        run_channels = stem[len("psds_"):] if stem.startswith("psds_") else None
+
         self.psd_store = PSDStore(
             psd_file,
             channel_names=channel_names
-            )
-        self.psd_page = PSDGridPage(self, store=self.psd_store,
-                                    channel_names=channel_names,
-                                    states=['wake', 'nrem', 'rem'],
-                                    manifest=Manifest.load(self.project_root))
+        )
+        self.psd_page = PSDGridPage(
+            self,
+            store=self.psd_store,
+            channel_names=channel_names,
+            states=['wake', 'nrem', 'rem'],
+            manifest=Manifest.load(self.project_root),
+            run_channels=run_channels,
+        )
         self.root.addWidget(self.psd_page)
 
 

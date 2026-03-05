@@ -56,6 +56,7 @@ class SleepQCGridPage(QWidget):
         self._plots: Dict[Tuple[str, str], pg.PlotItem] = {}
         self._legend_items: Dict[int, Tuple[pg.GraphicsObject, str]] = {}
         self._manifest = Manifest.load(project_root)
+        self._current_channels: Optional[str] = None  # inferred from selected dir
 
         self._build_ui()
         self._wire()
@@ -192,6 +193,7 @@ class SleepQCGridPage(QWidget):
             return
 
         self._current_dir = Path(dirname)
+        self._current_channels = self._current_dir.name  # e.g. "LFC_RSC"
         self.dir_label.setText(str(self._current_dir))
 
         try:
@@ -449,8 +451,8 @@ class SleepQCGridPage(QWidget):
 
         for i, mid in enumerate(mice):
             color = mouse_colors[mid]
-            manifest_entry = self._manifest.get(mid)
-            status = manifest_entry.sleep_qc if manifest_entry else None
+            run = self._manifest.get_run(mid, self._current_channels) if self._current_channels else None
+            status = run.sleep_qc if run else None
 
             swatch = QFrame()
             swatch.setFixedSize(30, 4)
@@ -491,9 +493,12 @@ class SleepQCGridPage(QWidget):
             self.legend_layout.addWidget(entry_widget, i // 2, i % 2)
 
     def _flag_sleep_qc(self, mid: str, status: str) -> None:
-        if self._manifest.get(mid) is None:
+        if self._current_channels is None or self._manifest.get(mid) is None:
             return
-        self._manifest.flag_sleep_qc(mid, status)
+        # Ensure a RunEntry exists for this (animal, channels) pair
+        if self._manifest.get_run(mid, self._current_channels) is None:
+            self._manifest.add_run(mid, self._current_channels)
+        self._manifest.flag_sleep_qc(mid, self._current_channels, status)
         mice = self._get_mice_for_current_page()
         mouse_colors = self._build_mouse_color_map(mice)
         self._update_color_legend(mice, mouse_colors)

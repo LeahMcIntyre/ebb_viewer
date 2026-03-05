@@ -28,12 +28,14 @@ class PSDGridPage(QWidget):
         channel_names: List[str], # e.g., ["LFC","RSC","LSC"]
         states: List[str] = None, # e.g., ["wake","nrem","rem"]
         manifest=None,            # optional Manifest for per-animal flagging
+        run_channels: str | None = None,  # channel combo identifying which run this PSD belongs to
     ):
         super().__init__(parent)
         self.store = store
         self.channel_names = list(channel_names)
         self.states = list(states or ["wake", "nrem", "rem"])
         self.manifest = manifest
+        self.run_channels = run_channels
 
         # View preferences
         self.xrange: Tuple[float, float] = (0.5, 110)  # default window to show
@@ -335,30 +337,30 @@ class PSDGridPage(QWidget):
         return key.replace("_artifact", "").replace("_drink", "")
 
     def _flag_psd_ok(self) -> None:
-        if self.manifest is None:
+        if self.manifest is None or self.run_channels is None:
             return
         animal_id = self._manifest_animal_id()
         if animal_id is None:
             return
-        self.manifest.flag_psd(animal_id, "ok")
+        self.manifest.flag_psd(animal_id, self.run_channels, "ok")
         self._update_flag_status()
 
     def _flag_drink_mask(self) -> None:
-        if self.manifest is None:
+        if self.manifest is None or self.run_channels is None:
             return
         animal_id = self._manifest_animal_id()
         if animal_id is None:
             return
         drink_rel = f"drink_masks/{animal_id}.npy"
-        self.manifest.flag_psd(animal_id, "needs_drink_mask", drink_mask=drink_rel)
+        self.manifest.flag_psd(animal_id, self.run_channels, "needs_drink_mask", drink_mask=drink_rel)
         self._update_flag_status()
 
     def _update_flag_status(self) -> None:
-        if self.manifest is None:
+        if self.manifest is None or self.run_channels is None:
             return
         animal_id = self._manifest_animal_id()
-        entry = self.manifest.get(animal_id) if animal_id else None
-        status = entry.psd_status if entry else None
+        run = self.manifest.get_run(animal_id, self.run_channels) if animal_id else None
+        status = run.psd_status if run else None
         if status == "ok":
             self._status_label.setText("✓ OK")
             self._status_label.setStyleSheet("color: green; font-weight: bold;")

@@ -4,12 +4,17 @@ Stages:
   1. Preprocess       raw EDFs → standard/
   2. Spindle write    standard/ → spindle_edfs/<COMBO>/
   3. Upload/Download  spindle_edfs/<COMBO>/ ↔ SleepyRat → spindle_outputs/<COMBO>/
-  4. Sleep QC gate    flag: ok | needs_review | rerun_channels
+  4. Sleep QC gate    flag per run: ok | needs_review | needs_rerun
   5. PSD compute      standard/ + spindle_outputs/<COMBO>/ → psd/psds_<COMBO>.pkl
-  6. PSD review gate  flag: ok | needs_drink_mask
+  6. PSD review gate  flag per run: ok | needs_drink_mask
+  7. Final merge      psd/psds_final.pkl (one entry per animal from their ok run)
 
 The manifest lives at project_root/manifest.json.  One entry per animal;
 animal ID = first '_'-separated token of the preprocessed EDF stem.
+
+Each animal may have multiple spindle runs, one per channel combo tried
+(e.g. "LFC_RSC" initially, then "LSC_RSC" if a rerun was needed).
+Each run has its own independent QC lifecycle.
 """
 
 import json
@@ -22,8 +27,8 @@ from typing import Iterator
 # Valid status values
 # ---------------------------------------------------------------------------
 
-SLEEP_QC_STATUSES = frozenset({"ok", "needs_review", "rerun_channels"})
-PSD_STATUSES = frozenset({"ok", "needs_drink_mask"})
+SLEEP_QC_STATUSES = frozenset({"ok", "needs_review", "needs_rerun"})
+PSD_STATUSES      = frozenset({"ok", "needs_drink_mask"})
 
 
 # ---------------------------------------------------------------------------
@@ -31,24 +36,26 @@ PSD_STATUSES = frozenset({"ok", "needs_drink_mask"})
 # ---------------------------------------------------------------------------
 
 @dataclass
+class RunEntry:
+    """State for one (animal × channel combo) spindle run."""
+    sleep_qc:    str | None = None   # None | "ok" | "needs_review" | "needs_rerun"
+    rerun_combo: str | None = None   # target combo when sleep_qc == "needs_rerun"
+    psd_status:  str | None = None   # None | "ok" | "needs_drink_mask"
+    drink_mask:  str | None = None   # relative path to .npy
+
+
+@dataclass
 class ManifestEntry:
-    """Pipeline state for a single animal."""
+    """Pipeline state for a single animal, across all spindle runs."""
 
     animal_id: str
 
     # Stage 1 — Preprocess
     preprocessed_edf: str           # relative path from project_root
 
-    # Stage 2 — Spindle write
-    spindle_channels: str | None = None   # e.g. "LFC_RSC"
-
-    # Stage 4 — Sleep QC gate
-    sleep_qc: str | None = None           # None | "ok" | "needs_review" | "rerun_channels"
-    rerun_channels: str | None = None     # set only when sleep_qc == "rerun_channels"
-
-    # Stage 6 — PSD review gate
-    psd_status: str | None = None         # None | "ok" | "needs_drink_mask"
-    drink_mask: str | None = None         # relative path to .npy
+    # Stage 2+ — one RunEntry per channel combo tried
+    runs: dict[str, RunEntry] = field(default_factory=dict)
+    # key = channel combo string, e.g. "LFC_RSC"
 
     notes: str = ""
 
@@ -57,28 +64,38 @@ class ManifestEntry:
 # Derived path helpers (not stored; computed on demand)
 # ---------------------------------------------------------------------------
 
-def spindle_edf_dir(entry: ManifestEntry, project_root: Path) -> Path:
-    if entry.spindle_channels is None:
-        raise ValueError(f"{entry.animal_id}: spindle_channels not set")
-    return project_root / "spindle_edfs" / entry.spindle_channels
+def spindle_edf_dir(channels: str, project_root: Path) -> Path:
+    return project_root / "spindle_edfs" / channels
 
 
-def spindle_output_dir(entry: ManifestEntry, project_root: Path) -> Path:
-    if entry.spindle_channels is None:
-        raise ValueError(f"{entry.animal_id}: spindle_channels not set")
-    return project_root / "spindle_outputs" / entry.spindle_channels
+def spindle_output_dir(channels: str, project_root: Path) -> Path:
+    return project_root / "spindle_outputs" / channels
 
 
-def psd_path(entry: ManifestEntry, project_root: Path) -> Path:
-    if entry.spindle_channels is None:
-        raise ValueError(f"{entry.animal_id}: spindle_channels not set")
-    return project_root / "psd" / f"psds_{entry.spindle_channels}.pkl"
+def psd_path(channels: str, project_root: Path) -> Path:
+    return project_root / "psd" / f"psds_{channels}.pkl"
 
 
-def drink_mask_path(entry: ManifestEntry, project_root: Path) -> Path | None:
-    if entry.drink_mask is None:
+def final_psd_path(project_root: Path) -> Path:
+    return project_root / "psd" / "psds_final.pkl"
+
+
+def drink_mask_path(run: RunEntry, project_root: Path) -> Path | None:
+    if run.drink_mask is None:
         return None
-    return project_root / entry.drink_mask
+    return project_root / run.drink_mask
+
+
+# ---------------------------------------------------------------------------
+# Serialisation helpers
+# ---------------------------------------------------------------------------
+
+def _run_to_dict(run: RunEntry) -> dict:
+    return asdict(run)
+
+
+def _run_from_dict(d: dict) -> RunEntry:
+    return RunEntry(**{k: v for k, v in d.items() if k in RunEntry.__dataclass_fields__})
 
 
 # ---------------------------------------------------------------------------
@@ -99,28 +116,68 @@ class Manifest:
 
     @classmethod
     def load(cls, project_root: Path) -> "Manifest":
-        """Load from manifest.json; return empty manifest if file is missing."""
+        """Load from manifest.json; return empty manifest if file is missing.
+
+        Handles migration from the old flat format (spindle_channels, sleep_qc,
+        psd_status as top-level fields) to the new per-run dict format.
+        """
         m = cls(project_root)
         if not m.path.exists():
             return m
         with m.path.open("r", encoding="utf-8") as f:
             raw = json.load(f)
         for animal_id, d in raw.items():
-            m._entries[animal_id] = ManifestEntry(animal_id=animal_id, **d)
+            # --- migration from old flat format ---
+            if "spindle_channels" in d:
+                old_ch      = d.pop("spindle_channels")
+                old_qc      = d.pop("sleep_qc", None)
+                old_rerun   = d.pop("rerun_channels", None)
+                old_psd     = d.pop("psd_status", None)
+                old_drink   = d.pop("drink_mask", None)
+                d.pop("notes", None)
+                runs: dict[str, RunEntry] = {}
+                if old_ch:
+                    # Map old "rerun_channels" status → "needs_rerun"
+                    if old_qc == "rerun_channels":
+                        runs[old_ch] = RunEntry(
+                            sleep_qc="needs_rerun",
+                            rerun_combo=old_rerun,
+                        )
+                    else:
+                        runs[old_ch] = RunEntry(
+                            sleep_qc=old_qc,
+                            psd_status=old_psd,
+                            drink_mask=old_drink,
+                        )
+                m._entries[animal_id] = ManifestEntry(
+                    animal_id=animal_id,
+                    preprocessed_edf=d.get("preprocessed_edf", ""),
+                    runs=runs,
+                    notes=d.get("notes", ""),
+                )
+            else:
+                # New format
+                runs_raw = d.pop("runs", {})
+                runs = {combo: _run_from_dict(r) for combo, r in runs_raw.items()}
+                m._entries[animal_id] = ManifestEntry(
+                    animal_id=animal_id,
+                    runs=runs,
+                    **d,
+                )
         return m
 
     @classmethod
     def build_from_standard(cls, project_root: Path) -> "Manifest":
         """Load existing manifest, scan standard/ + spindle folders, and sync.
 
-        - Adds entries for any new EDFs found in standard/ (animal_id + preprocessed_edf).
-        - For entries where spindle_channels is None, scans spindle_edfs/ and
-          spindle_outputs/ to infer the channel combo from the folder structure.
-        - Existing non-None fields are never overwritten.
+        - Adds ManifestEntry for any new EDFs found in standard/.
+        - Adds a RunEntry for each (animal, combo) found in spindle_edfs/ or
+          spindle_outputs/ that doesn't already have one.
+        - Existing entries and run statuses are never overwritten.
         """
         m = cls.load(project_root)
 
-        # 1. Add new entries from standard/
+        # 1. Add new animal entries from standard/
         standard = project_root / "standard"
         if standard.is_dir():
             for edf in sorted(standard.glob("*.edf")):
@@ -131,33 +188,22 @@ class Manifest:
                         preprocessed_edf=str(edf.relative_to(project_root)),
                     )
 
-        # 2. Infer spindle_channels for entries that don't have it set yet.
-        #    Scan spindle_edfs/<COMBO>/ and spindle_outputs/<COMBO>/ for files
-        #    matching the animal_id prefix.  Prefer spindle_outputs if found there
-        #    (more likely to be the completed run), fall back to spindle_edfs.
-        #    If both contain multiple combos for the same animal, pick the most
-        #    recently modified file's combo.
+        # 2. Add RunEntry for each (animal, combo) found on disk
         for subdir in ("spindle_outputs", "spindle_edfs"):
             root_dir = project_root / subdir
             if not root_dir.is_dir():
                 continue
-            # Build: animal_id -> [(mtime, combo), ...]
-            found: dict[str, list[tuple[float, str]]] = {}
-            for combo_dir in root_dir.iterdir():
+            for combo_dir in sorted(root_dir.iterdir()):
                 if not combo_dir.is_dir():
                     continue
                 combo = combo_dir.name
                 for f in combo_dir.iterdir():
                     animal_id = f.stem.split("_")[0]
-                    if animal_id in m._entries:
-                        found.setdefault(animal_id, []).append(
-                            (f.stat().st_mtime, combo)
-                        )
-            # Apply: pick the combo from the most recently modified file
-            for animal_id, hits in found.items():
-                if m._entries[animal_id].spindle_channels is None:
-                    best_combo = max(hits, key=lambda x: x[0])[1]
-                    m._entries[animal_id].spindle_channels = best_combo
+                    if animal_id not in m._entries:
+                        continue
+                    entry = m._entries[animal_id]
+                    if combo not in entry.runs:
+                        entry.runs[combo] = RunEntry()
 
         m.save()
         return m
@@ -172,9 +218,14 @@ class Manifest:
         tmp = self.path.with_suffix(".json.tmp")
         data = {}
         for animal_id, entry in self._entries.items():
-            d = asdict(entry)
-            d.pop("animal_id")   # stored as key, not field
-            data[animal_id] = d
+            data[animal_id] = {
+                "preprocessed_edf": entry.preprocessed_edf,
+                "notes": entry.notes,
+                "runs": {
+                    combo: _run_to_dict(run)
+                    for combo, run in entry.runs.items()
+                },
+            }
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         tmp.replace(self.path)
@@ -189,6 +240,20 @@ class Manifest:
     def get(self, animal_id: str) -> ManifestEntry | None:
         return self._entries.get(animal_id)
 
+    def get_run(self, animal_id: str, channels: str) -> RunEntry | None:
+        entry = self._entries.get(animal_id)
+        if entry is None:
+            return None
+        return entry.runs.get(channels)
+
+    def add_run(self, animal_id: str, channels: str) -> RunEntry:
+        """Add a RunEntry for (animal_id, channels) if not present; return it."""
+        entry = self._entries[animal_id]
+        if channels not in entry.runs:
+            entry.runs[channels] = RunEntry()
+            self.save()
+        return entry.runs[channels]
+
     def __iter__(self) -> Iterator[ManifestEntry]:
         return iter(self._entries.values())
 
@@ -199,36 +264,55 @@ class Manifest:
         return animal_id in self._entries
 
     # ------------------------------------------------------------------
-    # Filtered views
+    # Filtered views — return (entry, channels) tuples
     # ------------------------------------------------------------------
 
-    def pending_sleep_qc(self) -> list[ManifestEntry]:
-        """Entries that have spindle outputs but haven't been QC'd yet."""
+    def pending_sleep_qc(self) -> list[tuple[ManifestEntry, str]]:
+        """Runs that exist but haven't been QC'd yet."""
         return [
-            e for e in self
-            if e.spindle_channels is not None and e.sleep_qc is None
+            (entry, combo)
+            for entry in self
+            for combo, run in entry.runs.items()
+            if run.sleep_qc is None
         ]
 
-    def needs_review(self) -> list[ManifestEntry]:
-        """Entries flagged for EDF viewer review."""
-        return [e for e in self if e.sleep_qc == "needs_review"]
-
-    def needs_rerun(self) -> list[ManifestEntry]:
-        """Entries flagged for spindle rerun with different channels."""
-        return [e for e in self if e.sleep_qc == "rerun_channels"]
-
-    def pending_psd_review(self) -> list[ManifestEntry]:
-        """Entries that have a PSD file but haven't been reviewed yet."""
+    def needs_review(self) -> list[tuple[ManifestEntry, str]]:
+        """Runs flagged for EDF viewer review."""
         return [
-            e for e in self
-            if e.spindle_channels is not None
-            and psd_path(e, self.project_root).exists()
-            and e.psd_status is None
+            (entry, combo)
+            for entry in self
+            for combo, run in entry.runs.items()
+            if run.sleep_qc == "needs_review"
         ]
 
-    def needs_drink_mask(self) -> list[ManifestEntry]:
-        """Entries flagged as having drinking sidebands in the PSD."""
-        return [e for e in self if e.psd_status == "needs_drink_mask"]
+    def needs_rerun(self) -> list[tuple[ManifestEntry, str]]:
+        """Runs flagged for spindle rerun with a different channel combo."""
+        return [
+            (entry, combo)
+            for entry in self
+            for combo, run in entry.runs.items()
+            if run.sleep_qc == "needs_rerun"
+        ]
+
+    def pending_psd_review(self) -> list[tuple[ManifestEntry, str]]:
+        """Runs whose PSD file exists but hasn't been reviewed yet."""
+        return [
+            (entry, combo)
+            for entry in self
+            for combo, run in entry.runs.items()
+            if run.sleep_qc == "ok"
+            and run.psd_status is None
+            and psd_path(combo, self.project_root).exists()
+        ]
+
+    def needs_drink_mask(self) -> list[tuple[ManifestEntry, str]]:
+        """Runs flagged as having drinking sidebands in the PSD."""
+        return [
+            (entry, combo)
+            for entry in self
+            for combo, run in entry.runs.items()
+            if run.psd_status == "needs_drink_mask"
+        ]
 
     # ------------------------------------------------------------------
     # Flagging
@@ -237,60 +321,59 @@ class Manifest:
     def flag_sleep_qc(
         self,
         animal_id: str,
+        channels: str,
         status: str,
-        rerun_channels: str | None = None,
+        rerun_combo: str | None = None,
     ) -> None:
-        """Set the sleep QC flag for an animal and save.
+        """Set the sleep QC flag for a specific (animal, channels) run.
 
         Args:
-            animal_id: Animal to update.
-            status: One of "ok", "needs_review", "rerun_channels".
-            rerun_channels: Channel combo string (e.g. "RSC_LSC") required
-                when status == "rerun_channels".
+            animal_id:   Animal to update.
+            channels:    Channel combo string identifying the run (e.g. "LFC_RSC").
+            status:      One of "ok", "needs_review", "needs_rerun".
+            rerun_combo: New channel combo to use for the rerun; required when
+                         status == "needs_rerun".
         """
         if status not in SLEEP_QC_STATUSES:
             raise ValueError(f"Invalid sleep_qc status {status!r}; must be one of {SLEEP_QC_STATUSES}")
-        if status == "rerun_channels" and not rerun_channels:
-            raise ValueError("rerun_channels must be provided when status == 'rerun_channels'")
-        entry = self._entries[animal_id]
-        entry.sleep_qc = status
-        entry.rerun_channels = rerun_channels if status == "rerun_channels" else None
+        if status == "needs_rerun" and not rerun_combo:
+            raise ValueError("rerun_combo required when status == 'needs_rerun'")
+        run = self._entries[animal_id].runs[channels]
+        run.sleep_qc = status
+        run.rerun_combo = rerun_combo if status == "needs_rerun" else None
         self.save()
 
     def flag_psd(
         self,
         animal_id: str,
+        channels: str,
         status: str,
         drink_mask: str | None = None,
     ) -> None:
-        """Set the PSD review flag for an animal and save.
+        """Set the PSD review flag for a specific (animal, channels) run.
 
         Args:
-            animal_id: Animal to update.
-            status: One of "ok", "needs_drink_mask".
-            drink_mask: Relative path to .npy file (e.g. "drink_masks/Mice-1234.npy")
-                required when status == "needs_drink_mask".
+            animal_id:  Animal to update.
+            channels:   Channel combo string identifying the run.
+            status:     One of "ok", "needs_drink_mask".
+            drink_mask: Relative path to .npy (e.g. "drink_masks/Mice-1234.npy");
+                        required when status == "needs_drink_mask".
         """
         if status not in PSD_STATUSES:
             raise ValueError(f"Invalid psd_status {status!r}; must be one of {PSD_STATUSES}")
-        entry = self._entries[animal_id]
-        entry.psd_status = status
-        entry.drink_mask = drink_mask if status == "needs_drink_mask" else None
+        run = self._entries[animal_id].runs[channels]
+        run.psd_status = status
+        run.drink_mask = drink_mask if status == "needs_drink_mask" else None
         self.save()
 
-    def set_spindle_channels(self, animal_id: str, channels: str) -> None:
-        """Record which channel combo was used for spindle write and save."""
-        self._entries[animal_id].spindle_channels = channels
+    def reset_sleep_qc(self, animal_id: str, channels: str) -> None:
+        """Clear sleep QC status for a specific run."""
+        run = self._entries[animal_id].runs[channels]
+        run.sleep_qc = None
+        run.rerun_combo = None
         self.save()
 
-    def reset_sleep_qc(self, animal_id: str) -> None:
-        """Clear sleep QC status (e.g. after a channel rerun) and save."""
-        entry = self._entries[animal_id]
-        entry.sleep_qc = None
-        entry.rerun_channels = None
-        self.save()
-
-    def reset_psd_status(self, animal_id: str) -> None:
-        """Clear PSD status (e.g. after drink mask rerun) and save."""
-        self._entries[animal_id].psd_status = None
+    def reset_psd_status(self, animal_id: str, channels: str) -> None:
+        """Clear PSD review status for a specific run."""
+        self._entries[animal_id].runs[channels].psd_status = None
         self.save()
