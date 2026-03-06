@@ -2,11 +2,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np, pickle
 
-# TODO: Make this more flexible/customizable
+from ebb_viewer.pipeline.naming import parse_animal_id
+
+
 def parse_animal_from_path(path: Union[str, Path]) -> str:
-    """Example: take the EDF stem up to first space as the animal ID."""
-    stem = Path(path).stem
-    return stem.split('_')[0] if "_" in stem else stem
+    return parse_animal_id(path)
 
 def parse_animal_from_path_masks(rec: Dict) -> str:
     stem = Path(rec['path']).stem

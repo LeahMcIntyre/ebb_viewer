@@ -13,8 +13,7 @@ from ebb_viewer.pipeline.manifest import (
     Manifest, ManifestEntry, RunEntry,
     psd_path, spindle_output_dir,
 )
-
-_CHANNEL_COMBOS = ["LFC_RSC", "LFC_LSC", "RSC_LSC", "LFC", "RSC", "LSC"]
+from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, drink_mask_rel
 
 
 # Pipeline stage columns
@@ -200,13 +199,16 @@ class HomePage(QWidget):
             ))
 
             # 7: PSD Status
-            drink_mask_file = run.drink_mask if run else None
-            has_drink_mask = drink_mask_file is not None and (self.project_root / drink_mask_file).is_file()
+            has_drink_mask = (
+                run is not None
+                and psd_status == "needs_drink_mask"
+                and (self.project_root / drink_mask_rel(entry.animal_id)).is_file()
+            )
             if psd_status == "drink_mask_applied":
                 txt, bg = "drink mask applied", _STATUS_COLOR["drink_mask_applied"]
             elif psd_status == "needs_drink_mask":
                 if has_drink_mask:
-                    txt, bg = "has drink mask", _EXISTS_COLOR
+                    txt, bg = "drink mask ready", _STATUS_COLOR["needs_drink_mask"]
                 else:
                     txt, bg = "needs drink mask", _STATUS_COLOR["needs_drink_mask"]
             elif psd_status == "ok":
@@ -281,8 +283,8 @@ class HomePage(QWidget):
         h.addWidget(btn_ok)
 
         rerun_combo = QComboBox()
-        rerun_combo.addItems(_CHANNEL_COMBOS)
-        others = [c for c in _CHANNEL_COMBOS if c != channels]
+        rerun_combo.addItems(CHANNEL_COMBOS)
+        others = [c for c in CHANNEL_COMBOS if c != channels]
         if others:
             rerun_combo.setCurrentText(others[0])
 

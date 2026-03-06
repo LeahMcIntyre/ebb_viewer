@@ -22,6 +22,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterator
 
+from ebb_viewer.pipeline.naming import drink_mask_rel, parse_animal_id
+
 
 # ---------------------------------------------------------------------------
 # Valid status values
@@ -181,7 +183,7 @@ class Manifest:
         standard = project_root / "standard"
         if standard.is_dir():
             for edf in sorted(standard.glob("*.edf")):
-                animal_id = edf.stem.split("_")[0]
+                animal_id = parse_animal_id(edf)
                 if animal_id not in m._entries:
                     m._entries[animal_id] = ManifestEntry(
                         animal_id=animal_id,
@@ -198,10 +200,19 @@ class Manifest:
                     continue
                 combo = combo_dir.name
                 for f in combo_dir.iterdir():
-                    animal_id = f.stem.split("_")[0]
+                    animal_id = parse_animal_id(f)
                     if animal_id not in m._entries:
                         continue
                     entry = m._entries[animal_id]
+                    if combo not in entry.runs:
+                        entry.runs[combo] = RunEntry()
+
+        # 3. Add RunEntry for each combo found in psd/psds_<COMBO>.pkl files
+        psd_dir = project_root / "psd"
+        if psd_dir.is_dir():
+            for pkl in sorted(psd_dir.glob("psds_*.pkl")):
+                combo = pkl.stem[len("psds_"):]
+                for entry in m._entries.values():
                     if combo not in entry.runs:
                         entry.runs[combo] = RunEntry()
 
@@ -321,8 +332,7 @@ class Manifest:
             for entry in self
             for combo, run in entry.runs.items()
             if run.psd_status == "needs_drink_mask"
-            and run.drink_mask is not None
-            and (self.project_root / run.drink_mask).is_file()
+            and (self.project_root / drink_mask_rel(entry.animal_id)).is_file()
         ]
 
     # ------------------------------------------------------------------
@@ -354,31 +364,23 @@ class Manifest:
         run.rerun_combo = rerun_combo if status == "needs_rerun" else None
         self.save()
 
-    def flag_psd(
-        self,
-        animal_id: str,
-        channels: str,
-        status: str,
-        drink_mask: str | None = None,
-    ) -> None:
+    def flag_psd(self, animal_id: str, channels: str, status: str) -> None:
         """Set the PSD review flag for a specific (animal, channels) run.
 
         Args:
             animal_id:  Animal to update.
             channels:   Channel combo string identifying the run.
-            status:     One of "ok", "needs_drink_mask".
-            drink_mask: Relative path to .npy (e.g. "drink_masks/Mice-1234.npy");
-                        required when status == "needs_drink_mask".
+            status:     One of "ok", "needs_drink_mask", "drink_mask_applied".
         """
         if status not in PSD_STATUSES:
             raise ValueError(f"Invalid psd_status {status!r}; must be one of {PSD_STATUSES}")
         run = self._entries[animal_id].runs[channels]
         run.psd_status = status
-        if status == "needs_drink_mask":
-            run.drink_mask = drink_mask
+        if status == "drink_mask_applied":
+            run.drink_mask = drink_mask_rel(animal_id)
         elif status == "ok":
             run.drink_mask = None
-        # "drink_mask_applied": preserve existing drink_mask path
+        # "needs_drink_mask": leave drink_mask as None until rerun is applied
         self.save()
 
     def reset_sleep_qc(self, animal_id: str, channels: str) -> None:

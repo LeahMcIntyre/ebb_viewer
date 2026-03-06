@@ -23,8 +23,7 @@ from ebb_viewer.edf_viewer.mask_builder import (
     rebuild_artifact_masks, rebuild_spindle_mask, rebuild_drink_mask,
 )
 from ebb_viewer.edf_viewer.masks_dock import MasksDock
-
-_CHANNEL_COMBOS = ["LFC_RSC", "LFC_LSC", "RSC_LSC", "LFC", "RSC", "LSC"]
+from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, parse_animal_id
 
 
 
@@ -219,12 +218,12 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         # Rerun combo: pick a different combo from the current run_channels
         self._rerun_combo = QtWidgets.QComboBox()
-        self._rerun_combo.addItems(_CHANNEL_COMBOS)
+        self._rerun_combo.addItems(CHANNEL_COMBOS)
         run = self.manifest.get_run(self.animal_id, self.run_channels)
-        if run and run.rerun_combo and run.rerun_combo in _CHANNEL_COMBOS:
+        if run and run.rerun_combo and run.rerun_combo in CHANNEL_COMBOS:
             self._rerun_combo.setCurrentText(run.rerun_combo)
         else:
-            others = [c for c in _CHANNEL_COMBOS if c != self.run_channels]
+            others = [c for c in CHANNEL_COMBOS if c != self.run_channels]
             if others:
                 self._rerun_combo.setCurrentText(others[0])
         qc_tb.addWidget(self._rerun_combo)
@@ -438,7 +437,7 @@ def main():
 
     fmt_eeg = "%d.%m.%y %H.%M.%S"
     start_time = datetime.strptime(f"{date_str} {start_str}", fmt_eeg)
-    animal = Path(edf_path).stem.split("_")[0]
+    animal = parse_animal_id(edf_path)
     
     ch_names = ("LFC", "RSC", "LSC", "EMG")
 

@@ -13,6 +13,7 @@ from fooof.utils import interpolate_spectrum
 
 from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
 
+
 INVERSE_FILTER = np.array([2.485297985, 1.360646853, 1.145286775, 1.071699399, 1.038017048, 1.018656356, 1.007806318])
 FILTER_RANGE = [0.5, 3.5] #Filter applied in filter range (inclusive)
 
@@ -360,8 +361,7 @@ class PSDGridPage(QWidget):
         animal_id = self._manifest_animal_id()
         if animal_id is None:
             return
-        drink_rel = f"drink_masks/{animal_id}.npy"
-        self.manifest.flag_psd(animal_id, self.run_channels, "needs_drink_mask", drink_mask=drink_rel)
+        self.manifest.flag_psd(animal_id, self.run_channels, "needs_drink_mask")
         self._update_flag_status()
 
     def _update_flag_status(self) -> None:
