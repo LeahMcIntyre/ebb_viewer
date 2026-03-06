@@ -133,6 +133,8 @@ class SpindleWritePage(QWidget):
         root.addWidget(folder_gb)
         root.addWidget(gb)
         root.addLayout(actions)
+        root.addStretch()
+
 
     # ------------ Wiring / Signals ------------
     def _wire(self):

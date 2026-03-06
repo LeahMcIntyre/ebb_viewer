@@ -281,11 +281,13 @@ class HomePage(QWidget):
         #h.addWidget(lbl_file, stretch=1)
 
         btn_open = QPushButton("Open EDF")
+        btn_open.setToolTip("View Standard EDF")
         btn_open.setFixedHeight(24)
         btn_open.clicked.connect(lambda _, e=entry, ch=channels: self._open_edf_for_animal(e, ch))
         h.addWidget(btn_open)
 
         btn_ok = QPushButton("✓ OK")
+        btn_ok.setToolTip("File OK, no spindle rerun necessary")
         btn_ok.setFixedHeight(24)
         btn_ok.clicked.connect(
             lambda _, mid=entry.animal_id, ch=channels: self._queue_flag_ok(mid, ch)
@@ -293,6 +295,7 @@ class HomePage(QWidget):
         h.addWidget(btn_ok)
 
         rerun_combo = QComboBox()
+        rerun_combo.setToolTip("Channel combination to rerun spindle with")
         rerun_combo.addItems(CHANNEL_COMBOS)
         others = [c for c in CHANNEL_COMBOS if c != channels]
         if others:
@@ -303,6 +306,7 @@ class HomePage(QWidget):
         h.addWidget(rerun_combo)
 
         btn_rerun = QPushButton("Needs Rerun")
+        btn_rerun.setToolTip("Mark file to be rerun with the selected channel combo")
         btn_rerun.setFixedHeight(24)
         btn_rerun.clicked.connect(
             lambda _, mid=entry.animal_id, ch=channels, c=rerun_combo:

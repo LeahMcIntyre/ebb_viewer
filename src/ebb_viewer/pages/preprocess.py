@@ -79,6 +79,7 @@ class PreprocessPage(QWidget):
 
         self.btn_run = QPushButton("Run preprocessing")
         root.addWidget(self.btn_run)
+        root.addStretch()
 
         # ----------- Set Style Sheets -----------
         folder_gb.setObjectName("folderBox")
