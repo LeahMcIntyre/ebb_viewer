@@ -68,8 +68,8 @@ class PSDVisualizer(QWidget):
 
         channel_names = ["LFC", "RSC", "LSC"]
         # Infer run_channels from the PKL filename: psds_<COMBO>.pkl
-        stem = Path(psd_file).stem  # e.g. "psds_LFC_RSC"
-        run_channels = stem[len("psds_"):] if stem.startswith("psds_") else None
+        stem = Path(psd_file).stem  # e.g. "psds_LFC_RSC" or "LFC_RSC"
+        run_channels = stem[len("psds_"):] if stem.startswith("psds_") else stem
 
         self.psd_store = PSDStore(
             psd_file,

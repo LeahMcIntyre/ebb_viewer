@@ -329,6 +329,15 @@ class PSDGridPage(QWidget):
 
     # ---------------- MANIFEST FLAGGING ----------------
 
+    def _pending_animal_ids(self) -> set[str]:
+        if self.manifest is None or self.run_channels is None:
+            return set()
+        return {
+            entry.animal_id
+            for entry, combo in self.manifest.pending_psd_review()
+            if combo == self.run_channels
+        }
+
     def _manifest_animal_id(self) -> str | None:
         """Strip _artifact/_drink suffixes from store key to get manifest animal_id."""
         key = self.cmb_animal.currentText()
@@ -367,6 +376,9 @@ class PSDGridPage(QWidget):
         elif status == "needs_drink_mask":
             self._status_label.setText("⚠ Drink Mask")
             self._status_label.setStyleSheet("color: orange; font-weight: bold;")
+        elif animal_id in self._pending_animal_ids():
+            self._status_label.setText("pending")
+            self._status_label.setStyleSheet("color: gray;")
         else:
             self._status_label.setText("")
             self._status_label.setStyleSheet("")

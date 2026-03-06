@@ -28,7 +28,7 @@ from typing import Iterator
 # ---------------------------------------------------------------------------
 
 SLEEP_QC_STATUSES = frozenset({"ok", "needs_review", "needs_rerun"})
-PSD_STATUSES      = frozenset({"ok", "needs_drink_mask"})
+PSD_STATUSES      = frozenset({"ok", "needs_drink_mask", "drink_mask_applied"})
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +314,17 @@ class Manifest:
             if run.psd_status == "needs_drink_mask"
         ]
 
+    def needs_drink_mask_rerun(self) -> list[tuple[ManifestEntry, str]]:
+        """Runs flagged needs_drink_mask where the drink mask file is present on disk."""
+        return [
+            (entry, combo)
+            for entry in self
+            for combo, run in entry.runs.items()
+            if run.psd_status == "needs_drink_mask"
+            and run.drink_mask is not None
+            and (self.project_root / run.drink_mask).is_file()
+        ]
+
     # ------------------------------------------------------------------
     # Flagging
     # ------------------------------------------------------------------
@@ -363,7 +374,11 @@ class Manifest:
             raise ValueError(f"Invalid psd_status {status!r}; must be one of {PSD_STATUSES}")
         run = self._entries[animal_id].runs[channels]
         run.psd_status = status
-        run.drink_mask = drink_mask if status == "needs_drink_mask" else None
+        if status == "needs_drink_mask":
+            run.drink_mask = drink_mask
+        elif status == "ok":
+            run.drink_mask = None
+        # "drink_mask_applied": preserve existing drink_mask path
         self.save()
 
     def reset_sleep_qc(self, animal_id: str, channels: str) -> None:

@@ -367,3 +367,78 @@ def batch_estimate(
     return results
 
 
+def rerun_with_drink_masks(
+    pkl_path: Union[str, Path],
+    eeg_dir: Union[str, Path],
+    state_dir: Union[str, Path],
+    drink_dir: Union[str, Path],
+    animal_ids: Sequence[str],
+    ncores: Optional[int] = None,
+    **kwargs,
+) -> None:
+    """Recompute PSDs for specific animals with drink masks and merge back into pkl.
+
+    Removes all existing entries for each animal_id, reruns estimate_psd with
+    the drink mask applied, then overwrites the pkl atomically.
+
+    Args:
+        pkl_path:   Path to the existing PSD pkl to update in-place.
+        eeg_dir:    Directory of preprocessed EDF files.
+        state_dir:  Directory of spindle state CSV files.
+        drink_dir:  Directory of drink mask .npy files (one per animal).
+        animal_ids: Animal IDs to rerun (everything before first '_' in EDF stem).
+        ncores:     Number of parallel workers (None = auto).
+        kwargs:     Passed through to estimate_psd (fs, winsize, etc.).
+    """
+    import warnings, tracemalloc
+
+    pkl_path = Path(pkl_path)
+    animal_ids_set = set(animal_ids)
+
+    # Load existing results and remove entries for the target animals
+    with open(pkl_path, "rb") as f:
+        existing: List[dict] = pickle.load(f)
+    if isinstance(existing, dict):
+        existing = [existing]
+
+    kept = [
+        e for e in existing
+        if Path(e["path"]).stem.split("_")[0] not in animal_ids_set
+    ]
+
+    # Find files only for the target animals
+    eeg_paths = [
+        p for p in sorted(Path(eeg_dir).glob("*PROCESSED.edf"))
+        if p.stem.split("_")[0] in animal_ids_set
+    ]
+    if not eeg_paths:
+        raise ValueError(f"No EDF files found for animals: {animal_ids_set}")
+
+    state_paths = sorted(Path(state_dir).glob("*.csv"))
+    drink_paths = sorted(Path(drink_dir).glob("*.npy"))
+    paired = match_paths(eeg_paths, state_paths, drink_paths=drink_paths)
+
+    tracemalloc.start()
+    warnings.filterwarnings("ignore", category=ResourceWarning)
+    [kwargs.pop(x, None) for x in ("path", "state_path")]
+
+    estimator = functools.partial(estimate_psd, **kwargs)
+    workers = concurrency.set_cores(ncores, len(paired))
+    t0 = time.perf_counter()
+    if workers == 1:
+        results_nested = [estimator(*args) for args in paired]
+    else:
+        with Pool(workers) as pool:
+            results_nested = pool.starmap(estimator, paired)
+    elapsed = time.perf_counter() - t0
+    print(f"Drink-mask rerun: {len(paired)} files in {elapsed:.1f}s")
+
+    new_dicts = [dataclasses.asdict(r) for sublist in results_nested for r in sublist]
+
+    # Atomic write: tmp → replace
+    tmp = pkl_path.with_suffix(".pkl.tmp")
+    with open(tmp, "wb") as f:
+        pickle.dump(kept + new_dicts, f)
+    tmp.replace(pkl_path)
+
+

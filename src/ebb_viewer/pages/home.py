@@ -25,10 +25,11 @@ _COLUMNS = [
 ]
 
 _STATUS_COLOR = {
-    "ok":                QColor("#d4edda"),   # green
-    "needs_review":      QColor("#fff3cd"),   # yellow
-    "needs_rerun":       QColor("#fde8ce"),   # orange
-    "needs_drink_mask":  QColor("#fde8ce"),   # orange
+    "ok":                  QColor("#d4edda"),   # green
+    "needs_review":        QColor("#fff3cd"),   # yellow
+    "needs_rerun":         QColor("#fde8ce"),   # orange
+    "needs_drink_mask":    QColor("#fde8ce"),   # orange
+    "drink_mask_applied":  QColor("#d4edda"),   # green
 }
 _PENDING_COLOR = QColor("#f0f0f0")            # light gray = reached but not yet flagged
 _EXISTS_COLOR  = QColor("#d4edda")            # green
@@ -102,8 +103,8 @@ class HomePage(QWidget):
 
         root_layout.addWidget(self.table)
 
-        # --- review queue ---
-        queue_lbl = QLabel("Review Queue")
+        # --- sleep review queue ---
+        queue_lbl = QLabel("Sleep QC Review Queue")
         queue_lbl.setStyleSheet("font-weight: bold; font-size: 13px;")
         root_layout.addWidget(queue_lbl)
 
@@ -199,12 +200,21 @@ class HomePage(QWidget):
             ))
 
             # 7: PSD Status
-            if psd_status is None:
-                txt = "pending" if psd_file_ok else "—"
-                bg  = _PENDING_COLOR if psd_file_ok else None
+            drink_mask_file = run.drink_mask if run else None
+            has_drink_mask = drink_mask_file is not None and (self.project_root / drink_mask_file).is_file()
+            if psd_status == "drink_mask_applied":
+                txt, bg = "drink mask applied", _STATUS_COLOR["drink_mask_applied"]
+            elif psd_status == "needs_drink_mask":
+                if has_drink_mask:
+                    txt, bg = "has drink mask", _EXISTS_COLOR
+                else:
+                    txt, bg = "needs drink mask", _STATUS_COLOR["needs_drink_mask"]
+            elif psd_status == "ok":
+                txt, bg = "ok", _EXISTS_COLOR
+            elif psd_file_ok:
+                txt, bg = "pending", _PENDING_COLOR
             else:
-                txt = psd_status
-                bg  = _STATUS_COLOR.get(psd_status)
+                txt, bg = "—", None
             self.table.setItem(row_idx, 7, _cell(txt, bg))
 
         self.table.resizeRowsToContents()
