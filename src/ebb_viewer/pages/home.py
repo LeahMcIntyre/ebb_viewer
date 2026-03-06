@@ -18,10 +18,12 @@ from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, drink_mask_rel
 
 # Pipeline stage columns
 _COLUMNS = [
-    "Animal", "Preprocessed", "Channels",
+    "Animal", "Runs", "Preprocessed", "Channels",
     "Spindle EDF", "Spindle Output",
     "Sleep QC", "PSD File", "PSD Status",
 ]
+
+_MULTIRUN_COLOR = QColor("#dce8f7")   # light blue = animal has multiple runs
 
 _STATUS_COLOR = {
     "ok":                  QColor("#d4edda"),   # green
@@ -96,8 +98,9 @@ class HomePage(QWidget):
 
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Animal
-        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)           # Preprocessed EDF
-        for col in range(2, len(_COLUMNS)):
+        hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Runs
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)           # Preprocessed EDF
+        for col in range(3, len(_COLUMNS)):
             hh.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
 
         root_layout.addWidget(self.table)
@@ -162,26 +165,33 @@ class HomePage(QWidget):
             # 0: Animal
             self.table.setItem(row_idx, 0, _cell(entry.animal_id))
 
-            # 1: Preprocessed EDF (filename only)
+            # 1: Runs
+            n_runs = len(entry.runs)
+            self.table.setItem(row_idx, 1, _cell(
+                str(n_runs),
+                _MULTIRUN_COLOR if n_runs > 1 else None,
+            ))
+
+            # 2: Preprocessed EDF (filename only)
             pre = Path(entry.preprocessed_edf).name if entry.preprocessed_edf else "—"
-            self.table.setItem(row_idx, 1, _cell(pre))
+            self.table.setItem(row_idx, 2, _cell(pre))
 
-            # 2: Channels
-            self.table.setItem(row_idx, 2, _cell(combo or "—"))
+            # 3: Channels
+            self.table.setItem(row_idx, 3, _cell(combo or "—"))
 
-            # 3: Spindle EDF
-            self.table.setItem(row_idx, 3, _cell(
+            # 4: Spindle EDF
+            self.table.setItem(row_idx, 4, _cell(
                 "✓" if spindle_edf_ok else "—",
                 _EXISTS_COLOR if spindle_edf_ok else None,
             ))
 
-            # 4: Spindle Output
-            self.table.setItem(row_idx, 4, _cell(
+            # 5: Spindle Output
+            self.table.setItem(row_idx, 5, _cell(
                 "✓" if spindle_out_ok else "—",
                 _EXISTS_COLOR if spindle_out_ok else None,
             ))
 
-            # 5: Sleep QC
+            # 6: Sleep QC
             if sleep_qc is None:
                 txt = "pending" if spindle_out_ok else "—"
                 bg  = _PENDING_COLOR if spindle_out_ok else None
@@ -190,15 +200,15 @@ class HomePage(QWidget):
                        if sleep_qc == "needs_rerun" and run.rerun_combo
                        else sleep_qc)
                 bg  = _STATUS_COLOR.get(sleep_qc)
-            self.table.setItem(row_idx, 5, _cell(txt, bg))
+            self.table.setItem(row_idx, 6, _cell(txt, bg))
 
-            # 6: PSD File
-            self.table.setItem(row_idx, 6, _cell(
+            # 7: PSD File
+            self.table.setItem(row_idx, 7, _cell(
                 "✓" if psd_file_ok else "—",
                 _EXISTS_COLOR if psd_file_ok else None,
             ))
 
-            # 7: PSD Status
+            # 8: PSD Status
             has_drink_mask = (
                 run is not None
                 and psd_status == "needs_drink_mask"
@@ -217,7 +227,7 @@ class HomePage(QWidget):
                 txt, bg = "pending", _PENDING_COLOR
             else:
                 txt, bg = "—", None
-            self.table.setItem(row_idx, 7, _cell(txt, bg))
+            self.table.setItem(row_idx, 8, _cell(txt, bg))
 
         self.table.resizeRowsToContents()
 

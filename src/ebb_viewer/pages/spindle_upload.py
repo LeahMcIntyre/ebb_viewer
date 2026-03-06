@@ -1,11 +1,11 @@
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QPushButton, QGroupBox, QMessageBox,
-    QListWidget, QListView, QPlainTextEdit, QApplication, QInputDialog,
+    QListWidget, QPlainTextEdit, QApplication, QInputDialog,
     QLabel, QComboBox, QSizePolicy
 )
 
@@ -383,87 +383,46 @@ class SpindleUploadPage(QWidget):
         return project, remote_folder, upload_dir, out_dir
 
 
-    def _download_only_labels(self, project: str, remote_folder: str, out_dir: Path):
-        """Shared label-download logic (used by both actions)."""
-        api = self._ensure_api()
-
-        # Ensure output dir exists
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        # Warn if output dir is not empty
-        existing = [p for p in out_dir.iterdir()]
-        if existing:
-            msg = (
-                "Output folder already exists and is not empty:\n\n"
-                f"{out_dir}\n\n"
-                "If you continue, new label CSVs will be mixed with existing files.\n"
-                "Continue anyway?"
-            )
+    def _check_output_dir(self, out_dir: Path) -> bool:
+        """Return True if safe to proceed (user confirmed or dir is empty)."""
+        if out_dir.exists() and any(out_dir.iterdir()):
             btn = QMessageBox.question(
-                self,
-                "Output Folder Not Empty",
-                msg,
+                self, "Output Folder Not Empty",
+                f"Output folder is not empty:\n\n{out_dir}\n\n"
+                "New CSVs will be mixed with existing files. Continue?",
                 QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Ok,
                 QMessageBox.StandardButton.Cancel,
             )
-            if btn != QMessageBox.StandardButton.Ok:
-                return
+            return btn == QMessageBox.StandardButton.Ok
+        return True
 
-        # Soft check remote contents
-        try:
-            info = api.get_submissions(project, remote_folder)
-            submissions = info.get("submissions", [])
-        except Exception as e:
-            self._log(f"ERROR checking remote folder: {e}")
-            QMessageBox.critical(
-                self,
-                "SleepyRat Error",
-                f"Could not check remote folder contents for:\n"
-                f"project='{project}', folder='{remote_folder}'\n\n{e}",
-            )
-            return
+    def _launch_worker(self, project, remote_folder, out_dir, *, upload_dir=None):
+        self.btn_upload_and_download.setEnabled(False)
+        self.btn_download_only.setEnabled(False)
 
-        if not submissions:
-            msg = (
-                "No submissions were found in this SleepyRat folder.\n\n"
-                f"project='{project}', folder='{remote_folder}'"
-            )
-            QMessageBox.warning(self, "No Submissions Found", msg)
-            return
+        self._sr_thread = QThread(self)
+        self._sr_worker = SleepyRatWorker(project, remote_folder, out_dir, upload_dir=upload_dir)
+        self._sr_worker.moveToThread(self._sr_thread)
 
-        # Ask confirmation if there are already submissions
-        if submissions:
-            msg = (
-                "The selected SleepyRat folder has "
-                f"{len(submissions)} submission(s).\n\n"
-                "Labels will be downloaded for this folder.\n"
-                "Continue?"
-            )
-            btn = QMessageBox.question(
-                self,
-                "Download Labels",
-                msg,
-                QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.Cancel,
-            )
-            if btn != QMessageBox.StandardButton.Ok:
-                return
+        self._sr_thread.started.connect(self._sr_worker.run)
+        self._sr_worker.log.connect(self._log)
+        self._sr_worker.finished.connect(self._on_sr_done)
+        self._sr_worker.error.connect(self._on_sr_error)
+        self._sr_worker.finished.connect(self._sr_thread.quit)
+        self._sr_worker.finished.connect(self._sr_worker.deleteLater)
+        self._sr_worker.error.connect(self._sr_thread.quit)
+        self._sr_worker.error.connect(self._sr_worker.deleteLater)
+        self._sr_thread.finished.connect(self._sr_thread.deleteLater)
 
-        # --- Download labels ---
-        self._log(f"Downloading labels into {out_dir}...")
-        try:
-            api.download_labels_all(
-                project, remote_folder, outdir=out_dir, threshold=0.5
-            )
-            self._log("Download complete.")
-            QMessageBox.information(
-                self,
-                "Download Complete",
-                f"Labels saved under:\n{out_dir}",
-            )
-        except Exception as e:
-            self._log(f"ERROR during label download: {e}")
-            QMessageBox.critical(self, "SleepyRat Error", str(e))
+        self._sr_thread.start()
+
+    def _on_sr_done(self):
+        self._update_run_enabled()
+
+    def _on_sr_error(self, msg: str):
+        self._log(f"ERROR: {msg}")
+        QMessageBox.critical(self, "SleepyRat Error", msg)
+        self._update_run_enabled()
 
     def _upload_and_download_clicked(self):
         ctx = self._get_common_run_context()
@@ -472,56 +431,66 @@ class SpindleUploadPage(QWidget):
         project, remote_folder, upload_dir, out_dir = ctx
 
         if upload_dir is None:
-            QMessageBox.critical(
-                self,
-                "No Upload Folder",
-                "No spindle EDF folder is selected."
-            )
+            QMessageBox.critical(self, "No Upload Folder", "No spindle EDF folder is selected.")
             return
-
         edfs = sorted(upload_dir.glob("*.edf"))
         if not edfs:
-            QMessageBox.critical(
-                self,
-                "No EDF Files Found",
-                f"No .edf files were found in:\n{upload_dir}",
-            )
+            QMessageBox.critical(self, "No EDF Files Found",
+                                 f"No .edf files were found in:\n{upload_dir}")
             return
-
-        api = self._ensure_api()
-
-        self.btn_upload_and_download.setEnabled(False)
-        self.btn_download_only.setEnabled(False)
-
-        self._log(f"Uploading EDFs from {upload_dir} to {project}/{remote_folder}...")
-        try:
-            api.upload_dir(project, remote_folder, upload_dir)
-            self._log("All EDFs uploaded. Waiting for processing...")
-            ok = api.wait_for_processing(project, remote_folder)
-            if not ok:
-                raise RuntimeError(
-                    "Processing did not finish within the wait limit."
-                )
-
-            # Once processing is done, do the download step
-            self._download_only_labels(project, remote_folder, out_dir)
-
-        except Exception as e:
-            self._log(f"ERROR during upload/wait/download: {e}")
-            QMessageBox.critical(self, "SleepyRat Error", str(e))
-        finally:
-            self._update_run_enabled()
-
+        if not self._check_output_dir(out_dir):
+            return
+        self._launch_worker(project, remote_folder, out_dir, upload_dir=upload_dir)
 
     def _download_only_clicked(self):
         ctx = self._get_common_run_context()
         if ctx is None:
             return
         project, remote_folder, _upload_dir, out_dir = ctx
+        if not self._check_output_dir(out_dir):
+            return
+        self._launch_worker(project, remote_folder, out_dir, upload_dir=None)
 
-        self.btn_upload_and_download.setEnabled(False)
-        self.btn_download_only.setEnabled(False)
+
+class SleepyRatWorker(QObject):
+    log      = pyqtSignal(str)
+    finished = pyqtSignal()
+    error    = pyqtSignal(str)
+
+    def __init__(self, project, remote_folder, out_dir, upload_dir=None, parent=None):
+        super().__init__(parent)
+        self.project       = project
+        self.remote_folder = remote_folder
+        self.out_dir       = Path(out_dir)
+        self.upload_dir    = Path(upload_dir) if upload_dir else None
+
+    def run(self):
+        from ebb.io.sleepyrat import SleepyRatAPI
         try:
-            self._download_only_labels(project, remote_folder, out_dir)
-        finally:
-            self._update_run_enabled()
+            api = SleepyRatAPI()
+            if self.upload_dir is not None:
+                self.log.emit(f"Uploading EDFs from {self.upload_dir}...")
+                api.upload_dir(self.project, self.remote_folder, self.upload_dir)
+                self.log.emit("Upload complete. Waiting for SleepyRat processing...")
+                ok = api.wait_for_processing(self.project, self.remote_folder)
+                if not ok:
+                    raise RuntimeError("Processing did not finish within the wait limit.")
+
+            self.log.emit("Checking remote submissions...")
+            info = api.get_submissions(self.project, self.remote_folder)
+            submissions = info.get("submissions", [])
+            if not submissions:
+                raise RuntimeError(
+                    f"No submissions found in project='{self.project}', "
+                    f"folder='{self.remote_folder}'"
+                )
+
+            self.out_dir.mkdir(parents=True, exist_ok=True)
+            self.log.emit(f"Downloading {len(submissions)} label(s) to {self.out_dir}...")
+            api.download_labels_all(
+                self.project, self.remote_folder, outdir=self.out_dir, threshold=0.5
+            )
+            self.log.emit("Download complete.")
+            self.finished.emit()
+        except Exception as e:
+            self.error.emit(str(e))
