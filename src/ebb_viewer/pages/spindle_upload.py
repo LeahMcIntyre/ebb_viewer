@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ebb.io.sleepyrat import SleepyRatAPI
+from ebb_viewer.pipeline import sleepyrat_config
 
 
 class SpindleUploadPage(QWidget):
@@ -26,8 +27,7 @@ class SpindleUploadPage(QWidget):
         super().__init__(parent)
         self.project_root = Path(project_root)
         self._api: Optional[SleepyRatAPI] = None
-
-
+        self._pending_save: Optional[tuple[str, str, str]] = None  # (combo, project, remote_folder)
 
         self._build_ui()
         self._wire()
@@ -396,9 +396,10 @@ class SpindleUploadPage(QWidget):
             return btn == QMessageBox.StandardButton.Ok
         return True
 
-    def _launch_worker(self, project, remote_folder, out_dir, *, upload_dir=None):
+    def _launch_worker(self, project, remote_folder, out_dir, *, upload_dir=None, save_combo: str | None = None):
         self.btn_upload_and_download.setEnabled(False)
         self.btn_download_only.setEnabled(False)
+        self._pending_save = (save_combo, project, remote_folder) if save_combo else None
 
         self._sr_thread = QThread(self)
         self._sr_worker = SleepyRatWorker(project, remote_folder, out_dir, upload_dir=upload_dir)
@@ -417,6 +418,10 @@ class SpindleUploadPage(QWidget):
         self._sr_thread.start()
 
     def _on_sr_done(self):
+        if self._pending_save:
+            combo, project, remote_folder = self._pending_save
+            sleepyrat_config.save_combo(self.project_root, combo, project, remote_folder)
+            self._pending_save = None
         self._update_run_enabled()
 
     def _on_sr_error(self, msg: str):
@@ -440,7 +445,8 @@ class SpindleUploadPage(QWidget):
             return
         if not self._check_output_dir(out_dir):
             return
-        self._launch_worker(project, remote_folder, out_dir, upload_dir=upload_dir)
+        combo = self._current_combo_name()
+        self._launch_worker(project, remote_folder, out_dir, upload_dir=upload_dir, save_combo=combo)
 
     def _download_only_clicked(self):
         ctx = self._get_common_run_context()

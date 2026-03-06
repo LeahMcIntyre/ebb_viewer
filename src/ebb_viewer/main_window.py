@@ -3,14 +3,16 @@ from typing import Optional
 
 from PyQt6.QtWidgets import (
     QMainWindow, QPushButton, QStackedLayout, QVBoxLayout, QWidget, QLabel,
-    QListWidget, QFileDialog, QHBoxLayout
+    QListWidget, QListWidgetItem, QFileDialog, QHBoxLayout
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 
 from ebb_viewer.pages.home import HomePage
 from ebb_viewer.pages.preprocess import PreprocessPage
 from ebb_viewer.pages.spindle import SpindleWritePage
 from ebb_viewer.pages.spindle_upload import SpindleUploadPage
+from ebb_viewer.pages.rerun import RerunPage
 from ebb_viewer.pages.psds import PSDPage
 from ebb_viewer.pages.psd_visualizer import PSDVisualizer
 from ebb_viewer.pages.sleep_visualizer import SleepMetricsPage
@@ -49,32 +51,55 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.lbl_project)
 
         self.pagelist = QListWidget()
-        self.pagelist.addItems(["Home", "Preprocess", "Spindle EDFs", "Spindle Upload", "Sleep Visualizer", "PSD Computation", 
-                                "PSD Visualizer"])
-        self.pagelist.setFixedWidth(140)
+        self.pagelist.setFixedWidth(160)
         sidebar_layout.addWidget(self.pagelist)
         sidebar_layout.addStretch(1)
 
-        # ----- Pages 
+        # ----- Pages (stack order must match _ROW_TO_STACK mapping below)
         self.home_page = HomePage(parent=self, project_root=self.project_root)
         self.preprocess_page = PreprocessPage(parent=self, project_root=self.project_root)
         self.spindle_write_page = SpindleWritePage(parent=self, project_root=self.project_root)
         self.spindle_upload_page = SpindleUploadPage(parent=self, project_root=self.project_root)
         self.sleep_combine_page = SleepQCGridPage(parent=self, project_root=self.project_root)
+        self.rerun_page = RerunPage(parent=self, project_root=self.project_root)
         self.psd_page = PSDPage(parent=self, project_root=self.project_root)
         self.psd_visualizer_page = PSDVisualizer(parent=self, project_root=self.project_root)
-        #self.sleep_visualizer_page = SleepMetricsPage(parent=self, project_root=self.project_root)
 
-
-        for w in (self.home_page, self.preprocess_page, self.spindle_write_page,self.spindle_upload_page, self.sleep_combine_page, 
+        for w in (self.home_page, self.preprocess_page, self.spindle_write_page,
+                  self.spindle_upload_page, self.sleep_combine_page, self.rerun_page,
                   self.psd_page, self.psd_visualizer_page):
             self.stacklayout.addWidget(w)
-        
 
+        # Build sidebar with separators.
+        # _ROW_TO_STACK maps list-row index → stack index (None = separator row).
+        _NAV = [
+            ("Home",               0),
+            None,
+            ("1. Preprocess",      1),
+            ("2. Spindle EDFs",    2),
+            ("3. Spindle Upload",  3),
+            None,
+            ("4. Sleep QC",        4),
+            ("5. Spindle Rerun",   5),
+            None,
+            ("6. PSD Computation", 6),
+            ("7. PSD Visualizer",  7),
+        ]
+        self._row_to_stack: dict[int, int] = {}
+        for row, entry in enumerate(_NAV):
+            if entry is None:
+                sep = QListWidgetItem("─────────────")
+                sep.setFlags(Qt.ItemFlag.NoItemFlags)
+                sep.setForeground(QColor("#bbbbbb"))
+                self.pagelist.addItem(sep)
+            else:
+                label, stack_idx = entry
+                self.pagelist.addItem(label)
+                self._row_to_stack[row] = stack_idx
 
         # ----- Navigation
         self.pagelist.currentRowChanged.connect(self.display)
-        self.pagelist.setCurrentRow(0) # show home page initially
+        self.pagelist.setCurrentRow(0)  # show home page initially
 
         # Central widget
         wrapper = QWidget()
@@ -83,4 +108,6 @@ class MainWindow(QMainWindow):
 
 
     def display(self, i: int):
-        self.stacklayout.setCurrentIndex(i)
+        stack_idx = self._row_to_stack.get(i)
+        if stack_idx is not None:
+            self.stacklayout.setCurrentIndex(stack_idx)
