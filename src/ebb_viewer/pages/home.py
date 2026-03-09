@@ -27,9 +27,9 @@ _MULTIRUN_COLOR = QColor("#dce8f7")   # light blue = animal has multiple runs
 
 _STATUS_COLOR = {
     "ok":                  QColor("#d4edda"),   # green
-    "needs_review":        QColor("#fff3cd"),   # yellow
-    "needs_rerun":         QColor("#fde8ce"),   # orange
-    "needs_drink_mask":    QColor("#fde8ce"),   # orange
+    "needs_review":        QColor("#FFF3CD"),   # yellow
+    "needs_rerun":         QColor("#E97B7B"),   # red
+    "needs_drink_mask":    QColor("#E97B7B"),   # red
     "drink_mask_applied":  QColor("#d4edda"),   # green
 }
 _PENDING_COLOR = QColor("#f0f0f0")            # light gray = reached but not yet flagged

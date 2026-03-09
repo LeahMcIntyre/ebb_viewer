@@ -518,23 +518,69 @@ class SleepQCGridPage(QWidget):
 
     def _update_legend_animal(self, combos: List[str]) -> None:
         self._clear_legend()
+        animal = self.cmb_animal.currentText()
         for i, combo in enumerate(combos):
             color = self._COMBO_COLORS.get(combo, (100, 100, 100))
+            run = self._manifest.get_run(animal, combo) if animal else None
+            status = run.sleep_qc if run else None
+
             swatch = QFrame()
             swatch.setFixedSize(30, 4)
             swatch.setStyleSheet(f"background-color: rgb({color[0]}, {color[1]}, {color[2]});")
+
+            btn_ok = QPushButton("OK")
+            btn_ok.setFixedHeight(22)
+            btn_ok.setCheckable(True)
+            btn_ok.setChecked(status == "ok")
+            btn_ok.clicked.connect(lambda _, c=combo: self._flag_animal_ok(c))
+
+            btn_review = QPushButton("Review")
+            btn_review.setFixedHeight(22)
+            btn_review.setCheckable(True)
+            btn_review.setChecked(status == "needs_review")
+            btn_review.clicked.connect(lambda _, c=combo: self._flag_animal_review(c))
+
             row_w = QWidget()
             row_l = QHBoxLayout(row_w)
             row_l.setContentsMargins(4, 2, 4, 2)
             row_l.setSpacing(4)
             row_l.addWidget(swatch)
             row_l.addWidget(QLabel(combo))
+            row_l.addWidget(btn_ok)
+            row_l.addWidget(btn_review)
             row_l.addStretch(1)
+
+            bg = self._STATUS_BG.get(status)
+            if bg:
+                row_w.setStyleSheet(f"background-color: {bg}; border-radius: 3px;")
+
             self.legend_layout.addWidget(row_w, i // 2, i % 2)
 
     # ------------------------------------------------------------------
     # Manifest flagging
     # ------------------------------------------------------------------
+    def _flag_animal_ok(self, combo: str) -> None:
+        animal = self.cmb_animal.currentText()
+        if not animal or self._manifest.get(animal) is None:
+            return
+        entry = self._manifest.get(animal)
+        for c, run in entry.runs.items():
+            if c != combo and run.sleep_qc == "ok":
+                self._manifest.reset_sleep_qc(animal, c)
+        if self._manifest.get_run(animal, combo) is None:
+            self._manifest.add_run(animal, combo)
+        self._manifest.flag_sleep_qc(animal, combo, "ok")
+        self._update_all_plots()
+
+    def _flag_animal_review(self, combo: str) -> None:
+        animal = self.cmb_animal.currentText()
+        if not animal or self._manifest.get(animal) is None:
+            return
+        if self._manifest.get_run(animal, combo) is None:
+            self._manifest.add_run(animal, combo)
+        self._manifest.flag_sleep_qc(animal, combo, "needs_review")
+        self._update_all_plots()
+
     def _flag_sleep_qc(self, mid: str, status: str) -> None:
         combo = self.cmb_combo.currentText()
         if not combo or self._manifest.get(mid) is None:
