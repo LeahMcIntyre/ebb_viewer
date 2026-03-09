@@ -6,10 +6,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QComboBox, QLabel, QPushButton, QSizePolicy,
-    QMessageBox, QSpinBox, QFrame,
+    QMessageBox, QSpinBox, QFrame, QScrollArea,
 )
 from ebb_viewer.pipeline.manifest import Manifest
 
@@ -167,7 +168,7 @@ class SleepQCGridPage(QWidget):
 
         layout.addWidget(self.grid, stretch=1)
 
-        # --- legend ---
+        # --- legend (in a scroll area so the plot grid can't collapse it) ---
         self.legend_container = QWidget()
         self.legend_layout = QGridLayout(self.legend_container)
         self.legend_layout.setContentsMargins(2, 2, 2, 2)
@@ -175,7 +176,13 @@ class SleepQCGridPage(QWidget):
         self.legend_layout.setHorizontalSpacing(40)
         self.legend_layout.setColumnStretch(0, 1)
         self.legend_layout.setColumnStretch(1, 1)
-        layout.addWidget(self.legend_container)
+
+        legend_scroll = QScrollArea()
+        legend_scroll.setWidget(self.legend_container)
+        legend_scroll.setWidgetResizable(True)
+        legend_scroll.setFixedHeight(140)
+        legend_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        layout.addWidget(legend_scroll)
 
     def _wire(self) -> None:
         self.cmb_combo.currentTextChanged.connect(self._on_combo_changed)
@@ -395,7 +402,6 @@ class SleepQCGridPage(QWidget):
             return
 
         df, x_col = self._ensure_x_col(df)
-        sub = df[df["mouse_id"].isin(mice)]
         mouse_colors = self._build_mouse_color_map(mice)
 
         for state in self.STATE_ORDER:
@@ -404,6 +410,11 @@ class SleepQCGridPage(QWidget):
                 if metric == self.METRIC_ORDER[-1][0]:
                     label = "Time (h)" if self.btn_offset.isChecked() else "Time (h) From EEG Start"
                     p.setLabel("bottom", label)
+
+        sub = df[df["mouse_id"].isin(mice)]
+        for state in self.STATE_ORDER:
+            for metric, _ in self.METRIC_ORDER:
+                p = self._plots[(metric, state)]
                 panel = sub[sub["state"] == state]
                 for mid in mice:
                     dm = panel[panel["mouse_id"] == mid].copy()
@@ -468,6 +479,7 @@ class SleepQCGridPage(QWidget):
     def _update_legend_group(self, mice: List[str], mouse_colors: dict) -> None:
         self._clear_legend()
         combo = self.cmb_combo.currentText()
+
         for i, mid in enumerate(mice):
             color = mouse_colors[mid]
             run = self._manifest.get_run(mid, combo) if combo else None

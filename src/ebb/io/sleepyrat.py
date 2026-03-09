@@ -85,8 +85,10 @@ class SleepyRatAPI:
         outdir = Path(outdir)
         outdir.mkdir(exist_ok=True)
         names = self.get_submission_names(project, folder)
-        for name in names: 
+        for name in names:
             new_path = Path(outdir, Path(name).stem + "_labels.csv")
+            if new_path.exists():
+                continue
             labels = self.download_labels(project, folder, name, threshold=threshold)
             with open(new_path, "w") as f:
                 f.write(labels)
