@@ -29,7 +29,7 @@ from ebb_viewer.pipeline.naming import drink_mask_rel, parse_animal_id
 # Valid status values
 # ---------------------------------------------------------------------------
 
-SLEEP_QC_STATUSES = frozenset({"ok", "needs_review", "needs_rerun"})
+SLEEP_QC_STATUSES = frozenset({"ok", "needs_review", "needs_rerun", "rejected"})
 PSD_STATUSES      = frozenset({"ok", "needs_drink_mask", "drink_mask_applied"})
 
 
@@ -40,10 +40,11 @@ PSD_STATUSES      = frozenset({"ok", "needs_drink_mask", "drink_mask_applied"})
 @dataclass
 class RunEntry:
     """State for one (animal × channel combo) spindle run."""
-    sleep_qc:    str | None = None   # None | "ok" | "needs_review" | "needs_rerun"
-    rerun_combo: str | None = None   # target combo when sleep_qc == "needs_rerun"
-    psd_status:  str | None = None   # None | "ok" | "needs_drink_mask"
-    drink_mask:  str | None = None   # relative path to .npy
+    sleep_qc:     str | None = None   # None | "ok" | "needs_review" | "needs_rerun" | "rejected"
+    rerun_combo:  str | None = None   # target combo when sleep_qc == "needs_rerun"
+    source_combo: str | None = None   # combo that triggered this run as a rerun
+    psd_status:   str | None = None   # None | "ok" | "needs_drink_mask"
+    drink_mask:   str | None = None   # relative path to .npy
 
 
 @dataclass
@@ -257,11 +258,11 @@ class Manifest:
             return None
         return entry.runs.get(channels)
 
-    def add_run(self, animal_id: str, channels: str) -> RunEntry:
+    def add_run(self, animal_id: str, channels: str, source_combo: str | None = None) -> RunEntry:
         """Add a RunEntry for (animal_id, channels) if not present; return it."""
         entry = self._entries[animal_id]
         if channels not in entry.runs:
-            entry.runs[channels] = RunEntry()
+            entry.runs[channels] = RunEntry(source_combo=source_combo)
             self.save()
         return entry.runs[channels]
 
@@ -294,6 +295,24 @@ class Manifest:
             for entry in self
             for combo, run in entry.runs.items()
             if run.sleep_qc == "needs_review"
+        ]
+
+    def pending_rerun_review(self) -> list[tuple[ManifestEntry, str]]:
+        """Rerun combos that have been processed and are awaiting review.
+
+        A combo is pending review when:
+        - it was triggered as a rerun (source_combo is set)
+        - it has not yet been reviewed (sleep_qc is None)
+        - spindle outputs exist on disk
+        """
+        return [
+            (entry, combo)
+            for entry in self
+            for combo, run in entry.runs.items()
+            if run.source_combo is not None
+            and run.sleep_qc is None
+            and spindle_output_dir(combo, self.project_root).is_dir()
+            and any(spindle_output_dir(combo, self.project_root).iterdir())
         ]
 
     def needs_rerun(self) -> list[tuple[ManifestEntry, str]]:
@@ -351,7 +370,7 @@ class Manifest:
         Args:
             animal_id:   Animal to update.
             channels:    Channel combo string identifying the run (e.g. "LFC_RSC").
-            status:      One of "ok", "needs_review", "needs_rerun".
+            status:      One of "ok", "needs_review", "needs_rerun", "rejected".
             rerun_combo: New channel combo to use for the rerun; required when
                          status == "needs_rerun".
         """

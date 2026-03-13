@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ebb.preprocess.edf import spindle as spindle_preprocess
-from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, spindle_edf_dir
+from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, spindle_edf_dir, spindle_output_dir
 from ebb_viewer.pipeline import sleepyrat_config
 from ebb_viewer.pages.spindle_upload import SleepyRatWorker
 
@@ -126,7 +126,19 @@ class RerunPage(QWidget):
     def _refresh(self):
         manifest = Manifest.load(self.project_root)
 
-        # Show entries where the rerun hasn't been registered yet, or hasn't been QC'd.
+        def _rerun_files_exist(entry: ManifestEntry, rerun_combo: str) -> bool:
+            """True if both a spindle EDF and spindle output already exist for the rerun combo."""
+            if not rerun_combo:
+                return False
+            animal_id = entry.animal_id
+            edf_dir = spindle_edf_dir(rerun_combo, self.project_root)
+            out_dir = spindle_output_dir(rerun_combo, self.project_root)
+            has_edf = edf_dir.is_dir() and any(edf_dir.glob(f"{animal_id}*.edf"))
+            has_output = out_dir.is_dir() and any(out_dir.glob(f"{animal_id}*"))
+            return has_edf and has_output
+
+        # Show entries where the rerun hasn't been registered yet, or hasn't been QC'd,
+        # and where the rerun files haven't already been generated.
         pairs = [
             (entry, combo)
             for entry, combo in manifest.needs_rerun()
@@ -134,6 +146,7 @@ class RerunPage(QWidget):
                 entry.runs[combo].rerun_combo not in entry.runs
                 or entry.runs[entry.runs[combo].rerun_combo].sleep_qc is None
             )
+            and not _rerun_files_exist(entry, entry.runs[combo].rerun_combo or "")
         ]
 
         self.table.setRowCount(len(pairs))
@@ -211,7 +224,7 @@ class RerunPage(QWidget):
                     self._log("  Spindle EDF already exists, skipping preprocessing.")
                 else:
                     spindle_preprocess(edf_path, savedir=target_dir, channels=channels)
-                manifest.add_run(entry.animal_id, rerun_combo)
+                manifest.add_run(entry.animal_id, rerun_combo, source_combo=combo)
                 written_combos.add((combo, rerun_combo))
                 written_files.setdefault(rerun_combo, []).extend(
                     target_dir.glob(f"{entry.animal_id}*.edf")

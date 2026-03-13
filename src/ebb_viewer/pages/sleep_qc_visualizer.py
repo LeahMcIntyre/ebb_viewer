@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 )
 from ebb_viewer.pipeline.manifest import Manifest
 
+
 import pyqtgraph as pg
 import matplotlib as mpl
 from ebb.process.sleep_compute import compute_sleep_bins_df, compute_sleep_bins_df_offset
@@ -27,6 +28,8 @@ class SleepQCGridPage(QWidget):
     with optional mean ± SD reference band.
 
     Animal mode: shows all available channel combos overlaid for one selected animal.
+    Includes a dashed group-mean reference line for the most prevalent "ok" combo.
+    Animals with at least one unreviewed run appear first in the dropdown.
     """
 
     STATE_ORDER = ["w", "n", "r"]
@@ -43,6 +46,7 @@ class SleepQCGridPage(QWidget):
         "ok":           "#d4edda",
         "needs_review": "#fff3cd",
         "needs_rerun":  "#fde8ce",
+        "rejected":     "#e8e8e8",
     }
 
     _COMBO_COLORS = {
@@ -74,7 +78,23 @@ class SleepQCGridPage(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._manifest = Manifest.load(self.project_root)
+        self._update_reruns_badge()
         self._refresh_combos()
+        if self._mode == "animal":
+            self._ensure_all_combos_loaded()
+            self._refresh_animal_combo()
+            self._update_all_plots()
+
+    def _update_reruns_badge(self) -> None:
+        pending = self._manifest.pending_rerun_review()
+        if pending:
+            n = len(pending)
+            self.lbl_reruns_ready.setText(
+                f"● {n} rerun{'s' if n != 1 else ''} ready for review"
+            )
+            self.lbl_reruns_ready.setVisible(True)
+        else:
+            self.lbl_reruns_ready.setVisible(False)
 
     # ------------------------------------------------------------------
     # UI
@@ -111,6 +131,12 @@ class SleepQCGridPage(QWidget):
         top.addWidget(self.btn_offset)
 
         top.addStretch(1)
+
+        self.lbl_reruns_ready = QLabel()
+        self.lbl_reruns_ready.setStyleSheet("color: #c96a00; font-weight: bold;")
+        self.lbl_reruns_ready.setVisible(False)
+        top.addWidget(self.lbl_reruns_ready)
+
         layout.addLayout(top)
 
         # --- group-mode controls ---
@@ -284,11 +310,22 @@ class SleepQCGridPage(QWidget):
     # Animal combo (animal mode)
     # ------------------------------------------------------------------
     def _refresh_animal_combo(self) -> None:
-        all_mice = sorted({
+        all_mice_set = {
             mid
             for df, _ in self._data_cache.values()
             for mid in df["mouse_id"].unique()
-        })
+        }
+
+        def _has_pending(mid: str) -> bool:
+            entry = self._manifest.get(mid)
+            return entry is not None and any(
+                run.sleep_qc is None for run in entry.runs.values()
+            )
+
+        pending = sorted(m for m in all_mice_set if _has_pending(m))
+        reviewed = sorted(m for m in all_mice_set if not _has_pending(m))
+        all_mice = pending + reviewed
+
         self.cmb_animal.blockSignals(True)
         current = self.cmb_animal.currentText()
         self.cmb_animal.clear()
@@ -459,7 +496,59 @@ class SleepQCGridPage(QWidget):
                     )
             drawn_combos.append(combo)
 
-        self._update_legend_animal(drawn_combos)
+        # Group mean reference overlay
+        ref_combo = self._get_ref_combo()
+        if ref_combo is not None:
+            self._draw_ref_mean(ref_combo)
+
+        self._update_legend_animal(drawn_combos, ref_combo)
+
+    # ------------------------------------------------------------------
+    # Group mean reference overlay
+    # ------------------------------------------------------------------
+    def _get_ref_combo(self) -> Optional[str]:
+        """Return combo with most ok animals; prefer LFC_RSC."""
+        ok_counts: dict[str, int] = {}
+        for combo in self._available_combos:
+            n = sum(
+                1 for entry in self._manifest
+                for c, run in entry.runs.items()
+                if c == combo and run.sleep_qc == "ok"
+            )
+            if n > 0:
+                ok_counts[combo] = n
+        if not ok_counts:
+            return None
+        return "LFC_RSC" if "LFC_RSC" in ok_counts else max(ok_counts, key=ok_counts.__getitem__)
+
+    def _draw_ref_mean(self, combo: str) -> None:
+        """Draw group mean reference as a dashed gray line on all plots."""
+        df = self._get_df(combo)
+        if df is None or df.empty:
+            return
+        ok_animals = {
+            entry.animal_id
+            for entry in self._manifest
+            for c, run in entry.runs.items()
+            if c == combo and run.sleep_qc == "ok"
+        }
+        if not ok_animals:
+            return
+        df, x_col = self._ensure_x_col(df)
+        sub = df[df["mouse_id"].isin(ok_animals)]
+        metrics = [m for m, _ in self.METRIC_ORDER]
+        mean_df = sub.groupby(["state", x_col])[metrics].mean().reset_index()
+
+        ref_pen = pg.mkPen(color=(160, 160, 160), width=1.5,
+                           style=Qt.PenStyle.DashLine)
+        for state in self.STATE_ORDER:
+            for metric, _ in self.METRIC_ORDER:
+                panel = mean_df[mean_df["state"] == state].sort_values(x_col)
+                if panel.empty:
+                    continue
+                self._plots[(metric, state)].plot(
+                    panel[x_col].to_numpy(), panel[metric].to_numpy(), pen=ref_pen
+                )
 
     # ------------------------------------------------------------------
     # Legend
@@ -516,7 +605,8 @@ class SleepQCGridPage(QWidget):
 
             self.legend_layout.addWidget(row_w, i // 2, i % 2)
 
-    def _update_legend_animal(self, combos: List[str]) -> None:
+    def _update_legend_animal(self, combos: List[str],
+                               ref_combo: Optional[str] = None) -> None:
         self._clear_legend()
         animal = self.cmb_animal.currentText()
         for i, combo in enumerate(combos):
@@ -528,26 +618,27 @@ class SleepQCGridPage(QWidget):
             swatch.setFixedSize(30, 4)
             swatch.setStyleSheet(f"background-color: rgb({color[0]}, {color[1]}, {color[2]});")
 
-            btn_ok = QPushButton("OK")
-            btn_ok.setFixedHeight(22)
-            btn_ok.setCheckable(True)
-            btn_ok.setChecked(status == "ok")
-            btn_ok.clicked.connect(lambda _, c=combo: self._flag_animal_ok(c))
-
-            btn_review = QPushButton("Review")
-            btn_review.setFixedHeight(22)
-            btn_review.setCheckable(True)
-            btn_review.setChecked(status == "needs_review")
-            btn_review.clicked.connect(lambda _, c=combo: self._flag_animal_review(c))
-
             row_w = QWidget()
             row_l = QHBoxLayout(row_w)
             row_l.setContentsMargins(4, 2, 4, 2)
             row_l.setSpacing(4)
             row_l.addWidget(swatch)
             row_l.addWidget(QLabel(combo))
+
+            btn_ok = QPushButton("OK")
+            btn_ok.setFixedHeight(22)
+            btn_ok.setCheckable(True)
+            btn_ok.setChecked(status == "ok")
+            btn_ok.clicked.connect(lambda _, c=combo: self._flag_animal_ok(c))
             row_l.addWidget(btn_ok)
+
+            btn_review = QPushButton("Review")
+            btn_review.setFixedHeight(22)
+            btn_review.setCheckable(True)
+            btn_review.setChecked(status == "needs_review")
+            btn_review.clicked.connect(lambda _, c=combo: self._flag_animal_review(c))
             row_l.addWidget(btn_review)
+
             row_l.addStretch(1)
 
             bg = self._STATUS_BG.get(status)
@@ -556,8 +647,15 @@ class SleepQCGridPage(QWidget):
 
             self.legend_layout.addWidget(row_w, i // 2, i % 2)
 
+        # Reference line label
+        if ref_combo is not None:
+            ref_lbl = QLabel(f"─ ─  Group mean ({ref_combo})")
+            ref_lbl.setStyleSheet("color: #999;")
+            n_rows = (len(combos) + 1) // 2
+            self.legend_layout.addWidget(ref_lbl, n_rows, 0, 1, 2)
+
     # ------------------------------------------------------------------
-    # Manifest flagging
+    # Manifest flagging (normal mode)
     # ------------------------------------------------------------------
     def _flag_animal_ok(self, combo: str) -> None:
         animal = self.cmb_animal.currentText()
@@ -565,11 +663,14 @@ class SleepQCGridPage(QWidget):
             return
         entry = self._manifest.get(animal)
         for c, run in entry.runs.items():
-            if c != combo and run.sleep_qc == "ok":
-                self._manifest.reset_sleep_qc(animal, c)
+            if c == combo:
+                continue
+            if run.sleep_qc != "rejected":
+                self._manifest.flag_sleep_qc(animal, c, "rejected")
         if self._manifest.get_run(animal, combo) is None:
             self._manifest.add_run(animal, combo)
         self._manifest.flag_sleep_qc(animal, combo, "ok")
+        self._update_reruns_badge()
         self._update_all_plots()
 
     def _flag_animal_review(self, combo: str) -> None:
@@ -587,6 +688,11 @@ class SleepQCGridPage(QWidget):
             return
         if self._manifest.get_run(mid, combo) is None:
             self._manifest.add_run(mid, combo)
+        if status == "ok":
+            entry = self._manifest.get(mid)
+            for c, run in entry.runs.items():
+                if c != combo and run.sleep_qc != "rejected":
+                    self._manifest.flag_sleep_qc(mid, c, "rejected")
         self._manifest.flag_sleep_qc(mid, combo, status)
         mice = self._get_page_mice()
         self._update_legend_group(mice, self._build_mouse_color_map(mice))

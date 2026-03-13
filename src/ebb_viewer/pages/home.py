@@ -5,7 +5,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QWidget,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy,
-    QComboBox, QMessageBox, QScrollArea,
+    QComboBox, QInputDialog, QMessageBox, QScrollArea,
 )
 
 from ebb_viewer.widgets.tree_view import ProjectTree
@@ -13,6 +13,7 @@ from ebb_viewer.pipeline.manifest import (
     Manifest, ManifestEntry, RunEntry,
     psd_path, spindle_output_dir,
 )
+from ebb_viewer.pipeline.manifest import spindle_edf_dir
 from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, drink_mask_rel
 
 
@@ -29,9 +30,11 @@ _STATUS_COLOR = {
     "ok":                  QColor("#d4edda"),   # green
     "needs_review":        QColor("#FFF3CD"),   # yellow
     "needs_rerun":         QColor("#E97B7B"),   # red
+    "rejected":            QColor("#e0e0e0"),   # gray
     "needs_drink_mask":    QColor("#E97B7B"),   # red
     "drink_mask_applied":  QColor("#d4edda"),   # green
 }
+_RERUN_DONE_COLOR = QColor("#c8c8c8")           # gray = rerun resolved
 _PENDING_COLOR = QColor("#f0f0f0")            # light gray = reached but not yet flagged
 _EXISTS_COLOR  = QColor("#d4edda")            # green
 
@@ -77,6 +80,13 @@ class HomePage(QWidget):
         self.btn_refresh.clicked.connect(self._refresh)
         hdr.addWidget(self.btn_refresh)
 
+        self.btn_hide_rejected = QPushButton("Hide Rejected")
+        self.btn_hide_rejected.setCheckable(True)
+        self.btn_hide_rejected.setChecked(True)
+        self.btn_hide_rejected.setToolTip("Toggle visibility of rejected runs in the table")
+        self.btn_hide_rejected.toggled.connect(self._refresh)
+        hdr.addWidget(self.btn_hide_rejected)
+
         self.btn_build = QPushButton("Sync from filesystem")
         self.btn_build.setToolTip(
             "Scan standard/, spindle_edfs/, and spindle_outputs/ to add new "
@@ -103,6 +113,7 @@ class HomePage(QWidget):
         for col in range(3, len(_COLUMNS)):
             hh.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
 
+        self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         root_layout.addWidget(self.table)
 
         # --- sleep review queue ---
@@ -134,6 +145,50 @@ class HomePage(QWidget):
     # ---------------------------------------------------------------
     # Actions
     # ---------------------------------------------------------------
+    def _on_cell_double_clicked(self, row: int, col: int) -> None:
+        """Allow changing the rerun combo on a needs_rerun row if no EDF written yet."""
+        if col != 6:
+            return
+        manifest = Manifest.load(self.project_root)
+        hide_rejected = self.btn_hide_rejected.isChecked()
+        rows: list[tuple[ManifestEntry, str, RunEntry]] = []
+        for entry in manifest:
+            if entry.runs:
+                for combo, run in entry.runs.items():
+                    if hide_rejected and run.sleep_qc == "rejected":
+                        continue
+                    rows.append((entry, combo, run))
+            else:
+                rows.append((entry, "", None))
+
+        if row >= len(rows):
+            return
+        entry, combo, run = rows[row]
+        if run is None or run.sleep_qc != "needs_rerun" or not run.rerun_combo:
+            return
+
+        edf_dir = spindle_edf_dir(run.rerun_combo, self.project_root)
+        if edf_dir.is_dir() and any(edf_dir.glob(f"{entry.animal_id}*.edf")):
+            QMessageBox.information(
+                self, "EDF already written",
+                f"Spindle EDF for {run.rerun_combo} has already been written and cannot be changed.",
+            )
+            return
+
+        choices = [c for c in CHANNEL_COMBOS if c != combo]
+        new_combo, ok = QInputDialog.getItem(
+            self, "Change Rerun Combo",
+            f"New rerun combo for {entry.animal_id}:",
+            choices,
+            choices.index(run.rerun_combo) if run.rerun_combo in choices else 0,
+            editable=False,
+        )
+        if not ok or new_combo == run.rerun_combo:
+            return
+
+        manifest.flag_sleep_qc(entry.animal_id, combo, "needs_rerun", rerun_combo=new_combo)
+        self._refresh()
+
     def _build_manifest(self):
         Manifest.build_from_standard(self.project_root)
         self._refresh()
@@ -142,10 +197,13 @@ class HomePage(QWidget):
         manifest = Manifest.load(self.project_root)
 
         # Build one row per (animal, run) pair
+        hide_rejected = self.btn_hide_rejected.isChecked()
         rows: list[tuple[ManifestEntry, str, RunEntry]] = []
         for entry in manifest:
             if entry.runs:
                 for combo, run in entry.runs.items():
+                    if hide_rejected and run.sleep_qc == "rejected":
+                        continue
                     rows.append((entry, combo, run))
             else:
                 # Animal exists but no runs yet — show a placeholder row
@@ -195,10 +253,16 @@ class HomePage(QWidget):
             if sleep_qc is None:
                 txt = "pending" if spindle_out_ok else "—"
                 bg  = _PENDING_COLOR if spindle_out_ok else None
+            elif sleep_qc == "needs_rerun" and run.rerun_combo:
+                rerun_run = entry.runs.get(run.rerun_combo)
+                if rerun_run and rerun_run.sleep_qc == "ok":
+                    txt = "rerun done ✓"
+                    bg  = _RERUN_DONE_COLOR
+                else:
+                    txt = f"rerun → {run.rerun_combo}"
+                    bg  = _STATUS_COLOR.get("needs_rerun")
             else:
-                txt = (f"rerun → {run.rerun_combo}"
-                       if sleep_qc == "needs_rerun" and run.rerun_combo
-                       else sleep_qc)
+                txt = sleep_qc
                 bg  = _STATUS_COLOR.get(sleep_qc)
             self.table.setItem(row_idx, 6, _cell(txt, bg))
 
