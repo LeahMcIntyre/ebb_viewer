@@ -29,7 +29,6 @@ _ORANGE = QColor("#fde8ce")
 _BLUE   = QColor("#dce8f7")
 _GREEN  = QColor("#d4edda")
 _RED    = QColor("#f8d7da")
-_GRAY   = QColor("#e8e8e8")
 
 
 def _combo_to_channels(combo: str) -> list[int]:
@@ -41,17 +40,6 @@ def _combo_to_channels(combo: str) -> list[int]:
     indices = sorted({mapping[p] for p in parts if p in mapping})
     indices.append(3)  # EMG always
     return indices
-
-
-def _rerun_step(entry: ManifestEntry, combo: str, project_root: Path) -> tuple[str, QColor]:
-    """Return (status_label, color) for where this rerun currently stands."""
-    rerun_combo = entry.runs[combo].rerun_combo
-    if rerun_combo not in entry.runs:
-        return "Write EDF", _ORANGE
-    out_dir = project_root / "spindle_outputs" / rerun_combo
-    if not out_dir.is_dir() or not any(out_dir.glob(f"{entry.animal_id}*_labels.csv")):
-        return "Upload & Download", _BLUE
-    return "Sleep QC pending", _GRAY
 
 
 def _cell(text: str, bg: QColor | None = None) -> QTableWidgetItem:
@@ -95,9 +83,9 @@ class RerunPage(QWidget):
         layout.addWidget(desc)
 
         # Table
-        self.table = QTableWidget(0, 5)
+        self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(
-            ["Animal", "Standard EDF", "Original Combo", "Rerun Combo", "Status"]
+            ["Animal", "Standard EDF", "Original Combo", "Rerun Combo"]
         )
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -109,7 +97,6 @@ class RerunPage(QWidget):
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         hh.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         hh.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        hh.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.table)
 
         # Buttons
@@ -139,7 +126,7 @@ class RerunPage(QWidget):
     def _refresh(self):
         manifest = Manifest.load(self.project_root)
 
-        # Show all needs_rerun entries where the rerun hasn't been QC'd yet.
+        # Show entries where the rerun hasn't been registered yet, or hasn't been QC'd.
         pairs = [
             (entry, combo)
             for entry, combo in manifest.needs_rerun()
@@ -156,14 +143,12 @@ class RerunPage(QWidget):
             run = entry.runs[combo]
             rerun_combo = run.rerun_combo or "?"
             edf_name = Path(entry.preprocessed_edf).name if entry.preprocessed_edf else "—"
-            status_label, status_color = _rerun_step(entry, combo, self.project_root)
 
             self.table.setItem(i, 0, _cell(entry.animal_id))
             self.table.setItem(i, 1, _cell(edf_name))
             self.table.setItem(i, 2, _cell(combo, _ORANGE))
             self.table.setItem(i, 3, _cell(rerun_combo, _BLUE))
-            self.table.setItem(i, 4, _cell(status_label, status_color))
-            self._row_data.append((entry, combo, status_label))
+            self._row_data.append((entry, combo))
 
         self.table.resizeRowsToContents()
         self.btn_run.setEnabled(len(pairs) > 0)
@@ -172,7 +157,7 @@ class RerunPage(QWidget):
             self.table.setRowCount(1)
             placeholder = _cell("No files pending rerun.")
             placeholder.setFlags(Qt.ItemFlag.ItemIsEnabled)
-            self.table.setSpan(0, 0, 1, 5)
+            self.table.setSpan(0, 0, 1, 4)
             self.table.setItem(0, 0, placeholder)
 
     # ----------------------------------------------------------------- Log
@@ -193,17 +178,13 @@ class RerunPage(QWidget):
         items = [self._row_data[r] for r in selected_rows if r < len(self._row_data)]
 
         errors: list[str] = []
-        # Track which rerun combos were written successfully (for upload step)
-        written_combos: set[str] = set()
+        written_combos: set[tuple[str, str]] = set()
+        written_files: dict[str, list[Path]] = {}  # rerun_combo → list of EDF paths written
 
-        for step, (entry, combo, status_label) in enumerate(items):
+        for step, (entry, combo) in enumerate(items):
             run = entry.runs[combo]
             rerun_combo = run.rerun_combo
             row = selected_rows[step]
-
-            if status_label == "Sleep QC pending":
-                self._log(f"[{step + 1}/{len(items)}] {entry.animal_id}: outputs ready, go to Sleep QC.")
-                continue
 
             self._log(f"[{step + 1}/{len(items)}] {entry.animal_id} → {rerun_combo}…")
 
@@ -227,13 +208,16 @@ class RerunPage(QWidget):
                 target_dir = spindle_edf_dir(rerun_combo, self.project_root)
                 already_written = target_dir.is_dir() and any(target_dir.glob(f"{entry.animal_id}*.edf"))
                 if already_written:
-                    self._log(f"  Spindle EDF already exists, skipping preprocessing.")
+                    self._log("  Spindle EDF already exists, skipping preprocessing.")
                 else:
                     spindle_preprocess(edf_path, savedir=target_dir, channels=channels)
                 manifest.add_run(entry.animal_id, rerun_combo)
                 written_combos.add((combo, rerun_combo))
+                written_files.setdefault(rerun_combo, []).extend(
+                    target_dir.glob(f"{entry.animal_id}*.edf")
+                )
                 self._color_row(row, _GREEN)
-                self._log(f"  Done.")
+                self._log("  Done.")
             except Exception as e:
                 msg = f"{entry.animal_id}: {e}"
                 self._log(f"  ERROR: {msg}")
@@ -248,9 +232,10 @@ class RerunPage(QWidget):
 
         if written_combos:
             self._refresh()
-            self._offer_upload(written_combos)
+            self._offer_upload(written_combos, written_files)
 
-    def _offer_upload(self, written_combos: set[tuple[str, str]]) -> None:
+    def _offer_upload(self, written_combos: set[tuple[str, str]],
+                      written_files: dict[str, list[Path]]) -> None:
         """For each unique rerun combo written, offer SleepyRat upload using saved config."""
         from PyQt6.QtCore import QThread
         seen_rerun_combos: set[str] = set()
@@ -275,12 +260,12 @@ class RerunPage(QWidget):
 
             project_name = dlg.project_edit.text().strip()
             remote_folder = dlg.folder_edit.text().strip()
-            upload_dir = spindle_edf_dir(rerun_combo, self.project_root)
             out_dir = self.project_root / "spindle_outputs" / rerun_combo
 
             self._sr_thread = QThread(self)
             self._sr_worker = SleepyRatWorker(
-                project_name, remote_folder, out_dir, upload_dir=upload_dir
+                project_name, remote_folder, out_dir,
+                files=written_files.get(rerun_combo),
             )
             self._sr_worker.moveToThread(self._sr_thread)
             self._sr_thread.started.connect(self._sr_worker.run)

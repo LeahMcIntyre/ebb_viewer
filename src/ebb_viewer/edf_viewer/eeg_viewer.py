@@ -388,6 +388,9 @@ def launch_edf_window(
     with edf.Reader(str(edf_path)) as reader:
         data = reader.read(start=0)
         fs = int(reader.header.samples_per_record[0])
+        if fs != 250:
+            print(f"Sampling frequency of selected file is {fs}. Please pick a file with a frequency of 250.")
+            return
         start_str = reader.header.start_time
         date_str = reader.header.start_date
     start_time = datetime.strptime(f"{date_str} {start_str}", "%d.%m.%y %H.%M.%S")
@@ -419,12 +422,14 @@ def main():
     if not edf_path:
         return"""
     
-
     initial_dir = "/media/matt/Data_A/leah/Stxbp1 characterization"
 
-    edf_path = '/media/matt/Data_A/leah/Stxbp1 characterization/standard/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED.edf'
-    csv_path = '/media/matt/Data_A/leah/Stxbp1 characterization/spindle_outputs/LFC_RSC/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED_SPINDLE_labels.csv'
-
+    #edf_path = '/media/matt/Data_A/leah/Stxbp1 characterization/standard/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED.edf'
+    #csv_path = '/media/matt/Data_A/leah/Stxbp1 characterization/spindle_outputs/LFC_RSC/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED_SPINDLE_labels.csv'
+    edf_path, csv_path = pick_edf_csv(None, initial_dir)
+    if not edf_path:
+        return
+    
     with edf.Reader(str(edf_path)) as reader:
         data = reader.read(start=0)
         fs = int(reader.header.samples_per_record[0])

@@ -463,24 +463,52 @@ class SleepyRatWorker(QObject):
     finished = pyqtSignal()
     error    = pyqtSignal(str)
 
-    def __init__(self, project, remote_folder, out_dir, upload_dir=None, parent=None):
+    def __init__(self, project, remote_folder, out_dir,
+                 upload_dir=None, files=None, parent=None):
         super().__init__(parent)
         self.project       = project
         self.remote_folder = remote_folder
         self.out_dir       = Path(out_dir)
         self.upload_dir    = Path(upload_dir) if upload_dir else None
+        self.files         = list(files) if files else None
 
     def run(self):
         from ebb.io.sleepyrat import SleepyRatAPI
         try:
             api = SleepyRatAPI()
-            if self.upload_dir is not None:
-                self.log.emit(f"Uploading EDFs from {self.upload_dir}...")
-                api.upload_dir(self.project, self.remote_folder, self.upload_dir)
-                self.log.emit("Upload complete. Waiting for SleepyRat processing...")
-                ok = api.wait_for_processing(self.project, self.remote_folder)
-                if not ok:
-                    raise RuntimeError("Processing did not finish within the wait limit.")
+
+            if self.files is not None:
+                # Explicit file list — upload exactly these files, no remote check needed
+                for p in self.files:
+                    self.log.emit(f"Uploading {p.name}...")
+                    api.upload_edf(self.project, self.remote_folder, p)
+                if self.files:
+                    self.log.emit("Upload complete. Waiting for SleepyRat processing...")
+                    ok = api.wait_for_processing(self.project, self.remote_folder)
+                    if not ok:
+                        raise RuntimeError("Processing did not finish within the wait limit.")
+
+            elif self.upload_dir is not None:
+                # Directory batch — glob EDFs, skip already-uploaded by remote check
+                edfs = sorted(self.upload_dir.glob("*.edf"))
+                try:
+                    existing = set(api.get_submission_names(self.project, self.remote_folder))
+                except Exception:
+                    existing = set()
+                to_upload = [p for p in edfs if p.name not in existing]
+                skipped = len(edfs) - len(to_upload)
+                if skipped:
+                    self.log.emit(f"Skipping {skipped} already-uploaded file(s).")
+                for p in to_upload:
+                    self.log.emit(f"Uploading {p.name}...")
+                    api.upload_edf(self.project, self.remote_folder, p)
+                if to_upload:
+                    self.log.emit("Upload complete. Waiting for SleepyRat processing...")
+                    ok = api.wait_for_processing(self.project, self.remote_folder)
+                    if not ok:
+                        raise RuntimeError("Processing did not finish within the wait limit.")
+                else:
+                    self.log.emit("All files already uploaded, skipping wait.")
 
             self.log.emit("Checking remote submissions...")
             info = api.get_submissions(self.project, self.remote_folder)
@@ -492,11 +520,21 @@ class SleepyRatWorker(QObject):
                 )
 
             self.out_dir.mkdir(parents=True, exist_ok=True)
-            self.log.emit(f"Downloading {len(submissions)} label(s) to {self.out_dir}...")
-            api.download_labels_all(
-                self.project, self.remote_folder, outdir=self.out_dir, threshold=0.5
-            )
-            self.log.emit("Download complete.")
+            names = [s["name"] for s in submissions]
+            to_download = [
+                name for name in names
+                if not (self.out_dir / (Path(name).stem + "_labels.csv")).exists()
+            ]
+            skipped = len(names) - len(to_download)
+            if skipped:
+                self.log.emit(f"Skipping {skipped} already-downloaded file(s).")
+            self.log.emit(f"Downloading {len(to_download)} label(s) to {self.out_dir}...")
+            for name in to_download:
+                out_path = self.out_dir / (Path(name).stem + "_labels.csv")
+                labels = api.download_labels(self.project, self.remote_folder, name, threshold=0.5)
+                with open(out_path, "w") as f:
+                    f.write(labels)
+            self.log.emit("Done.")
             self.finished.emit()
         except Exception as e:
             self.error.emit(str(e))

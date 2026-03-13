@@ -64,6 +64,7 @@ def estimate_psd(
     verbose: bool = True,
     noise_thresh: float = 0.5,
     drink_pad: int = 2,
+    s_prob: float = None,
     **kwargs,
 ) -> List[PSDResult]:
     """
@@ -123,8 +124,13 @@ def estimate_psd(
 
         # build state masks
         state_masks = {}
-        for label, code in labels.items():
-            state_masks[label] = (masking.state(state_path, code, fs, winsize=4))
+
+        if s_prob is not None:
+            for label, code in labels.items():
+                state_masks[label] = (masking.state_prob(state_path, code[0], fs, winsize=4, sprob=s_prob))
+        else:
+            for label, code in labels.items():
+                state_masks[label] = (masking.state(state_path, code, fs, winsize=4))
 
         #print(f"{animal}: {reader.shape}")
         #Compute commutator artifact threshold mask

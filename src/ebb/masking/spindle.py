@@ -46,7 +46,50 @@ def state(path: Union[str, Path],
         winsize=winsize,
         value_fn=is_in_labels,
         include=include,
-    )   
+    )
+
+def state_prob(path: Union[str, Path], 
+          label: str,
+          fs: int = 250, 
+          winsize: int = 4, 
+          sprob=0.9,
+) -> npt.NDArray[np.bool_]:
+    """Returns a boolean mask from a spindle sleep score csv file. Uses values from 'rawstate' column
+    as to include values listed as spindle artifacts (separate artifact mask). Default returns True for samples where 
+    rawstate matches label. 
+
+    Args:
+        path:
+            A path to a spindle file.
+        labels:
+            A label to to get the class probability for.
+        fs:
+            The sampling rate of the data this mask will be applied.
+        winsize:
+            The window length in seconds that spindle used to estimate states.
+        state_prob: 
+            The class probability the an epoch must be to be considered as being the label
+            
+    Returns:
+        A 1-D boolean array state mask 
+    """
+    state_mask = state(path, labels=[label], fs=fs, winsize=winsize, include=True)
+
+    p_column = {'w': 'class_prob_0', 'n': 'class_prob_1', 'r': 'class_prob_2'}
+    def above_thresh(val):
+        return float(val) >= sprob
+    
+
+    prob_mask = _expand_spindle_column(
+        path=path,
+        column_name=p_column[label],
+        fs=fs,
+        winsize=winsize,
+        value_fn=above_thresh,
+        include=True
+    )
+
+    return state_mask & prob_mask
 
 def spindle_noise(path: Union[str, Path], 
                   noise_thresh: float = 0.5,

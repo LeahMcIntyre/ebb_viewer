@@ -13,6 +13,7 @@ from ebb_viewer.edf_viewer.state_legend import StateLegend
 
 pg.setConfigOption("background", "w")
 pg.setConfigOption("foreground", "k")
+pg.setConfigOptions(antialias=True)
 
 # Shift+1..9 produces different key codes on most platforms (!, @, # …).
 # Map them back to 0-based mask indices.
