@@ -17,7 +17,7 @@ from ebb_viewer.widgets.sleep_viewer import SleepPopup
 
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
-from ebb_viewer.edf_viewer.file_openers import pick_edf_csv, pick_mat, pick_npy_csv
+from ebb_viewer.edf_viewer.file_openers import pick_edf_csv, pick_mat, pick_npy_csv, pick_annotations_csv, load_annotations
 from ebb_viewer.edf_viewer.mask_builder import (
     build_default_masks, load_state_masks, load_swd_mask, load_drink_mask,
     rebuild_artifact_masks, rebuild_spindle_mask, rebuild_drink_mask,
@@ -111,6 +111,17 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.act_plot_sleep = QtGui.QAction("Plot Sleep Data", self)
         self.act_plot_sleep.triggered.connect(self.on_plot_sleep)
 
+        self.act_load_annotations = QtGui.QAction("Load Annotations…", self)
+        self.act_load_annotations.triggered.connect(self.on_load_annotations)
+
+        self.act_next_annotation = QtGui.QAction("Next Annotation", self)
+        self.act_next_annotation.setShortcut("]")
+        self.act_next_annotation.triggered.connect(self.trace_view.jump_to_next_annotation)
+
+        self.act_prev_annotation = QtGui.QAction("Previous Annotation", self)
+        self.act_prev_annotation.setShortcut("[")
+        self.act_prev_annotation.triggered.connect(self.trace_view.jump_to_prev_annotation)
+
     # ---------- menus / toolbars / docks ----------
 
     def _build_menus(self):
@@ -120,6 +131,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         m_file.addAction(self.act_open)
         m_file.addAction(self.act_load_swd)
         m_file.addAction(self.act_load_drink)
+        m_file.addAction(self.act_load_annotations)
         m_file.addSeparator()
         m_file.addAction(self.act_quit)
         m_file.addAction(self.act_info)
@@ -127,6 +139,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         m_view = mb.addMenu("&View")
         m_view.addAction(self.act_plot_sleep)
+        m_view.addSeparator()
+        m_view.addAction(self.act_prev_annotation)
+        m_view.addAction(self.act_next_annotation)
 
         m_tools = mb.addMenu("&Tools")
         m_tools.addAction(self.act_stft)
@@ -322,6 +337,16 @@ class EegMainWindow(QtWidgets.QMainWindow):
             except Exception as e:
                 QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
 
+    def on_load_annotations(self):
+        csv_path = pick_annotations_csv(self, self.initial_dir)
+        if csv_path is None:
+            return
+        try:
+            annotations = load_annotations(csv_path)
+            self.trace_view.set_annotations(annotations)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
+
     def on_open(self):
         # reuse your existing pick_edf_csv_npy
         edf_path, csv_path = pick_edf_csv(self, self.initial_dir)
@@ -422,7 +447,7 @@ def main():
     if not edf_path:
         return"""
     
-    initial_dir = "/media/matt/Data_A/leah/Stxbp1 characterization"
+    initial_dir = "/media/matt/Data_A/leah/For Leah"
 
     #edf_path = '/media/matt/Data_A/leah/Stxbp1 characterization/standard/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED.edf'
     #csv_path = '/media/matt/Data_A/leah/Stxbp1 characterization/spindle_outputs/LFC_RSC/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED_SPINDLE_labels.csv'

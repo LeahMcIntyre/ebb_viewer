@@ -90,6 +90,10 @@ class TraceView(QtWidgets.QWidget):
         self.state_set: MaskSet | None = None
         self._overlay_items: list[tuple[pg.PlotWidget, pg.LinearRegionItem]] = []
 
+        # Annotation vertical lines: list of (t_sec, label)
+        self._annotations: list[tuple[float, str]] = []
+        self._annotation_items: list[pg.InfiniteLine] = []
+
         # State bar + legend (both hidden until set_state_masks is called)
         self.state_bar    = StateBar(self)
         self.state_legend = StateLegend(self)
@@ -482,6 +486,48 @@ class TraceView(QtWidgets.QWidget):
 
     def _apply_all_y(self):
         for ch in range(self.nch):
-            self._apply_y(ch)    
-        
+            self._apply_y(ch)
+
+    def jump_to_next_annotation(self) -> None:
+        if not self._annotations:
+            return
+        t_current = self.center_sample / self.fs
+        for t_sec, _ in sorted(self._annotations):
+            if t_sec > t_current + 0.01:
+                self.jump_to_sample(int(t_sec * self.fs))
+                return
+
+    def jump_to_prev_annotation(self) -> None:
+        if not self._annotations:
+            return
+        t_current = self.center_sample / self.fs
+        for t_sec, _ in sorted(self._annotations, reverse=True):
+            if t_sec < t_current - 0.01:
+                self.jump_to_sample(int(t_sec * self.fs))
+                return
+
+    def set_annotations(self, annotations: list[tuple[float, str]]) -> None:
+        """Draw vertical lines for each (t_sec, label) annotation across all channels."""
+        for item in self._annotation_items:
+            item.getViewBox().removeItem(item)
+        self._annotation_items.clear()
+
+        self._annotations = annotations
+        pen = pg.mkPen(color=(200, 0, 200, 200), width=1.5, style=Qt.PenStyle.DashLine)
+        for t_sec, label in annotations:
+            labeled = pg.InfiniteLine(
+                pos=t_sec, angle=90, movable=False, pen=pen,
+                label=label,
+                labelOpts={"position": 0.95, "color": (180, 0, 180), "fill": (255, 255, 255, 120)},
+            )
+            labeled.setZValue(20)
+            self.plots[0].addItem(labeled)
+            self._annotation_items.append(labeled)
+
+            for pw in self.plots[1:]:
+                line = pg.InfiniteLine(pos=t_sec, angle=90, movable=False, pen=pen)
+                line.setZValue(20)
+                pw.addItem(line)
+                self._annotation_items.append(line)
+
     
