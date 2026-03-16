@@ -478,15 +478,25 @@ class SleepyRatWorker(QObject):
             api = SleepyRatAPI()
 
             if self.files is not None:
-                # Explicit file list — upload exactly these files, no remote check needed
-                for p in self.files:
+                # Explicit file list — skip files already on the remote
+                try:
+                    existing = set(api.get_submission_names(self.project, self.remote_folder))
+                except Exception:
+                    existing = set()
+                to_upload = [p for p in self.files if p.name not in existing]
+                skipped = len(self.files) - len(to_upload)
+                if skipped:
+                    self.log.emit(f"Skipping {skipped} already-uploaded file(s).")
+                for p in to_upload:
                     self.log.emit(f"Uploading {p.name}...")
                     api.upload_edf(self.project, self.remote_folder, p)
-                if self.files:
+                if to_upload:
                     self.log.emit("Upload complete. Waiting for SleepyRat processing...")
                     ok = api.wait_for_processing(self.project, self.remote_folder)
                     if not ok:
                         raise RuntimeError("Processing did not finish within the wait limit.")
+                else:
+                    self.log.emit("All files already uploaded, skipping wait.")
 
             elif self.upload_dir is not None:
                 # Directory batch — glob EDFs, skip already-uploaded by remote check
