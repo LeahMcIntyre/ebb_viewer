@@ -6,12 +6,13 @@ import numpy as np
 import pandas as pd
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QComboBox, QLabel, QPushButton, QSizePolicy,
     QMessageBox, QSpinBox, QFrame, QScrollArea,
 )
-from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
 
 
 import pyqtgraph as pg
@@ -88,12 +89,12 @@ class SleepQCGridPage(QWidget):
         pending = self._manifest.pending_rerun_review()
         if pending:
             n = len(pending)
-            self.lbl_reruns_ready.setText(
-                f"● {n} rerun{'s' if n != 1 else ''} ready for review"
+            self.btn_reruns_ready.setText(
+                f"● {n} rerun{'s' if n != 1 else ''} ready for review  →"
             )
-            self.lbl_reruns_ready.setVisible(True)
+            self.btn_reruns_ready.setVisible(True)
         else:
-            self.lbl_reruns_ready.setVisible(False)
+            self.btn_reruns_ready.setVisible(False)
 
     # ------------------------------------------------------------------
     # UI
@@ -131,10 +132,13 @@ class SleepQCGridPage(QWidget):
 
         top.addStretch(1)
 
-        self.lbl_reruns_ready = QLabel()
-        self.lbl_reruns_ready.setStyleSheet("color: #c96a00; font-weight: bold;")
-        self.lbl_reruns_ready.setVisible(False)
-        top.addWidget(self.lbl_reruns_ready)
+        self.btn_reruns_ready = QPushButton()
+        self.btn_reruns_ready.setStyleSheet(
+            "color: #c96a00; font-weight: bold; border: none; padding: 0;"
+        )
+        self.btn_reruns_ready.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_reruns_ready.setVisible(False)
+        top.addWidget(self.btn_reruns_ready)
 
         layout.addLayout(top)
 
@@ -166,9 +170,12 @@ class SleepQCGridPage(QWidget):
         self.cmb_animal.setMinimumWidth(150)
         self.btn_prev_animal = QPushButton("◄ Prev")
         self.btn_next_animal = QPushButton("Next ►")
+        self.btn_next_rerun = QPushButton("Next Rerun ►")
+        self.btn_next_rerun.setEnabled(False)
         ac.addWidget(self.cmb_animal)
         ac.addWidget(self.btn_prev_animal)
         ac.addWidget(self.btn_next_animal)
+        ac.addWidget(self.btn_next_rerun)
         ac.addStretch(1)
         self._animal_controls.setVisible(False)
         layout.addWidget(self._animal_controls)
@@ -219,9 +226,12 @@ class SleepQCGridPage(QWidget):
         self.btn_next.clicked.connect(self._on_next_page)
         self.spin_page.valueChanged.connect(self._on_page_spin_changed)
 
+        self.btn_reruns_ready.clicked.connect(self._jump_to_rerun_queue)
+
         self.cmb_animal.currentTextChanged.connect(self._on_animal_changed)
         self.btn_prev_animal.clicked.connect(self._on_prev_animal)
         self.btn_next_animal.clicked.connect(self._on_next_animal)
+        self.btn_next_rerun.clicked.connect(self._on_next_rerun)
 
     # ------------------------------------------------------------------
     # Mode switching
@@ -321,14 +331,26 @@ class SleepQCGridPage(QWidget):
                 run.sleep_qc is None for run in entry.runs.values()
             )
 
-        pending = sorted(m for m in all_mice_set if _has_pending(m))
+        # Three groups: reruns awaiting decision, other unreviewed, already reviewed
+        rerun_pending = sorted(m for m in all_mice_set if self._has_pending_rerun(m))
+        other_pending = sorted(
+            m for m in all_mice_set
+            if _has_pending(m) and not self._has_pending_rerun(m)
+        )
         reviewed = sorted(m for m in all_mice_set if not _has_pending(m))
-        all_mice = pending + reviewed
+        all_mice = rerun_pending + other_pending + reviewed
 
         self.cmb_animal.blockSignals(True)
         current = self.cmb_animal.currentText()
         self.cmb_animal.clear()
         self.cmb_animal.addItems(all_mice)
+
+        # Bold the rerun-pending items so they stand out in the dropdown
+        bold_font = QFont()
+        bold_font.setBold(True)
+        for i in range(len(rerun_pending)):
+            self.cmb_animal.setItemData(i, bold_font, Qt.ItemDataRole.FontRole)
+
         if current in all_mice:
             self.cmb_animal.setCurrentText(current)
         self.cmb_animal.blockSignals(False)
@@ -343,6 +365,11 @@ class SleepQCGridPage(QWidget):
         n = self.cmb_animal.count()
         self.btn_prev_animal.setEnabled(i > 0)
         self.btn_next_animal.setEnabled(i < n - 1)
+        has_next_rerun = any(
+            self._has_pending_rerun(self.cmb_animal.itemText(j))
+            for j in range(i + 1, n)
+        )
+        self.btn_next_rerun.setEnabled(has_next_rerun)
 
     def _on_prev_animal(self) -> None:
         i = self.cmb_animal.currentIndex()
@@ -353,6 +380,44 @@ class SleepQCGridPage(QWidget):
         i = self.cmb_animal.currentIndex()
         if i < self.cmb_animal.count() - 1:
             self.cmb_animal.setCurrentIndex(i + 1)
+
+    def _has_pending_rerun(self, mid: str) -> bool:
+        """True if this animal has a rerun run with outputs on disk awaiting review."""
+        entry = self._manifest.get(mid)
+        if entry is None:
+            return False
+        return any(
+            run.source_combo is not None
+            and run.sleep_qc is None
+            and spindle_output_dir(combo, self.project_root).is_dir()
+            and any(spindle_output_dir(combo, self.project_root).iterdir())
+            for combo, run in entry.runs.items()
+        )
+
+    def _jump_to_rerun_queue(self) -> None:
+        """Switch to animal mode and jump to the first animal with a pending rerun."""
+        self._set_mode("animal")
+        for i in range(self.cmb_animal.count()):
+            if self._has_pending_rerun(self.cmb_animal.itemText(i)):
+                self.cmb_animal.setCurrentIndex(i)
+                return
+
+    def _on_next_rerun(self) -> None:
+        """Step forward to the next animal with a pending rerun."""
+        current = self.cmb_animal.currentIndex()
+        for i in range(current + 1, self.cmb_animal.count()):
+            if self._has_pending_rerun(self.cmb_animal.itemText(i)):
+                self.cmb_animal.setCurrentIndex(i)
+                return
+
+    def _advance_to_next_rerun(self) -> None:
+        """After resolving a rerun, jump to the next pending one or stay and refresh."""
+        current = self.cmb_animal.currentIndex()
+        for i in range(current + 1, self.cmb_animal.count()):
+            if self._has_pending_rerun(self.cmb_animal.itemText(i)):
+                self.cmb_animal.setCurrentIndex(i)  # triggers _on_animal_changed
+                return
+        self._update_all_plots()
 
     # ------------------------------------------------------------------
     # Pagination (group mode)
@@ -482,7 +547,12 @@ class SleepQCGridPage(QWidget):
             if adf.empty:
                 continue
             color = self._COMBO_COLORS.get(combo, (100, 100, 100))
-            pen = pg.mkPen(color=color, width=2.0)
+            run = self._manifest.get_run(animal, combo)
+            is_rerun = run is not None and run.source_combo is not None
+            pen = pg.mkPen(
+                color=color, width=2.0,
+                style=Qt.PenStyle.DashLine if is_rerun else Qt.PenStyle.SolidLine,
+            )
             for state in self.STATE_ORDER:
                 for metric, _ in self.METRIC_ORDER:
                     dm = adf[adf["state"] == state].copy()
@@ -625,6 +695,7 @@ class SleepQCGridPage(QWidget):
             run = self._manifest.get_run(animal, combo) if animal else None
             status = run.sleep_qc if run else None
             rejected_by = run.rejected_by if run else None
+            source_combo = run.source_combo if run else None
 
             swatch = QFrame()
             swatch.setFixedSize(30, 4)
@@ -635,7 +706,13 @@ class SleepQCGridPage(QWidget):
             row_l.setContentsMargins(4, 2, 4, 2)
             row_l.setSpacing(4)
             row_l.addWidget(swatch)
-            row_l.addWidget(QLabel(combo))
+
+            combo_label = QLabel(
+                f"{combo}  ← rerun of {source_combo}" if source_combo else combo
+            )
+            if source_combo:
+                combo_label.setStyleSheet("font-style: italic;")
+            row_l.addWidget(combo_label)
 
             btn_ok = QPushButton("OK")
             btn_ok.setFixedHeight(22)
@@ -702,6 +779,8 @@ class SleepQCGridPage(QWidget):
         animal = self.cmb_animal.currentText()
         if not animal or self._manifest.get(animal) is None:
             return
+        # Capture before flagging — after OK, the rerun will be cascade-rejected
+        had_pending_rerun = checked and self._has_pending_rerun(animal)
         if not checked:
             self._manifest.reset_sleep_qc(animal, combo)
         else:
@@ -709,7 +788,10 @@ class SleepQCGridPage(QWidget):
                 self._manifest.add_run(animal, combo)
             self._manifest.flag_sleep_qc(animal, combo, "ok")
         self._update_reruns_badge()
-        self._update_all_plots()
+        if had_pending_rerun:
+            self._advance_to_next_rerun()
+        else:
+            self._update_all_plots()
 
     def _flag_animal_review(self, combo: str, checked: bool = True) -> None:
         animal = self.cmb_animal.currentText()

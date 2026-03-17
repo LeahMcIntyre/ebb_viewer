@@ -57,13 +57,19 @@ PSD_STATUSES      = frozenset({"ok", "needs_drink_mask", "drink_mask_applied"})
 @dataclass
 class RunEntry:
     """State for one (animal × channel combo) spindle run."""
-    sleep_qc:      str | None = None   # None | "ok" | "needs_review" | "needs_rerun" | "rejected"
-    rerun_combo:   str | None = None   # target combo when sleep_qc == "needs_rerun"
-    source_combo:  str | None = None   # combo that triggered this run as a rerun
-    psd_status:    str | None = None   # None | "ok" | "needs_drink_mask" | "drink_mask_applied"
-    drink_mask:    str | None = None   # relative path to .npy
-    prev_sleep_qc: str | None = None   # status before cascade-rejection by a sibling going "ok"
-    rejected_by:   str | None = None   # combo whose "ok" status caused this run's cascade-rejection
+
+    # Sleep QC
+    sleep_qc:     str | None = None   # None | "ok" | "needs_review" | "needs_rerun" | "rejected"
+    rerun_combo:  str | None = None   # target combo when sleep_qc == "needs_rerun"
+    source_combo: str | None = None   # combo that triggered this run as a rerun
+
+    # PSD review
+    psd_status:   str | None = None   # None | "ok" | "needs_drink_mask" | "drink_mask_applied"
+    drink_mask:   str | None = None   # relative path to .npy
+
+    # Cascade-rejection bookkeeping (see one-ok invariant in module docstring)
+    prev_sleep_qc: str | None = None  # sleep_qc value before this run was cascade-rejected
+    rejected_by:   str | None = None  # combo that caused the cascade-rejection
 
 
 @dataclass
@@ -118,6 +124,11 @@ def _run_to_dict(run: RunEntry) -> dict:
 
 def _run_from_dict(d: dict) -> RunEntry:
     return RunEntry(**{k: v for k, v in d.items() if k in RunEntry.__dataclass_fields__})
+
+
+def _ok_combo(entry: ManifestEntry) -> str | None:
+    """Return the combo with sleep_qc == 'ok' for this entry, or None."""
+    return next((c for c, r in entry.runs.items() if r.sleep_qc == "ok"), None)
 
 
 # ---------------------------------------------------------------------------
@@ -189,8 +200,9 @@ class Manifest:
                 runs = {combo: _run_from_dict(r) for combo, r in runs_raw.items()}
                 m._entries[animal_id] = ManifestEntry(
                     animal_id=animal_id,
+                    preprocessed_edf=d.get("preprocessed_edf", ""),
+                    notes=d.get("notes", ""),
                     runs=runs,
-                    **d,
                 )
 
         # --- integrity checks ---
@@ -273,17 +285,11 @@ class Manifest:
                         continue
                     entry = m._entries[animal_id]
                     if combo not in entry.runs:
-                        ok_combo = next(
-                            (c for c, r in entry.runs.items() if r.sleep_qc == "ok"),
-                            None,
+                        ok = _ok_combo(entry)
+                        entry.runs[combo] = (
+                            RunEntry(sleep_qc="rejected", rejected_by=ok)
+                            if ok is not None else RunEntry()
                         )
-                        if ok_combo is not None:
-                            entry.runs[combo] = RunEntry(
-                                sleep_qc="rejected",
-                                rejected_by=ok_combo,
-                            )
-                        else:
-                            entry.runs[combo] = RunEntry()
 
         m.save()
         return m
@@ -337,13 +343,10 @@ class Manifest:
         if channels not in entry.runs:
             new_run = RunEntry(source_combo=source_combo)
             if source_combo is None:
-                ok_combo = next(
-                    (c for c, r in entry.runs.items() if r.sleep_qc == "ok"),
-                    None,
-                )
-                if ok_combo is not None:
+                ok = _ok_combo(entry)
+                if ok is not None:
                     new_run.sleep_qc = "rejected"
-                    new_run.rejected_by = ok_combo
+                    new_run.rejected_by = ok
             entry.runs[channels] = new_run
             self.save()
         return entry.runs[channels]
@@ -495,7 +498,7 @@ class Manifest:
                     sibling.rejected_by = channels
                 # Already-rejected siblings keep their existing prev/rejected_by
 
-            # The ok run itself has no cascade metadata
+            # The ok run itself carries no cascade metadata
             run.prev_sleep_qc = None
             run.rejected_by = None
 
@@ -512,8 +515,8 @@ class Manifest:
             run.psd_status = None
             run.drink_mask = None
 
-        # Leaving "rejected" for a different status: clear this run's cascade metadata
-        if old_status == "rejected" and status != "rejected":
+        elif old_status == "rejected":
+            # Leaving "rejected" for another status: clear this run's cascade metadata
             run.prev_sleep_qc = None
             run.rejected_by = None
 
@@ -567,13 +570,13 @@ class Manifest:
                     sibling.sleep_qc = sibling.prev_sleep_qc
                     sibling.prev_sleep_qc = None
                     sibling.rejected_by = None
+            # PSD review progress is only valid while sleep_qc == "ok"
+            run.psd_status = None
+            run.drink_mask = None
         run.sleep_qc = None
         run.rerun_combo = None
         run.prev_sleep_qc = None
         run.rejected_by = None
-        # Clearing sleep QC on an ok run invalidates any PSD review progress
-        run.psd_status = None
-        run.drink_mask = None
         self.save()
 
     def reset_psd_status(self, animal_id: str, channels: str) -> None:
