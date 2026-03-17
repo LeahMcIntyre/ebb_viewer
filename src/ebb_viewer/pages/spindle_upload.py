@@ -472,21 +472,39 @@ class SleepyRatWorker(QObject):
         self.upload_dir    = Path(upload_dir) if upload_dir else None
         self.files         = list(files) if files else None
 
+    @staticmethod
+    def _existing_stems(api, project: str, remote_folder: str) -> set[str]:
+        """Return the set of already-uploaded submission stems (no extension) from SleepyRat.
+
+        Returns an empty set if the folder doesn't exist yet or the call fails.
+        """
+        try:
+            import unicodedata
+            names = api.get_submission_names(project, remote_folder)
+            return {unicodedata.normalize("NFC", Path(n.strip()).stem).replace(" ", "_")
+                    for n in names}
+        except Exception:
+            return set()
+
     def run(self):
         from ebb.io.sleepyrat import SleepyRatAPI
         try:
             api = SleepyRatAPI()
 
             if self.files is not None:
-                # Explicit file list — skip files already on the remote
-                try:
-                    existing = set(api.get_submission_names(self.project, self.remote_folder))
-                except Exception:
-                    existing = set()
-                to_upload = [p for p in self.files if p.name not in existing]
-                skipped = len(self.files) - len(to_upload)
-                if skipped:
-                    self.log.emit(f"Skipping {skipped} already-uploaded file(s).")
+                # Explicit file list (rerun path) — check remote before uploading anything.
+                import unicodedata
+                self.log.emit("Checking for existing submissions on SleepyRat...")
+                existing = self._existing_stems(api, self.project, self.remote_folder)
+
+                to_upload = [p for p in self.files
+                             if unicodedata.normalize("NFC", p.stem).replace(" ", "_") not in existing]
+                already_there = len(self.files) - len(to_upload)
+                if already_there:
+                    self.log.emit(
+                        f"Found {already_there} submission(s) already on SleepyRat "
+                        f"— downloading instead of re-uploading."
+                    )
                 for p in to_upload:
                     self.log.emit(f"Uploading {p.name}...")
                     api.upload_edf(self.project, self.remote_folder, p)
@@ -496,19 +514,19 @@ class SleepyRatWorker(QObject):
                     if not ok:
                         raise RuntimeError("Processing did not finish within the wait limit.")
                 else:
-                    self.log.emit("All files already uploaded, skipping wait.")
+                    self.log.emit("All files already on SleepyRat, skipping upload and wait.")
 
             elif self.upload_dir is not None:
-                # Directory batch — glob EDFs, skip already-uploaded by remote check
+                # Directory batch — glob EDFs, skip already-uploaded by remote check.
+                import unicodedata
                 edfs = sorted(self.upload_dir.glob("*.edf"))
-                try:
-                    existing = set(api.get_submission_names(self.project, self.remote_folder))
-                except Exception:
-                    existing = set()
-                to_upload = [p for p in edfs if p.name not in existing]
-                skipped = len(edfs) - len(to_upload)
-                if skipped:
-                    self.log.emit(f"Skipping {skipped} already-uploaded file(s).")
+                self.log.emit("Checking for existing submissions on SleepyRat...")
+                existing = self._existing_stems(api, self.project, self.remote_folder)
+                to_upload = [p for p in edfs
+                             if unicodedata.normalize("NFC", p.stem).replace(" ", "_") not in existing]
+                already_there = len(edfs) - len(to_upload)
+                if already_there:
+                    self.log.emit(f"Skipping {already_there} already-uploaded file(s).")
                 for p in to_upload:
                     self.log.emit(f"Uploading {p.name}...")
                     api.upload_edf(self.project, self.remote_folder, p)
@@ -530,7 +548,24 @@ class SleepyRatWorker(QObject):
                 )
 
             self.out_dir.mkdir(parents=True, exist_ok=True)
-            names = [s["name"] for s in submissions]
+            all_names = [s["name"] for s in submissions]
+
+            # When given an explicit file list, only download labels for those files.
+            if self.files is not None:
+                import unicodedata
+                target_stems = {
+                    unicodedata.normalize("NFC", p.stem).replace(" ", "_")
+                    for p in self.files
+                }
+                names = [
+                    n for n in all_names
+                    if unicodedata.normalize("NFC", Path(n).stem).replace(" ", "_") in target_stems
+                ]
+                skipped_remote = len(all_names) - len(names)
+                if skipped_remote:
+                    self.log.emit(f"Limiting download to {len(names)} file(s) (skipping {skipped_remote} unrelated submission(s) in folder).")
+            else:
+                names = all_names
             to_download = [
                 name for name in names
                 if not (self.out_dir / (Path(name).stem + "_labels.csv")).exists()
