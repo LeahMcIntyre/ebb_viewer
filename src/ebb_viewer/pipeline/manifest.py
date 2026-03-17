@@ -15,9 +15,26 @@ animal ID = first '_'-separated token of the preprocessed EDF stem.
 Each animal may have multiple spindle runs, one per channel combo tried
 (e.g. "LFC_RSC" initially, then "LSC_RSC" if a rerun was needed).
 Each run has its own independent QC lifecycle.
+
+One-ok invariant
+----------------
+At most one run per animal may have sleep_qc == "ok".  flag_sleep_qc enforces
+this automatically:
+
+  * Setting a run to "ok" cascade-rejects all sibling runs that are not already
+    rejected.  Each newly rejected sibling stores its prior status in
+    prev_sleep_qc and records which combo caused the rejection in rejected_by.
+
+  * Changing an "ok" run to any other status (un-okaying) automatically
+    restores every sibling that was rejected by that run: their sleep_qc is
+    set back to prev_sleep_qc and the cascade metadata is cleared.
+
+  * Directly rejected runs (rejected_by is None) are not touched by the
+    un-ok restore; they can be reset explicitly via reset_sleep_qc.
 """
 
 import json
+import warnings
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterator
@@ -40,11 +57,13 @@ PSD_STATUSES      = frozenset({"ok", "needs_drink_mask", "drink_mask_applied"})
 @dataclass
 class RunEntry:
     """State for one (animal × channel combo) spindle run."""
-    sleep_qc:     str | None = None   # None | "ok" | "needs_review" | "needs_rerun" | "rejected"
-    rerun_combo:  str | None = None   # target combo when sleep_qc == "needs_rerun"
-    source_combo: str | None = None   # combo that triggered this run as a rerun
-    psd_status:   str | None = None   # None | "ok" | "needs_drink_mask"
-    drink_mask:   str | None = None   # relative path to .npy
+    sleep_qc:      str | None = None   # None | "ok" | "needs_review" | "needs_rerun" | "rejected"
+    rerun_combo:   str | None = None   # target combo when sleep_qc == "needs_rerun"
+    source_combo:  str | None = None   # combo that triggered this run as a rerun
+    psd_status:    str | None = None   # None | "ok" | "needs_drink_mask" | "drink_mask_applied"
+    drink_mask:    str | None = None   # relative path to .npy
+    prev_sleep_qc: str | None = None   # status before cascade-rejection by a sibling going "ok"
+    rejected_by:   str | None = None   # combo whose "ok" status caused this run's cascade-rejection
 
 
 @dataclass
@@ -123,6 +142,12 @@ class Manifest:
 
         Handles migration from the old flat format (spindle_channels, sleep_qc,
         psd_status as top-level fields) to the new per-run dict format.
+
+        Also performs integrity checks:
+        - Animals with multiple "ok" runs are auto-fixed (first ok wins, rest
+          are cascade-rejected) with a warning printed to stderr.
+        - Orphaned rejected_by references (pointing to a non-ok or missing combo)
+          are cleared so the run can be manually reset.
         """
         m = cls(project_root)
         if not m.path.exists():
@@ -137,7 +162,7 @@ class Manifest:
                 old_rerun   = d.pop("rerun_channels", None)
                 old_psd     = d.pop("psd_status", None)
                 old_drink   = d.pop("drink_mask", None)
-                d.pop("notes", None)
+                old_notes = d.pop("notes", "")
                 runs: dict[str, RunEntry] = {}
                 if old_ch:
                     # Map old "rerun_channels" status → "needs_rerun"
@@ -156,7 +181,7 @@ class Manifest:
                     animal_id=animal_id,
                     preprocessed_edf=d.get("preprocessed_edf", ""),
                     runs=runs,
-                    notes=d.get("notes", ""),
+                    notes=old_notes,
                 )
             else:
                 # New format
@@ -167,6 +192,44 @@ class Manifest:
                     runs=runs,
                     **d,
                 )
+
+        # --- integrity checks ---
+        needs_resave = False
+        for animal_id, entry in m._entries.items():
+            ok_combos = [c for c, r in entry.runs.items() if r.sleep_qc == "ok"]
+
+            # Multiple ok runs: keep first, cascade-reject the rest
+            if len(ok_combos) > 1:
+                warnings.warn(
+                    f"Manifest integrity: animal '{animal_id}' has multiple ok runs "
+                    f"{ok_combos}. Keeping '{ok_combos[0]}', rejecting the rest.",
+                    stacklevel=2,
+                )
+                winner = ok_combos[0]
+                for extra in ok_combos[1:]:
+                    run = entry.runs[extra]
+                    run.prev_sleep_qc = "ok"
+                    run.sleep_qc = "rejected"
+                    run.rejected_by = winner
+                needs_resave = True
+
+            # Orphaned rejected_by: the referenced combo no longer exists or isn't ok
+            for combo, run in entry.runs.items():
+                if (
+                    run.sleep_qc == "rejected"
+                    and run.rejected_by is not None
+                    and (
+                        run.rejected_by not in entry.runs
+                        or entry.runs[run.rejected_by].sleep_qc != "ok"
+                    )
+                ):
+                    run.rejected_by = None
+                    run.prev_sleep_qc = None
+                    needs_resave = True
+
+        if needs_resave:
+            m.save()
+
         return m
 
     @classmethod
@@ -177,6 +240,8 @@ class Manifest:
         - Adds a RunEntry for each (animal, combo) found in spindle_edfs/ or
           spindle_outputs/ that doesn't already have one.
         - Existing entries and run statuses are never overwritten.
+        - New runs are auto-rejected (with rejected_by set) if the animal
+          already has an ok run.
         """
         m = cls.load(project_root)
 
@@ -191,7 +256,9 @@ class Manifest:
                         preprocessed_edf=str(edf.relative_to(project_root)),
                     )
 
-        # 2. Add RunEntry for each (animal, combo) found on disk
+        # 2. Add RunEntry for each (animal, combo) found on disk.
+        # PSD files (psds_<COMBO>.pkl) are per-combo aggregates, not per-animal,
+        # so they don't tell us which animals have a run — skip them here.
         for subdir in ("spindle_outputs", "spindle_edfs"):
             root_dir = project_root / subdir
             if not root_dir.is_dir():
@@ -206,16 +273,17 @@ class Manifest:
                         continue
                     entry = m._entries[animal_id]
                     if combo not in entry.runs:
-                        entry.runs[combo] = RunEntry()
-
-        # 3. Add RunEntry for each combo found in psd/psds_<COMBO>.pkl files
-        psd_dir = project_root / "psd"
-        if psd_dir.is_dir():
-            for pkl in sorted(psd_dir.glob("psds_*.pkl")):
-                combo = pkl.stem[len("psds_"):]
-                for entry in m._entries.values():
-                    if combo not in entry.runs:
-                        entry.runs[combo] = RunEntry()
+                        ok_combo = next(
+                            (c for c, r in entry.runs.items() if r.sleep_qc == "ok"),
+                            None,
+                        )
+                        if ok_combo is not None:
+                            entry.runs[combo] = RunEntry(
+                                sleep_qc="rejected",
+                                rejected_by=ok_combo,
+                            )
+                        else:
+                            entry.runs[combo] = RunEntry()
 
         m.save()
         return m
@@ -259,10 +327,24 @@ class Manifest:
         return entry.runs.get(channels)
 
     def add_run(self, animal_id: str, channels: str, source_combo: str | None = None) -> RunEntry:
-        """Add a RunEntry for (animal_id, channels) if not present; return it."""
+        """Add a RunEntry for (animal_id, channels) if not present; return it.
+
+        Deliberate reruns (source_combo set) always start with sleep_qc=None so
+        they appear in pending_rerun_review.  Runs added without a source_combo
+        are auto-rejected when the animal already has an ok run.
+        """
         entry = self._entries[animal_id]
         if channels not in entry.runs:
-            entry.runs[channels] = RunEntry(source_combo=source_combo)
+            new_run = RunEntry(source_combo=source_combo)
+            if source_combo is None:
+                ok_combo = next(
+                    (c for c, r in entry.runs.items() if r.sleep_qc == "ok"),
+                    None,
+                )
+                if ok_combo is not None:
+                    new_run.sleep_qc = "rejected"
+                    new_run.rejected_by = ok_combo
+            entry.runs[channels] = new_run
             self.save()
         return entry.runs[channels]
 
@@ -341,7 +423,7 @@ class Manifest:
             (entry, combo)
             for entry in self
             for combo, run in entry.runs.items()
-            if run.psd_status == "needs_drink_mask"
+            if run.sleep_qc == "ok" and run.psd_status == "needs_drink_mask"
         ]
 
     def needs_drink_mask_rerun(self) -> list[tuple[ManifestEntry, str]]:
@@ -350,7 +432,8 @@ class Manifest:
             (entry, combo)
             for entry in self
             for combo, run in entry.runs.items()
-            if run.psd_status == "needs_drink_mask"
+            if run.sleep_qc == "ok"
+            and run.psd_status == "needs_drink_mask"
             and (self.project_root / drink_mask_rel(entry.animal_id)).is_file()
         ]
 
@@ -367,18 +450,73 @@ class Manifest:
     ) -> None:
         """Set the sleep QC flag for a specific (animal, channels) run.
 
+        Enforces the one-ok invariant automatically:
+
+        - Setting "ok": cascade-rejects all non-rejected sibling runs, saving
+          their current status in prev_sleep_qc and recording rejected_by.
+        - Un-okaying (was "ok", now anything else): restores all siblings whose
+          rejected_by == channels, resetting their sleep_qc and clearing metadata.
+        - Leaving "rejected" for another status: clears this run's own cascade
+          metadata (prev_sleep_qc, rejected_by).
+
+        All mutations are flushed in a single atomic save.
+
         Args:
             animal_id:   Animal to update.
             channels:    Channel combo string identifying the run (e.g. "LFC_RSC").
             status:      One of "ok", "needs_review", "needs_rerun", "rejected".
             rerun_combo: New channel combo to use for the rerun; required when
-                         status == "needs_rerun".
+                         status == "needs_rerun", must differ from channels.
         """
         if status not in SLEEP_QC_STATUSES:
-            raise ValueError(f"Invalid sleep_qc status {status!r}; must be one of {SLEEP_QC_STATUSES}")
-        if status == "needs_rerun" and not rerun_combo:
-            raise ValueError("rerun_combo required when status == 'needs_rerun'")
-        run = self._entries[animal_id].runs[channels]
+            raise ValueError(
+                f"Invalid sleep_qc status {status!r}; must be one of {SLEEP_QC_STATUSES}"
+            )
+        if status == "needs_rerun":
+            if not rerun_combo:
+                raise ValueError("rerun_combo required when status == 'needs_rerun'")
+            if rerun_combo == channels:
+                raise ValueError(
+                    f"rerun_combo {rerun_combo!r} cannot be the same as the current combo"
+                )
+
+        entry = self._entries[animal_id]
+        run = entry.runs[channels]
+        old_status = run.sleep_qc
+
+        if status == "ok":
+            # Cascade-reject all siblings that aren't already rejected
+            for combo, sibling in entry.runs.items():
+                if combo == channels:
+                    continue
+                if sibling.sleep_qc != "rejected":
+                    sibling.prev_sleep_qc = sibling.sleep_qc
+                    sibling.sleep_qc = "rejected"
+                    sibling.rejected_by = channels
+                # Already-rejected siblings keep their existing prev/rejected_by
+
+            # The ok run itself has no cascade metadata
+            run.prev_sleep_qc = None
+            run.rejected_by = None
+
+        elif old_status == "ok":
+            # Un-okaying: restore only the siblings this run cascade-rejected
+            for combo, sibling in entry.runs.items():
+                if combo == channels:
+                    continue
+                if sibling.sleep_qc == "rejected" and sibling.rejected_by == channels:
+                    sibling.sleep_qc = sibling.prev_sleep_qc
+                    sibling.prev_sleep_qc = None
+                    sibling.rejected_by = None
+            # PSD review progress is only valid while sleep_qc == "ok"
+            run.psd_status = None
+            run.drink_mask = None
+
+        # Leaving "rejected" for a different status: clear this run's cascade metadata
+        if old_status == "rejected" and status != "rejected":
+            run.prev_sleep_qc = None
+            run.rejected_by = None
+
         run.sleep_qc = status
         run.rerun_combo = rerun_combo if status == "needs_rerun" else None
         self.save()
@@ -390,10 +528,21 @@ class Manifest:
             animal_id:  Animal to update.
             channels:   Channel combo string identifying the run.
             status:     One of "ok", "needs_drink_mask", "drink_mask_applied".
+
+        Raises:
+            ValueError: if the run's sleep_qc is not "ok" (PSD review only
+                        applies to runs that passed sleep QC).
         """
         if status not in PSD_STATUSES:
-            raise ValueError(f"Invalid psd_status {status!r}; must be one of {PSD_STATUSES}")
+            raise ValueError(
+                f"Invalid psd_status {status!r}; must be one of {PSD_STATUSES}"
+            )
         run = self._entries[animal_id].runs[channels]
+        if run.sleep_qc != "ok":
+            raise ValueError(
+                f"Cannot set PSD status on run {channels!r} for animal "
+                f"{animal_id!r}: sleep_qc is {run.sleep_qc!r}, expected 'ok'."
+            )
         run.psd_status = status
         if status == "drink_mask_applied":
             run.drink_mask = drink_mask_rel(animal_id)
@@ -403,10 +552,28 @@ class Manifest:
         self.save()
 
     def reset_sleep_qc(self, animal_id: str, channels: str) -> None:
-        """Clear sleep QC status for a specific run."""
-        run = self._entries[animal_id].runs[channels]
+        """Clear sleep QC status for a specific run.
+
+        If the run was "ok", restores all siblings that were cascade-rejected
+        by it before clearing its own status.
+        """
+        entry = self._entries[animal_id]
+        run = entry.runs[channels]
+        if run.sleep_qc == "ok":
+            for combo, sibling in entry.runs.items():
+                if combo == channels:
+                    continue
+                if sibling.sleep_qc == "rejected" and sibling.rejected_by == channels:
+                    sibling.sleep_qc = sibling.prev_sleep_qc
+                    sibling.prev_sleep_qc = None
+                    sibling.rejected_by = None
         run.sleep_qc = None
         run.rerun_combo = None
+        run.prev_sleep_qc = None
+        run.rejected_by = None
+        # Clearing sleep QC on an ok run invalidates any PSD review progress
+        run.psd_status = None
+        run.drink_mask = None
         self.save()
 
     def reset_psd_status(self, animal_id: str, channels: str) -> None:

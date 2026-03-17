@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional, Dict, Tuple, List
 from pathlib import Path
 
 import numpy as np
@@ -62,13 +61,13 @@ class SleepQCGridPage(QWidget):
         super().__init__(parent)
         self.project_root = Path(project_root)
 
-        self._available_combos: List[str] = []
-        self._data_cache: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]] = {}
-        self._mouse_ids: List[str] = []
+        self._available_combos: list[str] = []
+        self._data_cache: dict[str, tuple[pd.DataFrame, pd.DataFrame]] = {}
+        self._mouse_ids: list[str] = []
         self._current_page: int = 0
         self._mode: str = "group"
 
-        self._plots: Dict[Tuple[str, str], pg.PlotItem] = {}
+        self._plots: dict[tuple[str, str], pg.PlotItem] = {}
 
         self._manifest = Manifest.load(project_root)
 
@@ -245,7 +244,7 @@ class SleepQCGridPage(QWidget):
     # ------------------------------------------------------------------
     # Combo discovery + loading
     # ------------------------------------------------------------------
-    def _discover_combos(self) -> List[str]:
+    def _discover_combos(self) -> list[str]:
         d = self.project_root / "spindle_outputs"
         if not d.is_dir():
             return []
@@ -380,7 +379,7 @@ class SleepQCGridPage(QWidget):
         self.btn_prev.setEnabled(self._current_page > 0)
         self.btn_next.setEnabled(self._current_page < n_pages - 1)
 
-    def _get_page_mice(self) -> List[str]:
+    def _get_page_mice(self) -> list[str]:
         start = self._current_page * self.MICE_PER_PAGE
         return self._mouse_ids[start:start + self.MICE_PER_PAGE]
 
@@ -405,14 +404,14 @@ class SleepQCGridPage(QWidget):
     # ------------------------------------------------------------------
     # Plotting helpers
     # ------------------------------------------------------------------
-    def _get_df(self, combo: str) -> Optional[pd.DataFrame]:
+    def _get_df(self, combo: str) -> pd.DataFrame | None:
         pair = self._data_cache.get(combo)
         if pair is None:
             return None
         return pair[1] if self.btn_offset.isChecked() else pair[0]
 
     @staticmethod
-    def _ensure_x_col(df: pd.DataFrame) -> Tuple[pd.DataFrame, str]:
+    def _ensure_x_col(df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
         if "bin_start_hr" in df.columns:
             return df, "bin_start_hr"
         return df.assign(bin_start_hr=df["bin_start_sec"] / 3600.0), "bin_start_hr"
@@ -506,17 +505,13 @@ class SleepQCGridPage(QWidget):
     # ------------------------------------------------------------------
     # Group mean reference overlay
     # ------------------------------------------------------------------
-    def _get_ref_combo(self) -> Optional[str]:
+    def _get_ref_combo(self) -> str | None:
         """Return combo with most ok animals; prefer LFC_RSC."""
         ok_counts: dict[str, int] = {}
-        for combo in self._available_combos:
-            n = sum(
-                1 for entry in self._manifest
-                for c, run in entry.runs.items()
-                if c == combo and run.sleep_qc == "ok"
-            )
-            if n > 0:
-                ok_counts[combo] = n
+        for entry in self._manifest:
+            for c, run in entry.runs.items():
+                if run.sleep_qc == "ok" and c in self._available_combos:
+                    ok_counts[c] = ok_counts.get(c, 0) + 1
         if not ok_counts:
             return None
         return "LFC_RSC" if "LFC_RSC" in ok_counts else max(ok_counts, key=ok_counts.__getitem__)
@@ -560,12 +555,12 @@ class SleepQCGridPage(QWidget):
             if w:
                 w.deleteLater()
 
-    def _build_mouse_color_map(self, mice: List[str]) -> dict:
+    def _build_mouse_color_map(self, mice: list[str]) -> dict:
         n = len(mice)
         cmap = mpl.colormaps["tab10"] if n <= 10 else mpl.colormaps["tab20"]
         return {mid: tuple(int(255 * c) for c in cmap(i)[:3]) for i, mid in enumerate(mice)}
 
-    def _update_legend_group(self, mice: List[str], mouse_colors: dict) -> None:
+    def _update_legend_group(self, mice: list[str], mouse_colors: dict) -> None:
         self._clear_legend()
         combo = self.cmb_combo.currentText()
 
@@ -573,6 +568,7 @@ class SleepQCGridPage(QWidget):
             color = mouse_colors[mid]
             run = self._manifest.get_run(mid, combo) if combo else None
             status = run.sleep_qc if run else None
+            rejected_by = run.rejected_by if run else None
 
             swatch = QFrame()
             swatch.setFixedSize(30, 4)
@@ -582,13 +578,13 @@ class SleepQCGridPage(QWidget):
             btn_ok.setFixedHeight(22)
             btn_ok.setCheckable(True)
             btn_ok.setChecked(status == "ok")
-            btn_ok.clicked.connect(lambda _, m=mid: self._flag_sleep_qc(m, "ok"))
+            btn_ok.clicked.connect(lambda checked, m=mid: self._flag_sleep_qc(m, "ok" if checked else None))
 
             btn_review = QPushButton("Review")
             btn_review.setFixedHeight(22)
             btn_review.setCheckable(True)
             btn_review.setChecked(status == "needs_review")
-            btn_review.clicked.connect(lambda _, m=mid: self._flag_sleep_qc(m, "needs_review"))
+            btn_review.clicked.connect(lambda checked, m=mid: self._flag_sleep_qc(m, "needs_review" if checked else None))
 
             row_w = QWidget()
             row_l = QHBoxLayout(row_w)
@@ -599,20 +595,36 @@ class SleepQCGridPage(QWidget):
             row_l.addWidget(btn_ok)
             row_l.addWidget(btn_review)
 
+            if status == "rejected":
+                if rejected_by:
+                    tip = f"Rejected because {rejected_by} is OK.\nClick OK here to switch, or click Review to re-examine."
+                    btn_ok.setToolTip(tip)
+                    btn_review.setToolTip(tip)
+                else:
+                    # Manually rejected with no cascade history — offer a reset
+                    btn_reset = QPushButton("Reset")
+                    btn_reset.setFixedHeight(22)
+                    btn_reset.setToolTip("Reset to unreviewed")
+                    btn_reset.clicked.connect(
+                        lambda _, m=mid, c=combo: self._reset_sleep_qc_group(m, c)
+                    )
+                    row_l.addWidget(btn_reset)
+
             bg = self._STATUS_BG.get(status)
             if bg:
                 row_w.setStyleSheet(f"background-color: {bg}; border-radius: 3px;")
 
             self.legend_layout.addWidget(row_w, i // 2, i % 2)
 
-    def _update_legend_animal(self, combos: List[str],
-                               ref_combo: Optional[str] = None) -> None:
+    def _update_legend_animal(self, combos: list[str],
+                               ref_combo: str | None = None) -> None:
         self._clear_legend()
         animal = self.cmb_animal.currentText()
         for i, combo in enumerate(combos):
             color = self._COMBO_COLORS.get(combo, (100, 100, 100))
             run = self._manifest.get_run(animal, combo) if animal else None
             status = run.sleep_qc if run else None
+            rejected_by = run.rejected_by if run else None
 
             swatch = QFrame()
             swatch.setFixedSize(30, 4)
@@ -629,15 +641,29 @@ class SleepQCGridPage(QWidget):
             btn_ok.setFixedHeight(22)
             btn_ok.setCheckable(True)
             btn_ok.setChecked(status == "ok")
-            btn_ok.clicked.connect(lambda _, c=combo: self._flag_animal_ok(c))
+            btn_ok.clicked.connect(lambda checked, c=combo: self._flag_animal_ok(c, checked))
             row_l.addWidget(btn_ok)
 
             btn_review = QPushButton("Review")
             btn_review.setFixedHeight(22)
             btn_review.setCheckable(True)
             btn_review.setChecked(status == "needs_review")
-            btn_review.clicked.connect(lambda _, c=combo: self._flag_animal_review(c))
+            btn_review.clicked.connect(lambda checked, c=combo: self._flag_animal_review(c, checked))
             row_l.addWidget(btn_review)
+
+            if status == "rejected":
+                if rejected_by:
+                    tip = f"Rejected because {rejected_by} is OK.\nClick OK here to switch, or click Review to re-examine."
+                    btn_ok.setToolTip(tip)
+                    btn_review.setToolTip(tip)
+                else:
+                    btn_reset = QPushButton("Reset")
+                    btn_reset.setFixedHeight(22)
+                    btn_reset.setToolTip("Reset to unreviewed")
+                    btn_reset.clicked.connect(
+                        lambda _, a=animal, c=combo: self._reset_sleep_qc_animal(a, c)
+                    )
+                    row_l.addWidget(btn_reset)
 
             row_l.addStretch(1)
 
@@ -655,45 +681,60 @@ class SleepQCGridPage(QWidget):
             self.legend_layout.addWidget(ref_lbl, n_rows, 0, 1, 2)
 
     # ------------------------------------------------------------------
-    # Manifest flagging (normal mode)
+    # Reset helpers (manually-rejected runs with no cascade history)
     # ------------------------------------------------------------------
-    def _flag_animal_ok(self, combo: str) -> None:
-        animal = self.cmb_animal.currentText()
-        if not animal or self._manifest.get(animal) is None:
-            return
-        entry = self._manifest.get(animal)
-        for c, run in entry.runs.items():
-            if c == combo:
-                continue
-            if run.sleep_qc != "rejected":
-                self._manifest.flag_sleep_qc(animal, c, "rejected")
-        if self._manifest.get_run(animal, combo) is None:
-            self._manifest.add_run(animal, combo)
-        self._manifest.flag_sleep_qc(animal, combo, "ok")
+    def _reset_sleep_qc_group(self, mid: str, combo: str) -> None:
+        self._manifest.reset_sleep_qc(mid, combo)
+        self._update_reruns_badge()
+        # Only the legend needs updating; group plots don't encode QC status.
+        mice = self._get_page_mice()
+        self._update_legend_group(mice, self._build_mouse_color_map(mice))
+
+    def _reset_sleep_qc_animal(self, animal: str, combo: str) -> None:
+        self._manifest.reset_sleep_qc(animal, combo)
         self._update_reruns_badge()
         self._update_all_plots()
 
-    def _flag_animal_review(self, combo: str) -> None:
+    # ------------------------------------------------------------------
+    # Manifest flagging — the manifest enforces the one-ok invariant
+    # ------------------------------------------------------------------
+    def _flag_animal_ok(self, combo: str, checked: bool = True) -> None:
         animal = self.cmb_animal.currentText()
         if not animal or self._manifest.get(animal) is None:
             return
-        if self._manifest.get_run(animal, combo) is None:
-            self._manifest.add_run(animal, combo)
-        self._manifest.flag_sleep_qc(animal, combo, "needs_review")
+        if not checked:
+            self._manifest.reset_sleep_qc(animal, combo)
+        else:
+            if self._manifest.get_run(animal, combo) is None:
+                self._manifest.add_run(animal, combo)
+            self._manifest.flag_sleep_qc(animal, combo, "ok")
+        self._update_reruns_badge()
         self._update_all_plots()
 
-    def _flag_sleep_qc(self, mid: str, status: str) -> None:
+    def _flag_animal_review(self, combo: str, checked: bool = True) -> None:
+        animal = self.cmb_animal.currentText()
+        if not animal or self._manifest.get(animal) is None:
+            return
+        if not checked:
+            self._manifest.reset_sleep_qc(animal, combo)
+        else:
+            if self._manifest.get_run(animal, combo) is None:
+                self._manifest.add_run(animal, combo)
+            self._manifest.flag_sleep_qc(animal, combo, "needs_review")
+        self._update_reruns_badge()
+        self._update_all_plots()
+
+    def _flag_sleep_qc(self, mid: str, status: str | None) -> None:
         combo = self.cmb_combo.currentText()
         if not combo or self._manifest.get(mid) is None:
             return
-        if self._manifest.get_run(mid, combo) is None:
-            self._manifest.add_run(mid, combo)
-        if status == "ok":
-            entry = self._manifest.get(mid)
-            for c, run in entry.runs.items():
-                if c != combo and run.sleep_qc != "rejected":
-                    self._manifest.flag_sleep_qc(mid, c, "rejected")
-        self._manifest.flag_sleep_qc(mid, combo, status)
+        if status is None:
+            self._manifest.reset_sleep_qc(mid, combo)
+        else:
+            if self._manifest.get_run(mid, combo) is None:
+                self._manifest.add_run(mid, combo)
+            self._manifest.flag_sleep_qc(mid, combo, status)
+        self._update_reruns_badge()
         mice = self._get_page_mice()
         self._update_legend_group(mice, self._build_mouse_color_map(mice))
 
