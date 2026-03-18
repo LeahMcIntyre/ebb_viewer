@@ -399,7 +399,7 @@ class Manifest:
         A combo is pending review when:
         - it was triggered as a rerun (source_combo is set)
         - it has not yet been reviewed (sleep_qc is None)
-        - spindle outputs exist on disk
+        - this animal's spindle output CSV exists on disk for that combo
         """
         return [
             (entry, combo)
@@ -407,8 +407,9 @@ class Manifest:
             for combo, run in entry.runs.items()
             if run.source_combo is not None
             and run.sleep_qc is None
-            and spindle_output_dir(combo, self.project_root).is_dir()
-            and any(spindle_output_dir(combo, self.project_root).iterdir())
+            and any(spindle_output_dir(combo, self.project_root).glob(
+                f"{entry.animal_id}_*.csv"
+            ))
         ]
 
     def needs_rerun(self) -> list[tuple[ManifestEntry, str]]:

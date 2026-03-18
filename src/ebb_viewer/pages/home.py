@@ -38,12 +38,25 @@ _RERUN_DONE_COLOR = QColor("#c8c8c8")           # gray = rerun resolved
 _PENDING_COLOR = QColor("#f0f0f0")            # light gray = reached but not yet flagged
 _EXISTS_COLOR  = QColor("#d4edda")            # green
 
+# Combo badge colours for the Channels column
+_COMBO_BG: dict[str, QColor] = {
+    "LFC_RSC": QColor("#5ba3d9"),
+    "LFC_LSC": QColor("#ffab5e"),
+    "RSC_LSC": QColor("#5ec45e"),
+    "LFC":     QColor("#e86e6e"),
+    "RSC":     QColor("#b89cd8"),
+    "LSC":     QColor("#b3896e"),
+}
+_COMBO_FG = QColor("#ffffff")
 
-def _cell(text: str, bg: QColor | None = None) -> QTableWidgetItem:
+
+def _cell(text: str, bg: QColor | None = None, fg: QColor | None = None) -> QTableWidgetItem:
     item = QTableWidgetItem(text)
     item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
     if bg is not None:
         item.setBackground(bg)
+    if fg is not None:
+        item.setForeground(fg)
     return item
 
 
@@ -257,7 +270,12 @@ class HomePage(QWidget):
             self.table.setItem(row_idx, 2, _cell(pre))
 
             # 3: Channels
-            self.table.setItem(row_idx, 3, _cell(combo or "—"))
+            combo_bg = _COMBO_BG.get(combo)
+            self.table.setItem(row_idx, 3, _cell(
+                combo or "—",
+                bg=combo_bg,
+                fg=_COMBO_FG if combo_bg else None,
+            ))
 
             # 4: Spindle EDF
             self.table.setItem(row_idx, 4, _cell(
@@ -357,15 +375,8 @@ class HomePage(QWidget):
 
         h.addWidget(QLabel(f"<b>{entry.animal_id}</b>"))
 
-        if channels == "LFC_RSC":
-            ch_bg, ch_fg = "#1f77b4", "#ffffff"
-        else:
-            ch_bg, ch_fg = "#2ca02c", "#ffffff"
-        lbl_ch = QLabel(channels)
-        lbl_ch.setStyleSheet(
-            f"background-color: {ch_bg}; color: {ch_fg};"
-            " border-radius: 3px; padding: 1px 6px; font-size: 11px; font-weight: bold;"
-        )
+        lbl_ch = QLabel(f"[{channels}]")
+        lbl_ch.setStyleSheet("color: #555;")
         h.addWidget(lbl_ch)
 
         h.addStretch(3)

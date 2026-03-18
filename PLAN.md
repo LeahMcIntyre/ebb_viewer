@@ -91,8 +91,8 @@ from re-appearing as actionable.
 
 ## Implementation order
 
-1. Manifest — `RunEntry.source_combo`, `"rejected"` status, `add_run`, `pending_rerun_review`, `flag_sleep_qc`
-2. RerunPage — pass `source_combo` when calling `add_run`
-3. Home page — `"rejected"` colour in table + "rerun done ✓" display for resolved reruns
-4. Sleep QC — group reference overlay (Animal mode)
-5. Sleep QC — Review Mode toggle + decision buttons in legend
+1. ✅ Manifest — `RunEntry.source_combo`, `"rejected"` status, `add_run`, `pending_rerun_review`, `flag_sleep_qc`
+2. ✅ RerunPage — pass `source_combo` when calling `add_run`
+3. ✅ Home page — `"rejected"` colour in table + "rerun done ✓" display for resolved reruns
+4. ✅ Sleep QC — group reference overlay (Animal mode)
+5. ✅ Sleep QC — Review Mode toggle + decision buttons in legend
