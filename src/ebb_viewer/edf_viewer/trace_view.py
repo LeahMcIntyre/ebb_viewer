@@ -94,6 +94,10 @@ class TraceView(QtWidgets.QWidget):
         self._annotations: list[tuple[float, str]] = []
         self._annotation_items: list[pg.InfiniteLine] = []
 
+        # Per-channel peak lines: {ch_idx: array of t_sec}
+        self._peaks: dict[int, "np.ndarray"] = {}
+        self._peak_items: list[pg.InfiniteLine] = []
+
         # State bar + legend (both hidden until set_state_masks is called)
         self.state_bar    = StateBar(self)
         self.state_legend = StateLegend(self)
@@ -530,4 +534,28 @@ class TraceView(QtWidgets.QWidget):
                 pw.addItem(line)
                 self._annotation_items.append(line)
 
-    
+    def set_peaks(self, peaks: dict[int, np.ndarray]) -> None:
+        """Draw a vertical line per peak time, only on its matching channel.
+
+        Parameters
+        ----------
+        peaks:
+            ``{ch_idx: array_of_times_in_seconds}`` — ch_idx matches the order
+            of ``self.plots`` (0=LFC, 1=RSC, 2=LSC, 3=EMG).
+        """
+        for item in self._peak_items:
+            item.getViewBox().removeItem(item)
+        self._peak_items.clear()
+
+        self._peaks = peaks
+        pen = pg.mkPen(color=(220, 100, 0, 200), width=1.0, style=Qt.PenStyle.SolidLine)
+        for ch_idx, times in peaks.items():
+            if ch_idx < 0 or ch_idx >= len(self.plots):
+                continue
+            pw = self.plots[ch_idx]
+            for t_sec in times:
+                line = pg.InfiniteLine(pos=float(t_sec), angle=90, movable=False, pen=pen)
+                line.setZValue(15)
+                pw.addItem(line)
+                self._peak_items.append(line)
+

@@ -17,7 +17,7 @@ from ebb_viewer.widgets.sleep_viewer import SleepPopup
 
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
-from ebb_viewer.edf_viewer.file_openers import pick_edf_csv, pick_mat, pick_npy_csv, pick_annotations_csv, load_annotations
+from ebb_viewer.edf_viewer.file_openers import pick_edf_csv, pick_mat, pick_npy_csv, pick_annotations_csv, load_annotations, pick_peaks_mat, load_peaks_mat
 from ebb_viewer.edf_viewer.mask_builder import (
     build_default_masks, load_state_masks, load_swd_mask, load_drink_mask,
     rebuild_artifact_masks, rebuild_spindle_mask, rebuild_drink_mask,
@@ -114,6 +114,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.act_load_annotations = QtGui.QAction("Load Annotations…", self)
         self.act_load_annotations.triggered.connect(self.on_load_annotations)
 
+        self.act_load_peaks = QtGui.QAction("Load Peaks (.mat)…", self)
+        self.act_load_peaks.triggered.connect(self.on_load_peaks)
+
         self.act_next_annotation = QtGui.QAction("Next Annotation", self)
         self.act_next_annotation.setShortcut("]")
         self.act_next_annotation.triggered.connect(self.trace_view.jump_to_next_annotation)
@@ -132,6 +135,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         m_file.addAction(self.act_load_swd)
         m_file.addAction(self.act_load_drink)
         m_file.addAction(self.act_load_annotations)
+        m_file.addAction(self.act_load_peaks)
         m_file.addSeparator()
         m_file.addAction(self.act_quit)
         m_file.addAction(self.act_info)
@@ -344,6 +348,16 @@ class EegMainWindow(QtWidgets.QMainWindow):
         try:
             annotations = load_annotations(csv_path)
             self.trace_view.set_annotations(annotations)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
+
+    def on_load_peaks(self):
+        mat_path = pick_peaks_mat(self, self.initial_dir)
+        if mat_path is None:
+            return
+        try:
+            peaks = load_peaks_mat(mat_path)
+            self.trace_view.set_peaks(peaks)
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
 

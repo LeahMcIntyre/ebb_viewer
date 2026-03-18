@@ -81,6 +81,33 @@ def pick_annotations_csv(parent=None, dir=""):
     return Path(path)
 
 
+def pick_peaks_mat(parent=None, dir=""):
+    """Prompt the user to select a peak-times .mat file."""
+    path, _ = QFileDialog.getOpenFileName(
+        parent,
+        "Select peak times .mat file",
+        dir,
+        "MAT files (*.mat);;All files (*)",
+    )
+    if not path:
+        return None
+    return Path(path)
+
+
+def load_peaks_mat(mat_path) -> dict[int, "np.ndarray"]:
+    """Load a peak-times .mat file and return {ch_idx: times_in_seconds}.
+
+    Expects the mat variable ``peak_times`` shaped (1, 4) where each cell
+    contains the peak times (in seconds) for channels LFC, RSC, LSC, EMG.
+    """
+    import numpy as np
+    import scipy.io
+
+    mat = scipy.io.loadmat(str(mat_path))
+    peak_times = mat["peak_times"]
+    return {i: peak_times[0, i].flatten().astype(float) for i in range(3)}
+
+
 def load_annotations(csv_path) -> list[tuple[float, str]]:
     """Parse a Pinnacle-style annotation CSV and return (t_sec, label) pairs.
 
