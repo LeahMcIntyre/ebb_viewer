@@ -396,6 +396,20 @@ class SleepQCGridPage(QWidget):
 
     def _jump_to_rerun_queue(self) -> None:
         """Switch to animal mode and jump to the first animal with a pending rerun."""
+        # Re-discover combo directories — new ones may have appeared since page load,
+        # and cached data for existing combos may be stale (downloaded after first load).
+        new_combos = self._discover_combos()
+        stale = [c for c in new_combos if c not in self._available_combos]
+        # Also invalidate cache for combos whose directory now has files but was
+        # previously loaded empty (download completed after first cache population).
+        for combo in list(self._data_cache):
+            out_dir = self.project_root / "spindle_outputs" / combo
+            cached_df, _ = self._data_cache[combo]
+            if cached_df.empty and out_dir.is_dir() and any(out_dir.iterdir()):
+                del self._data_cache[combo]
+                stale.append(combo)
+        if stale:
+            self._available_combos = new_combos
         self._set_mode("animal")
         for i in range(self.cmb_animal.count()):
             if self._has_pending_rerun(self.cmb_animal.itemText(i)):

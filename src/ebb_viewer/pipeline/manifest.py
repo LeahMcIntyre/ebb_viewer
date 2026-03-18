@@ -338,6 +338,10 @@ class Manifest:
         Deliberate reruns (source_combo set) always start with sleep_qc=None so
         they appear in pending_rerun_review.  Runs added without a source_combo
         are auto-rejected when the animal already has an ok run.
+
+        If the run already exists but lacks source_combo and one is now provided
+        (e.g. the animal's rerun combo happened to already be in the manifest from
+        a previous cycle), stamp source_combo so it appears in pending_rerun_review.
         """
         entry = self._entries[animal_id]
         if channels not in entry.runs:
@@ -348,6 +352,13 @@ class Manifest:
                     new_run.sleep_qc = "rejected"
                     new_run.rejected_by = ok
             entry.runs[channels] = new_run
+            self.save()
+        elif source_combo is not None and entry.runs[channels].source_combo is None:
+            # Run exists but isn't tagged as a rerun yet — stamp it so it shows
+            # up for review. Reset sleep_qc to None so it's not silently skipped.
+            run = entry.runs[channels]
+            run.source_combo = source_combo
+            run.sleep_qc = None
             self.save()
         return entry.runs[channels]
 

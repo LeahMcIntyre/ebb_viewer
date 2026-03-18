@@ -124,7 +124,7 @@ class RerunPage(QWidget):
         self._refresh()
 
     def _refresh(self):
-        self.table.setSpan(0, 0, 1, 1)  # reset any span left from a previous placeholder row
+        self.table.setRowCount(0)  # clears all spans and content from previous render
         manifest = Manifest.load(self.project_root)
 
         def _rerun_files_exist(entry: ManifestEntry, rerun_combo: str) -> bool:

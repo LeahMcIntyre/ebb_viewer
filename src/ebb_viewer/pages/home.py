@@ -117,30 +117,52 @@ class HomePage(QWidget):
         root_layout.addWidget(self.table)
 
         # --- sleep review queue ---
-        queue_lbl = QLabel("Sleep QC Review Queue")
-        queue_lbl.setStyleSheet("font-weight: bold; font-size: 13px;")
-        root_layout.addWidget(queue_lbl)
+        self.btn_queue_toggle = QPushButton("▼  Sleep QC Review Queue")
+        self.btn_queue_toggle.setCheckable(True)
+        self.btn_queue_toggle.setChecked(True)
+        self.btn_queue_toggle.setStyleSheet(
+            "font-weight: bold; font-size: 13px; text-align: left; border: none; padding: 0;"
+        )
+        self.btn_queue_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_queue_toggle.toggled.connect(self._toggle_queue)
+        root_layout.addWidget(self.btn_queue_toggle)
 
         self._queue_container = QWidget()
         self._queue_layout = QVBoxLayout(self._queue_container)
         self._queue_layout.setContentsMargins(0, 2, 0, 4)
         self._queue_layout.setSpacing(3)
 
-        queue_scroll = QScrollArea()
-        queue_scroll.setWidget(self._queue_container)
-        queue_scroll.setWidgetResizable(True)
-        queue_scroll.setFixedHeight(160)
-        queue_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        root_layout.addWidget(queue_scroll)
+        self.queue_scroll = QScrollArea()
+        self.queue_scroll.setWidget(self._queue_container)
+        self.queue_scroll.setWidgetResizable(True)
+        self.queue_scroll.setMinimumHeight(120)
+        self.queue_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        root_layout.addWidget(self.queue_scroll, stretch=1)
 
         # --- file tree ---
-        file_lbl = QLabel("Project Files")
-        file_lbl.setStyleSheet("font-weight: bold; font-size: 13px;")
-        root_layout.addWidget(file_lbl)
+        self.btn_files_toggle = QPushButton("▼  Project Files")
+        self.btn_files_toggle.setCheckable(True)
+        self.btn_files_toggle.setChecked(True)
+        self.btn_files_toggle.setStyleSheet(
+            "font-weight: bold; font-size: 13px; text-align: left; border: none; padding: 0;"
+        )
+        self.btn_files_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_files_toggle.toggled.connect(self._toggle_file_tree)
+        root_layout.addWidget(self.btn_files_toggle)
 
         self.edf_tree = ProjectTree()
         self.edf_tree.set_root(root_path=self.project_root)
-        root_layout.addWidget(self.edf_tree)
+        root_layout.addWidget(self.edf_tree, stretch=2)
+
+    def _toggle_queue(self, checked: bool) -> None:
+        self.btn_queue_toggle.setText(
+            "▼  Sleep QC Review Queue" if checked else "►  Sleep QC Review Queue"
+        )
+        self.queue_scroll.setVisible(checked)
+
+    def _toggle_file_tree(self, checked: bool) -> None:
+        self.btn_files_toggle.setText("▼  Project Files" if checked else "►  Project Files")
+        self.edf_tree.setVisible(checked)
 
     # ---------------------------------------------------------------
     # Actions
@@ -335,8 +357,15 @@ class HomePage(QWidget):
 
         h.addWidget(QLabel(f"<b>{entry.animal_id}</b>"))
 
-        lbl_ch = QLabel(f"[{channels}]")
-        lbl_ch.setStyleSheet("color: #555;")
+        if channels == "LFC_RSC":
+            ch_bg, ch_fg = "#1f77b4", "#ffffff"
+        else:
+            ch_bg, ch_fg = "#2ca02c", "#ffffff"
+        lbl_ch = QLabel(channels)
+        lbl_ch.setStyleSheet(
+            f"background-color: {ch_bg}; color: {ch_fg};"
+            " border-radius: 3px; padding: 1px 6px; font-size: 11px; font-weight: bold;"
+        )
         h.addWidget(lbl_ch)
 
         h.addStretch(3)
