@@ -28,15 +28,16 @@ test coverage, and general UI clarity.
 #### Tests (`tests/ebb_viewer/test_manifest.py`)
 - 44 tests covering the full manifest API
 
-### Completed (commit `642d358` — branch `refactor/sleep_qc`)
+### Completed (commits on branch `refactor/sleep_qc`)
 
 #### Manifest additions (`pipeline/manifest.py`)
 - `RunEntry.source_combo: str | None` — backward pointer in the rerun chain
 - `"rejected"` added to `SLEEP_QC_STATUSES`
 - `add_run(animal_id, channels, source_combo=None)` — stamps `source_combo`; handles re-processing after reload
 - `pending_rerun_review()` — globs `{entry.animal_id}_*.csv` specifically
-- `needs_rerun_pending()` — manifest-only badge/queue view (no filesystem)
+- `needs_rerun_pending()` — excludes only when output CSV is on disk (so cancelled uploads re-appear)
 - `flag_sleep_qc` handles `"rejected"` cleanly
+- `build_from_standard` stamps `source_combo` only from `spindle_outputs/` scan (not `spindle_edfs/`)
 
 #### Home page (`pages/home.py`)
 - "Needs Attention" scroll zone replaces the old review queue
@@ -44,6 +45,8 @@ test coverage, and general UI clarity.
   - Orange cards — `needs_rerun_pending()`: "Spindle rerun queued" + clickable nav link
   - Blue cards — `pending_rerun_review()`: "Rerun ready for review" + clickable nav link
   - "All caught up ✓" when all three lists empty
+- Attention zone **auto-sizes**: collapses to ~40 px when empty; grows to fit content, capped
+  at half the window height, scrollable beyond that. Updates on window resize.
 - `navigate_to = pyqtSignal(str)` — nav links navigate the sidebar
 - Pipeline Summary table collapsible
 - `manifest_changed` + `_poll()` signals wired
@@ -60,21 +63,15 @@ test coverage, and general UI clarity.
 - `_poll()` skips cache eviction during review mode — prevents the 10 s timer from
   evicting rerun combo data mid-review (caused second animal's rerun line to disappear)
 
-#### Rerun page queue / `needs_rerun_pending()` alignment
-- Both now exclude runs where `rerun_run.source_combo is not None`
-  (once `add_run` stamps `source_combo`, the orange card clears and the blue card takes over)
-- Queue filter guards: only show if rerun run doesn't exist OR (`sleep_qc is None` AND `source_combo is None`)
-
-#### `build_from_standard` (`pipeline/manifest.py`)
-- Stamps `source_combo` only when scanning `spindle_outputs/` (CSV present = rerun processed)
-- Does NOT stamp `source_combo` from `spindle_edfs/` alone — EDF present without CSV means
-  upload has not happened yet; the Rerun page must still act and will stamp via `add_run()`
+#### Rerun page queue (`pages/rerun.py`)
+- Shows items where output CSV hasn't been downloaded yet (rerun_run not reviewed AND no CSV)
+- Items **re-appear** if upload was cancelled or download failed — user can re-trigger
+- Skips EDF re-write if it already exists on disk
 
 #### Tests (`tests/ebb_viewer/test_manifest.py`)
-- 70 tests total (was 44 → 70 across this session and prior session)
-- New: `build_from_standard` source_combo stamping (3 tests)
-- New: `needs_rerun_pending` source_combo exclusion (2 tests)
-- New: EDF-only placement must NOT stamp source_combo (1 test, with `needs_rerun_pending` assertion)
+- 70 tests total, all passing
+- Covers: `build_from_standard` source_combo stamping, `needs_rerun_pending` CSV-based exclusion,
+  EDF-only placement must NOT stamp source_combo
 
 ---
 
@@ -92,6 +89,7 @@ test coverage, and general UI clarity.
    → Run Selected → writes spindle_edfs/<RERUN_COMBO>/ (skips if EDF already exists)
    → manifest.add_run(animal, rerun_combo, source_combo=original_combo)  ← stamps source_combo
    → Upload & Download dialog → spindle_outputs/<RERUN_COMBO>/
+   → If upload cancelled or fails: item re-appears in queue on next refresh
 
 4. Sleep QC page  (sidebar shows "4. Sleep QC (1)")
    → showEvent evicts stale cache, badge appears: "● 1 rerun ready for review →"
@@ -108,12 +106,10 @@ test coverage, and general UI clarity.
 
 ## Key Design Decisions
 
-### `source_combo` as the "Rerun page done" signal
-`source_combo` being set on a rerun run means the Rerun page has registered it
-(called `add_run`) and the upload/download process has been triggered. This is the
-handoff point from the orange card to the blue card:
-- `source_combo=None` → Rerun page still needs to act → orange card / Rerun queue
-- `source_combo` set, no CSV → waiting for download → neither card (transition state)
+### `source_combo` + CSV as the "Rerun page done" signal
+The handoff between orange card (Rerun page must act) and blue card (Sleep QC review):
+- `source_combo=None`, no CSV → Rerun page hasn't acted → orange card / Rerun queue
+- `source_combo` set, no CSV → upload was triggered but not completed → **still orange card / Rerun queue** (re-trigger)
 - `source_combo` set, CSV on disk → ready for Sleep QC review → blue card / Sleep QC badge
 
 ### When `build_from_standard` stamps `source_combo`
@@ -139,12 +135,12 @@ eviction in `_poll()` when `self._review_mode` is True. Cache is fully refreshed
 on review mode exit.
 
 ### `pending_rerun_review()` filesystem check
-The only filtered view that checks the filesystem (for the CSV). Badge fires only
-when the specific animal's CSV is downloaded, not just any file in the dir.
+Checks for `{animal_id}_*.csv` in `spindle_outputs/<combo>/`. Badge fires only
+when the specific animal's CSV is downloaded.
 
-### `needs_rerun_pending()` — manifest-only, no filesystem
-Excludes runs where rerun_run is reviewed (sleep_qc not None) OR already registered
-as a rerun (source_combo not None). The Rerun page queue uses the same logic.
+### `needs_rerun_pending()` — CSV-gated, not source_combo-gated
+Excludes runs only when the output CSV is on disk. Previously excluded on `source_combo`
+being set, which caused items to vanish when upload was cancelled.
 
 ---
 
@@ -154,22 +150,19 @@ as a rerun (source_combo not None). The Rerun page queue uses the same logic.
 - **Inline combo picker for "Rerun Again"**: routes through Home queue instead.
 - **Separate decision panel above plots**: tried twice (below legend, above plots) — reverted to legend each time.
 - **`any(iterdir())` check for download completion**: too loose; replaced with animal-specific glob.
-- **Filesystem check in `needs_rerun_pending()`**: caused false exclusions from stale files. Reverted to manifest-only check.
+- **Filesystem check in `needs_rerun_pending()` (early attempt)**: caused false exclusions from stale files in previous cycles.
 - **Stamping `source_combo` from `spindle_edfs/` scan**: caused the "needs rerun" item to disappear from the attention zone when user placed only the EDF manually. Fixed by only stamping from `spindle_outputs/`.
-- **Review button interactive for `needs_rerun` status**: unchecking it called `reset_sleep_qc` and erased the rerun target combo silently. Fixed by disabling the button for `needs_rerun` runs.
+- **Review button interactive for `needs_rerun` status**: unchecking it called `reset_sleep_qc` and erased the rerun target combo silently. Fixed by disabling the button.
 - **Cache eviction in `_poll()` during review mode**: the 10 s timer evicted rerun combo data causing the second animal's rerun line to disappear mid-review. Fixed by skipping eviction when `_review_mode` is True.
-- **`needs_rerun_pending()` not checking `source_combo`**: when user had LSC output pre-placed and synced, then flagged LFC_LSC for rerun, the Rerun page would run (stamp `source_combo`) but both the orange card AND blue card showed simultaneously. Fixed by excluding runs where `rerun_run.source_combo is not None`.
+- **`needs_rerun_pending()` excluding on `source_combo` alone**: when upload was cancelled, `source_combo` was stamped but no CSV existed, causing the item to vanish from both orange card and Rerun queue. Fixed by gating exclusion on CSV presence instead.
 
 ---
 
 ## Next Steps
-1. **Commit** all pending changes on `refactor/sleep_qc` (4 files modified, ~147 lines)
-2. **End-to-end verification** of full rerun flow (see flow diagram above)
-3. **Debug print** in `psd_graph_widget.py:64`: `print("New PSD Window")` — remove it
-4. **`needs_drink_mask()` never called**: manifest method exists but nothing in UI calls it
-5. **Persistent upload button on Rerun page**: upload only triggered immediately after Run —
-   add a persistent button to re-trigger for cancelled uploads or download-only re-runs
-6. **Remaining UX improvements** from saved plan (see memory: `project_ux_improvement_plan.md`):
+1. **End-to-end verification** of full rerun flow (see flow diagram above)
+2. **Debug print** in `psd_graph_widget.py:64`: `print("New PSD Window")` — remove it
+3. **`needs_drink_mask()` never called**: manifest method exists but nothing in UI calls it
+4. **Remaining UX improvements** from saved plan (see memory: `project_ux_improvement_plan.md`):
    - Priority 4: Review mode visual tint (`#f0f4ff` background when `_review_mode` is True)
    - Priority 5: Post-run navigation hints on Rerun page
    - Priority 7: Human-readable status labels in home table

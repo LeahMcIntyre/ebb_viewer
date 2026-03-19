@@ -118,6 +118,8 @@ class HomePage(QWidget):
         lbl_attn.setStyleSheet("font-weight: bold; font-size: 13px;")
         root_layout.addWidget(lbl_attn)
 
+        self._attn_card_count = 0
+
         self._attn_container = QWidget()
         self._attn_layout = QVBoxLayout(self._attn_container)
         self._attn_layout.setContentsMargins(0, 2, 0, 4)
@@ -126,9 +128,9 @@ class HomePage(QWidget):
         self._attn_scroll = QScrollArea()
         self._attn_scroll.setWidget(self._attn_container)
         self._attn_scroll.setWidgetResizable(True)
-        self._attn_scroll.setMinimumHeight(80)
         self._attn_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        root_layout.addWidget(self._attn_scroll, stretch=1)
+        self._attn_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        root_layout.addWidget(self._attn_scroll)
 
         # --- pipeline summary table (collapsible) ---
         self.btn_table_toggle = QPushButton("▼  Pipeline Summary")
@@ -173,6 +175,23 @@ class HomePage(QWidget):
         self.edf_tree = ProjectTree()
         self.edf_tree.set_root(root_path=self.project_root)
         root_layout.addWidget(self.edf_tree, stretch=2)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_attn_max_height()
+
+    def _update_attn_max_height(self) -> None:
+        """Size the attention scroll area to content, capped at half the page."""
+        n = self._attn_card_count
+        if n == 0:
+            self._attn_scroll.setMinimumHeight(0)
+            self._attn_scroll.setMaximumHeight(40)
+        else:
+            content_h = 48 * n + 12  # ~48 px per card + layout overhead
+            cap = max(160, self.height() // 2)
+            clamped = min(content_h, cap)
+            self._attn_scroll.setMinimumHeight(min(80, clamped))
+            self._attn_scroll.setMaximumHeight(clamped)
 
     def _toggle_table(self, checked: bool) -> None:
         self.btn_table_toggle.setText(
@@ -366,6 +385,9 @@ class HomePage(QWidget):
         reviewing       = manifest.needs_review()
         rerunning       = manifest.needs_rerun_pending()
         rerun_ready     = manifest.pending_rerun_review()
+
+        self._attn_card_count = len(reviewing) + len(rerunning) + len(rerun_ready)
+        self._update_attn_max_height()
 
         if not reviewing and not rerunning and not rerun_ready:
             lbl = QLabel("All caught up ✓")

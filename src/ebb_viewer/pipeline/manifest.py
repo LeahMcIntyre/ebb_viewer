@@ -433,14 +433,13 @@ class Manifest:
         ]
 
     def needs_rerun_pending(self) -> list[tuple[ManifestEntry, str]]:
-        """Runs flagged for rerun where the Rerun page still needs to act.
+        """Runs flagged for rerun where the output CSV has not yet been downloaded.
 
         Excludes entries where the rerun run:
         - already has a non-None sleep_qc (reviewed in Sleep QC), or
-        - already has source_combo set (registered by the Rerun page;
-          pending_rerun_review / the blue card takes over from here).
-        Does not check the filesystem — stale files from previous cycles are
-        irrelevant to whether action is still needed.
+        - has an output CSV on disk (pending_rerun_review / the blue card takes over).
+        Items reappear here if the upload was cancelled or the download failed,
+        so the user can re-trigger from the Rerun page.
         """
         result = []
         for entry in self:
@@ -450,8 +449,12 @@ class Manifest:
                 rerun_run = entry.runs.get(run.rerun_combo)
                 if rerun_run is not None and rerun_run.sleep_qc is not None:
                     continue  # already reviewed
-                if rerun_run is not None and rerun_run.source_combo is not None:
-                    continue  # registered as a rerun; pending_rerun_review handles it
+                csv_present = any(
+                    spindle_output_dir(run.rerun_combo, self.project_root)
+                    .glob(f"{entry.animal_id}_*.csv")
+                )
+                if csv_present:
+                    continue  # CSV downloaded; pending_rerun_review handles it
                 result.append((entry, combo))
         return result
 

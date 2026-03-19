@@ -132,23 +132,26 @@ class RerunPage(QWidget):
         self.table.setRowCount(0)  # clears all spans and content from previous render
         manifest = Manifest.load(self.project_root)
 
-        # Show entries where the rerun run hasn't been registered yet.
-        # Mirrors needs_rerun_pending() — no filesystem check, so stale files from
-        # previous cycles don't hide items that still need upload/download.
-        # _run_selected already skips writing the EDF if it already exists on disk.
-        # Once add_run stamps source_combo, the item moves to pending_rerun_review
-        # (blue card / Sleep QC badge) and is removed from this queue.
-        pairs = [
-            (entry, combo)
-            for entry, combo in manifest.needs_rerun()
-            if (
-                entry.runs[combo].rerun_combo not in entry.runs
-                or (
-                    entry.runs[entry.runs[combo].rerun_combo].sleep_qc is None
-                    and entry.runs[entry.runs[combo].rerun_combo].source_combo is None
-                )
+        # Show entries where the rerun output CSV hasn't been downloaded yet.
+        # Exclude only when the rerun run has been reviewed (sleep_qc set) OR the
+        # output CSV is already on disk (pending_rerun_review / blue card takes over).
+        # This means items re-appear here if the upload dialog was cancelled or the
+        # download failed — the user can run again to re-trigger the upload.
+        pairs = []
+        for entry, combo in manifest.needs_rerun():
+            rerun_combo = entry.runs[combo].rerun_combo
+            if rerun_combo not in entry.runs:
+                pairs.append((entry, combo))
+                continue
+            rerun_run = entry.runs[rerun_combo]
+            if rerun_run.sleep_qc is not None:
+                continue  # already reviewed
+            csv_present = any(
+                spindle_output_dir(rerun_combo, self.project_root)
+                .glob(f"{entry.animal_id}_*.csv")
             )
-        ]
+            if not csv_present:
+                pairs.append((entry, combo))
 
         self.table.setRowCount(len(pairs))
         self._row_data = []

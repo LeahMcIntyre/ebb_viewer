@@ -650,13 +650,11 @@ def test_pending_rerun_review(tmp_path):
     assert "AM003" not in animal_ids  # no source_combo (not a rerun)
 
 
-def test_needs_rerun_pending_excludes_registered_rerun(tmp_path):
-    """Once add_run stamps source_combo, needs_rerun_pending drops the item.
+def test_needs_rerun_pending_excludes_when_csv_present(tmp_path):
+    """needs_rerun_pending drops an item only once the output CSV is on disk.
 
-    Reproduces: user syncs LSC from filesystem before flagging LFC_RSC for
-    rerun. LSC run exists with source_combo=None. After the Rerun page calls
-    add_run (which stamps source_combo), both the orange card and the Rerun
-    page queue should stop showing the item.
+    If source_combo is stamped but no CSV exists (e.g. upload was cancelled),
+    the item must still appear so the user can re-trigger from the Rerun page.
     """
     m = _make_manifest(tmp_path, {
         "AM001": {
@@ -664,15 +662,19 @@ def test_needs_rerun_pending_excludes_registered_rerun(tmp_path):
             "LSC":     RunEntry(sleep_qc=None, source_combo=None),
         },
     })
-    # Before add_run: should appear (Rerun page needs to register it)
+    # No CSV yet: appears
     assert len(m.needs_rerun_pending()) == 1
 
-    # Simulate add_run stamping source_combo (as Rerun page does)
+    # Stamp source_combo but still no CSV — should still appear
     m._entries["AM001"].runs["LSC"].source_combo = "LFC_RSC"
     m.save()
     m2 = Manifest.load(m.project_root)
+    assert len(m2.needs_rerun_pending()) == 1
 
-    # After add_run: should disappear (pending_rerun_review takes over)
+    # CSV downloaded — should now disappear (pending_rerun_review takes over)
+    csv = tmp_path / "spindle_outputs" / "LSC" / "AM001_states.csv"
+    csv.parent.mkdir(parents=True, exist_ok=True)
+    csv.touch()
     assert len(m2.needs_rerun_pending()) == 0
 
 
