@@ -331,8 +331,11 @@ class PSDGridPage(QWidget):
     # ---------------- MANIFEST FLAGGING ----------------
 
     def _pending_animal_ids(self) -> set[str]:
-        if self.manifest is None or self.run_channels is None:
+        if self.manifest is None:
             return set()
+        if self.run_channels is None:
+            # Final PKL mode: any animal pending PSD review
+            return {entry.animal_id for entry, _ in self.manifest.pending_psd_review()}
         return {
             entry.animal_id
             for entry, combo in self.manifest.pending_psd_review()
@@ -346,29 +349,40 @@ class PSDGridPage(QWidget):
             return None
         return key.replace("_artifact", "").replace("_drink", "")
 
+    def _resolve_combo(self, animal_id: str | None) -> str | None:
+        """Return the channel combo to use for manifest flagging."""
+        if self.run_channels is not None:
+            return self.run_channels
+        if animal_id is None:
+            return None
+        return self.store.source_combo(animal_id)
+
     def _flag_psd_ok(self) -> None:
-        if self.manifest is None or self.run_channels is None:
+        if self.manifest is None:
             return
         animal_id = self._manifest_animal_id()
-        if animal_id is None:
+        combo = self._resolve_combo(animal_id)
+        if animal_id is None or combo is None:
             return
-        self.manifest.flag_psd(animal_id, self.run_channels, "ok")
+        self.manifest.flag_psd(animal_id, combo, "ok")
         self._update_flag_status()
 
     def _flag_drink_mask(self) -> None:
-        if self.manifest is None or self.run_channels is None:
+        if self.manifest is None:
             return
         animal_id = self._manifest_animal_id()
-        if animal_id is None:
+        combo = self._resolve_combo(animal_id)
+        if animal_id is None or combo is None:
             return
-        self.manifest.flag_psd(animal_id, self.run_channels, "needs_drink_mask")
+        self.manifest.flag_psd(animal_id, combo, "needs_drink_mask")
         self._update_flag_status()
 
     def _update_flag_status(self) -> None:
-        if self.manifest is None or self.run_channels is None:
+        if self.manifest is None:
             return
         animal_id = self._manifest_animal_id()
-        run = self.manifest.get_run(animal_id, self.run_channels) if animal_id else None
+        combo = self._resolve_combo(animal_id)
+        run = self.manifest.get_run(animal_id, combo) if (animal_id and combo) else None
         status = run.psd_status if run else None
         if status == "ok":
             self._status_label.setText("✓ OK")

@@ -335,11 +335,16 @@ def batch_estimate(
     [kwargs.pop(x, None) for x in ('path', 'state_path')]
 
     # pair the eeg paths with the state paths
-    eeg_paths = sorted(Path(eeg_dir).glob('*PROCESSED.edf'))
     state_paths = sorted(Path(state_dir).glob('*.csv'))
+    # Only process EDFs that have a matching spindle CSV — the state CSV is
+    # authoritative for which animals to include in this batch.
+    state_animal_ids = {_animal_id(p) for p in state_paths}
+    eeg_paths = sorted(
+        p for p in Path(eeg_dir).glob('*PROCESSED.edf')
+        if _animal_id(p) in state_animal_ids
+    )
     swd_paths = sorted(Path(swd_dir).glob("*.mat")) if swd_dir else None
     drink_paths = sorted(Path(drink_dir).glob("*.npy")) if drink_dir else None
-
 
     paired = match_paths(eeg_paths, state_paths, swd_paths, drink_paths)
 
@@ -371,6 +376,53 @@ def batch_estimate(
 
     # flatten the list of list of PSDResult data instances
     return results
+
+
+def build_final_pkl(project_root, manifest) -> Path:
+    """For each animal with sleep_qc == "ok", load their entry from
+    psds_<ok_combo>.pkl, annotate with source_combo, and write to
+    psd/psds_final.pkl. Atomically replaces the file.
+    Returns the path written.
+    """
+    import warnings
+
+    project_root = Path(project_root)
+    psd_dir = project_root / "psd"
+
+    # Group animals by their ok combo
+    combo_to_animals: dict = {}
+    for entry in manifest:
+        ok_combo = next((c for c, r in entry.runs.items() if r.sleep_qc == "ok"), None)
+        if ok_combo is None:
+            continue
+        combo_to_animals.setdefault(ok_combo, []).append(entry.animal_id)
+
+    final_records = []
+    for combo, animal_ids in combo_to_animals.items():
+        pkl = psd_dir / f"psds_{combo}.pkl"
+        if not pkl.exists():
+            warnings.warn(f"build_final_pkl: PKL not found for combo '{combo}': {pkl}")
+            continue
+        with open(pkl, "rb") as f:
+            records = pickle.load(f)
+        if isinstance(records, dict):
+            records = [records]
+
+        animal_ids_set = set(animal_ids)
+        for rec in records:
+            rec_animal = Path(rec["path"]).stem.split("_")[0]
+            if rec_animal in animal_ids_set:
+                rec = dict(rec)
+                rec["source_combo"] = combo
+                final_records.append(rec)
+
+    out_path = psd_dir / "psds_final.pkl"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out_path.with_suffix(".pkl.tmp")
+    with open(tmp, "wb") as f:
+        pickle.dump(final_records, f)
+    tmp.replace(out_path)
+    return out_path
 
 
 def rerun_with_drink_masks(

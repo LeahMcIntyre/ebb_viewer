@@ -591,9 +591,10 @@ def test_needs_rerun(tmp_path):
 
 
 def test_pending_psd_review(tmp_path):
-    psd_file = tmp_path / "psd" / "psds_LFC_RSC.pkl"
-    psd_file.parent.mkdir(parents=True)
-    psd_file.touch()
+    # pending_psd_review is gated on psds_final.pkl existing
+    final_pkl = tmp_path / "psd" / "psds_final.pkl"
+    final_pkl.parent.mkdir(parents=True)
+    final_pkl.touch()
 
     m = _make_manifest(tmp_path, {
         "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status=None)},
@@ -605,6 +606,14 @@ def test_pending_psd_review(tmp_path):
     assert "AM001" in animal_ids
     assert "AM002" not in animal_ids   # already reviewed
     assert "AM003" not in animal_ids   # sleep_qc not ok
+
+
+def test_pending_psd_review_empty_without_final_pkl(tmp_path):
+    m = _make_manifest(tmp_path, {
+        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status=None)},
+    })
+    # No psds_final.pkl → empty
+    assert m.pending_psd_review() == []
 
 
 def test_needs_drink_mask_requires_ok_sleep_qc(tmp_path):

@@ -459,14 +459,18 @@ class Manifest:
         return result
 
     def pending_psd_review(self) -> list[tuple[ManifestEntry, str]]:
-        """Runs whose PSD file exists but hasn't been reviewed yet."""
+        """Animals with ok sleep QC whose PSD hasn't been reviewed yet.
+
+        Gated on psds_final.pkl existing — returns empty list until the final
+        PKL has been built.
+        """
+        if not final_psd_path(self.project_root).exists():
+            return []
         return [
             (entry, combo)
             for entry in self
             for combo, run in entry.runs.items()
-            if run.sleep_qc == "ok"
-            and run.psd_status is None
-            and psd_path(combo, self.project_root).exists()
+            if run.sleep_qc == "ok" and run.psd_status is None
         ]
 
     def needs_drink_mask(self) -> list[tuple[ManifestEntry, str]]:

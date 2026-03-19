@@ -67,8 +67,11 @@ class PSDVisualizer(QWidget):
             self.cmb_file.addItem(p.name, str(p))
         self.cmb_file.blockSignals(False)
 
-        # Restore previous selection if still present
-        if current:
+        # Auto-select psds_final.pkl if present; otherwise restore previous or first
+        final_idx = self.cmb_file.findText("psds_final.pkl")
+        if final_idx >= 0:
+            self.cmb_file.setCurrentIndex(final_idx)
+        elif current:
             idx = self.cmb_file.findData(current)
             self.cmb_file.setCurrentIndex(idx if idx >= 0 else 0)
         elif self.cmb_file.count():
@@ -108,8 +111,11 @@ class PSDVisualizer(QWidget):
             return
 
         channel_names = ["LFC", "RSC", "LSC"]
-        stem = Path(psd_file).stem  # e.g. "psds_LFC_RSC"
-        run_channels = stem[len("psds_"):] if stem.startswith("psds_") else stem
+        stem = Path(psd_file).stem  # e.g. "psds_LFC_RSC" or "psds_final"
+        if stem == "psds_final":
+            run_channels = None
+        else:
+            run_channels = stem[len("psds_"):] if stem.startswith("psds_") else stem
 
         self.psd_store = PSDStore(psd_file, channel_names=channel_names)
         self.psd_page = PSDGridPage(

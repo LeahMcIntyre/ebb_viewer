@@ -40,9 +40,14 @@ class PSDStore:
 
         # TODO: Better way to implement this?
 
+        self._source_combos: Dict[str, str] = {}  # raw_animal_id -> source_combo
+
         self.first_freqs = np.asarray(items[0]["freqs"], float)
         for rec in items:
             animal = self.parse_animal(rec)
+            raw_animal = Path(rec["path"]).stem.split("_")[0]
+            if "source_combo" in rec:
+                self._source_combos[raw_animal] = rec["source_combo"]
             # behavior like ('threshold','wake') -> we care about state='wake'
             bhv = rec.get("behavior", (None, None))
 
@@ -86,3 +91,7 @@ class PSDStore:
     
     def freq_range(self):
         return [self.first_freqs[0], self.first_freqs[-1]]
+
+    def source_combo(self, animal_id: str) -> "str | None":
+        """Return the source_combo for animal_id if present in the PKL (final PKL only)."""
+        return self._source_combos.get(animal_id)

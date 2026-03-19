@@ -102,12 +102,20 @@ class MainWindow(QMainWindow):
 
         # Rows that carry pending-work badges (row index → manifest method name)
         # Home=0: needs_review queue; Sleep QC=6: pending rerun decisions; Rerun=7: needs_rerun
-        self._badge_rows: dict[int, str] = {0: "needs_review", 6: "pending_rerun_review", 7: "needs_rerun_pending"}
+        # PSD Computation=9: combos with CSVs but no PKL (computed separately)
+        # PSD Review=10: pending_psd_review (gated on psds_final.pkl)
+        self._badge_rows: dict[int, str] = {
+            0:  "needs_review",
+            6:  "pending_rerun_review",
+            7:  "needs_rerun_pending",
+            10: "pending_psd_review",
+        }
 
         # Connect manifest_changed signals for immediate badge refresh
         self.home_page.manifest_changed.connect(self._refresh_badges)
         self.sleep_combine_page.manifest_changed.connect(self._refresh_badges)
         self.rerun_page.manifest_changed.connect(self._refresh_badges)
+        self.psd_page.manifest_changed.connect(self._refresh_badges)
 
         # Home page navigation hints
         _page_rows = {"rerun": 7, "sleep_qc": 6}
@@ -151,10 +159,26 @@ class MainWindow(QMainWindow):
             manifest = Manifest.load(self.project_root)
         except Exception:
             return
+
+        # PSD Computation badge: combos with CSVs but no per-combo PKL
+        spindle_outputs = self.project_root / "spindle_outputs"
+        psd_dir = self.project_root / "psd"
+        psd_compute_count = 0
+        if spindle_outputs.is_dir():
+            for combo_dir in spindle_outputs.iterdir():
+                if not combo_dir.is_dir():
+                    continue
+                if (
+                    any(combo_dir.glob("*.csv"))
+                    and not (psd_dir / f"psds_{combo_dir.name}.pkl").exists()
+                ):
+                    psd_compute_count += 1
+
         counts = {
             "needs_review":         len(manifest.needs_review()),
             "pending_rerun_review": len(manifest.pending_rerun_review()),
             "needs_rerun_pending":  len(manifest.needs_rerun_pending()),
+            "pending_psd_review":   len(manifest.pending_psd_review()),
         }
         for row, method in self._badge_rows.items():
             item = self.pagelist.item(row)
@@ -163,3 +187,16 @@ class MainWindow(QMainWindow):
             base = self._row_base_label[row]
             n = counts[method]
             item.setText(f"{base}  ({n})" if n > 0 else base)
+
+        # PSD Computation badge (row 9) — computed from filesystem, not manifest
+        psd_compute_row = next(
+            (r for r, lbl in self._row_base_label.items() if lbl == "6. PSD Computation"),
+            None,
+        )
+        if psd_compute_row is not None:
+            item = self.pagelist.item(psd_compute_row)
+            if item is not None:
+                base = self._row_base_label[psd_compute_row]
+                item.setText(
+                    f"{base}  ({psd_compute_count})" if psd_compute_count > 0 else base
+                )
