@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QFont
 
 from ebb_viewer.widgets.trim_to_widget import TrimToWidget
+from ebb_viewer.pipeline.manifest import Manifest
 from ebb.preprocess.edf import batch, standard
 
 DEFAULT_FS = 5000
@@ -143,6 +144,7 @@ class PreprocessPage(QWidget):
                 target=target_dir,
                 **params,
             )
+            Manifest.build_from_standard(self.project_root)
             QMessageBox.information(
                 self,
                 "Preprocess",

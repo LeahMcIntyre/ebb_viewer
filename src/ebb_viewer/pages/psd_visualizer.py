@@ -117,13 +117,14 @@ class PSDVisualizer(QWidget):
         else:
             run_channels = stem[len("psds_"):] if stem.startswith("psds_") else stem
 
+        is_final = (stem == "psds_final")
         self.psd_store = PSDStore(psd_file, channel_names=channel_names)
         self.psd_page = PSDGridPage(
             self,
             store=self.psd_store,
             channel_names=channel_names,
             states=['wake', 'nrem', 'rem'],
-            manifest=Manifest.load(self.project_root),
+            manifest=Manifest.load(self.project_root) if is_final else None,
             run_channels=run_channels,
         )
         self.root.addWidget(self.psd_page)

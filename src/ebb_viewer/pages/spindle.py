@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from ebb.preprocess.edf import batch, spindle
-# from ebb.preprocess.edf.spindle import preprocess_folder_spindle  # or wherever it lives
+from ebb_viewer.pipeline.manifest import Manifest
 
 
 class SpindleWritePage(QWidget):
@@ -251,6 +251,7 @@ class SpindleWritePage(QWidget):
                 target=target_dir,
                 channels=channels
             )
+            Manifest.build_from_standard(self.project_root)
             QMessageBox.information(
                 self,
                 "Spindle Preprocessing",

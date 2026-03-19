@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 
 from ebb.io.sleepyrat import SleepyRatAPI
 from ebb_viewer.pipeline import sleepyrat_config
+from ebb_viewer.pipeline.manifest import Manifest
 
 
 class SpindleUploadPage(QWidget):
@@ -422,6 +423,7 @@ class SpindleUploadPage(QWidget):
             combo, project, remote_folder = self._pending_save
             sleepyrat_config.save_combo(self.project_root, combo, project, remote_folder)
             self._pending_save = None
+        Manifest.build_from_standard(self.project_root)
         self._update_run_enabled()
 
     def _on_sr_error(self, msg: str):

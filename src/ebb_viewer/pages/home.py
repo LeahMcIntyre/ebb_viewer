@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import NamedTuple, Literal
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
@@ -11,7 +12,7 @@ from PyQt6.QtWidgets import (
 from ebb_viewer.widgets.tree_view import ProjectTree
 from ebb_viewer.pipeline.manifest import (
     Manifest, ManifestEntry, RunEntry,
-    psd_path, spindle_output_dir,
+    psd_path, spindle_output_dir, final_psd_path,
 )
 from ebb_viewer.pipeline.manifest import spindle_edf_dir
 from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, drink_mask_rel
@@ -50,6 +51,165 @@ _COMBO_BG: dict[str, QColor] = {
 _COMBO_FG = QColor("#ffffff")
 
 
+# ---------------------------------------------------------------------------
+# Pipeline guide
+# ---------------------------------------------------------------------------
+StepKind = Literal["done", "attention", "active", "blocked"]
+
+
+class StepStatus(NamedTuple):
+    kind: StepKind
+    description: str
+
+
+_STEP_LABELS = [
+    "1. Preprocess",
+    "2. Spindle EDFs",
+    "3. Spindle Upload",
+    "4. Sleep QC",
+    "5. Spindle Rerun",
+    "6. PSD Computation",
+    "7. PSD Review",
+]
+
+_STEP_PAGE_NAMES = [
+    "preprocess", "spindle_write", "spindle_upload",
+    "sleep_qc", "rerun", "psd_compute", "psd_review",
+]
+
+_GUIDE_ICON       = {"done": "✓", "attention": "⚠", "active": "→", "blocked": "○"}
+_GUIDE_ICON_COLOR = {
+    "done":      "#3a7d44",
+    "attention": "#b06000",
+    "active":    "#1a5fa8",
+    "blocked":   "#999999",
+}
+_GUIDE_ROW_HIGHLIGHT = "#eef4fc"
+
+
+def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[StepStatus]:
+    root = Path(project_root)
+
+    # --- filesystem facts ---
+    standard_dir = root / "standard"
+    step1_done = standard_dir.is_dir() and any(standard_dir.glob("*.edf"))
+
+    spindle_edfs_dir = root / "spindle_edfs"
+    step2_done = spindle_edfs_dir.is_dir() and any(
+        True for sd in spindle_edfs_dir.iterdir()
+        if sd.is_dir() and any(sd.glob("*.edf"))
+    )
+
+    spindle_outputs_dir = root / "spindle_outputs"
+    step3_done = spindle_outputs_dir.is_dir() and any(
+        True for sd in spindle_outputs_dir.iterdir()
+        if sd.is_dir() and any(sd.glob("*.csv"))
+    )
+
+    # --- manifest facts ---
+    n_review      = len(manifest.needs_review())
+    n_pending_qc  = len(manifest.pending_sleep_qc())
+    n_ok          = sum(1 for e in manifest if any(r.sleep_qc == "ok" for r in e.runs.values()))
+    n_rerun       = len(manifest.needs_rerun())
+    n_rerun_pend  = len(manifest.needs_rerun_pending())
+    n_rerun_ready = len(manifest.pending_rerun_review())
+    n_psd_pending = len(manifest.pending_psd_review())
+
+    # --- Step 1: Preprocess ---
+    if step1_done:
+        n = sum(1 for _ in standard_dir.glob("*.edf"))
+        s1 = StepStatus("done", f"{n} EDF{'s' if n != 1 else ''} in standard/")
+    else:
+        s1 = StepStatus("active", "Start here — run preprocessor on raw EDF files")
+
+    # --- Step 2: Spindle EDFs ---
+    if step2_done:
+        s2 = StepStatus("done", "Spindle EDFs written")
+    elif step1_done:
+        s2 = StepStatus("active", "Ready — write spindle EDFs from standard/")
+    else:
+        s2 = StepStatus("blocked", "Requires step 1")
+
+    # --- Step 3: Upload & Download ---
+    if step3_done:
+        s3 = StepStatus("done", "Spindle output CSVs downloaded")
+    elif step2_done:
+        s3 = StepStatus("active", "Ready — upload spindle EDFs to SleepyRat")
+    else:
+        s3 = StepStatus("blocked", "Requires step 2")
+
+    # --- Step 4: Sleep QC ---
+    if step3_done and n_pending_qc == 0 and n_review == 0 and n_ok > 0:
+        s4 = StepStatus("done", f"{n_ok} animal{'s' if n_ok != 1 else ''} marked ok")
+    elif step3_done and (n_review > 0 or n_pending_qc > 0):
+        parts = []
+        if n_review:     parts.append(f"{n_review} to review")
+        if n_pending_qc: parts.append(f"{n_pending_qc} pending")
+        s4 = StepStatus("attention", ", ".join(parts))
+    elif step3_done:
+        s4 = StepStatus("active", "Ready — review sleep QC for each animal")
+    else:
+        s4 = StepStatus("blocked", "Requires step 3")
+
+    # --- Step 5: Spindle Rerun ---
+    qc_complete = step3_done and n_pending_qc == 0 and n_ok > 0
+    if n_rerun_pend > 0 or n_rerun_ready > 0:
+        parts = []
+        if n_rerun_pend:  parts.append(f"{n_rerun_pend} upload pending")
+        if n_rerun_ready: parts.append(f"{n_rerun_ready} ready to review")
+        s5 = StepStatus("attention", ", ".join(parts))
+    elif n_rerun > 0 and n_rerun_pend == 0 and n_rerun_ready == 0:
+        s5 = StepStatus("done", f"{n_rerun} rerun{'s' if n_rerun != 1 else ''} resolved")
+    elif qc_complete:
+        s5 = StepStatus("done", "No reruns needed")
+    else:
+        s5 = StepStatus("blocked", "Requires step 4 completion")
+
+    # --- Step 6: PSD Computation ---
+    psd_dir = root / "psd"
+    combos_with_csv: set[str] = set()
+    if spindle_outputs_dir.is_dir():
+        combos_with_csv = {
+            sd.name for sd in spindle_outputs_dir.iterdir()
+            if sd.is_dir() and any(sd.glob("*.csv"))
+        }
+    combos_with_pkl: set[str] = set()
+    if psd_dir.is_dir():
+        combos_with_pkl = {
+            p.stem[len("psds_"):] for p in psd_dir.glob("psds_*.pkl")
+            if p.stem != "psds_final"
+        }
+    missing_pkls = combos_with_csv - combos_with_pkl
+    final_pkl = final_psd_path(root)
+
+    if final_pkl.exists() and not missing_pkls:
+        s6 = StepStatus("done", "All PSDs computed, final PKL ready")
+    elif combos_with_pkl and (missing_pkls or not final_pkl.exists()):
+        msg = f"{len(missing_pkls)} combo PKL(s) missing" if missing_pkls else "Run Build Final PKL"
+        s6 = StepStatus("attention", msg)
+    elif n_ok > 0:
+        s6 = StepStatus("active", f"{n_ok} ok animal{'s' if n_ok != 1 else ''} — ready to compute PSDs")
+    else:
+        s6 = StepStatus("blocked", "Requires ok sleep QC results (step 4)")
+
+    # --- Step 7: PSD Review ---
+    any_psd_reviewed = any(
+        r.psd_status is not None
+        for e in manifest for r in e.runs.values()
+        if r.sleep_qc == "ok"
+    )
+    if n_psd_pending > 0:
+        s7 = StepStatus("attention", f"{n_psd_pending} PSD{'s' if n_psd_pending != 1 else ''} to review")
+    elif final_pkl.exists() and n_psd_pending == 0 and any_psd_reviewed:
+        s7 = StepStatus("done", "All PSDs reviewed")
+    elif final_pkl.exists():
+        s7 = StepStatus("active", "Ready — open PSD Review page")
+    else:
+        s7 = StepStatus("blocked", "Requires final PKL (step 6)")
+
+    return [s1, s2, s3, s4, s5, s6, s7]
+
+
 def _cell(text: str, bg: QColor | None = None, fg: QColor | None = None) -> QTableWidgetItem:
     item = QTableWidgetItem(text)
     item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
@@ -68,7 +228,7 @@ def _any_file_for_animal(root: Path, subdir: str, channels: str, animal_id: str)
 
 class HomePage(QWidget):
     manifest_changed = pyqtSignal()
-    navigate_to = pyqtSignal(str)  # page name: "rerun" | "sleep_qc"
+    navigate_to = pyqtSignal(str)  # page name — see _STEP_PAGE_NAMES
 
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
@@ -96,13 +256,6 @@ class HomePage(QWidget):
         self.btn_refresh.clicked.connect(self._refresh)
         hdr.addWidget(self.btn_refresh)
 
-        self.btn_hide_rejected = QPushButton("Hide Rejected")
-        self.btn_hide_rejected.setCheckable(True)
-        self.btn_hide_rejected.setChecked(True)
-        self.btn_hide_rejected.setToolTip("Toggle visibility of rejected runs in the table")
-        self.btn_hide_rejected.toggled.connect(self._refresh)
-        hdr.addWidget(self.btn_hide_rejected)
-
         self.btn_build = QPushButton("Sync from filesystem")
         self.btn_build.setToolTip(
             "Scan standard/, spindle_edfs/, and spindle_outputs/ to add new "
@@ -112,6 +265,23 @@ class HomePage(QWidget):
         hdr.addWidget(self.btn_build)
 
         root_layout.addLayout(hdr)
+
+        # --- pipeline steps guide (collapsible) ---
+        self.btn_guide_toggle = QPushButton("▼  Pipeline Steps")
+        self.btn_guide_toggle.setCheckable(True)
+        self.btn_guide_toggle.setChecked(True)
+        self.btn_guide_toggle.setStyleSheet(
+            "font-weight: bold; font-size: 13px; text-align: left; border: none; padding: 0;"
+        )
+        self.btn_guide_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_guide_toggle.toggled.connect(self._toggle_guide)
+        root_layout.addWidget(self.btn_guide_toggle)
+
+        self._guide_container = QWidget()
+        self._guide_vbox = QVBoxLayout(self._guide_container)
+        self._guide_vbox.setContentsMargins(4, 2, 4, 4)
+        self._guide_vbox.setSpacing(1)
+        root_layout.addWidget(self._guide_container)
 
         # --- needs attention zone ---
         lbl_attn = QLabel("Needs Attention")
@@ -133,6 +303,8 @@ class HomePage(QWidget):
         root_layout.addWidget(self._attn_scroll)
 
         # --- pipeline summary table (collapsible) ---
+        summary_hdr = QHBoxLayout()
+
         self.btn_table_toggle = QPushButton("▼  Pipeline Summary")
         self.btn_table_toggle.setCheckable(True)
         self.btn_table_toggle.setChecked(True)
@@ -141,7 +313,18 @@ class HomePage(QWidget):
         )
         self.btn_table_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_table_toggle.toggled.connect(self._toggle_table)
-        root_layout.addWidget(self.btn_table_toggle)
+        summary_hdr.addWidget(self.btn_table_toggle)
+
+        summary_hdr.addStretch(1)
+
+        self.btn_hide_rejected = QPushButton("Hide Rejected")
+        self.btn_hide_rejected.setCheckable(True)
+        self.btn_hide_rejected.setChecked(True)
+        self.btn_hide_rejected.setToolTip("Toggle visibility of rejected runs in the table")
+        self.btn_hide_rejected.toggled.connect(self._refresh)
+        summary_hdr.addWidget(self.btn_hide_rejected)
+
+        root_layout.addLayout(summary_hdr)
 
         self.table = QTableWidget(0, len(_COLUMNS))
         self.table.setHorizontalHeaderLabels(_COLUMNS)
@@ -175,6 +358,79 @@ class HomePage(QWidget):
         self.edf_tree = ProjectTree()
         self.edf_tree.set_root(root_path=self.project_root)
         root_layout.addWidget(self.edf_tree, stretch=2)
+
+        root_layout.addStretch(1)
+
+        self._build_pipeline_guide()
+
+    def _build_pipeline_guide(self) -> None:
+        """Build 7 step rows and store (icon_lbl, name_lbl, desc_lbl, btn) refs."""
+        self._guide_row_refs: list[tuple[QLabel, QLabel, QLabel, QPushButton]] = []
+        for i, label in enumerate(_STEP_LABELS):
+            row_w = QWidget()
+            row_h = QHBoxLayout(row_w)
+            row_h.setContentsMargins(4, 2, 4, 2)
+            row_h.setSpacing(8)
+
+            icon_lbl = QLabel("○")
+            icon_lbl.setFixedWidth(14)
+            icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            row_h.addWidget(icon_lbl)
+
+            name_lbl = QLabel(label)
+            name_lbl.setFixedWidth(150)
+            row_h.addWidget(name_lbl)
+
+            desc_lbl = QLabel("")
+            desc_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            row_h.addWidget(desc_lbl)
+
+            btn = QPushButton("Open →")
+            btn.setFixedHeight(22)
+            page_name = _STEP_PAGE_NAMES[i]
+            btn.clicked.connect(lambda _, p=page_name: self.navigate_to.emit(p))
+            row_h.addWidget(btn)
+
+            self._guide_vbox.addWidget(row_w)
+            self._guide_row_refs.append((icon_lbl, name_lbl, desc_lbl, btn))
+
+    def _toggle_guide(self, checked: bool) -> None:
+        self.btn_guide_toggle.setText(
+            "▼  Pipeline Steps" if checked else "►  Pipeline Steps"
+        )
+        self._guide_container.setVisible(checked)
+
+    def _refresh_pipeline_guide(self, manifest: Manifest) -> None:
+        statuses = compute_pipeline_status(self.project_root, manifest)
+        next_idx: int | None = next(
+            (i for i, s in enumerate(statuses) if s.kind in ("active", "attention")),
+            None,
+        )
+        for i, (st, (icon_lbl, name_lbl, desc_lbl, btn)) in enumerate(
+            zip(statuses, self._guide_row_refs)
+        ):
+            color = _GUIDE_ICON_COLOR[st.kind]
+            icon_lbl.setText(_GUIDE_ICON[st.kind])
+            icon_lbl.setStyleSheet(f"color: {color}; font-weight: bold;")
+            desc_lbl.setText(st.description)
+            desc_lbl.setStyleSheet(f"color: {color};")
+
+            is_next = (i == next_idx)
+            name_lbl.setStyleSheet("font-weight: bold;" if is_next else "")
+            row_w = icon_lbl.parent()
+            row_w.setStyleSheet(
+                f"background-color: {_GUIDE_ROW_HIGHLIGHT}; border-radius: 3px;"
+                if is_next else ""
+            )
+            if st.kind == "blocked":
+                btn.setStyleSheet("QPushButton { padding: 2px 8px; color: #aaaaaa; }")
+            elif is_next:
+                btn.setStyleSheet(
+                    "QPushButton { padding: 2px 8px; font-weight: bold; "
+                    "color: #1a5fa8; border: 1px solid #1a5fa8; }"
+                )
+            else:
+                btn.setStyleSheet("QPushButton { padding: 2px 8px; }")
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -371,6 +627,7 @@ class HomePage(QWidget):
             total_h += self.table.rowHeight(r)
         self.table.setMaximumHeight(total_h + 4)
         self._refresh_attention_zone(manifest)
+        self._refresh_pipeline_guide(manifest)
 
     # ---------------------------------------------------------------
     # Needs Attention zone

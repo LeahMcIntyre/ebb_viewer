@@ -36,6 +36,7 @@ class PSDPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self._refresh_standard_folder()
         self._refresh_combo_table()
 
     # ---------------- UI ----------------

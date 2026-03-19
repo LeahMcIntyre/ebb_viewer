@@ -118,7 +118,15 @@ class MainWindow(QMainWindow):
         self.psd_page.manifest_changed.connect(self._refresh_badges)
 
         # Home page navigation hints
-        _page_rows = {"rerun": 7, "sleep_qc": 6}
+        _page_rows = {
+            "preprocess":     2,
+            "spindle_write":  3,
+            "spindle_upload": 4,
+            "sleep_qc":       6,
+            "rerun":          7,
+            "psd_compute":    9,
+            "psd_review":     10,
+        }
         self.home_page.navigate_to.connect(
             lambda name: self.pagelist.setCurrentRow(_page_rows[name])
         )
@@ -160,11 +168,16 @@ class MainWindow(QMainWindow):
         except Exception:
             return
 
-        # PSD Computation badge: combos with CSVs but no per-combo PKL
+        # PSD Computation badge: combos with CSVs but no per-combo PKL,
+        # only shown once at least one animal has an ok sleep QC result.
         spindle_outputs = self.project_root / "spindle_outputs"
         psd_dir = self.project_root / "psd"
+        n_ok = sum(
+            1 for e in manifest
+            if any(r.sleep_qc == "ok" for r in e.runs.values())
+        )
         psd_compute_count = 0
-        if spindle_outputs.is_dir():
+        if spindle_outputs.is_dir() and n_ok > 0:
             for combo_dir in spindle_outputs.iterdir():
                 if not combo_dir.is_dir():
                     continue
