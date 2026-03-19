@@ -286,10 +286,21 @@ class Manifest:
                     entry = m._entries[animal_id]
                     if combo not in entry.runs:
                         ok = _ok_combo(entry)
-                        entry.runs[combo] = (
+                        new_run = (
                             RunEntry(sleep_qc="rejected", rejected_by=ok)
                             if ok is not None else RunEntry()
                         )
+                        # Stamp source_combo only when the output CSV is present
+                        # (spindle_outputs/).  A file in spindle_edfs/ means the EDF
+                        # is ready but the upload/process step hasn't run yet; the
+                        # Rerun page must still act on it and will stamp source_combo
+                        # via add_run() once the upload is triggered.
+                        if subdir == "spindle_outputs":
+                            for src_combo, src_run in entry.runs.items():
+                                if src_run.rerun_combo == combo:
+                                    new_run.source_combo = src_combo
+                                    break
+                        entry.runs[combo] = new_run
 
         m.save()
         return m
@@ -422,10 +433,12 @@ class Manifest:
         ]
 
     def needs_rerun_pending(self) -> list[tuple[ManifestEntry, str]]:
-        """Runs flagged for rerun where the rerun has not yet been reviewed.
+        """Runs flagged for rerun where the Rerun page still needs to act.
 
-        Excludes entries where the rerun combo already has a registered run
-        with a non-None sleep_qc (i.e. it has been reviewed in Sleep QC).
+        Excludes entries where the rerun run:
+        - already has a non-None sleep_qc (reviewed in Sleep QC), or
+        - already has source_combo set (registered by the Rerun page;
+          pending_rerun_review / the blue card takes over from here).
         Does not check the filesystem — stale files from previous cycles are
         irrelevant to whether action is still needed.
         """
@@ -436,7 +449,9 @@ class Manifest:
                     continue
                 rerun_run = entry.runs.get(run.rerun_combo)
                 if rerun_run is not None and rerun_run.sleep_qc is not None:
-                    continue
+                    continue  # already reviewed
+                if rerun_run is not None and rerun_run.source_combo is not None:
+                    continue  # registered as a rerun; pending_rerun_review handles it
                 result.append((entry, combo))
         return result
 

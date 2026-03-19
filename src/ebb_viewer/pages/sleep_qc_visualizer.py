@@ -85,8 +85,13 @@ class SleepQCGridPage(QWidget):
     def _poll(self):
         """Lightweight background refresh: reload manifest and update the reruns badge."""
         self._manifest = Manifest.load(self.project_root)
-        for _, combo in self._manifest.pending_rerun_review():
-            self._data_cache.pop(combo, None)
+        # In review mode the user is actively navigating between animals using the
+        # cached combo data. Evicting mid-review would cause combos to disappear for
+        # the next animal without being reloaded.  Skip eviction here; the cache is
+        # fully refreshed when the user exits and re-enters review mode.
+        if not self._review_mode:
+            for _, combo in self._manifest.pending_rerun_review():
+                self._data_cache.pop(combo, None)
         self._update_reruns_badge()
 
     def showEvent(self, event):
@@ -739,7 +744,14 @@ class SleepQCGridPage(QWidget):
             btn_review.setFixedHeight(22)
             btn_review.setCheckable(True)
             btn_review.setChecked(status in ("needs_review", "needs_rerun"))
-            btn_review.clicked.connect(lambda checked, m=mid: self._flag_sleep_qc(m, "needs_review" if checked else None))
+            if status == "needs_rerun":
+                btn_review.setEnabled(False)
+                btn_review.setToolTip(
+                    f"Rerun queued as {run.rerun_combo or '?'}. "
+                    "Change target from the Home page."
+                )
+            else:
+                btn_review.clicked.connect(lambda checked, m=mid: self._flag_sleep_qc(m, "needs_review" if checked else None))
 
             row_w = QWidget()
             row_l = QHBoxLayout(row_w)
@@ -835,7 +847,14 @@ class SleepQCGridPage(QWidget):
                 btn_review.setFixedHeight(22)
                 btn_review.setCheckable(True)
                 btn_review.setChecked(status in ("needs_review", "needs_rerun"))
-                btn_review.clicked.connect(lambda checked, c=combo: self._flag_animal_review(c, checked))
+                if status == "needs_rerun":
+                    btn_review.setEnabled(False)
+                    btn_review.setToolTip(
+                        f"Rerun queued as {run.rerun_combo or '?'}. "
+                        "Change target from the Home page."
+                    )
+                else:
+                    btn_review.clicked.connect(lambda checked, c=combo: self._flag_animal_review(c, checked))
                 row_l.addWidget(btn_review)
 
                 if status == "rejected":

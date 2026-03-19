@@ -499,6 +499,65 @@ def test_build_does_not_overwrite_existing_status(tmp_path):
     assert m2.get_run("AM001", "LFC_RSC").sleep_qc == "ok"
 
 
+def test_build_stamps_source_combo_when_rerun_target_found_on_disk(tmp_path):
+    """Externally placed rerun output is recognised as a rerun on sync.
+
+    Scenario: LFC_RSC flagged needs_rerun → RSC. User places the RSC CSV
+    directly on disk and clicks 'Sync from filesystem'. The RSC run should
+    have source_combo='LFC_RSC' so pending_rerun_review() fires.
+    """
+    _touch(tmp_path / "standard" / "AM001_PREPROCESSED.edf")
+    _touch(tmp_path / "spindle_outputs" / "LFC_RSC" / "AM001_states.csv")
+    m = Manifest.build_from_standard(tmp_path)
+    m.flag_sleep_qc("AM001", "LFC_RSC", "needs_rerun", rerun_combo="RSC")
+
+    # Externally place the rerun output
+    _touch(tmp_path / "spindle_outputs" / "RSC" / "AM001_states.csv")
+    m2 = Manifest.build_from_standard(tmp_path)
+
+    rsc_run = m2.get_run("AM001", "RSC")
+    assert rsc_run is not None
+    assert rsc_run.source_combo == "LFC_RSC"
+    assert rsc_run.sleep_qc is None  # unreviewed, not auto-rejected
+
+
+def test_build_edf_only_does_not_stamp_source_combo(tmp_path):
+    """EDF placed in spindle_edfs/ without a matching CSV must NOT stamp source_combo.
+
+    Stamping source_combo causes needs_rerun_pending() to exclude the original
+    run (treating it as 'Rerun page done'), which makes the item disappear from
+    the attention zone and Rerun page queue even though upload hasn't happened.
+    The Rerun page's add_run() is the correct place to stamp source_combo.
+    """
+    _touch(tmp_path / "standard" / "AM001_PREPROCESSED.edf")
+    _touch(tmp_path / "spindle_outputs" / "LFC_RSC" / "AM001_states.csv")
+    m = Manifest.build_from_standard(tmp_path)
+    m.flag_sleep_qc("AM001", "LFC_RSC", "needs_rerun", rerun_combo="RSC")
+
+    # Only the EDF placed — output CSV not present yet
+    _touch(tmp_path / "spindle_edfs" / "RSC" / "AM001_PREPROCESSED.edf")
+    m2 = Manifest.build_from_standard(tmp_path)
+
+    rsc_run = m2.get_run("AM001", "RSC")
+    assert rsc_run is not None
+    assert rsc_run.source_combo is None   # NOT stamped — Rerun page must still act
+    # LFC_RSC must still appear in needs_rerun_pending so the orange card stays up
+    pending = m2.needs_rerun_pending()
+    assert any(e.animal_id == "AM001" for e, _ in pending)
+
+
+def test_build_no_source_combo_when_no_rerun_pointer(tmp_path):
+    """A new combo with no rerun pointer should NOT get source_combo stamped."""
+    _touch(tmp_path / "standard" / "AM001_PREPROCESSED.edf")
+    _touch(tmp_path / "spindle_outputs" / "LFC_RSC" / "AM001_states.csv")
+    _touch(tmp_path / "spindle_outputs" / "RSC" / "AM001_states.csv")
+    m = Manifest.build_from_standard(tmp_path)
+
+    rsc_run = m.get_run("AM001", "RSC")
+    assert rsc_run is not None
+    assert rsc_run.source_combo is None
+
+
 # ---------------------------------------------------------------------------
 # Filtered views
 # ---------------------------------------------------------------------------
@@ -589,6 +648,44 @@ def test_pending_rerun_review(tmp_path):
     assert "AM001" in animal_ids   # unreviewed rerun with outputs on disk
     assert "AM002" not in animal_ids  # already reviewed
     assert "AM003" not in animal_ids  # no source_combo (not a rerun)
+
+
+def test_needs_rerun_pending_excludes_registered_rerun(tmp_path):
+    """Once add_run stamps source_combo, needs_rerun_pending drops the item.
+
+    Reproduces: user syncs LSC from filesystem before flagging LFC_RSC for
+    rerun. LSC run exists with source_combo=None. After the Rerun page calls
+    add_run (which stamps source_combo), both the orange card and the Rerun
+    page queue should stop showing the item.
+    """
+    m = _make_manifest(tmp_path, {
+        "AM001": {
+            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
+            "LSC":     RunEntry(sleep_qc=None, source_combo=None),
+        },
+    })
+    # Before add_run: should appear (Rerun page needs to register it)
+    assert len(m.needs_rerun_pending()) == 1
+
+    # Simulate add_run stamping source_combo (as Rerun page does)
+    m._entries["AM001"].runs["LSC"].source_combo = "LFC_RSC"
+    m.save()
+    m2 = Manifest.load(m.project_root)
+
+    # After add_run: should disappear (pending_rerun_review takes over)
+    assert len(m2.needs_rerun_pending()) == 0
+
+
+def test_needs_rerun_pending_still_shows_before_source_combo_stamped(tmp_path):
+    """Before the Rerun page processes it, the item must appear in the queue."""
+    m = _make_manifest(tmp_path, {
+        "AM001": {
+            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
+            # LSC present but not yet registered as a rerun
+            "LSC":     RunEntry(sleep_qc=None, source_combo=None),
+        },
+    })
+    assert len(m.needs_rerun_pending()) == 1
 
 
 # ---------------------------------------------------------------------------

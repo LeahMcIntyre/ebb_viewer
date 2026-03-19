@@ -132,16 +132,21 @@ class RerunPage(QWidget):
         self.table.setRowCount(0)  # clears all spans and content from previous render
         manifest = Manifest.load(self.project_root)
 
-        # Show entries where the rerun run hasn't been reviewed yet.
+        # Show entries where the rerun run hasn't been registered yet.
         # Mirrors needs_rerun_pending() — no filesystem check, so stale files from
         # previous cycles don't hide items that still need upload/download.
         # _run_selected already skips writing the EDF if it already exists on disk.
+        # Once add_run stamps source_combo, the item moves to pending_rerun_review
+        # (blue card / Sleep QC badge) and is removed from this queue.
         pairs = [
             (entry, combo)
             for entry, combo in manifest.needs_rerun()
             if (
                 entry.runs[combo].rerun_combo not in entry.runs
-                or entry.runs[entry.runs[combo].rerun_combo].sleep_qc is None
+                or (
+                    entry.runs[entry.runs[combo].rerun_combo].sleep_qc is None
+                    and entry.runs[entry.runs[combo].rerun_combo].source_combo is None
+                )
             )
         ]
 
