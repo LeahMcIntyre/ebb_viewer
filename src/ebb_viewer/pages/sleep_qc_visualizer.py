@@ -213,14 +213,6 @@ class SleepQCGridPage(QWidget):
 
         layout.addWidget(self.grid, stretch=1)
 
-        # --- decision panel (review mode only, sits between plots and legend) ---
-        self._decision_panel = QWidget()
-        self._decision_layout = QVBoxLayout(self._decision_panel)
-        self._decision_layout.setContentsMargins(0, 2, 0, 2)
-        self._decision_layout.setSpacing(3)
-        self._decision_panel.setVisible(False)
-        layout.addWidget(self._decision_panel)
-
         # --- legend (in a scroll area so the plot grid can't collapse it) ---
         self.legend_container = QWidget()
         self.legend_layout = QGridLayout(self.legend_container)
@@ -583,7 +575,6 @@ class SleepQCGridPage(QWidget):
 
         if not animal:
             self._update_legend_animal([])
-            self._update_decision_panel(animal)
             return
 
         drawn_combos = []
@@ -620,7 +611,6 @@ class SleepQCGridPage(QWidget):
             self._draw_ref_mean(ref_combo)
 
         self._update_legend_animal(drawn_combos, ref_combo)
-        self._update_decision_panel(animal)
 
     # ------------------------------------------------------------------
     # Group mean reference overlay
@@ -665,98 +655,12 @@ class SleepQCGridPage(QWidget):
                     panel[x_col].to_numpy(), panel[metric].to_numpy(), pen=ref_pen
                 )
 
-    # ------------------------------------------------------------------
-    # Decision panel (review mode only)
-    # ------------------------------------------------------------------
-    def _update_decision_panel(self, animal: str) -> None:
-        """Rebuild the decision panel for the current animal's pending reruns."""
-        while self._decision_layout.count():
-            item = self._decision_layout.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
-
-        if not animal or not self._review_mode:
-            self._decision_panel.setVisible(False)
-            return
-
-        entry = self._manifest.get(animal)
-        if entry is None:
-            self._decision_panel.setVisible(False)
-            return
-
-        pending = [
-            (combo, run.source_combo)
-            for combo, run in entry.runs.items()
-            if run.source_combo is not None
-            and run.sleep_qc is None
-            and any(spindle_output_dir(combo, self.project_root).glob(f"{animal}_*.csv"))
-        ]
-
-        if not pending:
-            self._decision_panel.setVisible(False)
-            return
-
-        self._decision_panel.setVisible(True)
-        for rerun_combo, original_combo in pending:
-            row_w = QWidget()
-            row_w.setStyleSheet(
-                "background-color: #eef2ff;"
-                " border: 1px solid #c0c8e8; border-radius: 4px;"
-            )
-            row_l = QVBoxLayout(row_w)
-            row_l.setContentsMargins(8, 4, 8, 4)
-            row_l.setSpacing(4)
-
-            ctx = QLabel(f"<b>{rerun_combo}</b>  ← rerun of {original_combo}")
-            row_l.addWidget(ctx)
-
-            btn_row = QHBoxLayout()
-
-            btn_accept_rerun = QPushButton(f"✓  Accept {rerun_combo}")
-            btn_accept_rerun.setFixedHeight(26)
-            btn_accept_rerun.clicked.connect(
-                lambda _, rc=rerun_combo: self._flag_accept_rerun(rc)
-            )
-            btn_row.addWidget(btn_accept_rerun)
-
-            btn_accept_orig = QPushButton(f"↩  Accept {original_combo} instead")
-            btn_accept_orig.setFixedHeight(26)
-            btn_accept_orig.clicked.connect(
-                lambda _, oc=original_combo: self._flag_accept_original(oc)
-            )
-            btn_row.addWidget(btn_accept_orig)
-
-            btn_review = QPushButton("Review")
-            btn_review.setFixedHeight(26)
-            btn_review.setToolTip(
-                "Flag for re-examination in the Home page review queue.\n"
-                "Follows the same path as the original review: open EDF,\n"
-                "choose a new combo, and send to the Rerun page."
-            )
-            btn_review.clicked.connect(
-                lambda _, rc=rerun_combo: self._flag_review_again(rc)
-            )
-            btn_row.addWidget(btn_review)
-
-            btn_row.addStretch(1)
-            row_l.addLayout(btn_row)
-            self._decision_layout.addWidget(row_w)
-
-    def _flag_accept_rerun(self, rerun_combo: str) -> None:
-        """Accept the rerun combo as ok — cascade-rejects the original."""
+    def _flag_accept_combo(self, combo: str) -> None:
+        """Accept any combo as ok — cascade-rejects all siblings."""
         animal = self.cmb_animal.currentText()
         if not animal:
             return
-        self._manifest.flag_sleep_qc(animal, rerun_combo, "ok")
-        self._after_rerun_decision()
-
-    def _flag_accept_original(self, original_combo: str) -> None:
-        """Accept the original combo as ok — cascade-rejects the rerun."""
-        animal = self.cmb_animal.currentText()
-        if not animal:
-            return
-        self._manifest.flag_sleep_qc(animal, original_combo, "ok")
+        self._manifest.flag_sleep_qc(animal, combo, "ok")
         self._after_rerun_decision()
 
     def _flag_review_again(self, rerun_combo: str) -> None:
@@ -848,8 +752,11 @@ class SleepQCGridPage(QWidget):
                     row_l.addWidget(btn_reset)
 
             bg = self._STATUS_BG.get(status)
-            if bg:
-                row_w.setStyleSheet(f"background-color: {bg}; border-radius: 3px;")
+            row_w.setObjectName("legendRow")
+            row_w.setStyleSheet(
+                f"QWidget#legendRow {{ background-color: {bg or 'transparent'};"
+                " border-radius: 3px; }"
+            )
 
             self.legend_layout.addWidget(row_w, i // 2, i % 2)
 
@@ -882,16 +789,27 @@ class SleepQCGridPage(QWidget):
             row_l.addWidget(combo_label)
 
             if self._review_mode:
-                # Decision panel handles all actions — legend is a colour key only.
-                status_text = {
-                    "ok": "✓ accepted",
-                    "rejected": "✗ rejected",
-                    "needs_review": "review",
-                    "needs_rerun": "→ rerun",
-                }.get(status or "", "pending")
-                status_lbl = QLabel(status_text)
-                status_lbl.setStyleSheet("color: #777; font-size: 11px;")
-                row_l.addWidget(status_lbl)
+                btn_accept = QPushButton("✓ Accept")
+                btn_accept.setFixedHeight(22)
+                btn_accept.setToolTip(
+                    f"Accept {combo} as the final combo — rejects all others for this animal"
+                )
+                btn_accept.clicked.connect(lambda _, c=combo: self._flag_accept_combo(c))
+                row_l.addWidget(btn_accept)
+
+                is_pending_rerun = (
+                    source_combo is not None
+                    and status is None
+                    and any(spindle_output_dir(combo, self.project_root).glob(f"{animal}_*.csv"))
+                )
+                if is_pending_rerun:
+                    btn_review = QPushButton("Review")
+                    btn_review.setFixedHeight(22)
+                    btn_review.setToolTip(
+                        "Send back to the Home page review queue for re-examination."
+                    )
+                    btn_review.clicked.connect(lambda _, c=combo: self._flag_review_again(c))
+                    row_l.addWidget(btn_review)
             else:
                 btn_ok = QPushButton("OK")
                 btn_ok.setFixedHeight(22)
@@ -924,8 +842,11 @@ class SleepQCGridPage(QWidget):
             row_l.addStretch(1)
 
             bg = self._STATUS_BG.get(status)
-            if bg:
-                row_w.setStyleSheet(f"background-color: {bg}; border-radius: 3px;")
+            row_w.setObjectName("legendRow")
+            row_w.setStyleSheet(
+                f"QWidget#legendRow {{ background-color: {bg or 'transparent'};"
+                " border-radius: 3px; }"
+            )
 
             self.legend_layout.addWidget(row_w, i // 2, i % 2)
 

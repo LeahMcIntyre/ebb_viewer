@@ -17,6 +17,7 @@ from ebb_viewer.pages.psds import PSDPage
 from ebb_viewer.pages.psd_visualizer import PSDVisualizer
 from ebb_viewer.pages.sleep_visualizer import SleepMetricsPage
 from ebb_viewer.pages.sleep_qc_visualizer import SleepQCGridPage
+from ebb_viewer.pipeline.manifest import Manifest
 
 class MainWindow(QMainWindow):
     def __init__(self, project_root: Path, parent=None):
@@ -86,6 +87,7 @@ class MainWindow(QMainWindow):
             ("7. PSD Visualizer",  7),
         ]
         self._row_to_stack: dict[int, int] = {}
+        self._row_base_label: dict[int, str] = {}
         for row, entry in enumerate(_NAV):
             if entry is None:
                 sep = QListWidgetItem("─────────────")
@@ -96,10 +98,16 @@ class MainWindow(QMainWindow):
                 label, stack_idx = entry
                 self.pagelist.addItem(label)
                 self._row_to_stack[row] = stack_idx
+                self._row_base_label[row] = label
+
+        # Rows that carry pending-work badges (row index → manifest method name)
+        # Home=0: needs_review queue; Sleep QC=6: pending rerun decisions; Rerun=7: needs_rerun
+        self._badge_rows: dict[int, str] = {0: "needs_review", 6: "pending_rerun_review", 7: "needs_rerun"}
 
         # ----- Navigation
         self.pagelist.currentRowChanged.connect(self.display)
         self.pagelist.setCurrentRow(0)  # show home page initially
+        self._refresh_badges()
 
         # Central widget
         wrapper = QWidget()
@@ -111,3 +119,23 @@ class MainWindow(QMainWindow):
         stack_idx = self._row_to_stack.get(i)
         if stack_idx is not None:
             self.stacklayout.setCurrentIndex(stack_idx)
+            self._refresh_badges()
+
+    def _refresh_badges(self) -> None:
+        """Update sidebar item labels with pending-work counts."""
+        try:
+            manifest = Manifest.load(self.project_root)
+        except Exception:
+            return
+        counts = {
+            "needs_review":        len(manifest.needs_review()),
+            "pending_rerun_review": len(manifest.pending_rerun_review()),
+            "needs_rerun":         len(manifest.needs_rerun()),
+        }
+        for row, method in self._badge_rows.items():
+            item = self.pagelist.item(row)
+            if item is None:
+                continue
+            base = self._row_base_label[row]
+            n = counts[method]
+            item.setText(f"{base}  ({n})" if n > 0 else base)

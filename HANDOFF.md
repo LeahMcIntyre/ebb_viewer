@@ -2,8 +2,8 @@
 
 ## Goal
 Polish the spindle rerun pipeline UX in `ebb_viewer` — specifically the flagging/review
-loop from Sleep QC → EDF review → Rerun → re-review. Also improve manifest reliability
-and test coverage.
+loop from Sleep QC → EDF review → Rerun → re-review. Also improve manifest reliability,
+test coverage, and general UI clarity.
 
 ---
 
@@ -21,76 +21,58 @@ and test coverage.
 - `RunEntry` gains `prev_sleep_qc` + `rejected_by` for cascade-rejection bookkeeping
 - `flag_sleep_qc("ok")` cascade-rejects all sibling runs, saving their prior status; un-okaying restores them
 - `reset_sleep_qc` also restores cascade-rejected siblings and clears stale `psd_status`/`drink_mask`
-- `needs_drink_mask` / `needs_drink_mask_rerun` guarded on `sleep_qc == "ok"`
 - `build_from_standard` / `add_run` auto-reject new runs when an ok run already exists
 - `load()` integrity checks: fix multi-ok animals (warn + auto-fix), clear orphaned `rejected_by` refs
 - `flag_psd` raises `ValueError` if `sleep_qc != "ok"`
 
 #### Tests (`tests/ebb_viewer/test_manifest.py`)
-- 44 tests covering the full manifest API: save/load round-trip, migration, one-ok invariant, cascade/restore, psd_status clearing, add_run, integrity checks, build_from_standard, all filtered views, validation errors
+- 44 tests covering the full manifest API
 
 ### Completed (branch `refactor/sleep_qc`)
 
 #### Manifest additions (`pipeline/manifest.py`)
-- `RunEntry.source_combo: str | None` — backward pointer in the rerun chain (e.g. `LSC_RSC.source_combo = "LFC_RSC"`)
+- `RunEntry.source_combo: str | None` — backward pointer in the rerun chain
 - `"rejected"` added to `SLEEP_QC_STATUSES`
-- `add_run(animal_id, channels, source_combo=None)` — deliberate reruns start with `sleep_qc=None` regardless of existing ok run; stamps `source_combo` retroactively if run exists but wasn't tagged yet
-- `pending_rerun_review()` — returns `(entry, combo)` pairs where `source_combo` is set, `sleep_qc is None`, and **this animal's own `*_labels.csv` exists** in the rerun combo's output directory
-- `flag_sleep_qc` handles `"rejected"` status cleanly
-- Bug fix: `add_run` with `source_combo` on an already-existing run now stamps it
+- `add_run(animal_id, channels, source_combo=None)` — stamps `source_combo`; handles re-processing after reload
+- `pending_rerun_review()` — globs `{entry.animal_id}_*.csv` specifically (not `any(iterdir())`)
+- `flag_sleep_qc` handles `"rejected"` cleanly
 
 #### Rerun page (`pages/rerun.py`)
-- `add_run` now called with `source_combo=combo` so the backward pointer is recorded
-- Bug fix: `setRowCount(0)` instead of `setSpan(0,0,1,1)` — properly clears all content and spans on refresh
+- `add_run` called with `source_combo=combo`
+- Bug fix: `setRowCount(0)` clears all spans on refresh
 
 #### Home page (`pages/home.py`)
-- Colored combo badges in the **pipeline summary Channels column** (per-combo hue, white text, lighter shades): blue=`LFC_RSC`, orange=`LFC_LSC`, green=`RSC_LSC`, red=`LFC`, purple=`RSC`, brown=`LSC`
-- Review queue rows use plain `[channels]` text (no color)
-- Collapsible "Sleep QC Review Queue" and "Project Files" sections (▼/► toggle buttons)
-- Review queue scroll area is `stretch=1` (flexible height)
+- Colored combo badges in the Channels column (per-combo hue, lighter shades, white text)
+- Review queue rows use plain `[channels]` text
+- Collapsible "Sleep QC Review Queue" and "Project Files" sections
+- `_cell()` accepts optional `fg` parameter for foreground color
 
-#### Sleep QC page — full review mode redesign (`pages/sleep_qc_visualizer.py`)
+#### Sleep QC page (`pages/sleep_qc_visualizer.py`)
 
-**Single entry point:** The orange `"● N reruns ready for review →"` badge is a
-**checkable toggle**. Clicking it enters review mode; clicking again exits.
-
-**Review mode behaviour:**
+**Review mode:**
+- Orange `"● N reruns ready →"` badge is a checkable toggle — sole entry point
 - Forces Animal mode; disables Group button
-- On entry AND on `showEvent`: evicts stale cache for pending-rerun combos so newly-downloaded animal files are picked up (fixes bug where rerun line was invisible until app restart)
-- Filters `cmb_animal` dropdown to **only animals with pending rerun decisions**
-- A **decision panel** appears between the plots and the legend with one row per pending rerun:
-  ```
-  LSC_RSC  ← rerun of LFC_RSC
-  [✓ Accept LSC_RSC]  [↩ Accept LFC_RSC instead]  [Review]
-  ```
-- Legend in review mode is **read-only colour key** (swatch + label + status text)
-- After any decision: reloads manifest, refreshes filtered list, auto-advances to next pending or shows "Review Complete" and exits
+- `showEvent` and `_on_review_mode_toggled` both evict stale cache for pending-rerun combos
+- `_has_pending_rerun()` globs for animal-specific CSV (not `any(iterdir())`)
+- Filters animal dropdown to only pending-rerun animals
 
-**Three decisions:**
-| Button | Action | Manifest call |
-|---|---|---|
-| **✓ Accept rerun** | Accept the rerun; cascade-rejects original | `flag_sleep_qc(animal, rerun_combo, "ok")` |
-| **↩ Accept original instead** | Accept the original; cascade-rejects the rerun | `flag_sleep_qc(animal, original_combo, "ok")` |
-| **Review** | Send rerun back through Home page review queue | `flag_sleep_qc(animal, rerun_combo, "needs_review")` |
+**Legend in review mode** (decisions live in the legend alongside the colour swatch):
+- Every combo row gets `[✓ Accept]` — clicking any one calls `flag_sleep_qc(animal, combo, "ok")` which cascade-rejects all others via the one-ok invariant
+- Pending rerun combos additionally show `[Review]` — sends back to Home page review queue
+- `_flag_accept_combo(combo)` unified method replaces the old separate accept-rerun / accept-original pair
+- `_decision_panel` widget removed entirely — legend handles everything
+- Row background colors no longer bleed into buttons: `QWidget#legendRow { ... }` scoped stylesheet
 
 **Other Sleep QC improvements:**
-- Group mean reference overlay in animal mode (dashed gray line = mean of all `ok` animals for the most prevalent combo)
-- `_has_pending_rerun()` and `_update_decision_panel()` use animal-specific glob (`{animal_id}_*.csv`) instead of `any(iterdir())` — badge and decision panel only show when download is truly complete for that animal
+- Group mean reference overlay in animal mode (dashed gray line)
+- Bold font for rerun-pending animals in the dropdown
 
-### Bug fixes (this session)
-- **Stale cache / rerun line invisible**: `showEvent` now evicts `_data_cache` entries for any pending-rerun combo on every page visit. `_on_review_mode_toggled` does the same. Previously the cache was populated before the download completed and never invalidated, so the rerun line didn't appear until app restart.
-- **`pending_rerun_review()` too loose**: was checking `any(iterdir())` — passed even if other animals' files were present but not this animal's. Now globs `{entry.animal_id}_*.csv` specifically.
-
-### Pending commit
-All changes are uncommitted. Branch: `refactor/sleep_qc`. Suggested commit:
-```bash
-git add src/ebb_viewer/pages/sleep_qc_visualizer.py \
-        src/ebb_viewer/pages/rerun.py \
-        src/ebb_viewer/pages/home.py \
-        src/ebb_viewer/pipeline/manifest.py \
-        PLAN.md
-git commit -m "Redesign rerun review: single entry point, decision panel, no dead ends"
-```
+#### Sidebar badges (`main_window.py`)
+- `_refresh_badges()` called on every page navigation
+- `Home` shows count from `needs_review()`
+- `4. Sleep QC` shows count from `pending_rerun_review()`
+- `5. Spindle Rerun` shows count from `needs_rerun()`
+- Base labels stored in `_row_base_label`; badge format: `"4. Sleep QC  (2)"`
 
 ---
 
@@ -98,33 +80,26 @@ git commit -m "Redesign rerun review: single entry point, decision panel, no dea
 
 ```
 1. Sleep QC page (Group mode)
-   → click Review on a suspicious animal
-   → manifest: needs_review
+   → click Review on a suspicious animal → manifest: needs_review
 
-2. Home page — Sleep QC Review Queue
-   → row appears: [Animal] [combo] [Open EDF] [✓ OK] [Rerun as: ▼] [Needs Rerun]
-   → optionally Open EDF to inspect raw traces
+2. Home page — Sleep QC Review Queue  (sidebar shows "Home (1)")
+   → row: [Animal] [combo] [Open EDF] [✓ OK] [Rerun as: ▼] [Needs Rerun]
    → click Needs Rerun → manifest: needs_rerun + rerun_combo
 
-3. Rerun page
-   → table shows animal with original combo → target combo
+3. Rerun page  (sidebar shows "5. Spindle Rerun (1)")
    → Run Selected → writes spindle_edfs/<RERUN_COMBO>/
    → manifest.add_run(animal, rerun_combo, source_combo=original_combo)
-   → Upload & Download dialog → SleepyRatWorker → spindle_outputs/<RERUN_COMBO>/
+   → Upload & Download dialog → spindle_outputs/<RERUN_COMBO>/
 
-4. Sleep QC page
-   → showEvent reloads manifest, evicts stale cache for rerun combo
-   → orange badge appears: "● 1 rerun ready for review →"
-   → click badge → enters review mode
-   → animal dropdown filtered to pending-rerun animals
+4. Sleep QC page  (sidebar shows "4. Sleep QC (1)")
+   → showEvent evicts stale cache, badge appears: "● 1 rerun ready for review →"
+   → click badge → review mode, dropdown filtered to pending animals
    → plots: solid line (original), dashed line (rerun), group mean reference
-   → decision panel:
-       [✓ Accept rerun]  [↩ Accept original instead]  [Review]
+   → legend: [✓ Accept LFC_RSC] [✓ Accept RSC]  [Review]
    → decide → auto-advance or "Review Complete" → exit review mode
 
 5. If "Review" chosen:
-   → rerun combo flagged needs_review
-   → appears in Home page review queue → repeat from step 2
+   → rerun combo flagged needs_review → Home queue → repeat from step 2
 ```
 
 ---
@@ -132,49 +107,44 @@ git commit -m "Redesign rerun review: single entry point, decision panel, no dea
 ## Key Design Decisions
 
 ### One-ok invariant
-At most one run per animal may have `sleep_qc == "ok"`. Enforced entirely in the manifest:
-- `flag_sleep_qc("ok")` cascade-rejects all siblings, storing prior status in `prev_sleep_qc` / `rejected_by`
-- Un-okaying restores cascade-rejected siblings
-- Directly-rejected runs (`rejected_by=None`) require explicit `reset_sleep_qc`
+`flag_sleep_qc("ok")` cascade-rejects all siblings. Un-okaying restores them.
+Directly-rejected runs require explicit `reset_sleep_qc`.
+
+### Decisions live in the legend
+The legend already shows one row per combo with colour swatch. Accept/Review buttons
+sit inline with the swatch — no separate decision panel needed. The scoped stylesheet
+(`QWidget#legendRow`) prevents button borders from being overridden by row bg colour.
 
 ### Rerun chain semantics
 | Scenario | Original combo | Rerun combo |
 |---|---|---|
-| Accept rerun | stays `"needs_rerun"` (Home table: "rerun done ✓") | → `"ok"` |
-| Accept original | → `"ok"`, `rerun_combo` cleared | → `"rejected"` (cascade) |
+| Accept rerun | stays `"needs_rerun"` (Home: "rerun done ✓") | → `"ok"` |
+| Accept original | → `"ok"`, rerun_combo cleared | → `"rejected"` (cascade) |
 | Review again | unchanged | → `"needs_review"` → Home queue |
 
-### Status semantics
-| `sleep_qc` | Meaning |
-|---|---|
-| `None` | Not yet reviewed |
-| `"needs_review"` | Flagged for EDF trace inspection |
-| `"needs_rerun"` | Flagged for spindle rerun with different channels |
-| `"ok"` | Accepted (at most one per animal) |
-| `"rejected"` | Superseded — another combo was accepted (or cascade-rejected) |
-
-### PSD status invariant
-`psd_status` is only valid when `sleep_qc == "ok"`. Cleared automatically on un-ok or reset. `flag_psd` raises if `sleep_qc != "ok"`.
+### `pending_rerun_review()` check
+Globs `{entry.animal_id}_*.csv` in the output directory — badge only fires when
+this specific animal's file is actually downloaded, not just any file in the dir.
 
 ---
 
 ## What Didn't Work
-- **Standalone "Review Reruns" toggle button**: added then removed — the orange badge is a better single entry point.
-- **"Reject" as standalone decision**: stranded animals — eliminated in favour of "Accept Original".
-- **Inline combo picker for "Rerun Again"**: replaced by routing through the Home page review queue.
-- **Review Mode buttons in the legend**: moved to dedicated decision panel above the legend.
-- **`any(iterdir())` check for download completion**: too loose — other animals' files triggered it. Replaced with animal-specific glob.
-- **Status column on rerun page**: disk-based step detection felt detached from manifest; reverted.
-- **Ghost runs from PSD files in `build_from_standard`**: removed — PSD files are per-combo aggregates.
+- **Standalone "Review Reruns" toggle**: removed — badge is the single entry point.
+- **"Reject" as standalone decision**: stranded animals — replaced with "Accept Original".
+- **Inline combo picker for "Rerun Again"**: routes through Home queue instead.
+- **Separate decision panel above plots**: tried twice (below legend, above plots) — reverted to legend each time. The legend is the right home for per-combo decisions.
+- **`any(iterdir())` check for download completion**: too loose; replaced with animal-specific glob.
+- **Unscoped row stylesheet**: `background-color: {bg}` without selector cascaded into buttons, hiding borders. Fixed with `QWidget#legendRow { ... }`.
 
 ---
 
 ## Next Steps
-1. **Commit** the pending changes (see Pending commit above)
-2. **End-to-end verification**: write rerun EDF → upload → download → badge appears → review mode → both lines visible → accept → cascade-rejection → home table shows "rerun done ✓"
-3. **Debug print in `psd_graph_widget.py:64`**: `print("New PSD Window")` left in, should be removed
-4. **`needs_drink_mask()` never called**: the method exists on the manifest but nothing in the UI calls it — investigate whether the drink mask widget queries differently, or wire it up
-5. **Consider `_offer_upload` "download only" option** on rerun page: for when EDF was already uploaded in a prior session and only download is needed
+1. **Commit** all pending changes on `refactor/sleep_qc`
+2. **End-to-end verification**: write rerun EDF → upload → download → badge + sidebar count → review mode → both lines visible → accept → cascade-rejection → home table "rerun done ✓"
+3. **Debug print** in `psd_graph_widget.py:64`: `print("New PSD Window")` — remove it
+4. **`needs_drink_mask()` never called**: manifest method exists but nothing in UI calls it
+5. **Persistent upload button on Rerun page**: currently upload is triggered only immediately after Run — add a button to re-trigger for when user cancelled or needs download-only
+6. **Remaining UX improvements** from saved plan (see memory: `project_ux_improvement_plan.md`): home page "Needs Attention" zone (priority 2), review mode visual tint (priority 4), post-run nav hints (priority 5), and lower-priority items
 
 ---
 
@@ -184,6 +154,7 @@ At most one run per animal may have `sleep_qc == "ok"`. Enforced entirely in the
 - `src/ebb_viewer/pages/spindle_upload.py` — batch upload page + `SleepyRatWorker`
 - `src/ebb_viewer/pages/home.py` — pipeline summary + review queue
 - `src/ebb_viewer/pipeline/manifest.py` — `Manifest` / `ManifestEntry` / `RunEntry`
+- `src/ebb_viewer/main_window.py` — sidebar + page navigation + badge refresh
 - `src/ebb/io/sleepyrat.py` — `SleepyRatAPI` (low-level HTTP)
 - `tests/ebb_viewer/test_manifest.py` — 44 manifest tests
 
