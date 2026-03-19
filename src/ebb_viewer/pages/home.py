@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QWidget,
@@ -67,6 +67,9 @@ def _any_file_for_animal(root: Path, subdir: str, channels: str, animal_id: str)
 
 
 class HomePage(QWidget):
+    manifest_changed = pyqtSignal()
+    navigate_to = pyqtSignal(str)  # page name: "rerun" | "sleep_qc"
+
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
         self.project_root = Path(project_root)
@@ -83,7 +86,7 @@ class HomePage(QWidget):
 
         # --- header row ---
         hdr = QHBoxLayout()
-        lbl = QLabel("Pipeline Summary")
+        lbl = QLabel("Home")
         lbl.setStyleSheet("font-weight: bold; font-size: 15px;")
         hdr.addWidget(lbl)
         hdr.addStretch(1)
@@ -110,7 +113,34 @@ class HomePage(QWidget):
 
         root_layout.addLayout(hdr)
 
-        # --- summary table ---
+        # --- needs attention zone ---
+        lbl_attn = QLabel("Needs Attention")
+        lbl_attn.setStyleSheet("font-weight: bold; font-size: 13px;")
+        root_layout.addWidget(lbl_attn)
+
+        self._attn_container = QWidget()
+        self._attn_layout = QVBoxLayout(self._attn_container)
+        self._attn_layout.setContentsMargins(0, 2, 0, 4)
+        self._attn_layout.setSpacing(3)
+
+        self._attn_scroll = QScrollArea()
+        self._attn_scroll.setWidget(self._attn_container)
+        self._attn_scroll.setWidgetResizable(True)
+        self._attn_scroll.setMinimumHeight(80)
+        self._attn_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        root_layout.addWidget(self._attn_scroll, stretch=1)
+
+        # --- pipeline summary table (collapsible) ---
+        self.btn_table_toggle = QPushButton("▼  Pipeline Summary")
+        self.btn_table_toggle.setCheckable(True)
+        self.btn_table_toggle.setChecked(True)
+        self.btn_table_toggle.setStyleSheet(
+            "font-weight: bold; font-size: 13px; text-align: left; border: none; padding: 0;"
+        )
+        self.btn_table_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_table_toggle.toggled.connect(self._toggle_table)
+        root_layout.addWidget(self.btn_table_toggle)
+
         self.table = QTableWidget(0, len(_COLUMNS))
         self.table.setHorizontalHeaderLabels(_COLUMNS)
         self.table.setAlternatingRowColors(True)
@@ -129,29 +159,6 @@ class HomePage(QWidget):
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         root_layout.addWidget(self.table)
 
-        # --- sleep review queue ---
-        self.btn_queue_toggle = QPushButton("▼  Sleep QC Review Queue")
-        self.btn_queue_toggle.setCheckable(True)
-        self.btn_queue_toggle.setChecked(True)
-        self.btn_queue_toggle.setStyleSheet(
-            "font-weight: bold; font-size: 13px; text-align: left; border: none; padding: 0;"
-        )
-        self.btn_queue_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_queue_toggle.toggled.connect(self._toggle_queue)
-        root_layout.addWidget(self.btn_queue_toggle)
-
-        self._queue_container = QWidget()
-        self._queue_layout = QVBoxLayout(self._queue_container)
-        self._queue_layout.setContentsMargins(0, 2, 0, 4)
-        self._queue_layout.setSpacing(3)
-
-        self.queue_scroll = QScrollArea()
-        self.queue_scroll.setWidget(self._queue_container)
-        self.queue_scroll.setWidgetResizable(True)
-        self.queue_scroll.setMinimumHeight(120)
-        self.queue_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        root_layout.addWidget(self.queue_scroll, stretch=1)
-
         # --- file tree ---
         self.btn_files_toggle = QPushButton("▼  Project Files")
         self.btn_files_toggle.setCheckable(True)
@@ -167,11 +174,11 @@ class HomePage(QWidget):
         self.edf_tree.set_root(root_path=self.project_root)
         root_layout.addWidget(self.edf_tree, stretch=2)
 
-    def _toggle_queue(self, checked: bool) -> None:
-        self.btn_queue_toggle.setText(
-            "▼  Sleep QC Review Queue" if checked else "►  Sleep QC Review Queue"
+    def _toggle_table(self, checked: bool) -> None:
+        self.btn_table_toggle.setText(
+            "▼  Pipeline Summary" if checked else "►  Pipeline Summary"
         )
-        self.queue_scroll.setVisible(checked)
+        self.table.setVisible(checked)
 
     def _toggle_file_tree(self, checked: bool) -> None:
         self.btn_files_toggle.setText("▼  Project Files" if checked else "►  Project Files")
@@ -223,9 +230,13 @@ class HomePage(QWidget):
 
         manifest.flag_sleep_qc(entry.animal_id, combo, "needs_rerun", rerun_combo=new_combo)
         self._refresh()
+        self.manifest_changed.emit()
 
     def _build_manifest(self):
         Manifest.build_from_standard(self.project_root)
+        self._refresh()
+
+    def _poll(self):
         self._refresh()
 
     def _refresh(self):
@@ -335,54 +346,57 @@ class HomePage(QWidget):
 
         self.table.resizeRowsToContents()
 
-        # Shrink table height to content so file tree gets the remaining space
+        # Shrink table height to content so attention zone / file tree get remaining space
         total_h = self.table.horizontalHeader().height()
         for r in range(self.table.rowCount()):
             total_h += self.table.rowHeight(r)
         self.table.setMaximumHeight(total_h + 4)
-        self._refresh_review_queue(manifest)
+        self._refresh_attention_zone(manifest)
 
     # ---------------------------------------------------------------
-    # Review queue
+    # Needs Attention zone
     # ---------------------------------------------------------------
-    def _refresh_review_queue(self, manifest: Manifest) -> None:
-        while self._queue_layout.count():
-            item = self._queue_layout.takeAt(0)
+    def _refresh_attention_zone(self, manifest: Manifest) -> None:
+        while self._attn_layout.count():
+            item = self._attn_layout.takeAt(0)
             w = item.widget()
             if w:
                 w.setParent(None)
 
-        pairs = manifest.needs_review()
-        if not pairs:
-            lbl = QLabel("No animals pending review.")
-            lbl.setStyleSheet("color: #888;")
-            self._queue_layout.addWidget(lbl)
+        reviewing       = manifest.needs_review()
+        rerunning       = manifest.needs_rerun_pending()
+        rerun_ready     = manifest.pending_rerun_review()
+
+        if not reviewing and not rerunning and not rerun_ready:
+            lbl = QLabel("All caught up ✓")
+            lbl.setStyleSheet("color: #5a9a5a; font-weight: bold; padding: 4px;")
+            self._attn_layout.addWidget(lbl)
             return
 
-        for entry, channels in pairs:
-            self._queue_layout.addWidget(self._make_queue_row(entry, channels))
+        for entry, channels in reviewing:
+            self._attn_layout.addWidget(self._make_review_card(entry, channels))
+        for entry, channels in rerunning:
+            self._attn_layout.addWidget(self._make_rerun_pending_card(entry, channels))
+        for entry, channels in rerun_ready:
+            self._attn_layout.addWidget(self._make_rerun_ready_card(entry, channels))
 
-    def _make_queue_row(self, entry: ManifestEntry, channels: str) -> QWidget:
-        edf_name = Path(entry.preprocessed_edf).name if entry.preprocessed_edf else "—"
-
+    def _make_review_card(self, entry: ManifestEntry, channels: str) -> QWidget:
         row_w = QWidget()
-        row_w.setObjectName("queueRow")
+        row_w.setObjectName("attnRow")
         row_w.setMaximumHeight(42)
-        row_w.setStyleSheet("QWidget#queueRow { background-color: #fff3cd; border-radius: 3px; }")
+        row_w.setStyleSheet("QWidget#attnRow { background-color: #fff3cd; border-radius: 3px; }")
         h = QHBoxLayout(row_w)
         h.setContentsMargins(6, 3, 6, 3)
         h.setSpacing(8)
 
         h.addWidget(QLabel(f"<b>{entry.animal_id}</b>"))
-
         lbl_ch = QLabel(f"[{channels}]")
         lbl_ch.setStyleSheet("color: #555;")
         h.addWidget(lbl_ch)
-
-        h.addStretch(3)
-        #lbl_file = QLabel(edf_name)
-        #lbl_file.setStyleSheet("color: #888;")
-        #h.addWidget(lbl_file, stretch=1)
+        lbl_type = QLabel("Review EDF")
+        lbl_type.setStyleSheet("color: #7a6000; font-style: italic;")
+        h.addWidget(lbl_type)
+        h.addStretch(1)
 
         btn_open = QPushButton("Open EDF")
         btn_open.setToolTip("View Standard EDF")
@@ -404,8 +418,6 @@ class HomePage(QWidget):
         others = [c for c in CHANNEL_COMBOS if c != channels]
         if others:
             rerun_combo.setCurrentText(others[0])
-
-        h.addStretch(1)
         h.addWidget(QLabel("Rerun as:"))
         h.addWidget(rerun_combo)
 
@@ -420,15 +432,72 @@ class HomePage(QWidget):
 
         return row_w
 
+    def _make_rerun_pending_card(self, entry: ManifestEntry, channels: str) -> QWidget:
+        run = entry.runs.get(channels)
+        rerun_combo = run.rerun_combo if run else "?"
+
+        row_w = QWidget()
+        row_w.setObjectName("attnRow")
+        row_w.setMaximumHeight(42)
+        row_w.setStyleSheet("QWidget#attnRow { background-color: #fde8ce; border-radius: 3px; }")
+        h = QHBoxLayout(row_w)
+        h.setContentsMargins(6, 3, 6, 3)
+        h.setSpacing(8)
+
+        h.addWidget(QLabel(f"<b>{entry.animal_id}</b>"))
+        lbl = QLabel(f"[{channels}] → [{rerun_combo}]")
+        lbl.setStyleSheet("color: #555;")
+        h.addWidget(lbl)
+        lbl_type = QLabel("Spindle rerun queued")
+        lbl_type.setStyleSheet("color: #7a4400; font-style: italic;")
+        h.addWidget(lbl_type)
+        h.addStretch(1)
+        btn_hint = QPushButton("→ Spindle Rerun page")
+        btn_hint.setStyleSheet("color: #7a4400; border: none; padding: 0; text-decoration: underline;")
+        btn_hint.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_hint.setFlat(True)
+        btn_hint.clicked.connect(lambda: self.navigate_to.emit("rerun"))
+        h.addWidget(btn_hint)
+
+        return row_w
+
+    def _make_rerun_ready_card(self, entry: ManifestEntry, channels: str) -> QWidget:
+        row_w = QWidget()
+        row_w.setObjectName("attnRow")
+        row_w.setMaximumHeight(42)
+        row_w.setStyleSheet("QWidget#attnRow { background-color: #d9ecf7; border-radius: 3px; }")
+        h = QHBoxLayout(row_w)
+        h.setContentsMargins(6, 3, 6, 3)
+        h.setSpacing(8)
+
+        h.addWidget(QLabel(f"<b>{entry.animal_id}</b>"))
+        lbl = QLabel(f"[{channels}]")
+        lbl.setStyleSheet("color: #555;")
+        h.addWidget(lbl)
+        lbl_type = QLabel("Rerun ready for review")
+        lbl_type.setStyleSheet("color: #005a7a; font-style: italic;")
+        h.addWidget(lbl_type)
+        h.addStretch(1)
+        btn_hint = QPushButton("→ Sleep QC page")
+        btn_hint.setStyleSheet("color: #005a7a; border: none; padding: 0; text-decoration: underline;")
+        btn_hint.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_hint.setFlat(True)
+        btn_hint.clicked.connect(lambda: self.navigate_to.emit("sleep_qc"))
+        h.addWidget(btn_hint)
+
+        return row_w
+
     def _queue_flag_ok(self, animal_id: str, channels: str) -> None:
         Manifest.load(self.project_root).flag_sleep_qc(animal_id, channels, "ok")
         self._refresh()
+        self.manifest_changed.emit()
 
     def _queue_flag_rerun(self, animal_id: str, channels: str, rerun_combo: str) -> None:
         Manifest.load(self.project_root).flag_sleep_qc(
             animal_id, channels, "needs_rerun", rerun_combo=rerun_combo
         )
         self._refresh()
+        self.manifest_changed.emit()
 
     def _open_edf_for_animal(self, entry: ManifestEntry, channels: str) -> None:
         if not entry.preprocessed_edf:

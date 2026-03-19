@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -35,6 +35,8 @@ class SleepQCGridPage(QWidget):
     dropdown to only animals with pending rerun decisions and shows a decision panel
     (Accept Rerun / Accept Original / Review) below the plots.
     """
+
+    manifest_changed = pyqtSignal()
 
     STATE_ORDER = ["w", "n", "r"]
     STATE_DEF = {"w": "Wake", "n": "NREM", "r": "REM"}
@@ -79,6 +81,13 @@ class SleepQCGridPage(QWidget):
 
         self._build_ui()
         self._wire()
+
+    def _poll(self):
+        """Lightweight background refresh: reload manifest and update the reruns badge."""
+        self._manifest = Manifest.load(self.project_root)
+        for _, combo in self._manifest.pending_rerun_review():
+            self._data_cache.pop(combo, None)
+        self._update_reruns_badge()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -294,6 +303,8 @@ class SleepQCGridPage(QWidget):
                 self.btn_group.setEnabled(True)
                 self._update_reruns_badge()
         else:
+            self._available_combos = self._discover_combos()
+            self._ensure_all_combos_loaded()
             self._refresh_animal_combo()
             self._update_all_plots()
 
@@ -661,6 +672,7 @@ class SleepQCGridPage(QWidget):
         if not animal:
             return
         self._manifest.flag_sleep_qc(animal, combo, "ok")
+        self.manifest_changed.emit()
         self._after_rerun_decision()
 
     def _flag_review_again(self, rerun_combo: str) -> None:
@@ -669,6 +681,7 @@ class SleepQCGridPage(QWidget):
         if not animal:
             return
         self._manifest.flag_sleep_qc(animal, rerun_combo, "needs_review")
+        self.manifest_changed.emit()
         self._after_rerun_decision()
 
     def _after_rerun_decision(self) -> None:
@@ -725,7 +738,7 @@ class SleepQCGridPage(QWidget):
             btn_review = QPushButton("Review")
             btn_review.setFixedHeight(22)
             btn_review.setCheckable(True)
-            btn_review.setChecked(status == "needs_review")
+            btn_review.setChecked(status in ("needs_review", "needs_rerun"))
             btn_review.clicked.connect(lambda checked, m=mid: self._flag_sleep_qc(m, "needs_review" if checked else None))
 
             row_w = QWidget()
@@ -821,7 +834,7 @@ class SleepQCGridPage(QWidget):
                 btn_review = QPushButton("Review")
                 btn_review.setFixedHeight(22)
                 btn_review.setCheckable(True)
-                btn_review.setChecked(status == "needs_review")
+                btn_review.setChecked(status in ("needs_review", "needs_rerun"))
                 btn_review.clicked.connect(lambda checked, c=combo: self._flag_animal_review(c, checked))
                 row_l.addWidget(btn_review)
 
@@ -862,12 +875,14 @@ class SleepQCGridPage(QWidget):
     # ------------------------------------------------------------------
     def _reset_sleep_qc_group(self, mid: str, combo: str) -> None:
         self._manifest.reset_sleep_qc(mid, combo)
+        self.manifest_changed.emit()
         self._update_reruns_badge()
         mice = self._get_page_mice()
         self._update_legend_group(mice, self._build_mouse_color_map(mice))
 
     def _reset_sleep_qc_animal(self, animal: str, combo: str) -> None:
         self._manifest.reset_sleep_qc(animal, combo)
+        self.manifest_changed.emit()
         self._update_reruns_badge()
         self._update_all_plots()
 
@@ -885,6 +900,7 @@ class SleepQCGridPage(QWidget):
             if self._manifest.get_run(animal, combo) is None:
                 self._manifest.add_run(animal, combo)
             self._manifest.flag_sleep_qc(animal, combo, "ok")
+        self.manifest_changed.emit()
         self._update_reruns_badge()
         if had_pending_rerun:
             self._advance_to_next_rerun()
@@ -901,6 +917,7 @@ class SleepQCGridPage(QWidget):
             if self._manifest.get_run(animal, combo) is None:
                 self._manifest.add_run(animal, combo)
             self._manifest.flag_sleep_qc(animal, combo, "needs_review")
+        self.manifest_changed.emit()
         self._update_reruns_badge()
         self._update_all_plots()
 
@@ -914,6 +931,7 @@ class SleepQCGridPage(QWidget):
             if self._manifest.get_run(mid, combo) is None:
                 self._manifest.add_run(mid, combo)
             self._manifest.flag_sleep_qc(mid, combo, status)
+        self.manifest_changed.emit()
         self._update_reruns_badge()
         mice = self._get_page_mice()
         self._update_legend_group(mice, self._build_mouse_color_map(mice))

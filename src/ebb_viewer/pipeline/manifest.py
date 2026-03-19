@@ -421,6 +421,25 @@ class Manifest:
             if run.sleep_qc == "needs_rerun"
         ]
 
+    def needs_rerun_pending(self) -> list[tuple[ManifestEntry, str]]:
+        """Runs flagged for rerun where the rerun has not yet been reviewed.
+
+        Excludes entries where the rerun combo already has a registered run
+        with a non-None sleep_qc (i.e. it has been reviewed in Sleep QC).
+        Does not check the filesystem — stale files from previous cycles are
+        irrelevant to whether action is still needed.
+        """
+        result = []
+        for entry in self:
+            for combo, run in entry.runs.items():
+                if run.sleep_qc != "needs_rerun" or not run.rerun_combo:
+                    continue
+                rerun_run = entry.runs.get(run.rerun_combo)
+                if rerun_run is not None and rerun_run.sleep_qc is not None:
+                    continue
+                result.append((entry, combo))
+        return result
+
     def pending_psd_review(self) -> list[tuple[ManifestEntry, str]]:
         """Runs whose PSD file exists but hasn't been reviewed yet."""
         return [

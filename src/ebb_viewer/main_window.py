@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QPushButton, QStackedLayout, QVBoxLayout, QWidget, QLabel,
     QListWidget, QListWidgetItem, QFileDialog, QHBoxLayout
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 
 from ebb_viewer.pages.home import HomePage
@@ -102,7 +102,24 @@ class MainWindow(QMainWindow):
 
         # Rows that carry pending-work badges (row index → manifest method name)
         # Home=0: needs_review queue; Sleep QC=6: pending rerun decisions; Rerun=7: needs_rerun
-        self._badge_rows: dict[int, str] = {0: "needs_review", 6: "pending_rerun_review", 7: "needs_rerun"}
+        self._badge_rows: dict[int, str] = {0: "needs_review", 6: "pending_rerun_review", 7: "needs_rerun_pending"}
+
+        # Connect manifest_changed signals for immediate badge refresh
+        self.home_page.manifest_changed.connect(self._refresh_badges)
+        self.sleep_combine_page.manifest_changed.connect(self._refresh_badges)
+        self.rerun_page.manifest_changed.connect(self._refresh_badges)
+
+        # Home page navigation hints
+        _page_rows = {"rerun": 7, "sleep_qc": 6}
+        self.home_page.navigate_to.connect(
+            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
+        )
+
+        # Periodic poll: refresh badges + currently-visible page every 10 s
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(10_000)
+        self._poll_timer.timeout.connect(self._poll)
+        self._poll_timer.start()
 
         # ----- Navigation
         self.pagelist.currentRowChanged.connect(self.display)
@@ -121,6 +138,13 @@ class MainWindow(QMainWindow):
             self.stacklayout.setCurrentIndex(stack_idx)
             self._refresh_badges()
 
+    def _poll(self) -> None:
+        """Called every 10 s: refresh badges and the currently-visible page."""
+        self._refresh_badges()
+        page = self.stacklayout.currentWidget()
+        if page is not None and hasattr(page, "_poll"):
+            page._poll()
+
     def _refresh_badges(self) -> None:
         """Update sidebar item labels with pending-work counts."""
         try:
@@ -128,9 +152,9 @@ class MainWindow(QMainWindow):
         except Exception:
             return
         counts = {
-            "needs_review":        len(manifest.needs_review()),
+            "needs_review":         len(manifest.needs_review()),
             "pending_rerun_review": len(manifest.pending_rerun_review()),
-            "needs_rerun":         len(manifest.needs_rerun()),
+            "needs_rerun_pending":  len(manifest.needs_rerun_pending()),
         }
         for row, method in self._badge_rows.items():
             item = self.pagelist.item(row)

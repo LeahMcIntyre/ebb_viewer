@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QWidget,
@@ -51,6 +51,8 @@ def _cell(text: str, bg: QColor | None = None) -> QTableWidgetItem:
 
 
 class RerunPage(QWidget):
+    manifest_changed = pyqtSignal()
+
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
         self.project_root = Path(project_root)
@@ -123,23 +125,17 @@ class RerunPage(QWidget):
         super().showEvent(event)
         self._refresh()
 
+    def _poll(self):
+        self._refresh()
+
     def _refresh(self):
         self.table.setRowCount(0)  # clears all spans and content from previous render
         manifest = Manifest.load(self.project_root)
 
-        def _rerun_files_exist(entry: ManifestEntry, rerun_combo: str) -> bool:
-            """True if both a spindle EDF and spindle output already exist for the rerun combo."""
-            if not rerun_combo:
-                return False
-            animal_id = entry.animal_id
-            edf_dir = spindle_edf_dir(rerun_combo, self.project_root)
-            out_dir = spindle_output_dir(rerun_combo, self.project_root)
-            has_edf = edf_dir.is_dir() and any(edf_dir.glob(f"{animal_id}*.edf"))
-            has_output = out_dir.is_dir() and any(out_dir.glob(f"{animal_id}*"))
-            return has_edf and has_output
-
-        # Show entries where the rerun hasn't been registered yet, or hasn't been QC'd,
-        # and where the rerun files haven't already been generated.
+        # Show entries where the rerun run hasn't been reviewed yet.
+        # Mirrors needs_rerun_pending() — no filesystem check, so stale files from
+        # previous cycles don't hide items that still need upload/download.
+        # _run_selected already skips writing the EDF if it already exists on disk.
         pairs = [
             (entry, combo)
             for entry, combo in manifest.needs_rerun()
@@ -147,7 +143,6 @@ class RerunPage(QWidget):
                 entry.runs[combo].rerun_combo not in entry.runs
                 or entry.runs[entry.runs[combo].rerun_combo].sleep_qc is None
             )
-            and not _rerun_files_exist(entry, entry.runs[combo].rerun_combo or "")
         ]
 
         self.table.setRowCount(len(pairs))
@@ -246,6 +241,7 @@ class RerunPage(QWidget):
 
         if written_combos:
             self._refresh()
+            self.manifest_changed.emit()
             self._offer_upload(written_combos, written_files)
 
     def _offer_upload(self, written_combos: set[tuple[str, str]],
