@@ -4,7 +4,7 @@ from PyQt6 import QtWidgets
 class DrinkMaskDialogue(QtWidgets.QDialog):
     """Modal dialog to set drink mask offset and pad."""
     def __init__(self, *, drink_path: str, offset_val: float = 0.0, pad: int = 0,
-                  parent=None ,title="Drink Mask Confirmation"):
+                  parent=None, title="Drink Mask Confirmation"):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setModal(True)

@@ -8,12 +8,8 @@ Covers:
 - rerun_with_drink_masks raises when psds_final.pkl missing or combo mismatches
 - rerun_with_drink_masks raises when no EDF files found for target animals
 - DrinkMaskRerunWorker.run calls rerun_with_drink_masks with correct args
-- BatchEstimateWorker.run passes drink_dir and offset_path to batch_estimate
-- PSDPage._drink_masks_dir returns project_root/drink_masks
+- BatchEstimateWorker.run passes drink_dir=None, embeds params in PKL, saves psd_params.json
 - PSDPage._detect_offset_csv finds first CSV or returns None
-- PSDPage._refresh_drink_mask_info updates labels correctly
-- PSDPage._validate enables btn_drink_mask when rerun needed
-- PSDPage._on_drink_mask_done flags manifest and emits manifest_changed
 """
 
 import pickle
@@ -75,7 +71,6 @@ def test_batch_estimate_passes_offset_path(tmp_path):
 
     def fake_partial(fn, **kwargs):
         captured_kwargs.update(kwargs)
-        # Return a callable that does nothing
         return lambda *a: []
 
     with patch("ebb.process.psd_compute.match_paths", return_value=[]), \
@@ -302,62 +297,25 @@ def test_rerun_with_drink_masks_raises_when_no_edfs(tmp_path):
 # BatchEstimateWorker
 # ---------------------------------------------------------------------------
 
-def test_batch_estimate_worker_passes_drink_dir_and_offset(tmp_path):
-    """Worker passes drink_dir and offset_path to batch_estimate."""
-    drink_dir = tmp_path / "drink_masks"
-    offset_csv = drink_dir / "offsets.csv"
-    pairs = [(tmp_path / "spindle_out", tmp_path / "out.pkl")]
+def _run_batch_worker(tmp_path, params=None, offset_path=None):
+    """Run BatchEstimateWorker with a recording batch_estimate stub; return calls."""
+    if params is None:
+        params = {"fs": 250, "channels": [0, 1]}
+    spindle_dir = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle_dir.mkdir(parents=True)
+    psd_dir = tmp_path / "psd"
+    psd_dir.mkdir(exist_ok=True)
+    savepath = psd_dir / "psds_LFC_RSC.pkl"
 
-    captured = {}
-
-    def fake_batch_estimate(**kwargs):
-        captured.update(kwargs)
-        return []
-
-    with patch("ebb.process.psd_compute.batch_estimate", side_effect=fake_batch_estimate):
-        from ebb_viewer.pages.psds import BatchEstimateWorker
-        worker = BatchEstimateWorker(
-            eeg_dir=tmp_path / "standard",
-            combo_pairs=pairs,
-            params={"fs": 250, "channels": [0, 1]},
-            drink_dir=drink_dir,
-            offset_path=offset_csv,
-        )
-        # Patch batch_estimate at the import location used by the worker
-        with patch("ebb.process.psd_compute.batch_estimate") as mock_be:
-            mock_be.return_value = []
-            # simulate the import inside run()
-            import ebb.process.psd_compute as psd_mod
-            orig = psd_mod.batch_estimate
-
-            calls = []
-
-            def recording_be(**kw):
-                calls.append(kw)
-                return []
-
-            psd_mod.batch_estimate = recording_be
-            try:
-                worker.run()
-            finally:
-                psd_mod.batch_estimate = orig
-
-    assert len(calls) == 1
-    assert calls[0]["drink_dir"] == drink_dir
-    assert calls[0]["offset_path"] == offset_csv
-
-
-def test_batch_estimate_worker_none_drink_dir(tmp_path):
-    """Worker passes drink_dir=None when not provided."""
-    pairs = [(tmp_path / "spindle_out", tmp_path / "out.pkl")]
+    pairs = [(spindle_dir, savepath)]
+    calls = []
 
     import ebb.process.psd_compute as psd_mod
     orig = psd_mod.batch_estimate
-    calls = []
 
     def recording_be(**kw):
         calls.append(kw)
-        return []
+        return []  # empty results list
 
     psd_mod.batch_estimate = recording_be
     try:
@@ -365,18 +323,122 @@ def test_batch_estimate_worker_none_drink_dir(tmp_path):
         worker = BatchEstimateWorker(
             eeg_dir=tmp_path / "standard",
             combo_pairs=pairs,
-            params={"fs": 250, "channels": [0, 1]},
+            params=params,
+            project_root=tmp_path,
+            offset_path=offset_path,
         )
         worker.run()
     finally:
         psd_mod.batch_estimate = orig
 
+    return calls, savepath
+
+
+def test_batch_worker_always_passes_drink_dir_none(tmp_path):
+    """BatchEstimateWorker always passes drink_dir=None (clean compute)."""
+    calls, _ = _run_batch_worker(tmp_path)
+    assert len(calls) == 1
     assert calls[0]["drink_dir"] is None
+
+
+def test_batch_worker_always_passes_savepath_none(tmp_path):
+    """BatchEstimateWorker passes savepath=None and saves PKL manually."""
+    calls, _ = _run_batch_worker(tmp_path)
+    assert calls[0]["savepath"] is None
+
+
+def test_batch_worker_passes_offset_path(tmp_path):
+    """BatchEstimateWorker forwards offset_path when provided."""
+    offset_csv = tmp_path / "offsets.csv"
+    offset_csv.touch()
+    calls, _ = _run_batch_worker(tmp_path, offset_path=offset_csv)
+    assert calls[0]["offset_path"] == offset_csv
+
+
+def test_batch_worker_offset_path_none_when_not_given(tmp_path):
+    """BatchEstimateWorker passes offset_path=None when not provided."""
+    calls, _ = _run_batch_worker(tmp_path)
     assert calls[0]["offset_path"] is None
 
 
+def test_batch_worker_saves_pkl_with_params(tmp_path):
+    """BatchEstimateWorker saves PKL manually with params embedded in each record."""
+    import dataclasses
+
+    params = {"fs": 250, "channels": [0, 1]}
+    spindle_dir = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle_dir.mkdir(parents=True)
+    savepath = tmp_path / "psd" / "psds_LFC_RSC.pkl"
+    savepath.parent.mkdir(parents=True)
+
+    fake_result = MagicMock()
+    fake_result_dict = {"path": "AM001_PREPROCESSED.edf", "psd": [1.0]}
+
+    import ebb.process.psd_compute as psd_mod
+    orig = psd_mod.batch_estimate
+    psd_mod.batch_estimate = lambda **kw: [fake_result]
+
+    import ebb_viewer.pages.psds as psds_mod
+    orig_asdict = psds_mod.dataclasses.asdict
+
+    def fake_asdict(obj):
+        return dict(fake_result_dict)
+
+    psds_mod.dataclasses.asdict = fake_asdict
+    try:
+        from ebb_viewer.pages.psds import BatchEstimateWorker
+        worker = BatchEstimateWorker(
+            eeg_dir=tmp_path / "standard",
+            combo_pairs=[(spindle_dir, savepath)],
+            params=params,
+            project_root=tmp_path,
+        )
+        worker.run()
+    finally:
+        psd_mod.batch_estimate = orig
+        psds_mod.dataclasses.asdict = orig_asdict
+
+    with open(savepath, "rb") as f:
+        records = pickle.load(f)
+
+    assert len(records) == 1
+    assert records[0]["params"] == params
+
+
+def test_batch_worker_saves_psd_params_json(tmp_path):
+    """BatchEstimateWorker saves psd_params.json after computing."""
+    import json
+    params = {"fs": 250, "channels": [0, 1], "winsize": 180, "radius": 0.5}
+
+    psd_dir = tmp_path / "psd"
+    psd_dir.mkdir()
+    spindle_dir = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle_dir.mkdir(parents=True)
+    savepath = psd_dir / "psds_LFC_RSC.pkl"
+
+    import ebb.process.psd_compute as psd_mod
+    orig = psd_mod.batch_estimate
+    psd_mod.batch_estimate = lambda **kw: []
+    try:
+        from ebb_viewer.pages.psds import BatchEstimateWorker
+        worker = BatchEstimateWorker(
+            eeg_dir=tmp_path / "standard",
+            combo_pairs=[(spindle_dir, savepath)],
+            params=params,
+            project_root=tmp_path,
+        )
+        worker.run()
+    finally:
+        psd_mod.batch_estimate = orig
+
+    params_file = tmp_path / "psd" / "psd_params.json"
+    assert params_file.exists()
+    saved = json.loads(params_file.read_text())
+    assert saved == params
+
+
 # ---------------------------------------------------------------------------
-# DrinkMaskRerunWorker
+# DrinkMaskRerunWorker (now in drink_mask.py)
 # ---------------------------------------------------------------------------
 
 def test_drink_mask_rerun_worker_calls_rerun(tmp_path):
@@ -399,7 +461,7 @@ def test_drink_mask_rerun_worker_calls_rerun(tmp_path):
 
     psd_mod.rerun_with_drink_masks = recording_rerun
     try:
-        from ebb_viewer.pages.psds import DrinkMaskRerunWorker
+        from ebb_viewer.pages.drink_mask import DrinkMaskRerunWorker
         worker = DrinkMaskRerunWorker(
             psd_dir=psd_dir,
             eeg_dir=standard,
@@ -440,7 +502,7 @@ def test_drink_mask_rerun_worker_injects_offset_path(tmp_path):
 
     psd_mod.rerun_with_drink_masks = recording_rerun
     try:
-        from ebb_viewer.pages.psds import DrinkMaskRerunWorker
+        from ebb_viewer.pages.drink_mask import DrinkMaskRerunWorker
         worker = DrinkMaskRerunWorker(
             psd_dir=tmp_path / "psd",
             eeg_dir=tmp_path / "standard",
@@ -465,7 +527,7 @@ def test_drink_mask_rerun_worker_emits_error_on_exception(tmp_path):
 
     errors = []
     try:
-        from ebb_viewer.pages.psds import DrinkMaskRerunWorker
+        from ebb_viewer.pages.drink_mask import DrinkMaskRerunWorker
         worker = DrinkMaskRerunWorker(
             psd_dir=tmp_path / "psd",
             eeg_dir=tmp_path / "standard",
@@ -492,7 +554,6 @@ def qapp():
     """Create a QApplication for the session (skips if display unavailable)."""
     import os
     import sys
-    # Allow running headless if a virtual display is available
     if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PyQt6.QtWidgets import QApplication
@@ -502,21 +563,16 @@ def qapp():
 
 @pytest.fixture()
 def page(tmp_path, qapp):
-    """Construct a PSDPage against a bare tmp_path project root."""
-    from ebb_viewer.pages.psds import PSDPage
-    w = PSDPage(project_root=tmp_path)
+    """Construct a DrinkMaskPage against a bare tmp_path project root."""
+    from ebb_viewer.pages.drink_mask import DrinkMaskPage
+    w = DrinkMaskPage(project_root=tmp_path)
     yield w, tmp_path
     w.close()
 
 
 # ---------------------------------------------------------------------------
-# PSDPage helpers
+# DrinkMaskPage helpers
 # ---------------------------------------------------------------------------
-
-def test_drink_masks_dir(page):
-    w, tmp_path = page
-    assert w._drink_masks_dir() == tmp_path / "drink_masks"
-
 
 def test_detect_offset_csv_none_when_no_dir(page):
     w, _ = page
@@ -537,161 +593,3 @@ def test_detect_offset_csv_returns_first_csv(page):
     (d / "zoo.csv").touch()
     result = w._detect_offset_csv()
     assert result == d / "offsets.csv"
-
-
-def test_refresh_drink_mask_info_no_dir(page):
-    w, _ = page
-    w._refresh_drink_mask_info()
-    assert "Not found" in w.lbl_drink_dir.text()
-    assert w.lbl_offset_csv.text() == "None"
-
-
-def test_refresh_drink_mask_info_with_masks(page):
-    w, tmp_path = page
-    d = tmp_path / "drink_masks"
-    d.mkdir()
-    (d / "AM001.npy").touch()
-    (d / "AM002.npy").touch()
-    w._refresh_drink_mask_info()
-    assert str(d) in w.lbl_drink_dir.text()
-    assert "2 masks" in w._lbl_drink_count.text()
-    assert w.lbl_offset_csv.text() == "None"
-
-
-def test_refresh_drink_mask_info_single_mask(page):
-    w, tmp_path = page
-    d = tmp_path / "drink_masks"
-    d.mkdir()
-    (d / "AM001.npy").touch()
-    w._refresh_drink_mask_info()
-    assert "1 mask" in w._lbl_drink_count.text()
-
-
-def test_refresh_drink_mask_info_with_csv(page):
-    w, tmp_path = page
-    d = tmp_path / "drink_masks"
-    d.mkdir()
-    (d / "AM001.npy").touch()
-    (d / "offsets.csv").touch()
-    w._refresh_drink_mask_info()
-    assert w.lbl_offset_csv.text() == "offsets.csv"
-
-
-def test_refresh_drink_mask_info_dir_exists_no_npys(page):
-    w, tmp_path = page
-    d = tmp_path / "drink_masks"
-    d.mkdir()
-    w._refresh_drink_mask_info()
-    assert "no .npy files" in w._lbl_drink_count.text()
-
-
-# ---------------------------------------------------------------------------
-# PSDPage._validate: drink mask button state
-# ---------------------------------------------------------------------------
-
-def _make_manifest_json(tmp_path: Path, animal_id: str, combo: str,
-                         psd_status: str, has_npy: bool) -> None:
-    """Write a minimal manifest.json and optionally the .npy file."""
-    if has_npy:
-        d = tmp_path / "drink_masks"
-        d.mkdir(exist_ok=True)
-        (d / f"{animal_id}.npy").touch()
-
-    import json
-    data = {
-        animal_id: {
-            "animal_id": animal_id,
-            "preprocessed_edf": f"standard/{animal_id}_PREPROCESSED.edf",
-            "runs": {
-                combo: {
-                    "sleep_qc": "ok",
-                    "rerun_combo": None,
-                    "psd_status": psd_status,
-                    "drink_mask": None,
-                    "rejected_by": None,
-                    "source_combo": None,
-                }
-            },
-        }
-    }
-    (tmp_path / "manifest.json").write_text(json.dumps(data))
-
-
-def test_validate_drink_button_enabled_when_flagged(tmp_path, qapp):
-    """btn_drink_mask enabled when animal is needs_drink_mask and .npy present."""
-    _make_manifest_json(tmp_path, "AM001", "LFC_RSC", "needs_drink_mask", has_npy=True)
-
-    from ebb_viewer.pages.psds import PSDPage
-    w = PSDPage(project_root=tmp_path)
-    w._validate()
-    assert w.btn_drink_mask.isEnabled()
-    w.close()
-
-
-def test_validate_drink_button_disabled_without_npy(tmp_path, qapp):
-    """btn_drink_mask stays disabled when .npy is missing even if flagged."""
-    _make_manifest_json(tmp_path, "AM001", "LFC_RSC", "needs_drink_mask", has_npy=False)
-
-    from ebb_viewer.pages.psds import PSDPage
-    w = PSDPage(project_root=tmp_path)
-    w._validate()
-    assert not w.btn_drink_mask.isEnabled()
-    w.close()
-
-
-def test_validate_drink_button_disabled_when_psd_ok(tmp_path, qapp):
-    """btn_drink_mask disabled when psd_status is 'ok' (nothing to rerun)."""
-    _make_manifest_json(tmp_path, "AM001", "LFC_RSC", "ok", has_npy=True)
-
-    from ebb_viewer.pages.psds import PSDPage
-    w = PSDPage(project_root=tmp_path)
-    w._validate()
-    assert not w.btn_drink_mask.isEnabled()
-    w.close()
-
-
-# ---------------------------------------------------------------------------
-# PSDPage._on_drink_mask_done: manifest update
-# ---------------------------------------------------------------------------
-
-def test_on_drink_mask_done_flags_manifest(tmp_path, qapp):
-    """_on_drink_mask_done calls flag_psd(drink_mask_applied) and saves."""
-    _make_manifest_json(tmp_path, "AM001", "LFC_RSC", "needs_drink_mask", has_npy=True)
-
-    from ebb_viewer.pages.psds import PSDPage
-    from ebb_viewer.pipeline.manifest import Manifest
-
-    w = PSDPage(project_root=tmp_path)
-    w._computing = True
-    w._pending_drink_rerun = {"AM001": "LFC_RSC"}
-
-    emitted = []
-    w.manifest_changed.connect(lambda: emitted.append(True))
-
-    w._on_drink_mask_done()
-
-    assert not w._computing
-    assert w._pending_drink_rerun == {}
-    assert emitted  # manifest_changed was emitted
-
-    m = Manifest.load(tmp_path)
-    entry = m.get("AM001")
-    assert entry.runs["LFC_RSC"].psd_status == "drink_mask_applied"
-    assert entry.runs["LFC_RSC"].drink_mask == "drink_masks/AM001.npy"
-    w.close()
-
-
-def test_on_drink_mask_done_skips_missing_runs(tmp_path, qapp):
-    """_on_drink_mask_done silently ignores animals/combos not in manifest."""
-    _make_manifest_json(tmp_path, "AM001", "LFC_RSC", "needs_drink_mask", has_npy=True)
-
-    from ebb_viewer.pages.psds import PSDPage
-    w = PSDPage(project_root=tmp_path)
-    w._computing = True
-    # Include an animal/combo that doesn't exist — should not raise
-    w._pending_drink_rerun = {"AM001": "LFC_RSC", "AM999": "BOGUS_COMBO"}
-
-    w._on_drink_mask_done()  # must not raise
-
-    assert w._pending_drink_rerun == {}
-    w.close()

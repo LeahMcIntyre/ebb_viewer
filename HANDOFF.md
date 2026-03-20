@@ -60,29 +60,50 @@ test coverage, and general UI clarity.
 
 ---
 
-### Completed (current session, branch `refactor/clean-up`)
+### Completed (sessions 3–4, branch `refactor/clean-up`)
 
-#### Drink mask UX redesign (`pages/psds.py`, `psd_compute.py`, `widgets/psd_graph_widget.py`)
+#### UX improvements (all 9 plan items done)
 
-**Display fix**: `lbl_drink_dir` QLineEdit now shows the path only; count moved to a
-separate `_lbl_drink_count` QLabel badge (green `✓ N masks` / orange `! no .npy files`).
+- **Priority 1**: Sidebar pending-work badges (earlier session)
+- **Priority 2**: "Needs Attention" action zone on Home page (earlier session)
+- **Priority 3**: Decision panel moved above plots in review mode (earlier session)
+- **Priority 4** (`sleep_qc_visualizer.py`): Review mode tints page `#f0f4ff`; animal label becomes "Animal (review):"; `"(filtered: N pending)"` label shown next to dropdown; `setObjectName("sleepQcPage")` drives scoped stylesheet.
+- **Priority 5** (`rerun.py`): After successful `_run_selected`, a green `QFrame` hint appears: "✓ Spindle EDFs written. Upload them to SleepyRat, then go to Sleep QC to review the new results." + "→ Sleep QC" button (emits `navigate_to("sleep_qc")`).
+- **Priority 6** (`rerun.py`): Persistent "Upload Rerun…" button enabled whenever a rerun combo has EDFs in `spindle_edfs/` but no CSV in `spindle_outputs/`. Uses `upload_dir=` mode (skip-already-uploaded). `navigate_to` signal wired in `main_window.py`.
+- **Priority 7** (`home.py`): `_SLEEP_QC_LABEL` maps `"needs_review"` → `"Review EDF"` in Sleep QC column.
+- **Priority 8** (`home.py`): Button renamed "Import new animals" with updated tooltip. `showEvent` auto-runs `build_from_standard`; shows green `"✓ N new animals imported"` label or hides it if none. Manual button shows `"No new animals found"` on zero-import.
+- **Priority 9** (`home.py`): Editable rerun cells (EDF not yet written) display `"rerun → LFC_RSC  ✎"` with tooltip `"Double-click to change rerun combo"`.
 
-**Drink Mask Rerun groupbox** replaces the awkward three-button row:
-- Main buttons reduced to `[ Compute PSDs ]  [ Build Final PKL ]`
-- New "Drink Mask Rerun" QGroupBox always visible below buttons
-- Status line: `"N animal(s) flagged — N ready, N missing mask file"` with per-animal table
-  showing Animal | Status | Mask File (✓ found / ✗ missing per row)
-- Button label is dynamic: `"Apply Drink Masks (N ready)"` or
-  `"Apply Drink Masks (place .npy files to enable)"`
+#### Bug fixes (this session)
+- `sleep_qc_visualizer.py` legend stylesheet had extra `}}` (literal two `}`) in non-f-string — Qt reported "Could not parse stylesheet". Fixed to single `}`.
+- `BatchEstimateWorker` in `psds.py` had `offset_path` stripped again by linter. Restored `offset_path` param and `offset_path=self.offset_path` kwarg to `batch_estimate`.
+- `test_drink_mask_integration.py` `page` fixture referenced `PSDPage._detect_offset_csv` (moved to `DrinkMaskPage` in prior session). Updated fixture to instantiate `DrinkMaskPage`; updated section comment from "PSDPage helpers" → "DrinkMaskPage helpers".
 
-**BatchEstimateWorker** pre-flight log: before computing, emits which animals have drink
-mask files and which don't.
+#### Drink mask architectural redesign
 
-**PSD Visualizer guidance**: after clicking "Drink Mask" in `psd_graph_widget.py`,
-a yellow banner appears below the toolbar: *"Place `drink_masks/<animal_id>.npy`… then
-go to PSD Computation → Apply Drink Masks"*. Hidden for all other statuses.
+**Architecture**: PSD Computation page does a clean compute (no drink masks). Drink masks
+are only applied from the new dedicated "8. Drink Mask" sidebar page, and only after animals
+are explicitly flagged `needs_drink_mask` in the PSD Visualizer.
 
-**Removed** `print("New PSD Window")` debug statement from `psd_graph_widget.py`.
+**PSD params provenance**: `BatchEstimateWorker` saves `psd/psd_params.json` after each
+compute run and embeds `{"params": {...}}` in every PKL record. The Drink Mask page loads
+this as read-only so reruns always use the same params.
+
+**New `DrinkMaskPage`** (`pages/drink_mask.py`):
+- Read-only params panel (from psd_params.json)
+- Drink masks folder status + .npy count
+- Manifest-driven table of flagged animals + mask file presence
+- `Apply Drink Masks` gated on psd_params.json existence + at least one .npy found
+- Sidebar badge (row 11) shows `needs_drink_mask` count
+- `manifest_changed` signal wired to badge refresh
+
+**`BatchEstimateWorker`** (`pages/psds.py`): removed `drink_dir`; passes `savepath=None`
+to `batch_estimate`, embeds params in each dict, saves PKL manually, then saves
+`psd_params.json`. `PSDPage` pre-populates spinboxes from saved params on init.
+
+**`DrinkMaskRerunWorker`** moved from `psds.py` to `drink_mask.py`.
+
+**`psd_params.py`** (`pipeline/psd_params.py`): `save(project_root, params)` / `load(project_root)`.
 
 #### New drink mask PKL architecture (`psd_compute.py`, `pages/psds.py`)
 
@@ -176,27 +197,31 @@ mismatched counts and raised. Fixed by filtering all three path lists to `animal
 ## Full Drink Mask Flow (as implemented)
 
 ```
-1. PSD Computation page
-   → Compute PSDs  (drink masks auto-applied if drink_masks/ folder present;
-     pre-flight log shows which animals have mask files)
+1. PSD Computation page (6. PSD Computation)
+   → Select combos, set params → Compute PSDs
+   → Clean compute: no drink masks applied during initial PSD run
+   → params saved to psd/psd_params.json (auto-loads on next open)
+   → Each PKL record has {"params": {...}} embedded for provenance
 
 2. Build Final PKL → psds_final.pkl  (one entry per animal from their ok combo)
 
-3. PSD Visualizer
-   → opens psds_final_drink.pkl if present, else psds_final.pkl
-   → flag animals: [✓ OK] or [Drink Mask]
-   → "Drink Mask" shows guidance banner: place .npy in drink_masks/, go to PSD Computation
+3. PSD Visualizer (7. PSD Visualizer)
+   → Opens psds_final_drink.pkl if present, else psds_final.pkl
+   → Flag animals: [✓ OK] or [Drink Mask]
+   → "Drink Mask" sets psd_status = "needs_drink_mask" in manifest
 
-4. PSD Computation page — Drink Mask Rerun groupbox
-   → table shows flagged animals + mask file status (✓ found / ✗ missing)
-   → "Apply Drink Masks (N ready)" — validates combo vs psds_final.pkl, then:
-     a. reruns estimate_psd with drink mask for each ready animal
-     b. updates psds_drink.pkl (accumulates across sessions, replace-per-animal)
-     c. regenerates psds_final_drink.pkl = psds_final.pkl base + all psds_drink.pkl records
-   → manifest updated: psd_status = "drink_mask_applied"
+4. Drink Mask page (8. Drink Mask)  (sidebar badge shows count)
+   → Loads psd/psd_params.json as read-only (cannot change params here)
+   → Shows drink_masks/ folder status + .npy count
+   → Table: animals flagged needs_drink_mask + mask file presence (✓/✗)
+   → "Apply Drink Masks (N ready)" — gated on psd_params.json + .npy present
+     a. Calls rerun_with_drink_masks: validates source_combo vs psds_final.pkl
+     b. Updates psds_drink.pkl (accumulates across sessions, replace-per-animal)
+     c. Regenerates psds_final_drink.pkl = psds_final.pkl base + psds_drink.pkl
+   → manifest: psd_status = "drink_mask_applied"
 
 5. PSD Visualizer
-   → re-open to review psds_final_drink.pkl
+   → Re-open to review psds_final_drink.pkl
 ```
 
 ---
@@ -246,18 +271,15 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 - **`needs_rerun_pending()` excluding on `source_combo` alone**: caused vanishing items on cancelled upload. Fixed by gating on CSV presence.
 - **`rerun_with_drink_masks` overwriting `psds_<COMBO>.pkl` in place**: destructive, no accumulation across sessions. Replaced with `psds_drink.pkl` + `psds_final_drink.pkl` architecture.
 - **`rerun_with_drink_masks` globbing all state/drink paths without animal filter**: caused `re_match` count mismatch when running a subset. Fixed by filtering all path lists to `animal_ids_set`.
+- **Linter repeatedly strips `offset_path` from `BatchEstimateWorker`**: happens on every `/simplify` run. Each time: restore param in `__init__`, restore `self.offset_path = offset_path`, restore `offset_path=self.offset_path` in `batch_estimate` call.
+- **Legend stylesheet extra `}}`**: non-f-string `" border-radius: 3px; }}"` has two literal `}` — Qt can't parse it. Must be single `}`.
 
 ---
 
 ## Next Steps
 1. **End-to-end verification** of full rerun flow (see flow diagram above)
 2. **End-to-end verification** of drink mask flow (see flow diagram above)
-3. **Remaining UX improvements** from saved plan (see memory: `project_ux_improvement_plan.md`):
-   - Priority 4: Review mode visual tint (`#f0f4ff` background when `_review_mode` is True)
-   - Priority 5: Post-run navigation hints on Rerun page
-   - Priority 7: Human-readable status labels in home table
-   - Priority 8: Rename + auto-run "Sync from filesystem"
-   - Priority 9: Discoverable double-click affordance for rerun combo
+3. All UX improvement items from the plan are now complete — no remaining items
 
 ---
 
@@ -266,7 +288,9 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 - `src/ebb_viewer/pages/rerun.py` — rerun queue page
 - `src/ebb_viewer/pages/spindle_upload.py` — batch upload page + `SleepyRatWorker`
 - `src/ebb_viewer/pages/home.py` — pipeline summary + Needs Attention zone
-- `src/ebb_viewer/pages/psds.py` — PSD Computation page (batch estimate + drink mask rerun)
+- `src/ebb_viewer/pages/psds.py` — PSD Computation page (batch estimate, saves psd_params.json, params embedded in PKL)
+- `src/ebb_viewer/pages/drink_mask.py` — Drink Mask page (reads psd_params.json, applies drink masks, DrinkMaskRerunWorker)
+- `src/ebb_viewer/pipeline/psd_params.py` — save/load helpers for psd/psd_params.json
 - `src/ebb_viewer/pages/psd_visualizer.py` — PSD Visualizer (file picker, auto-selects psds_final_drink.pkl)
 - `src/ebb_viewer/widgets/psd_graph_widget.py` — PSD grid + flag buttons + drink mask guidance banner
 - `src/ebb_viewer/pipeline/manifest.py` — `Manifest` / `ManifestEntry` / `RunEntry`
@@ -278,5 +302,5 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 
 ## Environment
 - Conda env: `ebb-dev` (`source ~/miniconda3/etc/profile.d/conda.sh && conda activate ebb-dev`)
-- Run tests: `QT_QPA_PLATFORM=offscreen pytest` (106 passing)
+- Run tests: `QT_QPA_PLATFORM=offscreen pytest` (99 passing)
 - Branch: `refactor/clean-up`

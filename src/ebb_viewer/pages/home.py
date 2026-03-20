@@ -5,17 +5,19 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QWidget,
-    QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy,
+    QPushButton, QTableWidget, QHeaderView, QSizePolicy,
     QComboBox, QInputDialog, QMessageBox, QScrollArea,
 )
 
 from ebb_viewer.widgets.tree_view import ProjectTree
+from ebb_viewer.widgets.table_helpers import make_cell
 from ebb_viewer.pipeline.manifest import (
     Manifest, ManifestEntry, RunEntry,
     psd_path, spindle_output_dir, final_psd_path,
 )
 from ebb_viewer.pipeline.manifest import spindle_edf_dir
 from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, drink_mask_rel
+from ebb_viewer.pipeline.theme import COMBO_BADGE_HEX, STATUS_COLOR_HEX
 
 
 # Pipeline stage columns
@@ -27,28 +29,18 @@ _COLUMNS = [
 
 _MULTIRUN_COLOR = QColor("#dce8f7")   # light blue = animal has multiple runs
 
-_STATUS_COLOR = {
-    "ok":                  QColor("#d4edda"),   # green
-    "needs_review":        QColor("#FFF3CD"),   # yellow
-    "needs_rerun":         QColor("#E97B7B"),   # red
-    "rejected":            QColor("#e0e0e0"),   # gray
-    "needs_drink_mask":    QColor("#E97B7B"),   # red
-    "drink_mask_applied":  QColor("#d4edda"),   # green
-}
-_RERUN_DONE_COLOR = QColor("#c8c8c8")           # gray = rerun resolved
-_PENDING_COLOR = QColor("#f0f0f0")            # light gray = reached but not yet flagged
-_EXISTS_COLOR  = QColor("#d4edda")            # green
+_STATUS_COLOR = {k: QColor(v) for k, v in STATUS_COLOR_HEX.items()}
+_RERUN_DONE_COLOR = QColor("#c8c8c8")   # gray = rerun resolved
+_PENDING_COLOR    = QColor("#f0f0f0")   # light gray = reached but not yet flagged
+_EXISTS_COLOR     = QColor("#d4edda")   # green
 
 # Combo badge colours for the Channels column
-_COMBO_BG: dict[str, QColor] = {
-    "LFC_RSC": QColor("#5ba3d9"),
-    "LFC_LSC": QColor("#ffab5e"),
-    "RSC_LSC": QColor("#5ec45e"),
-    "LFC":     QColor("#e86e6e"),
-    "RSC":     QColor("#b89cd8"),
-    "LSC":     QColor("#b3896e"),
-}
+_COMBO_BG: dict[str, QColor] = {k: QColor(v) for k, v in COMBO_BADGE_HEX.items()}
 _COMBO_FG = QColor("#ffffff")
+
+_SLEEP_QC_LABEL: dict[str, str] = {
+    "needs_review": "Review EDF",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -86,20 +78,23 @@ _GUIDE_ICON_COLOR = {
 }
 _GUIDE_ROW_HIGHLIGHT = "#eef4fc"
 
-
+#TODO: Should this be centrilized somewhere else?
 def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[StepStatus]:
     root = Path(project_root)
 
     # --- filesystem facts ---
+    # Step 1 done: standard dir exists and has at least 1 edf
     standard_dir = root / "standard"
     step1_done = standard_dir.is_dir() and any(standard_dir.glob("*.edf"))
 
+    # Step 2 done: spindle edfs dir exist and contains at least 1 dir with at least 1 edf
     spindle_edfs_dir = root / "spindle_edfs"
     step2_done = spindle_edfs_dir.is_dir() and any(
         True for sd in spindle_edfs_dir.iterdir()
         if sd.is_dir() and any(sd.glob("*.edf"))
     )
 
+    # Step 3 done: spindle outputs dir exists and contains at least 1 dir with at least 1 csv 
     spindle_outputs_dir = root / "spindle_outputs"
     step3_done = spindle_outputs_dir.is_dir() and any(
         True for sd in spindle_outputs_dir.iterdir()
@@ -139,10 +134,13 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
         s3 = StepStatus("blocked", "Requires step 2")
 
     # --- Step 4: Sleep QC ---
+    # Step 4: spindle upload/download done, no sleep qc pending, no review edfs, and at least 1 file okay
     if step3_done and n_pending_qc == 0 and n_review == 0 and n_ok > 0:
         s4 = StepStatus("done", f"{n_ok} animal{'s' if n_ok != 1 else ''} marked ok")
+
     elif step3_done and (n_review > 0 or n_pending_qc > 0):
         parts = []
+        # n_review to review may be a bit confusing, consider changing this
         if n_review:     parts.append(f"{n_review} to review")
         if n_pending_qc: parts.append(f"{n_pending_qc} pending")
         s4 = StepStatus("attention", ", ".join(parts))
@@ -152,6 +150,7 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
         s4 = StepStatus("blocked", "Requires step 3")
 
     # --- Step 5: Spindle Rerun ---
+    # TODO: Do I want the ready to review to be in this part?
     qc_complete = step3_done and n_pending_qc == 0 and n_ok > 0
     if n_rerun_pend > 0 or n_rerun_ready > 0:
         parts = []
@@ -166,6 +165,8 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
         s5 = StepStatus("blocked", "Requires step 4 completion")
 
     # --- Step 6: PSD Computation ---
+    
+    #TODO: Rework how this is computed, I do not think this is clear what it means
     psd_dir = root / "psd"
     combos_with_csv: set[str] = set()
     if spindle_outputs_dir.is_dir():
@@ -210,16 +211,6 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     return [s1, s2, s3, s4, s5, s6, s7]
 
 
-def _cell(text: str, bg: QColor | None = None, fg: QColor | None = None) -> QTableWidgetItem:
-    item = QTableWidgetItem(text)
-    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-    if bg is not None:
-        item.setBackground(bg)
-    if fg is not None:
-        item.setForeground(fg)
-    return item
-
-
 def _any_file_for_animal(root: Path, subdir: str, channels: str, animal_id: str) -> bool:
     """True if any file matching animal_id* exists in root/subdir/channels/."""
     d = root / subdir / channels
@@ -256,15 +247,20 @@ class HomePage(QWidget):
         self.btn_refresh.clicked.connect(self._refresh)
         hdr.addWidget(self.btn_refresh)
 
-        self.btn_build = QPushButton("Sync from filesystem")
+        self.btn_build = QPushButton("Import new animals")
         self.btn_build.setToolTip(
             "Scan standard/, spindle_edfs/, and spindle_outputs/ to add new "
-            "animals and runs not yet in the manifest"
+            "animals and runs not yet in the manifest without changing existing flags"
         )
-        self.btn_build.clicked.connect(self._build_manifest)
+        self.btn_build.clicked.connect(lambda: self._do_import(show_zero=True))
         hdr.addWidget(self.btn_build)
 
         root_layout.addLayout(hdr)
+
+        self._import_lbl = QLabel("")
+        self._import_lbl.setStyleSheet("color: #3a7d44; font-size: 11px; padding: 1px 0;")
+        self._import_lbl.setVisible(False)
+        root_layout.addWidget(self._import_lbl)
 
         # --- pipeline steps guide (collapsible) ---
         self.btn_guide_toggle = QPushButton("▼  Pipeline Steps")
@@ -462,6 +458,7 @@ class HomePage(QWidget):
     # ---------------------------------------------------------------
     # Actions
     # ---------------------------------------------------------------
+    # Allows rerun channel combo to be more editable. 
     def _on_cell_double_clicked(self, row: int, col: int) -> None:
         """Allow changing the rerun combo on a needs_rerun row if no EDF written yet."""
         if col != 6:
@@ -507,9 +504,26 @@ class HomePage(QWidget):
         self._refresh()
         self.manifest_changed.emit()
 
-    def _build_manifest(self):
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._do_import()
+
+    def _do_import(self, show_zero: bool = False) -> None:
+        before = sum(1 for _ in Manifest.load(self.project_root))
         Manifest.build_from_standard(self.project_root)
+        after = sum(1 for _ in Manifest.load(self.project_root))
+        n_new = after - before
         self._refresh()
+        if n_new > 0:
+            self._import_lbl.setText(
+                f"✓ {n_new} new animal{'s' if n_new != 1 else ''} imported"
+            )
+            self._import_lbl.setVisible(True)
+        elif show_zero:
+            self._import_lbl.setText("No new animals found")
+            self._import_lbl.setVisible(True)
+        else:
+            self._import_lbl.setVisible(False)
 
     def _poll(self):
         self._refresh()
@@ -542,40 +556,41 @@ class HomePage(QWidget):
             psd_status = run.psd_status if run else None
 
             # 0: Animal
-            self.table.setItem(row_idx, 0, _cell(entry.animal_id))
+            self.table.setItem(row_idx, 0, make_cell(entry.animal_id))
 
             # 1: Runs
             n_runs = len(entry.runs)
-            self.table.setItem(row_idx, 1, _cell(
+            self.table.setItem(row_idx, 1, make_cell(
                 str(n_runs),
                 _MULTIRUN_COLOR if n_runs > 1 else None,
             ))
 
             # 2: Preprocessed EDF (filename only)
             pre = Path(entry.preprocessed_edf).name if entry.preprocessed_edf else "—"
-            self.table.setItem(row_idx, 2, _cell(pre))
+            self.table.setItem(row_idx, 2, make_cell(pre))
 
             # 3: Channels
             combo_bg = _COMBO_BG.get(combo)
-            self.table.setItem(row_idx, 3, _cell(
+            self.table.setItem(row_idx, 3, make_cell(
                 combo or "—",
                 bg=combo_bg,
                 fg=_COMBO_FG if combo_bg else None,
             ))
 
             # 4: Spindle EDF
-            self.table.setItem(row_idx, 4, _cell(
+            self.table.setItem(row_idx, 4, make_cell(
                 "✓" if spindle_edf_ok else "—",
                 _EXISTS_COLOR if spindle_edf_ok else None,
             ))
 
             # 5: Spindle Output
-            self.table.setItem(row_idx, 5, _cell(
+            self.table.setItem(row_idx, 5, make_cell(
                 "✓" if spindle_out_ok else "—",
                 _EXISTS_COLOR if spindle_out_ok else None,
             ))
 
             # 6: Sleep QC
+            edit_hint = False
             if sleep_qc is None:
                 txt = "pending" if spindle_out_ok else "—"
                 bg  = _PENDING_COLOR if spindle_out_ok else None
@@ -585,15 +600,21 @@ class HomePage(QWidget):
                     txt = "rerun done ✓"
                     bg  = _RERUN_DONE_COLOR
                 else:
-                    txt = f"rerun → {run.rerun_combo}"
+                    edf_written = _any_file_for_animal(
+                        self.project_root, "spindle_edfs", run.rerun_combo, entry.animal_id)
+                    txt = f"rerun → {run.rerun_combo}" + ("" if edf_written else "  ✎")
                     bg  = _STATUS_COLOR.get("needs_rerun")
+                    edit_hint = not edf_written
             else:
-                txt = sleep_qc
+                txt = _SLEEP_QC_LABEL.get(sleep_qc, sleep_qc)
                 bg  = _STATUS_COLOR.get(sleep_qc)
-            self.table.setItem(row_idx, 6, _cell(txt, bg))
+            cell_6 = make_cell(txt, bg)
+            if edit_hint:
+                cell_6.setToolTip("Double-click to change rerun combo")
+            self.table.setItem(row_idx, 6, cell_6)
 
             # 7: PSD File
-            self.table.setItem(row_idx, 7, _cell(
+            self.table.setItem(row_idx, 7, make_cell(
                 "✓" if psd_file_ok else "—",
                 _EXISTS_COLOR if psd_file_ok else None,
             ))
@@ -617,7 +638,7 @@ class HomePage(QWidget):
                 txt, bg = "pending", _PENDING_COLOR
             else:
                 txt, bg = "—", None
-            self.table.setItem(row_idx, 8, _cell(txt, bg))
+            self.table.setItem(row_idx, 8, make_cell(txt, bg))
 
         self.table.resizeRowsToContents()
 
@@ -659,15 +680,19 @@ class HomePage(QWidget):
         for entry, channels in rerun_ready:
             self._attn_layout.addWidget(self._make_rerun_ready_card(entry, channels))
 
-    def _make_review_card(self, entry: ManifestEntry, channels: str) -> QWidget:
+    def _make_card_frame(self, bg_color: str) -> "tuple[QWidget, QHBoxLayout]":
+        """Create an attention card frame. Returns (widget, layout)."""
         row_w = QWidget()
         row_w.setObjectName("attnRow")
         row_w.setMaximumHeight(42)
-        row_w.setStyleSheet("QWidget#attnRow { background-color: #fff3cd; border-radius: 3px; }")
+        row_w.setStyleSheet(f"QWidget#attnRow {{ background-color: {bg_color}; border-radius: 3px; }}")
         h = QHBoxLayout(row_w)
         h.setContentsMargins(6, 3, 6, 3)
         h.setSpacing(8)
+        return row_w, h
 
+    def _make_review_card(self, entry: ManifestEntry, channels: str) -> QWidget:
+        row_w, h = self._make_card_frame("#fff3cd")
         h.addWidget(QLabel(f"<b>{entry.animal_id}</b>"))
         lbl_ch = QLabel(f"[{channels}]")
         lbl_ch.setStyleSheet("color: #555;")
@@ -715,14 +740,7 @@ class HomePage(QWidget):
         run = entry.runs.get(channels)
         rerun_combo = run.rerun_combo if run else "?"
 
-        row_w = QWidget()
-        row_w.setObjectName("attnRow")
-        row_w.setMaximumHeight(42)
-        row_w.setStyleSheet("QWidget#attnRow { background-color: #fde8ce; border-radius: 3px; }")
-        h = QHBoxLayout(row_w)
-        h.setContentsMargins(6, 3, 6, 3)
-        h.setSpacing(8)
-
+        row_w, h = self._make_card_frame("#fde8ce")
         h.addWidget(QLabel(f"<b>{entry.animal_id}</b>"))
         lbl = QLabel(f"[{channels}] → [{rerun_combo}]")
         lbl.setStyleSheet("color: #555;")
@@ -741,14 +759,7 @@ class HomePage(QWidget):
         return row_w
 
     def _make_rerun_ready_card(self, entry: ManifestEntry, channels: str) -> QWidget:
-        row_w = QWidget()
-        row_w.setObjectName("attnRow")
-        row_w.setMaximumHeight(42)
-        row_w.setStyleSheet("QWidget#attnRow { background-color: #d9ecf7; border-radius: 3px; }")
-        h = QHBoxLayout(row_w)
-        h.setContentsMargins(6, 3, 6, 3)
-        h.setSpacing(8)
-
+        row_w, h = self._make_card_frame("#d9ecf7")
         h.addWidget(QLabel(f"<b>{entry.animal_id}</b>"))
         lbl = QLabel(f"[{channels}]")
         lbl.setStyleSheet("color: #555;")

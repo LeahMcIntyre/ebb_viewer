@@ -386,23 +386,22 @@ class Manifest:
     # Filtered views — return (entry, channels) tuples
     # ------------------------------------------------------------------
 
-    def pending_sleep_qc(self) -> list[tuple[ManifestEntry, str]]:
-        """Runs that exist but haven't been QC'd yet."""
+    def _filter_runs(self, predicate) -> list[tuple[ManifestEntry, str]]:
+        """Return (entry, combo) for every run where predicate(entry, run) is True."""
         return [
             (entry, combo)
             for entry in self
             for combo, run in entry.runs.items()
-            if run.sleep_qc is None
+            if predicate(entry, run)
         ]
+
+    def pending_sleep_qc(self) -> list[tuple[ManifestEntry, str]]:
+        """Runs that exist but haven't been QC'd yet."""
+        return self._filter_runs(lambda e, r: r.sleep_qc is None)
 
     def needs_review(self) -> list[tuple[ManifestEntry, str]]:
         """Runs flagged for EDF viewer review."""
-        return [
-            (entry, combo)
-            for entry in self
-            for combo, run in entry.runs.items()
-            if run.sleep_qc == "needs_review"
-        ]
+        return self._filter_runs(lambda e, r: r.sleep_qc == "needs_review")
 
     def pending_rerun_review(self) -> list[tuple[ManifestEntry, str]]:
         """Rerun combos that have been processed and are awaiting review.
@@ -425,13 +424,9 @@ class Manifest:
 
     def needs_rerun(self) -> list[tuple[ManifestEntry, str]]:
         """Runs flagged for spindle rerun with a different channel combo."""
-        return [
-            (entry, combo)
-            for entry in self
-            for combo, run in entry.runs.items()
-            if run.sleep_qc == "needs_rerun"
-        ]
+        return self._filter_runs(lambda e, r: r.sleep_qc == "needs_rerun")
 
+    # TODO: Look at this and think how it might break
     def needs_rerun_pending(self) -> list[tuple[ManifestEntry, str]]:
         """Runs flagged for rerun where the output CSV has not yet been downloaded.
 
@@ -466,32 +461,22 @@ class Manifest:
         """
         if not final_psd_path(self.project_root).exists():
             return []
-        return [
-            (entry, combo)
-            for entry in self
-            for combo, run in entry.runs.items()
-            if run.sleep_qc == "ok" and run.psd_status is None
-        ]
+        return self._filter_runs(lambda e, r: r.sleep_qc == "ok" and r.psd_status is None)
 
     def needs_drink_mask(self) -> list[tuple[ManifestEntry, str]]:
         """Runs flagged as having drinking sidebands in the PSD."""
-        return [
-            (entry, combo)
-            for entry in self
-            for combo, run in entry.runs.items()
-            if run.sleep_qc == "ok" and run.psd_status == "needs_drink_mask"
-        ]
+        return self._filter_runs(
+            lambda e, r: r.sleep_qc == "ok" and r.psd_status == "needs_drink_mask"
+        )
 
     def needs_drink_mask_rerun(self) -> list[tuple[ManifestEntry, str]]:
         """Runs flagged needs_drink_mask where the drink mask file is present on disk."""
-        return [
-            (entry, combo)
-            for entry in self
-            for combo, run in entry.runs.items()
-            if run.sleep_qc == "ok"
-            and run.psd_status == "needs_drink_mask"
-            and (self.project_root / drink_mask_rel(entry.animal_id)).is_file()
-        ]
+        root = self.project_root
+        return self._filter_runs(
+            lambda e, r: r.sleep_qc == "ok"
+            and r.psd_status == "needs_drink_mask"
+            and (root / drink_mask_rel(e.animal_id)).is_file()
+        )
 
     # ------------------------------------------------------------------
     # Flagging

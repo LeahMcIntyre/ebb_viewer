@@ -158,7 +158,7 @@ class PSDGridPage(QWidget):
 
         self._guidance_label = QLabel(
             "Place <code>drink_masks/&lt;animal_id&gt;.npy</code> in your project folder, "
-            "then go to <b>PSD Computation → Apply Drink Masks</b> to rerun."
+            "then go to <b>8. Drink Mask</b> to rerun with the drink mask applied."
         )
         self._guidance_label.setTextFormat(Qt.TextFormat.RichText)
         self._guidance_label.setWordWrap(True)

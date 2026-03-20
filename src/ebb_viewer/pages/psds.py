@@ -1,7 +1,10 @@
 from pathlib import Path
 from typing import Optional, List, Tuple
+import dataclasses
+import pickle
 
 from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal
+from ebb_viewer.widgets.worker_helpers import launch_worker
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QWidget, QFormLayout, QSpinBox, QDoubleSpinBox, QVBoxLayout, QPushButton,
@@ -28,18 +31,16 @@ class PSDPage(QWidget):
         self.project_root = Path(project_root)
         self.standard_folder: Optional[Path] = None
         self._computing = False
-        self._pending_drink_rerun: dict = {}
 
         self._build_ui()
         self._wire()
         self._refresh_standard_folder()
-        self._refresh_drink_mask_info()
         self._refresh_combo_table()
+        self._load_saved_params()
 
     def showEvent(self, event):
         super().showEvent(event)
         self._refresh_standard_folder()
-        self._refresh_drink_mask_info()
         self._refresh_combo_table()
 
     # ---------------- UI ----------------
@@ -63,22 +64,6 @@ class PSDPage(QWidget):
         self.target_name_edit = QLineEdit()
         self.target_name_edit.setReadOnly(True)
         top_form.addRow("PSD Output Root:", self.target_name_edit)
-
-        drink_dir_row = QHBoxLayout()
-        self.lbl_drink_dir = QLineEdit("Checking…")
-        self.lbl_drink_dir.setReadOnly(True)
-        self._lbl_drink_count = QLabel("")
-        self._lbl_drink_count.setMinimumWidth(110)
-        drink_dir_row.addWidget(self.lbl_drink_dir)
-        drink_dir_row.addWidget(self._lbl_drink_count)
-        top_form.addRow("Drink Masks Folder:", drink_dir_row)
-
-        self.lbl_offset_csv = QLineEdit("None")
-        self.lbl_offset_csv.setReadOnly(True)
-        self.lbl_offset_csv.setToolTip(
-            "Optional CSV with columns 'Animal' and 'Offset' (seconds) for video-EEG time alignment"
-        )
-        top_form.addRow("Video Offset CSV:", self.lbl_offset_csv)
 
         root.addWidget(self.folder_gb)
 
@@ -213,40 +198,6 @@ class PSDPage(QWidget):
         btn_row2.addWidget(self.btn_final)
         root.addLayout(btn_row2)
 
-        # ----- Drink Mask Rerun -----
-        self.gb_drink_rerun = QGroupBox("Drink Mask Rerun")
-        self.gb_drink_rerun.setObjectName("drinkRerunBox")
-        drink_v = QVBoxLayout(self.gb_drink_rerun)
-
-        self._lbl_drink_rerun_status = QLabel("No animals pending drink mask rerun.")
-        self._lbl_drink_rerun_status.setStyleSheet("color: gray;")
-        drink_v.addWidget(self._lbl_drink_rerun_status)
-
-        self._drink_rerun_table = QTableWidget(0, 3)
-        self._drink_rerun_table.setHorizontalHeaderLabels(["Animal (Combo)", "Status", "Mask File"])
-        self._drink_rerun_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch
-        )
-        self._drink_rerun_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Fixed
-        )
-        self._drink_rerun_table.setColumnWidth(1, 100)
-        self._drink_rerun_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.Fixed
-        )
-        self._drink_rerun_table.setColumnWidth(2, 110)
-        self._drink_rerun_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        self._drink_rerun_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._drink_rerun_table.verticalHeader().setVisible(False)
-        self._drink_rerun_table.setMaximumHeight(130)
-        self._drink_rerun_table.setVisible(False)
-        drink_v.addWidget(self._drink_rerun_table)
-
-        self.btn_drink_mask = QPushButton("Apply Drink Masks")
-        self.btn_drink_mask.setEnabled(False)
-        drink_v.addWidget(self.btn_drink_mask, alignment=Qt.AlignmentFlag.AlignRight)
-        root.addWidget(self.gb_drink_rerun)
-
         # ----- Log -----
         self.log_box = QPlainTextEdit()
         self.log_box.setReadOnly(True)
@@ -262,11 +213,11 @@ class PSDPage(QWidget):
         self.gb_mask.setObjectName("maskBox")
         self.setStyleSheet("""
         QGroupBox#psdBox, QGroupBox#spindleBox, QGroupBox#maskBox,
-        QGroupBox#folderBox, QGroupBox#comboBox, QGroupBox#drinkRerunBox {
+        QGroupBox#folderBox, QGroupBox#comboBox {
             font: 550;
         }
         QGroupBox#psdBox *, QGroupBox#spindleBox *, QGroupBox#maskBox *,
-        QGroupBox#folderBox *, QGroupBox#comboBox *, QGroupBox#drinkRerunBox * {
+        QGroupBox#folderBox *, QGroupBox#comboBox * {
             font: 400;
         }
         """)
@@ -278,7 +229,6 @@ class PSDPage(QWidget):
         self.btn_standard.clicked.connect(self._choose_standard_folder)
         self.btn_refresh_table.clicked.connect(self._refresh_combo_table)
         self.btn_psd.clicked.connect(self._run_clicked)
-        self.btn_drink_mask.clicked.connect(self._run_drink_mask_clicked)
         self.btn_final.clicked.connect(self._build_final_pkl)
         self.combo_table.itemChanged.connect(lambda _: self._validate())
 
@@ -297,33 +247,29 @@ class PSDPage(QWidget):
             )
         self.target_name_edit.setText(str(self.project_root / "psd"))
 
-    def _drink_masks_dir(self) -> Path:
-        return self.project_root / "drink_masks"
 
-    def _detect_offset_csv(self) -> Optional[Path]:
-        """Return the first .csv found in drink_masks/, or None."""
-        d = self._drink_masks_dir()
-        csvs = sorted(d.glob("*.csv")) if d.is_dir() else []
-        return csvs[0] if csvs else None
-
-    def _refresh_drink_mask_info(self):
-        d = self._drink_masks_dir()
-        if d.is_dir():
-            n = len(list(d.glob("*.npy")))
-            self.lbl_drink_dir.setText(str(d))
-            if n:
-                self._lbl_drink_count.setText(f"✓ {n} mask{'s' if n != 1 else ''}")
-                self._lbl_drink_count.setStyleSheet("color: green;")
-            else:
-                self._lbl_drink_count.setText("! no .npy files")
-                self._lbl_drink_count.setStyleSheet("color: orange;")
-        else:
-            self.lbl_drink_dir.setText("Not found — place .npy files in project_root/drink_masks/")
-            self._lbl_drink_count.setText("")
-            self._lbl_drink_count.setStyleSheet("")
-
-        csv = self._detect_offset_csv()
-        self.lbl_offset_csv.setText(str(csv.name) if csv else "None")
+    def _load_saved_params(self):
+        from ebb_viewer.pipeline import psd_params
+        params = psd_params.load(self.project_root)
+        if params is None:
+            return
+        if "fs" in params:
+            self.spin_fs.setValue(params["fs"])
+        if "winsize" in params:
+            self.spin_window.setValue(params["winsize"])
+        if "radius" in params:
+            self.dspin_radius.setValue(params["radius"])
+        if "nstd" in params:
+            self.dspin_z.setValue(params["nstd"])
+        if "noise_thresh" in params:
+            self.dspin_noise.setValue(params["noise_thresh"])
+        if "channels" in params:
+            for i, cb in enumerate(self._channel_boxes):
+                cb.setChecked(i in params["channels"])
+            all_checked = all(cb.isChecked() for cb in self._channel_boxes)
+            self.chk_all.blockSignals(True)
+            self.chk_all.setChecked(all_checked)
+            self.chk_all.blockSignals(False)
 
     def _refresh_combo_table(self):
         spindle_root = self.project_root / "spindle_outputs"
@@ -407,34 +353,22 @@ class PSDPage(QWidget):
             "noise_thresh": float(self.dspin_noise.value()),
         }
 
-        drink_dir = self._drink_masks_dir() if self._drink_masks_dir().is_dir() else None
-        offset_path = self._detect_offset_csv()
-
         self._computing = True
         self.btn_psd.setEnabled(False)
-        self.btn_drink_mask.setEnabled(False)
         self.btn_final.setEnabled(False)
         self._log(f"Starting PSD computation for {len(combos)} combo(s): {', '.join(combos)}")
-        if drink_dir:
-            self._log(f"  Drink masks folder: {drink_dir}")
 
         self.psd_thread = QThread(self)
         self.psd_worker = BatchEstimateWorker(
             eeg_dir=self.standard_folder,
             combo_pairs=pairs,
             params=params,
-            drink_dir=drink_dir,
-            offset_path=offset_path,
+            project_root=self.project_root,
         )
-        self.psd_worker.moveToThread(self.psd_thread)
-        self.psd_thread.started.connect(self.psd_worker.run)
         self.psd_worker.progress.connect(self._log)
-        self.psd_worker.finished.connect(self._on_psd_done)
-        self.psd_worker.error.connect(self._on_psd_error)
-        self.psd_worker.finished.connect(self.psd_thread.quit)
-        self.psd_worker.finished.connect(self.psd_worker.deleteLater)
-        self.psd_thread.finished.connect(self.psd_thread.deleteLater)
-        self.psd_thread.start()
+        launch_worker(self.psd_thread, self.psd_worker,
+                      on_finished=self._on_psd_done,
+                      on_error=self._on_psd_error)
 
     def _build_final_pkl(self):
         from ebb.process.psd_compute import build_final_pkl
@@ -489,136 +423,9 @@ class PSDPage(QWidget):
         )
         self.btn_final.setEnabled(has_pkl)
 
-        self._refresh_drink_rerun_table()
-
-    def _refresh_drink_rerun_table(self):
-        from ebb_viewer.pipeline.manifest import Manifest
-        try:
-            manifest = Manifest.load(self.project_root)
-            flagged = manifest.needs_drink_mask()
-            ready = manifest.needs_drink_mask_rerun()
-        except Exception:
-            flagged = []
-            ready = []
-
-        if not flagged:
-            self._lbl_drink_rerun_status.setText("No animals pending drink mask rerun.")
-            self._lbl_drink_rerun_status.setStyleSheet("color: gray;")
-            self._drink_rerun_table.setVisible(False)
-            self._drink_rerun_table.setRowCount(0)
-            self.btn_drink_mask.setEnabled(False)
-            self.btn_drink_mask.setText("Apply Drink Masks")
-            return
-
-        ready_set = {(e.animal_id, c) for e, c in ready}
-        n_ready = len(ready)
-        n_missing = len(flagged) - n_ready
-
-        parts = []
-        if n_ready:
-            parts.append(f"{n_ready} ready")
-        if n_missing:
-            parts.append(f"{n_missing} missing mask file")
-        self._lbl_drink_rerun_status.setText(
-            f"{len(flagged)} animal(s) flagged — {', '.join(parts)}"
-        )
-        self._lbl_drink_rerun_status.setStyleSheet(
-            "color: #8a4400;" if n_missing else "color: #1a5c1a;"
-        )
-
-        self._drink_rerun_table.blockSignals(True)
-        self._drink_rerun_table.setRowCount(0)
-        for entry, combo in flagged:
-            is_ready = (entry.animal_id, combo) in ready_set
-            row = self._drink_rerun_table.rowCount()
-            self._drink_rerun_table.insertRow(row)
-            self._drink_rerun_table.setItem(row, 0, QTableWidgetItem(f"{entry.animal_id} ({combo})"))
-            self._drink_rerun_table.setItem(row, 1, QTableWidgetItem("⚠ needs rerun"))
-            mask_item = QTableWidgetItem("✓ found" if is_ready else "✗ missing")
-            mask_item.setForeground(QColor("#2a7a2a") if is_ready else QColor("#aa2222"))
-            self._drink_rerun_table.setItem(row, 2, mask_item)
-        self._drink_rerun_table.blockSignals(False)
-        self._drink_rerun_table.setVisible(True)
-
-        self.btn_drink_mask.setEnabled(n_ready > 0 and not self._computing)
-        if n_ready:
-            self.btn_drink_mask.setText(f"Apply Drink Masks ({n_ready} ready)")
-        else:
-            self.btn_drink_mask.setText("Apply Drink Masks (place .npy files to enable)")
-
-    def _run_drink_mask_clicked(self):
-        from ebb_viewer.pipeline.manifest import Manifest
-        manifest = Manifest.load(self.project_root)
-        to_rerun = manifest.needs_drink_mask_rerun()
-        if not to_rerun:
-            return
-
-        # {animal_id: ok_combo} — combo comes from manifest (validated against psds_final.pkl
-        # inside rerun_with_drink_masks before any computation starts)
-        animal_combos = {entry.animal_id: combo for entry, combo in to_rerun}
-
-        offset_path = self._detect_offset_csv()
-        params = {
-            "fs":           int(self.spin_fs.value()),
-            "winsize":      int(self.spin_window.value()),
-            "radius":       float(self.dspin_radius.value()),
-            "nstd":         float(self.dspin_z.value()),
-            "noise_thresh": float(self.dspin_noise.value()),
-        }
-
-        self._computing = True
-        self._pending_drink_rerun = animal_combos
-        self.btn_psd.setEnabled(False)
-        self.btn_final.setEnabled(False)
-        self.btn_drink_mask.setEnabled(False)
-        self._log(f"Starting drink mask rerun for {len(animal_combos)} animal(s)…")
-
-        self.drink_thread = QThread(self)
-        self.drink_worker = DrinkMaskRerunWorker(
-            psd_dir=self.project_root / "psd",
-            eeg_dir=self.standard_folder,
-            spindle_root=self.project_root / "spindle_outputs",
-            drink_dir=self._drink_masks_dir(),
-            animal_combos=animal_combos,
-            offset_path=offset_path,
-            params=params,
-        )
-        self.drink_worker.moveToThread(self.drink_thread)
-        self.drink_thread.started.connect(self.drink_worker.run)
-        self.drink_worker.progress.connect(self._log)
-        self.drink_worker.finished.connect(self._on_drink_mask_done)
-        self.drink_worker.error.connect(self._on_drink_mask_error)
-        self.drink_worker.finished.connect(self.drink_thread.quit)
-        self.drink_worker.finished.connect(self.drink_worker.deleteLater)
-        self.drink_thread.finished.connect(self.drink_thread.deleteLater)
-        self.drink_thread.start()
-
-    def _on_drink_mask_done(self):
-        self._computing = False
-        from ebb_viewer.pipeline.manifest import Manifest
-        manifest = Manifest.load(self.project_root)
-        for animal_id, combo in self._pending_drink_rerun.items():
-            try:
-                manifest.flag_psd(animal_id, combo, "drink_mask_applied")
-            except Exception:
-                pass
-        manifest.save()
-        self._pending_drink_rerun = {}
-        self._log("Drink mask rerun complete. psds_drink.pkl and psds_final_drink.pkl updated.")
-        self.manifest_changed.emit()
-        self._refresh_combo_table()
-
-    def _on_drink_mask_error(self, msg: str):
-        self._computing = False
-        self._pending_drink_rerun = {}
-        self._log(f"ERROR in drink mask rerun: {msg}")
-        QMessageBox.critical(self, "Drink Mask Rerun Error", msg)
-        self._validate()
-
     def _on_psd_done(self):
         self._computing = False
         self._log("PSD computation finished.")
-        self._refresh_drink_mask_info()
         self._refresh_combo_table()
 
     def _on_psd_error(self, msg: str):
@@ -642,7 +449,7 @@ class BatchEstimateWorker(QObject):
         eeg_dir: Path,
         combo_pairs: List[Tuple[Path, Path]],
         params: dict,
-        drink_dir=None,
+        project_root: Path,
         offset_path=None,
         parent=None,
     ):
@@ -650,87 +457,32 @@ class BatchEstimateWorker(QObject):
         self.eeg_dir = eeg_dir
         self.combo_pairs = combo_pairs
         self.params = params
-        self.drink_dir = drink_dir
+        self.project_root = Path(project_root)
         self.offset_path = offset_path
 
     def run(self):
         from ebb.process.psd_compute import batch_estimate
+        from ebb_viewer.pipeline import psd_params
         try:
-            if self.drink_dir and self.drink_dir.is_dir():
-                drink_animals = {
-                    p.stem.split("_")[0] for p in sorted(self.drink_dir.glob("*.npy"))
-                }
-                edf_animals = {
-                    p.stem.split("_")[0] for p in sorted(self.eeg_dir.glob("*PROCESSED.edf"))
-                }
-                with_mask = sorted(edf_animals & drink_animals)
-                without_mask = sorted(edf_animals - drink_animals)
-                self.progress.emit(
-                    f"  Drink masks: {len(with_mask)}/{len(edf_animals)} animals covered"
-                )
-                if with_mask:
-                    self.progress.emit(f"    With mask:  {', '.join(with_mask)}")
-                if without_mask:
-                    self.progress.emit(f"    No mask:    {', '.join(without_mask)}")
-
             for spindle_dir, savepath in self.combo_pairs:
                 self.progress.emit(f"Computing PSDs for combo: {spindle_dir.name}…")
-                batch_estimate(
+                results = batch_estimate(
                     eeg_dir=self.eeg_dir,
                     state_dir=spindle_dir,
                     swd_dir=None,
-                    drink_dir=self.drink_dir,
+                    drink_dir=None,
                     ncores=None,
-                    savepath=savepath,
+                    savepath=None,
                     offset_path=self.offset_path,
                     **self.params,
                 )
+                records = [{**dataclasses.asdict(r), "params": self.params} for r in results]
+                with open(savepath, "wb") as f:
+                    pickle.dump(records, f)
                 self.progress.emit(f"  → Saved: {savepath.name}")
-            self.finished.emit()
-        except Exception as e:
-            self.error.emit(str(e))
 
-
-class DrinkMaskRerunWorker(QObject):
-    progress = pyqtSignal(str)
-    finished = pyqtSignal()
-    error = pyqtSignal(str)
-
-    def __init__(
-        self,
-        psd_dir: Path,
-        eeg_dir: Path,
-        spindle_root: Path,
-        drink_dir: Path,
-        animal_combos: dict,
-        offset_path,
-        params: dict,
-        parent=None,
-    ):
-        super().__init__(parent)
-        self.psd_dir = Path(psd_dir)
-        self.eeg_dir = Path(eeg_dir)
-        self.spindle_root = Path(spindle_root)
-        self.drink_dir = Path(drink_dir)
-        self.animal_combos = animal_combos   # {animal_id: ok_combo}
-        self.offset_path = offset_path
-        self.params = params
-
-    def run(self):
-        from ebb.process.psd_compute import rerun_with_drink_masks
-        try:
-            rerun_with_drink_masks(
-                psd_dir=self.psd_dir,
-                eeg_dir=self.eeg_dir,
-                spindle_root=self.spindle_root,
-                drink_dir=self.drink_dir,
-                animal_combos=self.animal_combos,
-                offset_path=self.offset_path,
-                ncores=None,
-                **self.params,
-            )
-            self.progress.emit("  → psds_drink.pkl updated.")
-            self.progress.emit("  → psds_final_drink.pkl regenerated.")
+            psd_params.save(self.project_root, self.params)
+            self.progress.emit("  → Saved PSD params to psd/psd_params.json")
             self.finished.emit()
         except Exception as e:
             self.error.emit(str(e))

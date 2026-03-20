@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QSpinBox, QFrame, QScrollArea,
 )
 from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
+from ebb_viewer.pipeline.theme import COMBO_PLOT_RGB, STATUS_COLOR_HEX
 
 
 import pyqtgraph as pg
@@ -48,21 +49,15 @@ class SleepQCGridPage(QWidget):
 
     MICE_PER_PAGE = 10
 
+    # Status button background colors — "needs_rerun" is intentionally orange
+    # here (not red) because these are legend buttons, not table-row alerts.
     _STATUS_BG = {
-        "ok":           "#d4edda",
-        "needs_review": "#fff3cd",
-        "needs_rerun":  "#fde8ce",
-        "rejected":     "#e8e8e8",
+        **STATUS_COLOR_HEX,
+        "needs_rerun": "#fde8ce",   # orange for legend buttons (override red)
+        "rejected":    "#e8e8e8",
     }
 
-    _COMBO_COLORS = {
-        "LFC_RSC": (31,  119, 180),
-        "LFC_LSC": (255, 127, 14),
-        "RSC_LSC": (44,  160, 44),
-        "LFC":     (214, 39,  40),
-        "RSC":     (148, 103, 189),
-        "LSC":     (140, 86,  75),
-    }
+    _COMBO_COLORS = COMBO_PLOT_RGB
 
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
@@ -114,6 +109,7 @@ class SleepQCGridPage(QWidget):
         if self._review_mode:
             self.btn_reruns_ready.setText(f"✕ Exit Review  ({n} remaining)")
             self.btn_reruns_ready.setVisible(True)
+            self._lbl_filter.setText(f"(filtered: {n} pending)")
         elif n > 0:
             self.btn_reruns_ready.setText(
                 f"● {n} rerun{'s' if n != 1 else ''} ready for review  →"
@@ -126,6 +122,7 @@ class SleepQCGridPage(QWidget):
     # UI
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
+        self.setObjectName("sleepQcPage")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
@@ -191,15 +188,20 @@ class SleepQCGridPage(QWidget):
         self._animal_controls = QWidget()
         ac = QHBoxLayout(self._animal_controls)
         ac.setContentsMargins(0, 0, 0, 0)
-        ac.addWidget(QLabel("Animal:"))
+        self._lbl_animal = QLabel("Animal:")
+        ac.addWidget(self._lbl_animal)
         self.cmb_animal = QComboBox()
         self.cmb_animal.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.cmb_animal.setMinimumWidth(150)
+        ac.addWidget(self.cmb_animal)
+        self._lbl_filter = QLabel("")
+        self._lbl_filter.setStyleSheet("color: #666; font-style: italic;")
+        self._lbl_filter.setVisible(False)
+        ac.addWidget(self._lbl_filter)
         self.btn_prev_animal = QPushButton("◄ Prev")
         self.btn_next_animal = QPushButton("Next ►")
         self.btn_next_rerun = QPushButton("Next Rerun ►")
         self.btn_next_rerun.setEnabled(False)
-        ac.addWidget(self.cmb_animal)
         ac.addWidget(self.btn_prev_animal)
         ac.addWidget(self.btn_next_animal)
         ac.addWidget(self.btn_next_rerun)
@@ -283,6 +285,14 @@ class SleepQCGridPage(QWidget):
     def _on_review_mode_toggled(self, checked: bool) -> None:
         self._review_mode = checked
         self.btn_group.setEnabled(not checked)
+        if checked:
+            self.setStyleSheet("#sleepQcPage { background: #f0f4ff; }")
+            self._lbl_animal.setText("Animal (review):")
+            self._lbl_filter.setVisible(True)
+        else:
+            self.setStyleSheet("")
+            self._lbl_animal.setText("Animal:")
+            self._lbl_filter.setVisible(False)
         self._update_reruns_badge()
         if checked:
             self._manifest = Manifest.load(self.project_root)
@@ -715,6 +725,29 @@ class SleepQCGridPage(QWidget):
             if w:
                 w.deleteLater()
 
+    def _make_legend_row_frame(
+        self, color: tuple, status: str | None
+    ) -> "tuple[QWidget, QHBoxLayout]":
+        """Create a styled legend row with a color swatch. Returns (widget, layout)."""
+        from PyQt6.QtWidgets import QFrame, QHBoxLayout as _QHBoxLayout
+        swatch = QFrame()
+        swatch.setFixedSize(30, 4)
+        swatch.setStyleSheet(f"background-color: rgb({color[0]}, {color[1]}, {color[2]});")
+
+        row_w = QWidget()
+        row_l = _QHBoxLayout(row_w)
+        row_l.setContentsMargins(4, 2, 4, 2)
+        row_l.setSpacing(4)
+        row_l.addWidget(swatch)
+
+        bg = self._STATUS_BG.get(status)
+        row_w.setObjectName("legendRow")
+        row_w.setStyleSheet(
+            f"QWidget#legendRow {{ background-color: {bg or 'transparent'};"
+            " border-radius: 3px; }"
+        )
+        return row_w, row_l
+
     def _build_mouse_color_map(self, mice: list[str]) -> dict:
         n = len(mice)
         cmap = mpl.colormaps["tab10"] if n <= 10 else mpl.colormaps["tab20"]
@@ -730,15 +763,15 @@ class SleepQCGridPage(QWidget):
             status = run.sleep_qc if run else None
             rejected_by = run.rejected_by if run else None
 
-            swatch = QFrame()
-            swatch.setFixedSize(30, 4)
-            swatch.setStyleSheet(f"background-color: rgb({color[0]}, {color[1]}, {color[2]});")
+            row_w, row_l = self._make_legend_row_frame(color, status)
+            row_l.addWidget(QLabel(str(mid)))
 
             btn_ok = QPushButton("OK")
             btn_ok.setFixedHeight(22)
             btn_ok.setCheckable(True)
             btn_ok.setChecked(status == "ok")
             btn_ok.clicked.connect(lambda checked, m=mid: self._flag_sleep_qc(m, "ok" if checked else None))
+            row_l.addWidget(btn_ok)
 
             btn_review = QPushButton("Review")
             btn_review.setFixedHeight(22)
@@ -752,14 +785,6 @@ class SleepQCGridPage(QWidget):
                 )
             else:
                 btn_review.clicked.connect(lambda checked, m=mid: self._flag_sleep_qc(m, "needs_review" if checked else None))
-
-            row_w = QWidget()
-            row_l = QHBoxLayout(row_w)
-            row_l.setContentsMargins(4, 2, 4, 2)
-            row_l.setSpacing(4)
-            row_l.addWidget(swatch)
-            row_l.addWidget(QLabel(str(mid)))
-            row_l.addWidget(btn_ok)
             row_l.addWidget(btn_review)
 
             if status == "rejected":
@@ -776,13 +801,6 @@ class SleepQCGridPage(QWidget):
                     )
                     row_l.addWidget(btn_reset)
 
-            bg = self._STATUS_BG.get(status)
-            row_w.setObjectName("legendRow")
-            row_w.setStyleSheet(
-                f"QWidget#legendRow {{ background-color: {bg or 'transparent'};"
-                " border-radius: 3px; }"
-            )
-
             self.legend_layout.addWidget(row_w, i // 2, i % 2)
 
     def _update_legend_animal(self, combos: list[str],
@@ -796,15 +814,7 @@ class SleepQCGridPage(QWidget):
             rejected_by = run.rejected_by if run else None
             source_combo = run.source_combo if run else None
 
-            swatch = QFrame()
-            swatch.setFixedSize(30, 4)
-            swatch.setStyleSheet(f"background-color: rgb({color[0]}, {color[1]}, {color[2]});")
-
-            row_w = QWidget()
-            row_l = QHBoxLayout(row_w)
-            row_l.setContentsMargins(4, 2, 4, 2)
-            row_l.setSpacing(4)
-            row_l.addWidget(swatch)
+            row_w, row_l = self._make_legend_row_frame(color, status)
 
             combo_label = QLabel(
                 f"{combo}  ← rerun of {source_combo}" if source_combo else combo
@@ -872,14 +882,6 @@ class SleepQCGridPage(QWidget):
                         row_l.addWidget(btn_reset)
 
             row_l.addStretch(1)
-
-            bg = self._STATUS_BG.get(status)
-            row_w.setObjectName("legendRow")
-            row_w.setStyleSheet(
-                f"QWidget#legendRow {{ background-color: {bg or 'transparent'};"
-                " border-radius: 3px; }"
-            )
-
             self.legend_layout.addWidget(row_w, i // 2, i % 2)
 
         # Reference line label

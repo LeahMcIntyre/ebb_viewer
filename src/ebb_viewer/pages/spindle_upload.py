@@ -1,3 +1,4 @@
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -12,6 +13,12 @@ from PyQt6.QtWidgets import (
 from ebb.io.sleepyrat import SleepyRatAPI
 from ebb_viewer.pipeline import sleepyrat_config
 from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.widgets.worker_helpers import launch_worker
+
+
+def _norm_stem(path: "str | Path") -> str:
+    """Normalize a file stem for SleepyRat comparison (NFC unicode, spaces→underscores)."""
+    return unicodedata.normalize("NFC", Path(path).stem).replace(" ", "_")
 
 
 class SpindleUploadPage(QWidget):
@@ -404,19 +411,10 @@ class SpindleUploadPage(QWidget):
 
         self._sr_thread = QThread(self)
         self._sr_worker = SleepyRatWorker(project, remote_folder, out_dir, upload_dir=upload_dir)
-        self._sr_worker.moveToThread(self._sr_thread)
-
-        self._sr_thread.started.connect(self._sr_worker.run)
         self._sr_worker.log.connect(self._log)
-        self._sr_worker.finished.connect(self._on_sr_done)
-        self._sr_worker.error.connect(self._on_sr_error)
-        self._sr_worker.finished.connect(self._sr_thread.quit)
-        self._sr_worker.finished.connect(self._sr_worker.deleteLater)
-        self._sr_worker.error.connect(self._sr_thread.quit)
-        self._sr_worker.error.connect(self._sr_worker.deleteLater)
-        self._sr_thread.finished.connect(self._sr_thread.deleteLater)
-
-        self._sr_thread.start()
+        launch_worker(self._sr_thread, self._sr_worker,
+                      on_finished=self._on_sr_done,
+                      on_error=self._on_sr_error)
 
     def _on_sr_done(self):
         if self._pending_save:
@@ -481,10 +479,8 @@ class SleepyRatWorker(QObject):
         Returns an empty set if the folder doesn't exist yet or the call fails.
         """
         try:
-            import unicodedata
             names = api.get_submission_names(project, remote_folder)
-            return {unicodedata.normalize("NFC", Path(n.strip()).stem).replace(" ", "_")
-                    for n in names}
+            return {_norm_stem(n.strip()) for n in names}
         except Exception:
             return set()
 
@@ -495,12 +491,10 @@ class SleepyRatWorker(QObject):
 
             if self.files is not None:
                 # Explicit file list (rerun path) — check remote before uploading anything.
-                import unicodedata
                 self.log.emit("Checking for existing submissions on SleepyRat...")
                 existing = self._existing_stems(api, self.project, self.remote_folder)
 
-                to_upload = [p for p in self.files
-                             if unicodedata.normalize("NFC", p.stem).replace(" ", "_") not in existing]
+                to_upload = [p for p in self.files if _norm_stem(p) not in existing]
                 already_there = len(self.files) - len(to_upload)
                 if already_there:
                     self.log.emit(
@@ -520,12 +514,10 @@ class SleepyRatWorker(QObject):
 
             elif self.upload_dir is not None:
                 # Directory batch — glob EDFs, skip already-uploaded by remote check.
-                import unicodedata
                 edfs = sorted(self.upload_dir.glob("*.edf"))
                 self.log.emit("Checking for existing submissions on SleepyRat...")
                 existing = self._existing_stems(api, self.project, self.remote_folder)
-                to_upload = [p for p in edfs
-                             if unicodedata.normalize("NFC", p.stem).replace(" ", "_") not in existing]
+                to_upload = [p for p in edfs if _norm_stem(p) not in existing]
                 already_there = len(edfs) - len(to_upload)
                 if already_there:
                     self.log.emit(f"Skipping {already_there} already-uploaded file(s).")
@@ -554,15 +546,8 @@ class SleepyRatWorker(QObject):
 
             # When given an explicit file list, only download labels for those files.
             if self.files is not None:
-                import unicodedata
-                target_stems = {
-                    unicodedata.normalize("NFC", p.stem).replace(" ", "_")
-                    for p in self.files
-                }
-                names = [
-                    n for n in all_names
-                    if unicodedata.normalize("NFC", Path(n).stem).replace(" ", "_") in target_stems
-                ]
+                target_stems = {_norm_stem(p) for p in self.files}
+                names = [n for n in all_names if _norm_stem(n) in target_stems]
                 skipped_remote = len(all_names) - len(names)
                 if skipped_remote:
                     self.log.emit(f"Limiting download to {len(names)} file(s) (skipping {skipped_remote} unrelated submission(s) in folder).")
