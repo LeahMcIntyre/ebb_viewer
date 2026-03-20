@@ -294,7 +294,7 @@ def batch_estimate(
     state_dir: Union[str, Path],
     swd_dir: Union[str, Path] = None,
     drink_dir: Union[str, Path] = None,
-    #offset_path: Union[str, Path] = None,
+    offset_path: Union[str, Path] = None,
     ncores: Optional[int] = None,
     verbose: bool = True,
     savepath: Union[str, Path] = None,
@@ -355,6 +355,8 @@ def batch_estimate(
     print(msg)
 
     # construct a partial to pass to Multiprocess pool
+    if offset_path is not None:
+        kwargs['offset_path'] = offset_path
     estimator = functools.partial(estimate_psd, **kwargs)
     t0 = time.perf_counter()
     if workers == 1:
@@ -426,77 +428,157 @@ def build_final_pkl(project_root, manifest) -> Path:
 
 
 def rerun_with_drink_masks(
-    pkl_path: Union[str, Path],
+    psd_dir: Union[str, Path],
     eeg_dir: Union[str, Path],
-    state_dir: Union[str, Path],
+    spindle_root: Union[str, Path],
     drink_dir: Union[str, Path],
-    animal_ids: Sequence[str],
+    animal_combos: Dict[str, str],
+    offset_path: Union[str, Path] = None,
     ncores: Optional[int] = None,
     **kwargs,
-) -> None:
-    """Recompute PSDs for specific animals with drink masks and merge back into pkl.
+) -> Tuple[Path, Path]:
+    """Recompute PSDs for specific animals with drink masks.
 
-    Removes all existing entries for each animal_id, reruns estimate_psd with
-    the drink mask applied, then overwrites the pkl atomically.
+    Validates that source_combo in psds_final.pkl matches the provided
+    animal_combos mapping. Results are accumulated in psds_drink.pkl
+    (replacing per animal on each call). psds_final_drink.pkl is regenerated
+    as psds_final.pkl with all psds_drink.pkl animals overriding their entries.
+    Neither psds_final.pkl nor any psds_<COMBO>.pkl is modified.
 
     Args:
-        pkl_path:   Path to the existing PSD pkl to update in-place.
-        eeg_dir:    Directory of preprocessed EDF files.
-        state_dir:  Directory of spindle state CSV files.
-        drink_dir:  Directory of drink mask .npy files (one per animal).
-        animal_ids: Animal IDs to rerun (everything before first '_' in EDF stem).
-        ncores:     Number of parallel workers (None = auto).
-        kwargs:     Passed through to estimate_psd (fs, winsize, etc.).
+        psd_dir:       Directory containing psds_final.pkl and output pkls.
+        eeg_dir:       Directory of preprocessed EDF files.
+        spindle_root:  Root of spindle_outputs/ (combo subdirs live here).
+        drink_dir:     Directory of drink mask .npy files (one per animal).
+        animal_combos: {animal_id: ok_combo} mapping for animals to rerun.
+        offset_path:   Optional CSV for video-EEG time alignment.
+        ncores:        Number of parallel workers (None = auto).
+        **kwargs:      Passed through to estimate_psd (fs, winsize, etc.).
+
+    Returns:
+        Tuple of (psds_drink.pkl path, psds_final_drink.pkl path).
     """
     import warnings, tracemalloc
 
-    pkl_path = Path(pkl_path)
-    animal_ids_set = set(animal_ids)
+    psd_dir = Path(psd_dir)
+    eeg_dir = Path(eeg_dir)
+    spindle_root = Path(spindle_root)
+    drink_dir = Path(drink_dir)
+    animal_ids_set = set(animal_combos)
 
-    # Load existing results and remove entries for the target animals
-    with open(pkl_path, "rb") as f:
-        existing: List[dict] = pickle.load(f)
-    if isinstance(existing, dict):
-        existing = [existing]
+    # --- Validate source_combo in psds_final.pkl against manifest combos ---
+    final_path = psd_dir / "psds_final.pkl"
+    if not final_path.exists():
+        raise FileNotFoundError(
+            f"psds_final.pkl not found at {final_path}. Build the final PKL first."
+        )
+    with open(final_path, "rb") as f:
+        final_data: List[dict] = pickle.load(f)
+    if isinstance(final_data, dict):
+        final_data = [final_data]
 
-    kept = [
-        e for e in existing
-        if Path(e["path"]).stem.split("_")[0] not in animal_ids_set
-    ]
+    final_combo_by_animal: Dict[str, str] = {}
+    for rec in final_data:
+        animal = Path(rec["path"]).stem.split("_")[0]
+        if animal in animal_ids_set:
+            final_combo_by_animal.setdefault(animal, rec.get("source_combo"))
 
-    # Find files only for the target animals
-    eeg_paths = [
-        p for p in sorted(Path(eeg_dir).glob("*PROCESSED.edf"))
-        if p.stem.split("_")[0] in animal_ids_set
-    ]
-    if not eeg_paths:
-        raise ValueError(f"No EDF files found for animals: {animal_ids_set}")
+    mismatches = []
+    for animal_id, manifest_combo in animal_combos.items():
+        final_combo = final_combo_by_animal.get(animal_id)
+        if final_combo is None:
+            mismatches.append(f"  {animal_id}: not found in psds_final.pkl")
+        elif final_combo != manifest_combo:
+            mismatches.append(
+                f"  {animal_id}: psds_final has '{final_combo}', manifest says '{manifest_combo}'"
+            )
+    if mismatches:
+        raise ValueError(
+            "Combo mismatch between psds_final.pkl and manifest:\n" + "\n".join(mismatches)
+        )
 
-    state_paths = sorted(Path(state_dir).glob("*.csv"))
-    drink_paths = sorted(Path(drink_dir).glob("*.npy"))
-    paired = match_paths(eeg_paths, state_paths, drink_paths=drink_paths)
+    # --- Run estimate_psd grouped by combo ---
+    combo_to_animals: Dict[str, List[str]] = {}
+    for animal_id, combo in animal_combos.items():
+        combo_to_animals.setdefault(combo, []).append(animal_id)
 
     tracemalloc.start()
     warnings.filterwarnings("ignore", category=ResourceWarning)
     [kwargs.pop(x, None) for x in ("path", "state_path")]
+    if offset_path is not None:
+        kwargs["offset_path"] = offset_path
 
     estimator = functools.partial(estimate_psd, **kwargs)
-    workers = concurrency.set_cores(ncores, len(paired))
-    t0 = time.perf_counter()
-    if workers == 1:
-        results_nested = [estimator(*args) for args in paired]
+    all_new_dicts: List[dict] = []
+
+    for combo, animals in combo_to_animals.items():
+        animals_set = set(animals)
+        state_dir = spindle_root / combo
+        eeg_paths = [
+            p for p in sorted(Path(eeg_dir).glob("*PROCESSED.edf"))
+            if p.stem.split("_")[0] in animals_set
+        ]
+        if not eeg_paths:
+            raise ValueError(f"No EDF files found for animals {animals_set} in {eeg_dir}")
+        state_paths = [
+            p for p in sorted(state_dir.glob("*.csv"))
+            if _animal_id(p) in animals_set
+        ]
+        drink_paths = [
+            p for p in sorted(drink_dir.glob("*.npy"))
+            if _animal_id(p) in animals_set
+        ]
+        paired = match_paths(eeg_paths, state_paths, drink_paths=drink_paths)
+
+        workers = concurrency.set_cores(ncores, len(paired))
+        t0 = time.perf_counter()
+        if workers == 1:
+            results_nested = [estimator(*args) for args in paired]
+        else:
+            with Pool(workers) as pool:
+                results_nested = pool.starmap(estimator, paired)
+        elapsed = time.perf_counter() - t0
+        print(f"Drink-mask rerun ({combo}): {len(paired)} files in {elapsed:.1f}s")
+
+        new_dicts = [dataclasses.asdict(r) for sublist in results_nested for r in sublist]
+        for d in new_dicts:
+            d["source_combo"] = combo
+        all_new_dicts.extend(new_dicts)
+
+    # --- Update psds_drink.pkl (accumulate, replace per animal) ---
+    drink_pkl = psd_dir / "psds_drink.pkl"
+    if drink_pkl.exists():
+        with open(drink_pkl, "rb") as f:
+            existing_drink: List[dict] = pickle.load(f)
+        if isinstance(existing_drink, dict):
+            existing_drink = [existing_drink]
     else:
-        with Pool(workers) as pool:
-            results_nested = pool.starmap(estimator, paired)
-    elapsed = time.perf_counter() - t0
-    print(f"Drink-mask rerun: {len(paired)} files in {elapsed:.1f}s")
+        existing_drink = []
 
-    new_dicts = [dataclasses.asdict(r) for sublist in results_nested for r in sublist]
-
-    # Atomic write: tmp → replace
-    tmp = pkl_path.with_suffix(".pkl.tmp")
+    kept_drink = [
+        e for e in existing_drink
+        if Path(e["path"]).stem.split("_")[0] not in animal_ids_set
+    ]
+    tmp = drink_pkl.with_suffix(".pkl.tmp")
     with open(tmp, "wb") as f:
-        pickle.dump(kept + new_dicts, f)
-    tmp.replace(pkl_path)
+        pickle.dump(kept_drink + all_new_dicts, f)
+    tmp.replace(drink_pkl)
+
+    # --- Regenerate psds_final_drink.pkl ---
+    # Use all accumulated drink records (not just this session's) to override final
+    with open(drink_pkl, "rb") as f:
+        all_drink: List[dict] = pickle.load(f)
+    drink_animals = {Path(r["path"]).stem.split("_")[0] for r in all_drink}
+    final_base_kept = [
+        r for r in final_data
+        if Path(r["path"]).stem.split("_")[0] not in drink_animals
+    ]
+    final_drink_path = psd_dir / "psds_final_drink.pkl"
+    tmp2 = final_drink_path.with_suffix(".pkl.tmp")
+    with open(tmp2, "wb") as f:
+        pickle.dump(final_base_kept + all_drink, f)
+    tmp2.replace(final_drink_path)
+
+    return drink_pkl, final_drink_path
 
 

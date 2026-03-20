@@ -61,8 +61,6 @@ class PSDGridPage(QWidget):
         if self.cmb_animal.count():
             self._render()
 
-        print("New PSD Window")
-
 
     # ---------------- UI BUILDERS ----------------
 
@@ -157,6 +155,18 @@ class PSDGridPage(QWidget):
             self._status_label.setVisible(False)
 
         self.root.addWidget(tb)
+
+        self._guidance_label = QLabel(
+            "Place <code>drink_masks/&lt;animal_id&gt;.npy</code> in your project folder, "
+            "then go to <b>PSD Computation → Apply Drink Masks</b> to rerun."
+        )
+        self._guidance_label.setTextFormat(Qt.TextFormat.RichText)
+        self._guidance_label.setWordWrap(True)
+        self._guidance_label.setStyleSheet(
+            "color: #7a3c00; background: #fff3cd; padding: 5px 10px; border-radius: 3px;"
+        )
+        self._guidance_label.setVisible(False)
+        self.root.addWidget(self._guidance_label)
 
     def _build_grid(self):
         # Grid container
@@ -387,15 +397,19 @@ class PSDGridPage(QWidget):
         if status == "ok":
             self._status_label.setText("✓ OK")
             self._status_label.setStyleSheet("color: green; font-weight: bold;")
+            self._guidance_label.setVisible(False)
         elif status == "needs_drink_mask":
             self._status_label.setText("⚠ Drink Mask")
             self._status_label.setStyleSheet("color: orange; font-weight: bold;")
+            self._guidance_label.setVisible(self.manifest is not None)
         elif animal_id in self._pending_animal_ids():
             self._status_label.setText("pending")
             self._status_label.setStyleSheet("color: gray;")
+            self._guidance_label.setVisible(False)
         else:
             self._status_label.setText("")
             self._status_label.setStyleSheet("")
+            self._guidance_label.setVisible(False)
 
     def _clear_all(self):
         for curve in self.curves.values():

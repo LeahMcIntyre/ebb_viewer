@@ -575,6 +575,21 @@ class Manifest:
 
         run.sleep_qc = status
         run.rerun_combo = rerun_combo if status == "needs_rerun" else None
+
+        if status == "needs_rerun" and rerun_combo:
+            # If a run entry already exists for the target rerun combo (e.g. from a
+            # previous accepted or rejected rerun cycle), reset it to a fresh state.
+            # Without this, needs_rerun_pending and pending_rerun_review both skip it
+            # because sleep_qc is not None, leaving the animal in a dead zone.
+            rerun_run = entry.runs.get(rerun_combo)
+            if rerun_run is not None:
+                rerun_run.sleep_qc = None
+                rerun_run.source_combo = channels
+                rerun_run.prev_sleep_qc = None
+                rerun_run.rejected_by = None
+                rerun_run.psd_status = None
+                rerun_run.drink_mask = None
+
         self.save()
 
     def flag_psd(self, animal_id: str, channels: str, status: str) -> None:

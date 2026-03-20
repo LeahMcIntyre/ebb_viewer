@@ -719,3 +719,43 @@ def test_flag_needs_rerun_rerun_combo_cannot_equal_channels(tmp_path):
     m = _make_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry()}})
     with pytest.raises(ValueError, match="cannot be the same"):
         m.flag_sleep_qc("AM001", "LFC_RSC", "needs_rerun", rerun_combo="LFC_RSC")
+
+
+def test_flag_needs_rerun_resets_existing_rerun_run_from_ok(tmp_path):
+    """Re-flagging needs_rerun when rerun run already exists and was accepted
+    resets it to sleep_qc=None so it re-enters pending_rerun_review."""
+    output_dir = tmp_path / "spindle_outputs" / "LFC"
+    output_dir.mkdir(parents=True)
+    (output_dir / "AM001_states.csv").touch()
+
+    m = _make_manifest(tmp_path, {
+        "AM001": {
+            "LFC_RSC": RunEntry(sleep_qc="needs_review"),
+            "LFC":     RunEntry(sleep_qc="ok", source_combo="LFC_RSC"),
+        },
+    })
+    m.flag_sleep_qc("AM001", "LFC_RSC", "needs_rerun", rerun_combo="LFC")
+
+    rerun_run = m._entries["AM001"].runs["LFC"]
+    assert rerun_run.sleep_qc is None
+    assert rerun_run.source_combo == "LFC_RSC"
+    # With CSV present the animal should appear in pending_rerun_review
+    assert any(e.animal_id == "AM001" for e, _ in m.pending_rerun_review())
+
+
+def test_flag_needs_rerun_resets_existing_rerun_run_from_rejected(tmp_path):
+    """Re-flagging needs_rerun when rerun run was cascade-rejected also resets it."""
+    m = _make_manifest(tmp_path, {
+        "AM001": {
+            "LFC_RSC": RunEntry(sleep_qc="needs_review"),
+            "LFC":     RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
+        },
+    })
+    m.flag_sleep_qc("AM001", "LFC_RSC", "needs_rerun", rerun_combo="LFC")
+
+    rerun_run = m._entries["AM001"].runs["LFC"]
+    assert rerun_run.sleep_qc is None
+    assert rerun_run.source_combo == "LFC_RSC"
+    assert rerun_run.rejected_by is None
+    # No CSV yet → appears in needs_rerun_pending (Rerun queue)
+    assert any(e.animal_id == "AM001" for e, _ in m.needs_rerun_pending())

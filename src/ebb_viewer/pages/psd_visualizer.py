@@ -67,9 +67,12 @@ class PSDVisualizer(QWidget):
             self.cmb_file.addItem(p.name, str(p))
         self.cmb_file.blockSignals(False)
 
-        # Auto-select psds_final.pkl if present; otherwise restore previous or first
+        # Auto-select psds_final_drink.pkl first (most complete), then psds_final.pkl
+        final_drink_idx = self.cmb_file.findText("psds_final_drink.pkl")
         final_idx = self.cmb_file.findText("psds_final.pkl")
-        if final_idx >= 0:
+        if final_drink_idx >= 0:
+            self.cmb_file.setCurrentIndex(final_drink_idx)
+        elif final_idx >= 0:
             self.cmb_file.setCurrentIndex(final_idx)
         elif current:
             idx = self.cmb_file.findData(current)
