@@ -40,6 +40,7 @@ _COMBO_FG = QColor("#ffffff")
 
 _SLEEP_QC_LABEL: dict[str, str] = {
     "needs_review": "Review EDF",
+    "needs_rerun":  "Rerun Queued",
 }
 
 
@@ -62,11 +63,13 @@ _STEP_LABELS = [
     "5. Spindle Rerun",
     "6. PSD Computation",
     "7. PSD Review",
+    "8. Drink Mask",
 ]
 
 _STEP_PAGE_NAMES = [
     "preprocess", "spindle_write", "spindle_upload",
     "sleep_qc", "rerun", "psd_compute", "psd_review",
+    "drink_mask",
 ]
 
 _GUIDE_ICON       = {"done": "✓", "attention": "⚠", "active": "→", "blocked": "○"}
@@ -85,7 +88,8 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     # --- filesystem facts ---
     # Step 1 done: standard dir exists and has at least 1 edf
     standard_dir = root / "standard"
-    step1_done = standard_dir.is_dir() and any(standard_dir.glob("*.edf"))
+    standard_edfs = list(standard_dir.glob("*.edf")) if standard_dir.is_dir() else []
+    step1_done = bool(standard_edfs)
 
     # Step 2 done: spindle edfs dir exist and contains at least 1 dir with at least 1 edf
     spindle_edfs_dir = root / "spindle_edfs"
@@ -112,7 +116,7 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
 
     # --- Step 1: Preprocess ---
     if step1_done:
-        n = sum(1 for _ in standard_dir.glob("*.edf"))
+        n = len(standard_edfs)
         s1 = StepStatus("done", f"{n} EDF{'s' if n != 1 else ''} in standard/")
     else:
         s1 = StepStatus("active", "Start here — run preprocessor on raw EDF files")
@@ -188,6 +192,11 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     elif combos_with_pkl and (missing_pkls or not final_pkl.exists()):
         msg = f"{len(missing_pkls)} combo PKL(s) missing" if missing_pkls else "Run Build Final PKL"
         s6 = StepStatus("attention", msg)
+    elif n_ok > 0 and n_review > 0:
+        s6 = StepStatus(
+            "attention",
+            f"⚠ {n_review} animal{'s' if n_review != 1 else ''} still need Sleep QC review",
+        )
     elif n_ok > 0:
         s6 = StepStatus("active", f"{n_ok} ok animal{'s' if n_ok != 1 else ''} — ready to compute PSDs")
     else:
@@ -208,7 +217,28 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     else:
         s7 = StepStatus("blocked", "Requires final PKL (step 6)")
 
-    return [s1, s2, s3, s4, s5, s6, s7]
+    # --- Step 8: Drink Mask ---
+    n_needs_drink = len(manifest.needs_drink_mask())
+    n_drink_applied = sum(
+        1 for e in manifest for r in e.runs.values()
+        if r.psd_status == "drink_mask_applied"
+    )
+    if not final_pkl.exists():
+        s8 = StepStatus("blocked", "Requires final PKL (step 6)")
+    elif n_needs_drink > 0:
+        s8 = StepStatus(
+            "attention",
+            f"{n_needs_drink} animal{'s' if n_needs_drink != 1 else ''} need drink mask",
+        )
+    elif n_drink_applied > 0:
+        s8 = StepStatus(
+            "done",
+            f"{n_drink_applied} drink mask{'s' if n_drink_applied != 1 else ''} applied",
+        )
+    else:
+        s8 = StepStatus("done", "No drink masks needed")
+
+    return [s1, s2, s3, s4, s5, s6, s7, s8]
 
 
 def _any_file_for_animal(root: Path, subdir: str, channels: str, animal_id: str) -> bool:
@@ -663,11 +693,12 @@ class HomePage(QWidget):
         reviewing       = manifest.needs_review()
         rerunning       = manifest.needs_rerun_pending()
         rerun_ready     = manifest.pending_rerun_review()
+        drink_mask      = manifest.needs_drink_mask()
 
-        self._attn_card_count = len(reviewing) + len(rerunning) + len(rerun_ready)
+        self._attn_card_count = len(reviewing) + len(rerunning) + len(rerun_ready) + len(drink_mask)
         self._update_attn_max_height()
 
-        if not reviewing and not rerunning and not rerun_ready:
+        if not reviewing and not rerunning and not rerun_ready and not drink_mask:
             lbl = QLabel("All caught up ✓")
             lbl.setStyleSheet("color: #5a9a5a; font-weight: bold; padding: 4px;")
             self._attn_layout.addWidget(lbl)
@@ -679,6 +710,8 @@ class HomePage(QWidget):
             self._attn_layout.addWidget(self._make_rerun_pending_card(entry, channels))
         for entry, channels in rerun_ready:
             self._attn_layout.addWidget(self._make_rerun_ready_card(entry, channels))
+        for entry, channels in drink_mask:
+            self._attn_layout.addWidget(self._make_drink_mask_card(entry, channels))
 
     def _make_card_frame(self, bg_color: str) -> "tuple[QWidget, QHBoxLayout]":
         """Create an attention card frame. Returns (widget, layout)."""
@@ -716,23 +749,33 @@ class HomePage(QWidget):
         )
         h.addWidget(btn_ok)
 
+        # Build rerun options: exclude current combo and any already-ok combos
+        ok_combos = {c for c, r in entry.runs.items() if r.sleep_qc == "ok"}
         rerun_combo = QComboBox()
         rerun_combo.setToolTip("Channel combination to rerun spindle with")
-        rerun_combo.addItems(CHANNEL_COMBOS)
-        others = [c for c in CHANNEL_COMBOS if c != channels]
-        if others:
-            rerun_combo.setCurrentText(others[0])
-        h.addWidget(QLabel("Rerun as:"))
-        h.addWidget(rerun_combo)
+        for c in CHANNEL_COMBOS:
+            if c == channels or c in ok_combos:
+                continue
+            run_for_c = entry.runs.get(c)
+            # "ok" already excluded via ok_combos above; only suppress "rejected" and None
+            if run_for_c and run_for_c.sleep_qc not in (None, "rejected"):
+                label = f"{c} ({_SLEEP_QC_LABEL.get(run_for_c.sleep_qc, run_for_c.sleep_qc)})"
+            else:
+                label = c
+            rerun_combo.addItem(label, c)  # userData = actual combo string
 
-        btn_rerun = QPushButton("Needs Rerun")
-        btn_rerun.setToolTip("Mark file to be rerun with the selected channel combo")
-        btn_rerun.setFixedHeight(24)
-        btn_rerun.clicked.connect(
-            lambda _, mid=entry.animal_id, ch=channels, c=rerun_combo:
-                self._queue_flag_rerun(mid, ch, c.currentText())
-        )
-        h.addWidget(btn_rerun)
+        if rerun_combo.count() > 0:
+            h.addWidget(QLabel("Rerun as:"))
+            h.addWidget(rerun_combo)
+
+            btn_rerun = QPushButton("Needs Rerun")
+            btn_rerun.setToolTip("Mark file to be rerun with the selected channel combo")
+            btn_rerun.setFixedHeight(24)
+            btn_rerun.clicked.connect(
+                lambda _, mid=entry.animal_id, ch=channels, c=rerun_combo:
+                    self._queue_flag_rerun(mid, ch, c.currentData())
+            )
+            h.addWidget(btn_rerun)
 
         return row_w
 
@@ -775,6 +818,26 @@ class HomePage(QWidget):
         btn_hint.clicked.connect(lambda: self.navigate_to.emit("sleep_qc"))
         h.addWidget(btn_hint)
 
+        return row_w
+
+    def _make_drink_mask_card(self, entry: ManifestEntry, channels: str) -> QWidget:
+        row_w, h = self._make_card_frame("#f0e6ff")
+        h.addWidget(QLabel(f"<b>{entry.animal_id}</b>"))
+        lbl_ch = QLabel(f"[{channels}]")
+        lbl_ch.setStyleSheet("color: #555;")
+        h.addWidget(lbl_ch)
+        lbl_type = QLabel("Drink mask needed")
+        lbl_type.setStyleSheet("color: #5a1d6b; font-style: italic;")
+        h.addWidget(lbl_type)
+        h.addStretch(1)
+        btn_hint = QPushButton("→ Drink Mask page")
+        btn_hint.setStyleSheet(
+            "color: #5a1d6b; border: none; padding: 0; text-decoration: underline;"
+        )
+        btn_hint.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_hint.setFlat(True)
+        btn_hint.clicked.connect(lambda: self.navigate_to.emit("drink_mask"))
+        h.addWidget(btn_hint)
         return row_w
 
     def _queue_flag_ok(self, animal_id: str, channels: str) -> None:

@@ -1,10 +1,10 @@
 from PyQt6.QtWidgets import (
     QVBoxLayout, QGroupBox, QGridLayout, QLabel, QCheckBox,
     QPushButton, QHBoxLayout, QSpacerItem, QSizePolicy,
-    QMessageBox, QFormLayout, QLineEdit, QWidget
+    QMessageBox, QFormLayout, QLineEdit, QWidget, QFrame
 )
 from PyQt6.QtGui import QFont
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from pathlib import Path
 from typing import Optional
 
@@ -13,6 +13,8 @@ from ebb_viewer.pipeline.manifest import Manifest
 
 
 class SpindleWritePage(QWidget):
+    navigate_to = pyqtSignal(str)
+
     CH_LABELS = {
         "Ch0": "LFC",
         "Ch1": "RSC",
@@ -133,6 +135,23 @@ class SpindleWritePage(QWidget):
         root.addWidget(folder_gb)
         root.addWidget(gb)
         root.addLayout(actions)
+
+        # Post-run hint (hidden until a run succeeds)
+        self._hint_frame = QFrame()
+        self._hint_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        self._hint_frame.setStyleSheet(
+            "QFrame { background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; }"
+        )
+        hint_layout = QHBoxLayout(self._hint_frame)
+        hint_layout.setContentsMargins(10, 6, 10, 6)
+        hint_lbl = QLabel("✓ Done. Spindle EDFs written.")
+        hint_layout.addWidget(hint_lbl, 1)
+        btn_go_upload = QPushButton("→ Spindle Upload")
+        btn_go_upload.clicked.connect(lambda: self.navigate_to.emit("spindle_upload"))
+        hint_layout.addWidget(btn_go_upload)
+        self._hint_frame.setVisible(False)
+        root.addWidget(self._hint_frame)
+
         root.addStretch()
 
 
@@ -252,12 +271,7 @@ class SpindleWritePage(QWidget):
                 channels=channels
             )
             Manifest.build_from_standard(self.project_root)
-            QMessageBox.information(
-                self,
-                "Spindle Preprocessing",
-                f"Finished preprocessing files for spindle.\n"
-                f"Output folder:\n{target_dir}",
-            )
+            self._hint_frame.setVisible(True)
 
         except Exception as e:
             QMessageBox.critical(self, "Spindle Preprocess failed", str(e))

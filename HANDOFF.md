@@ -62,106 +62,85 @@ test coverage, and general UI clarity.
 
 ### Completed (sessions 3–4, branch `refactor/clean-up`)
 
-#### UX improvements (all 9 plan items done)
+#### UX improvements (all 9 original plan items done)
 
-- **Priority 1**: Sidebar pending-work badges (earlier session)
-- **Priority 2**: "Needs Attention" action zone on Home page (earlier session)
-- **Priority 3**: Decision panel moved above plots in review mode (earlier session)
-- **Priority 4** (`sleep_qc_visualizer.py`): Review mode tints page `#f0f4ff`; animal label becomes "Animal (review):"; `"(filtered: N pending)"` label shown next to dropdown; `setObjectName("sleepQcPage")` drives scoped stylesheet.
-- **Priority 5** (`rerun.py`): After successful `_run_selected`, a green `QFrame` hint appears: "✓ Spindle EDFs written. Upload them to SleepyRat, then go to Sleep QC to review the new results." + "→ Sleep QC" button (emits `navigate_to("sleep_qc")`).
-- **Priority 6** (`rerun.py`): Persistent "Upload Rerun…" button enabled whenever a rerun combo has EDFs in `spindle_edfs/` but no CSV in `spindle_outputs/`. Uses `upload_dir=` mode (skip-already-uploaded). `navigate_to` signal wired in `main_window.py`.
-- **Priority 7** (`home.py`): `_SLEEP_QC_LABEL` maps `"needs_review"` → `"Review EDF"` in Sleep QC column.
-- **Priority 8** (`home.py`): Button renamed "Import new animals" with updated tooltip. `showEvent` auto-runs `build_from_standard`; shows green `"✓ N new animals imported"` label or hides it if none. Manual button shows `"No new animals found"` on zero-import.
-- **Priority 9** (`home.py`): Editable rerun cells (EDF not yet written) display `"rerun → LFC_RSC  ✎"` with tooltip `"Double-click to change rerun combo"`.
-
-#### Bug fixes (this session)
-- `sleep_qc_visualizer.py` legend stylesheet had extra `}}` (literal two `}`) in non-f-string — Qt reported "Could not parse stylesheet". Fixed to single `}`.
-- `BatchEstimateWorker` in `psds.py` had `offset_path` stripped again by linter. Restored `offset_path` param and `offset_path=self.offset_path` kwarg to `batch_estimate`.
-- `test_drink_mask_integration.py` `page` fixture referenced `PSDPage._detect_offset_csv` (moved to `DrinkMaskPage` in prior session). Updated fixture to instantiate `DrinkMaskPage`; updated section comment from "PSDPage helpers" → "DrinkMaskPage helpers".
+- **Priority 1**: Sidebar pending-work badges
+- **Priority 2**: "Needs Attention" action zone on Home page
+- **Priority 3**: Decision panel moved above plots in review mode
+- **Priority 4** (`sleep_qc_visualizer.py`): Review mode tints page `#f0f4ff`; animal label becomes "Animal (review):"; `"(filtered: N pending)"` label shown next to dropdown
+- **Priority 5** (`rerun.py`): After successful `_run_selected`, green hint frame with "→ Sleep QC" button
+- **Priority 6** (`rerun.py`): Persistent "Upload Rerun…" button enabled when rerun EDFs exist without CSV
+- **Priority 7** (`home.py`): `_SLEEP_QC_LABEL` maps statuses to human-readable labels
+- **Priority 8** (`home.py`): "Import new animals" button; `showEvent` auto-runs `build_from_standard`
+- **Priority 9** (`home.py`): Editable rerun cells display `✎` with tooltip
 
 #### Drink mask architectural redesign
 
 **Architecture**: PSD Computation page does a clean compute (no drink masks). Drink masks
-are only applied from the new dedicated "8. Drink Mask" sidebar page, and only after animals
-are explicitly flagged `needs_drink_mask` in the PSD Visualizer.
+are only applied from the dedicated "8. Drink Mask" sidebar page, after animals are
+explicitly flagged `needs_drink_mask` in the PSD Visualizer.
 
-**PSD params provenance**: `BatchEstimateWorker` saves `psd/psd_params.json` after each
-compute run and embeds `{"params": {...}}` in every PKL record. The Drink Mask page loads
-this as read-only so reruns always use the same params.
+**PKL architecture**:
+- `psds_final.pkl` — built by `build_final_pkl`, **never modified**
+- `psds_drink.pkl` — accumulates drink-mask reruns across sessions; per-animal replace
+- `psds_final_drink.pkl` — regenerated on every drink mask rerun: `psds_final.pkl` minus drink animals + all of `psds_drink.pkl`
 
-**New `DrinkMaskPage`** (`pages/drink_mask.py`):
-- Read-only params panel (from psd_params.json)
-- Drink masks folder status + .npy count
-- Manifest-driven table of flagged animals + mask file presence
-- `Apply Drink Masks` gated on psd_params.json existence + at least one .npy found
-- Sidebar badge (row 11) shows `needs_drink_mask` count
-- `manifest_changed` signal wired to badge refresh
-
-**`BatchEstimateWorker`** (`pages/psds.py`): removed `drink_dir`; passes `savepath=None`
-to `batch_estimate`, embeds params in each dict, saves PKL manually, then saves
-`psd_params.json`. `PSDPage` pre-populates spinboxes from saved params on init.
-
-**`DrinkMaskRerunWorker`** moved from `psds.py` to `drink_mask.py`.
-
-**`psd_params.py`** (`pipeline/psd_params.py`): `save(project_root, params)` / `load(project_root)`.
-
-#### New drink mask PKL architecture (`psd_compute.py`, `pages/psds.py`)
-
-**Old design** (removed): `rerun_with_drink_masks` rewrote `psds_<COMBO>.pkl` in place.
-
-**New design**:
-- `psds_final.pkl` — built by `build_final_pkl`, **never modified** again
-- `psds_drink.pkl` — accumulates all drink-mask reruns across sessions; per-animal replace
-- `psds_final_drink.pkl` — regenerated on every drink mask rerun as:
-  `psds_final.pkl` (base, minus drink animals) + all of `psds_drink.pkl`
-
-**`rerun_with_drink_masks` new signature**:
-```python
-rerun_with_drink_masks(
-    psd_dir, eeg_dir, spindle_root, drink_dir,
-    animal_combos: dict[str, str],   # {animal_id: ok_combo}
-    offset_path=None, ncores=None, **kwargs
-) -> tuple[Path, Path]   # (psds_drink.pkl, psds_final_drink.pkl)
-```
-Validation step: cross-checks `source_combo` in `psds_final.pkl` against
-`animal_combos` — raises `ValueError` with per-animal diff if they disagree.
-Groups animals by combo, uses `spindle_outputs/<combo>/` for state CSVs.
-Stamps `source_combo` on every record written to `psds_drink.pkl`.
-
-**`DrinkMaskRerunWorker`** simplified: takes `{animal_id: ok_combo}` dict directly,
-calls `rerun_with_drink_masks` once (no per-combo loop).
-
-**`_pending_drink_rerun`** is now `{animal_id: combo}` (was `{combo: [animal_ids]}`).
-
-**PSD Visualizer auto-select**: prefers `psds_final_drink.pkl` over `psds_final.pkl`
-when both exist.
-
-#### Manifest bug fix: re-flagging `needs_rerun` with existing rerun run (`pipeline/manifest.py`)
-
-**Bug**: When a user clicked "Needs Rerun → LFC" from a yellow card and the LFC run entry
-already existed from a previous cycle (with `sleep_qc="ok"` or `"rejected"`),
-`needs_rerun_pending()` and `pending_rerun_review()` both skipped it — dead zone.
-
-**Root cause**: `flag_sleep_qc` only un-cascades siblings when `old_status == "ok"`.
-Going from `"needs_review"` → `"needs_rerun"` skipped the un-cascade, leaving the
-target rerun run's `sleep_qc` as-is (non-None). Both queue methods skip non-None runs.
-
-**Fix** (end of `flag_sleep_qc`): when `status == "needs_rerun"` and the `rerun_combo`
-run entry already exists, reset it to `sleep_qc=None`, `source_combo=<channels>`,
-clear all cascade and PSD metadata. This re-enters it into the correct queue:
-- CSV present → `pending_rerun_review()` catches it → blue card + Sleep QC badge
-- CSV absent → `needs_rerun_pending()` catches it → orange card + Rerun queue
-
-#### Bug fix: `rerun_with_drink_masks` path count mismatch (`psd_compute.py`)
-
-State CSVs and drink `.npy` paths were globbed from the full directory rather than
-filtered to target animals. When running a subset (1 of N animals), `re_match` got
-mismatched counts and raised. Fixed by filtering all three path lists to `animal_ids_set`.
+**`rerun_with_drink_masks`** (`psd_compute.py`): validates `source_combo` in `psds_final.pkl` against manifest ok combo before computing. Stamps `source_combo` on every `psds_drink.pkl` record.
 
 #### Tests
-- `tests/ebb_viewer/test_manifest.py` — 79 tests (2 new for re-flag bug)
-- `tests/ebb/test_drink_mask_integration.py` — 30 tests (6 new for new PKL architecture)
-- Total: **106 passing**
+- `tests/ebb_viewer/test_manifest.py` — 79 tests
+- `tests/ebb/test_drink_mask_integration.py` — 30 tests
+
+---
+
+### Completed (this session, branch `refactor/clean-up`)
+
+#### TODO list reviewed and reorganized
+- Rewrote `TODO.md` with P0/P1/P2/P3 priority tiers and rationale for each item
+- Removed already-resolved items (auto-sync, clean PSD compute, etc.)
+
+#### P0 completed
+- **PSD Visualizer drink mask banner** (`psd_graph_widget.py:159`): updated text from
+  "go to PSD Computation → Apply Drink Masks" (button no longer exists) to
+  "go to **8. Drink Mask** page"
+
+#### P1 completed — all 5 items
+- **PSD Visualizer OK/Drink Mask buttons** (`psd_graph_widget.py`): made `setCheckable(True)`; `_update_flag_status()` now calls `setChecked()` inside each if/elif branch so button state and label state are always co-located
+- **Preprocess: computed Hz label** (`preprocess.py`): dynamic `"→ 250 Hz output"` label beside downsample spinbox, updates live on either spinbox change
+- **Preprocess: EDF filename format label** (`preprocess.py`): info label in Folder Selection group: `"ℹ EDF files must be named: AnimalID_anything_YYYY_MM_DD_HH_MM_SS.edf"`
+- **Home: PSD step gate** (`home.py` `compute_pipeline_status`): step 6 now shows "attention" with `"⚠ N animals still need Sleep QC review"` when `n_review > 0` and `n_ok > 0`, instead of "active"
+- **Home: filter rerun combo dropdown** (`home.py` `_make_review_card`): excludes already-ok combos; shows status suffix for existing non-ok runs (e.g. `"LFC_RSC (Rerun Queued)"`); uses `currentData()` for actual combo string
+
+#### `/simplify` fixes applied after P1
+- `_SLEEP_QC_LABEL` — added `"needs_rerun": "Rerun Queued"` (was missing; raw snake_case showed in dropdown)
+- `not in ("ok", "rejected")` — simplified to `not in (None, "rejected")` since `"ok"` already filtered by `ok_combos`
+- `standard_dir.glob("*.edf")` — was called twice per refresh; now stored in `standard_edfs` list once
+- `setChecked` in `_update_flag_status` — moved inside each if/elif branch (was unconditional before the block)
+- Lambda pattern — `lambda _checked=False:` → `lambda checked:` on flag button connects
+
+#### P2 partial — 2 of 6 items completed
+- **Home: drink mask cards + pipeline step 8** (`home.py`):
+  - Added "8. Drink Mask" to `_STEP_LABELS` / `_STEP_PAGE_NAMES`
+  - `compute_pipeline_status` now computes step 8: blocked/attention/done based on `needs_drink_mask` and `drink_mask_applied` counts
+  - `_refresh_attention_zone` now includes `manifest.needs_drink_mask()` items
+  - New `_make_drink_mask_card` method: lavender `#f0e6ff` card with `"→ Drink Mask page"` nav button
+  - "All caught up ✓" now requires no pending drink mask items too
+- **PSD Visualizer: prominent file label + flag button gate** (`psd_visualizer.py`):
+  - **Bug fix**: `psds_final_drink.pkl` was treated as non-final (`is_final = False`) → manifest was None → flag buttons hidden. Fixed: `is_final = stem in {"psds_final", "psds_final_drink"}`
+  - **`run_channels`** correctly set to `None` for both final stems (was `"final_drink"` for `psds_final_drink.pkl`)
+  - Bold `"Reviewing: {filename}"` label appears above plot area when "Plot PSDs" is clicked
+- **Video offset label** — verified already gone from `PSDPage` UI; removed from TODO
+
+#### P2 partial — preprocess EDF file count / duration display (`preprocess.py`)
+- `_scan_edfs()`: globs `*.edf` in project root, reads headers with `edf_io.Reader` context manager, computes min/max durations
+- `_scan_label` QLabel in Folder Selection group shows `"Found N files · all 72h 00m"` or `"Found N files · 48h 00m – 72h 00m"` for mixed durations
+- Live orange warning when any file is shorter than the current trim_to minimum — updates reactively via `trim_to.changed` signal
+- Scan is cached per-session (`_durations_hrs: list | None` sentinel in `__init__`); guarded in `showEvent`
+- `_fmt_hrs()` module helper, `_SAME_DURATION_THRESHOLD = 1/60`, `_STYLE_NORMAL/_STYLE_WARNING/_STYLE_ERROR` class constants
+
+#### Tests
+- `tests/ebb_viewer/test_compute_pipeline_status.py` — 10 new tests (6 for step 6 PSD gate, 4 for step 8 drink mask)
+- **Total: 109 passing**
 
 ---
 
@@ -173,6 +152,7 @@ mismatched counts and raised. Fixed by filtering all three path lists to `animal
 
 2. Home page — Needs Attention zone  (sidebar shows "Home (1)")
    → yellow card: [Animal] [combo] [Open EDF] [✓ OK] [Rerun as: ▼] [Needs Rerun]
+   → Rerun dropdown excludes already-ok combos; shows status of existing runs
    → click Needs Rerun → manifest: needs_rerun + rerun_combo
 
 3. Rerun page  (sidebar shows "5. Spindle Rerun (1)")
@@ -199,20 +179,23 @@ mismatched counts and raised. Fixed by filtering all three path lists to `animal
 ```
 1. PSD Computation page (6. PSD Computation)
    → Select combos, set params → Compute PSDs
-   → Clean compute: no drink masks applied during initial PSD run
-   → params saved to psd/psd_params.json (auto-loads on next open)
+   → Clean compute: no drink masks applied
+   → params saved to psd/psd_params.json
    → Each PKL record has {"params": {...}} embedded for provenance
 
 2. Build Final PKL → psds_final.pkl  (one entry per animal from their ok combo)
 
 3. PSD Visualizer (7. PSD Visualizer)
-   → Opens psds_final_drink.pkl if present, else psds_final.pkl
-   → Flag animals: [✓ OK] or [Drink Mask]
+   → Auto-selects psds_final_drink.pkl if present, else psds_final.pkl
+   → Bold "Reviewing: {filename}" label shown above plot
+   → Flag buttons (✓ OK / Drink Mask) only active for final PKLs — hidden for intermediate per-combo files
    → "Drink Mask" sets psd_status = "needs_drink_mask" in manifest
 
-4. Drink Mask page (8. Drink Mask)  (sidebar badge shows count)
-   → Loads psd/psd_params.json as read-only (cannot change params here)
-   → Shows drink_masks/ folder status + .npy count
+4. Home page — Needs Attention zone
+   → Lavender card per flagged animal: "→ Drink Mask page" button
+
+5. Drink Mask page (8. Drink Mask)  (sidebar badge shows count)
+   → Loads psd/psd_params.json as read-only
    → Table: animals flagged needs_drink_mask + mask file presence (✓/✗)
    → "Apply Drink Masks (N ready)" — gated on psd_params.json + .npy present
      a. Calls rerun_with_drink_masks: validates source_combo vs psds_final.pkl
@@ -220,7 +203,7 @@ mismatched counts and raised. Fixed by filtering all three path lists to `animal
      c. Regenerates psds_final_drink.pkl = psds_final.pkl base + psds_drink.pkl
    → manifest: psd_status = "drink_mask_applied"
 
-5. PSD Visualizer
+6. PSD Visualizer
    → Re-open to review psds_final_drink.pkl
 ```
 
@@ -234,24 +217,20 @@ mismatched counts and raised. Fixed by filtering all three path lists to `animal
 - `source_combo` set, CSV on disk → ready for Sleep QC review → blue card / Sleep QC badge
 
 ### Re-flagging `needs_rerun` resets the target run
-`flag_sleep_qc("needs_rerun", rerun_combo=X)` now unconditionally resets any existing
-run entry for X to `sleep_qc=None, source_combo=<original>`. Without this, re-cycling
-an animal through the rerun flow left the existing run in a non-None state that both
-queue methods skipped.
+`flag_sleep_qc("needs_rerun", rerun_combo=X)` unconditionally resets any existing
+run entry for X to `sleep_qc=None, source_combo=<original>`.
 
 ### Drink mask PKL architecture
 `psds_final.pkl` is immutable after `build_final_pkl`. Drink mask reruns accumulate
 in `psds_drink.pkl` (replace-per-animal) and the merge lives in `psds_final_drink.pkl`.
-The combo used for each animal is stored in `source_combo` on each record.
 
-### Combo validation in `rerun_with_drink_masks`
-Cross-checks `source_combo` in `psds_final.pkl` against the manifest ok combo before
-any computation. Fails fast with a per-animal diff. Prevents running drink mask rerun
-against the wrong spindle outputs.
+### `is_final` in PSD Visualizer
+`is_final = stem in {"psds_final", "psds_final_drink"}` — both are valid files for
+manifest flagging. Intermediate per-combo PKLs (`psds_LFC_RSC.pkl` etc.) get
+`manifest=None` → flag buttons hidden.
 
 ### One-ok invariant
 `flag_sleep_qc("ok")` cascade-rejects all siblings. Un-okaying restores them.
-Directly-rejected runs require explicit `reset_sleep_qc`.
 
 ### `_poll()` in Sleep QC — no cache eviction during review mode
 The 10 s background poll evicts rerun combo data. Evicting mid-review caused the second
@@ -267,19 +246,33 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 - **`any(iterdir())` check for download completion**: too loose; replaced with animal-specific glob.
 - **Stamping `source_combo` from `spindle_edfs/` scan**: caused item to disappear when EDF placed manually. Fixed by only stamping from `spindle_outputs/`.
 - **Review button interactive for `needs_rerun` status**: called `reset_sleep_qc` and erased `rerun_combo` silently. Fixed by disabling the button.
-- **Cache eviction in `_poll()` during review mode**: caused second animal's rerun line to disappear. Fixed by skipping eviction when `_review_mode` is True.
+- **Cache eviction in `_poll()` during review mode**: caused second animal's rerun line to disappear.
 - **`needs_rerun_pending()` excluding on `source_combo` alone**: caused vanishing items on cancelled upload. Fixed by gating on CSV presence.
-- **`rerun_with_drink_masks` overwriting `psds_<COMBO>.pkl` in place**: destructive, no accumulation across sessions. Replaced with `psds_drink.pkl` + `psds_final_drink.pkl` architecture.
-- **`rerun_with_drink_masks` globbing all state/drink paths without animal filter**: caused `re_match` count mismatch when running a subset. Fixed by filtering all path lists to `animal_ids_set`.
-- **Linter repeatedly strips `offset_path` from `BatchEstimateWorker`**: happens on every `/simplify` run. Each time: restore param in `__init__`, restore `self.offset_path = offset_path`, restore `offset_path=self.offset_path` in `batch_estimate` call.
-- **Legend stylesheet extra `}}`**: non-f-string `" border-radius: 3px; }}"` has two literal `}` — Qt can't parse it. Must be single `}`.
+- **`rerun_with_drink_masks` overwriting `psds_<COMBO>.pkl` in place**: destructive. Replaced with `psds_drink.pkl` + `psds_final_drink.pkl` architecture.
+- **`rerun_with_drink_masks` globbing all state/drink paths without animal filter**: caused count mismatch when running a subset. Fixed by filtering all path lists to `animal_ids_set`.
+- **Linter (`/simplify`) repeatedly strips `offset_path` from `BatchEstimateWorker`**: happens on every `/simplify` run. Restore: `offset_path=None` param in `__init__`, `self.offset_path = offset_path`, `offset_path=self.offset_path` in `batch_estimate` call in `psds.py`.
+- **Legend stylesheet extra `}}`**: non-f-string double `}` → Qt parse error. Must be single `}`.
+- **`psds_final_drink.pkl` treated as non-final**: `is_final = (stem == "psds_final")` missed it → manifest was None → flag buttons hidden. Fixed to `stem in {"psds_final", "psds_final_drink"}`.
 
 ---
 
-## Next Steps
-1. **End-to-end verification** of full rerun flow (see flow diagram above)
-2. **End-to-end verification** of drink mask flow (see flow diagram above)
-3. All UX improvement items from the plan are now complete — no remaining items
+## Next Steps (see TODO.md for full list)
+
+### P2 — remaining items
+1. **home: Evaluate removing double-click rerun combo from pipeline summary table** — the Needs Attention yellow card now handles this; the table double-click may be redundant
+2. **preprocess / spindle write: "Next →" navigation hint after completion** — same pattern as Rerun page; add `navigate_to` signal + green hint frame; wire in `main_window.py`
+3. **psd: Make compute → merge two-step flow clearer** — label "Step 1: Compute per-combo PSDs" / "Step 2: Build Final PKL" with separator in `psds.py`
+
+### P3 — needs more context
+- **spindle_upload: investigate "Upload, Wait & Download" issue** — need to reproduce and document the failure conditions
+- **spindle_upload: project names propagate on page shown** — `showEvent` may not trigger `_on_combo_changed`
+- **psd: SWD masks** — scientific decision on TS required before implementation
+
+### Additional suggestions (not yet started)
+- EDF format validation on import (`build_from_standard`)
+- Keyboard shortcuts in PSD Visualizer (O/D/←/→)
+- Manifest backup before destructive ops
+- Drink Mask page: highlight missing .npy files in orange
 
 ---
 
@@ -287,20 +280,21 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 - `src/ebb_viewer/pages/sleep_qc_visualizer.py` — Sleep QC page (group + animal + review modes)
 - `src/ebb_viewer/pages/rerun.py` — rerun queue page
 - `src/ebb_viewer/pages/spindle_upload.py` — batch upload page + `SleepyRatWorker`
-- `src/ebb_viewer/pages/home.py` — pipeline summary + Needs Attention zone
-- `src/ebb_viewer/pages/psds.py` — PSD Computation page (batch estimate, saves psd_params.json, params embedded in PKL)
-- `src/ebb_viewer/pages/drink_mask.py` — Drink Mask page (reads psd_params.json, applies drink masks, DrinkMaskRerunWorker)
+- `src/ebb_viewer/pages/home.py` — pipeline summary + Needs Attention zone (8 steps, drink mask cards)
+- `src/ebb_viewer/pages/psds.py` — PSD Computation page
+- `src/ebb_viewer/pages/drink_mask.py` — Drink Mask page
 - `src/ebb_viewer/pipeline/psd_params.py` — save/load helpers for psd/psd_params.json
-- `src/ebb_viewer/pages/psd_visualizer.py` — PSD Visualizer (file picker, auto-selects psds_final_drink.pkl)
-- `src/ebb_viewer/widgets/psd_graph_widget.py` — PSD grid + flag buttons + drink mask guidance banner
+- `src/ebb_viewer/pages/psd_visualizer.py` — PSD Visualizer (prominent file label, final-file gate for flag buttons)
+- `src/ebb_viewer/widgets/psd_graph_widget.py` — PSD grid + checkable flag buttons + drink mask banner
 - `src/ebb_viewer/pipeline/manifest.py` — `Manifest` / `ManifestEntry` / `RunEntry`
 - `src/ebb_viewer/main_window.py` — sidebar + page navigation + badge refresh + poll timer
 - `src/ebb/process/psd_compute.py` — `batch_estimate`, `rerun_with_drink_masks`, `build_final_pkl`
 - `src/ebb/io/sleepyrat.py` — `SleepyRatAPI` (low-level HTTP)
 - `tests/ebb_viewer/test_manifest.py` — 79 manifest tests
 - `tests/ebb/test_drink_mask_integration.py` — 30 drink mask integration tests
+- `tests/ebb_viewer/test_compute_pipeline_status.py` — 10 pipeline status tests (new this session)
 
 ## Environment
 - Conda env: `ebb-dev` (`source ~/miniconda3/etc/profile.d/conda.sh && conda activate ebb-dev`)
-- Run tests: `QT_QPA_PLATFORM=offscreen pytest` (99 passing)
+- Run tests: `QT_QPA_PLATFORM=offscreen pytest` (109 passing)
 - Branch: `refactor/clean-up`

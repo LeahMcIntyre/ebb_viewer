@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLineEdit, QPushButton, QGroupBox, QMessageBox,
     QListWidget, QPlainTextEdit, QApplication, QInputDialog,
-    QLabel, QComboBox, QSizePolicy
+    QLabel, QComboBox, QSizePolicy, QFrame
 )
 
 from ebb.io.sleepyrat import SleepyRatAPI
@@ -30,6 +30,8 @@ class SpindleUploadPage(QWidget):
     - Output folder is fixed to spindle_outputs/<same_name>.
     - Remote folder name defaults to that same combo name (editable).
     """
+
+    navigate_to = pyqtSignal(str)
 
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
@@ -171,6 +173,22 @@ class SpindleUploadPage(QWidget):
         self.log_box.setMaximumBlockCount(500)
         self.log_box.setPlaceholderText("Status messages will appear here...")
         root.addWidget(self.log_box)
+
+        # Post-download hint (hidden until a download succeeds)
+        self._hint_frame = QFrame()
+        self._hint_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        self._hint_frame.setStyleSheet(
+            "QFrame { background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; }"
+        )
+        hint_layout = QHBoxLayout(self._hint_frame)
+        hint_layout.setContentsMargins(10, 6, 10, 6)
+        hint_lbl = QLabel("✓ Done. Labels downloaded — ready for Sleep QC.")
+        hint_layout.addWidget(hint_lbl, 1)
+        btn_go_qc = QPushButton("→ Sleep QC")
+        btn_go_qc.clicked.connect(lambda: self.navigate_to.emit("sleep_qc"))
+        hint_layout.addWidget(btn_go_qc)
+        self._hint_frame.setVisible(False)
+        root.addWidget(self._hint_frame)
 
     # ------------- Wiring -------------
     def _wire(self):
@@ -423,6 +441,7 @@ class SpindleUploadPage(QWidget):
             self._pending_save = None
         Manifest.build_from_standard(self.project_root)
         self._update_run_enabled()
+        self._hint_frame.setVisible(True)
 
     def _on_sr_error(self, msg: str):
         self._log(f"ERROR: {msg}")

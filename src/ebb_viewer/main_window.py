@@ -122,8 +122,9 @@ class MainWindow(QMainWindow):
         self.psd_page.manifest_changed.connect(self._refresh_badges)
         self.drink_mask_page.manifest_changed.connect(self._refresh_badges)
 
-        # Navigation hints (home page + rerun page both emit navigate_to)
+        # Navigation hints — pages that emit navigate_to for post-action routing
         _page_rows = {
+            "home":           0,
             "preprocess":     2,
             "spindle_write":  3,
             "spindle_upload": 4,
@@ -137,6 +138,18 @@ class MainWindow(QMainWindow):
             lambda name: self.pagelist.setCurrentRow(_page_rows[name])
         )
         self.rerun_page.navigate_to.connect(
+            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
+        )
+        self.preprocess_page.navigate_to.connect(
+            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
+        )
+        self.spindle_write_page.navigate_to.connect(
+            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
+        )
+        self.spindle_upload_page.navigate_to.connect(
+            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
+        )
+        self.sleep_combine_page.navigate_to.connect(
             lambda name: self.pagelist.setCurrentRow(_page_rows[name])
         )
 

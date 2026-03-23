@@ -135,14 +135,16 @@ class PSDGridPage(QWidget):
         tb.addSeparator()
         self._btn_flag_ok = QPushButton("✓ OK")
         self._btn_flag_ok.setFixedHeight(26)
+        self._btn_flag_ok.setCheckable(True)
         self._btn_flag_ok.setToolTip("Mark current animal's PSD as OK in manifest")
-        self._btn_flag_ok.clicked.connect(self._flag_psd_ok)
+        self._btn_flag_ok.clicked.connect(lambda checked: self._flag_psd_ok())
         tb.addWidget(self._btn_flag_ok)
 
         self._btn_flag_drink = QPushButton("Drink Mask")
         self._btn_flag_drink.setFixedHeight(26)
+        self._btn_flag_drink.setCheckable(True)
         self._btn_flag_drink.setToolTip("Flag current animal as needing a drink mask PSD rerun")
-        self._btn_flag_drink.clicked.connect(self._flag_drink_mask)
+        self._btn_flag_drink.clicked.connect(lambda checked: self._flag_drink_mask())
         tb.addWidget(self._btn_flag_drink)
 
         self._status_label = QLabel("")
@@ -394,19 +396,28 @@ class PSDGridPage(QWidget):
         combo = self._resolve_combo(animal_id)
         run = self.manifest.get_run(animal_id, combo) if (animal_id and combo) else None
         status = run.psd_status if run else None
+
         if status == "ok":
+            self._btn_flag_ok.setChecked(True)
+            self._btn_flag_drink.setChecked(False)
             self._status_label.setText("✓ OK")
             self._status_label.setStyleSheet("color: green; font-weight: bold;")
             self._guidance_label.setVisible(False)
         elif status == "needs_drink_mask":
+            self._btn_flag_ok.setChecked(False)
+            self._btn_flag_drink.setChecked(True)
             self._status_label.setText("⚠ Drink Mask")
             self._status_label.setStyleSheet("color: orange; font-weight: bold;")
             self._guidance_label.setVisible(self.manifest is not None)
         elif animal_id in self._pending_animal_ids():
+            self._btn_flag_ok.setChecked(False)
+            self._btn_flag_drink.setChecked(False)
             self._status_label.setText("pending")
             self._status_label.setStyleSheet("color: gray;")
             self._guidance_label.setVisible(False)
         else:
+            self._btn_flag_ok.setChecked(False)
+            self._btn_flag_drink.setChecked(False)
             self._status_label.setText("")
             self._status_label.setStyleSheet("")
             self._guidance_label.setVisible(False)

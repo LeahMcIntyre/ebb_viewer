@@ -38,6 +38,7 @@ class SleepQCGridPage(QWidget):
     """
 
     manifest_changed = pyqtSignal()
+    navigate_to = pyqtSignal(str)
 
     STATE_ORDER = ["w", "n", "r"]
     STATE_DEF = {"w": "Wake", "n": "NREM", "r": "REM"}
@@ -69,6 +70,7 @@ class SleepQCGridPage(QWidget):
         self._current_page: int = 0
         self._mode: str = "group"
         self._review_mode: bool = False
+        self._nav_hint_dest: str = ""
 
         self._plots: dict[tuple[str, str], pg.PlotItem] = {}
 
@@ -117,6 +119,46 @@ class SleepQCGridPage(QWidget):
             self.btn_reruns_ready.setVisible(True)
         else:
             self.btn_reruns_ready.setVisible(False)
+        self._update_nav_hint()
+
+    def _update_nav_hint(self) -> None:
+        if self._review_mode:
+            self._hint_frame.setVisible(False)
+            return
+        entries = [e for e in self._manifest if e.runs]
+        if not entries:
+            self._hint_frame.setVisible(False)
+            return
+        has_review = any(
+            run.sleep_qc == "needs_review"
+            for e in entries
+            for run in e.runs.values()
+        )
+        all_have_ok = all(
+            any(run.sleep_qc == "ok" for run in e.runs.values())
+            for e in entries
+        )
+        if has_review:
+            self._hint_lbl.setText("✓ All reviewed. Some animals flagged for EDF review.")
+            self._hint_btn.setText("→ Home (review flagged EDFs)")
+            self._nav_hint_dest = "home"
+            self._hint_frame.setStyleSheet(
+                "QFrame { background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; }"
+            )
+            self._hint_frame.setVisible(True)
+        elif all_have_ok:
+            self._hint_lbl.setText("✓ All reviewed — ready for PSD computation.")
+            self._hint_btn.setText("→ PSD Computation")
+            self._nav_hint_dest = "psd_compute"
+            self._hint_frame.setStyleSheet(
+                "QFrame { background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; }"
+            )
+            self._hint_frame.setVisible(True)
+        else:
+            self._hint_frame.setVisible(False)
+
+    def _go_nav_hint(self) -> None:
+        self.navigate_to.emit(self._nav_hint_dest)
 
     # ------------------------------------------------------------------
     # UI
@@ -245,6 +287,21 @@ class SleepQCGridPage(QWidget):
         legend_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         layout.addWidget(legend_scroll)
 
+        # Navigation hint (hidden until all animals in combo are reviewed)
+        self._hint_frame = QFrame()
+        self._hint_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        self._hint_frame.setStyleSheet(
+            "QFrame { background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; }"
+        )
+        hint_layout = QHBoxLayout(self._hint_frame)
+        hint_layout.setContentsMargins(10, 6, 10, 6)
+        self._hint_lbl = QLabel()
+        hint_layout.addWidget(self._hint_lbl, 1)
+        self._hint_btn = QPushButton()
+        hint_layout.addWidget(self._hint_btn)
+        self._hint_frame.setVisible(False)
+        layout.addWidget(self._hint_frame)
+
     def _wire(self) -> None:
         self.cmb_combo.currentTextChanged.connect(self._on_combo_changed)
         self.btn_group.clicked.connect(lambda: self._set_mode("group"))
@@ -256,6 +313,7 @@ class SleepQCGridPage(QWidget):
         self.spin_page.valueChanged.connect(self._on_page_spin_changed)
 
         self.btn_reruns_ready.toggled.connect(self._on_review_mode_toggled)
+        self._hint_btn.clicked.connect(self._go_nav_hint)
 
         self.cmb_animal.currentTextChanged.connect(self._on_animal_changed)
         self.btn_prev_animal.clicked.connect(self._on_prev_animal)

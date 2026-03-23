@@ -2,7 +2,7 @@ from pathlib import Path
 from typing import Optional
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QGroupBox, QFormLayout, QHBoxLayout,
+    QWidget, QVBoxLayout, QGroupBox, QFormLayout, QHBoxLayout, QLabel,
     QPushButton, QComboBox, QSizePolicy, QFileDialog
 )
 from ebb_viewer.data_stores.psd_store import PSDStore
@@ -42,6 +42,11 @@ class PSDVisualizer(QWidget):
         row.addWidget(self.btn_plot)
         top_form.addRow("PSD File:", row)
         self.root.addWidget(folder_gb, alignment=Qt.AlignmentFlag.AlignTop)
+
+        self._reviewing_lbl = QLabel()
+        self._reviewing_lbl.setStyleSheet("font-weight: bold; font-size: 13px; padding: 2px 0;")
+        self._reviewing_lbl.setVisible(False)
+        self.root.addWidget(self._reviewing_lbl)
 
     def _wire(self):
         self.btn_refresh.clicked.connect(self._refresh_pkl_list)
@@ -113,14 +118,19 @@ class PSDVisualizer(QWidget):
         if not psd_file or not Path(psd_file).is_file():
             return
 
-        channel_names = ["LFC", "RSC", "LSC"]
-        stem = Path(psd_file).stem  # e.g. "psds_LFC_RSC" or "psds_final"
-        if stem == "psds_final":
-            run_channels = None
-        else:
-            run_channels = stem[len("psds_"):] if stem.startswith("psds_") else stem
+        _FINAL_STEMS = frozenset({"psds_final", "psds_final_drink"})
 
-        is_final = (stem == "psds_final")
+        channel_names = ["LFC", "RSC", "LSC"]
+        stem = Path(psd_file).stem  # e.g. "psds_LFC_RSC", "psds_final", "psds_final_drink"
+        is_final = stem in _FINAL_STEMS
+        run_channels = None if is_final else (
+            stem[len("psds_"):] if stem.startswith("psds_") else stem
+        )
+
+        fname = Path(psd_file).name
+        self._reviewing_lbl.setText(f"Reviewing: {fname}")
+        self._reviewing_lbl.setVisible(True)
+
         self.psd_store = PSDStore(psd_file, channel_names=channel_names)
         self.psd_page = PSDGridPage(
             self,
