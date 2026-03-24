@@ -105,7 +105,7 @@ def load_peaks_mat(mat_path) -> dict[int, "np.ndarray"]:
 
     mat = scipy.io.loadmat(str(mat_path))
     peak_times = mat["peak_times"]
-    return {i: peak_times[0, i].flatten().astype(float) for i in range(3)}
+    return {i: peak_times[0, i].flatten().astype(float) for i in range(1)}
 
 
 def load_annotations(csv_path) -> list[tuple[float, str]]:
