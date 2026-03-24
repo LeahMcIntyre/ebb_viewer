@@ -279,7 +279,7 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 ### Remaining P2 items (from TODO.md)
 1. **home: Remove editable channel combo from pipeline summary table** — the yellow card in Needs Attention already handles rerun combo selection; the double-click table edit is redundant
 2. **preprocess / spindle write: Add "Next →" navigation hint when done** — consistent with Rerun page; use `navigate_to` signal; also add per-file log output that currently goes to console
-3. **psd: Two-step flow label update in TODO** — DONE this session; remove from TODO.md
+3. ~~**psd: Two-step flow label update**~~ — DONE
 
 ### P3 items (from TODO.md)
 - **spindle_upload: "Upload, Wait & Download" button issue** — needs reproduction steps before fixing
@@ -293,18 +293,20 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 - Manifest backup before destructive ops
 - Drink Mask page: highlight missing .npy files in orange
 
-### High-risk testing gaps (from PIPELINE_AUDIT.md — not yet addressed)
-1. `build_final_pkl` with a missing per-combo PKL — silent skip with stderr-only warning
-2. `add_run` on a run that already has `sleep_qc=="ok"` — may reset it to None
-3. `pending_psd_review()` returns `[]` when `psds_channel_merged.pkl` is deleted — finalize incorrectly enabled
-4. `DrinkMaskPage._on_done` partial failure — one animal fails, manifest still saved *(error now surfaced; test still missing)*
-5. Dead-zone: `needs_rerun` + CSV present + `source_combo=None` — animal invisible to all queues
+### Testing gaps status (from PIPELINE_AUDIT.md)
 
-### Medium testing gaps (from PIPELINE_AUDIT.md)
-6. Step 7 "finalized" after re-flagging — `final_pkl.exists()` still true even when stale
-7. `batch_estimate` with no matching EDFs produces empty PKL silently
-8. `needs_rerun_pending()` when `rerun_run.sleep_qc == "rejected"` — home step 5 label state
-9. `flag_sleep_qc("ok")` on a combo with `psd_status` set — verify sibling `psd_status` on restore
+**Done:**
+- ~~Gap 1~~ `build_final_pkl` missing per-combo PKL — test fixed (was using same combo; updated to two combos so warning fires correctly)
+- ~~Gap 2~~ `add_run` resetting ok `sleep_qc` — fix + test added
+- ~~Gap 5~~ Dead-zone `needs_rerun` + CSV + no `source_combo` — test added
+- ~~Gap 7~~ `batch_estimate` with no matching EDFs — test added
+- ~~Gap 8~~ `needs_rerun_pending()` when `rerun_run.sleep_qc == "rejected"` — test added
+- ~~Gap 9~~ `flag_sleep_qc("ok")` sibling `psd_status` clear/preserve — tests added
+
+**Still open:**
+- **Gap 3** — `pending_psd_review()` returns `[]` when `psds_channel_merged.pkl` is deleted → Finalize step incorrectly shows "attention". Needs test + possible fix.
+- **Gap 4** — `DrinkMaskPage._on_done` partial failure: error is now surfaced in UI, but no automated test exists (widget-level, harder to test).
+- **Gap 6** — Step 7 shows "done" even after re-flagging an animal (`final_pkl.exists()` still true). Needs a `test_compute_pipeline_status.py` test.
 
 ---
 

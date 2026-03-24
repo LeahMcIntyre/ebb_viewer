@@ -442,9 +442,12 @@ def test_batch_worker_saves_psd_params_json(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_build_final_pkl_warns_and_skips_when_combo_pkl_missing(tmp_path):
-    """Gap 1: build_final_pkl emits a warning and silently skips an animal whose
-    per-combo PKL doesn't exist. The merged PKL is still written but that animal
-    is absent from it.
+    """Gap 1: build_final_pkl emits a warning and silently skips animals whose
+    combo PKL doesn't exist. The merged PKL is still written containing only
+    animals whose combo PKL is present.
+
+    build_final_pkl groups animals by combo, then loads each combo's PKL.
+    The warning fires when the PKL for a combo is entirely absent on disk.
     """
     import warnings
     import pickle
@@ -453,6 +456,7 @@ def test_build_final_pkl_warns_and_skips_when_combo_pkl_missing(tmp_path):
     psd_dir = tmp_path / "psd"
     psd_dir.mkdir()
 
+    # AM001 uses LFC_RSC (PKL will be present); AM002 uses RSC_LSC (PKL absent)
     m = Manifest(tmp_path)
     m._entries["AM001"] = ManifestEntry(
         animal_id="AM001",
@@ -462,29 +466,29 @@ def test_build_final_pkl_warns_and_skips_when_combo_pkl_missing(tmp_path):
     m._entries["AM002"] = ManifestEntry(
         animal_id="AM002",
         preprocessed_edf="standard/AM002_PREPROCESSED.edf",
-        runs={"LFC_RSC": RunEntry(sleep_qc="ok")},
+        runs={"RSC_LSC": RunEntry(sleep_qc="ok")},
     )
     m.save()
 
-    # Only create PKL for AM002; AM001's PKL is missing
-    am002_record = _make_psd_record("AM002", combo="LFC_RSC")
-    _write_pkl(psd_dir / "psds_LFC_RSC.pkl", [am002_record])
+    # Only create PKL for LFC_RSC; RSC_LSC PKL is intentionally absent
+    am001_record = _make_psd_record("AM001", combo="LFC_RSC")
+    _write_pkl(psd_dir / "psds_LFC_RSC.pkl", [am001_record])
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         from ebb.process.psd_compute import build_final_pkl
         out = build_final_pkl(tmp_path, m)
 
-    # Warning emitted for missing PKL
+    # Warning emitted for the missing RSC_LSC PKL
     assert any("PKL not found" in str(warning.message) for warning in w), \
         "Expected a warning about the missing per-combo PKL"
 
-    # Merged PKL written but AM001 absent
+    # Merged PKL written; AM001 present, AM002 absent (its combo PKL was missing)
     with open(out, "rb") as f:
         records = pickle.load(f)
     animal_ids = {Path(r["path"]).stem.split("_")[0] for r in records}
-    assert "AM002" in animal_ids
-    assert "AM001" not in animal_ids
+    assert "AM001" in animal_ids
+    assert "AM002" not in animal_ids
 
 
 def test_batch_estimate_writes_empty_pkl_when_no_matching_edfs(tmp_path):

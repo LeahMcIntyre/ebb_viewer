@@ -9,7 +9,8 @@ The rerun combo is already settable from the yellow card in Needs Attention. A s
 Consistent with the Rerun page pattern. After preprocessing: `"✓ Done. → Go to Spindle Write"`. After spindle write: `"✓ Done. → Go to Spindle Upload"`. Use `navigate_to` signal. Add logs with the outputs that are currently being printed to console. 
 
 ### psd: Make compute → merge two-step flow clearer in UI
-The "compute per-combo PSDs" and "Build Final PKL" steps are logically distinct but visually run together. Label them as Step 1 / Step 2 with a separator, and show which combos will be included in the merge.
+~~The "compute per-combo PSDs" and "Build Final PKL" steps are logically distinct but visually run together. Label them as Step 1 / Step 2 with a separator, and show which combos will be included in the merge.~~
+**DONE** — Step 1 / Step 2 layout with arrow, dynamic hint frame, and renamed button implemented.
 
 ---
 
