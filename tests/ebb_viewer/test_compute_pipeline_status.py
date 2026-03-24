@@ -107,11 +107,11 @@ def test_step6_active_when_review_animals_are_rejected(tmp_path):
 
 
 def test_step6_done_when_final_pkl_exists(tmp_path):
-    """Step 6 is 'done' when psds_final.pkl exists regardless of review state."""
+    """Step 6 is 'done' when psds_channel_merged.pkl exists regardless of review state."""
     _setup_filesystem(tmp_path, combos=["LFC_RSC"])
     psd_dir = tmp_path / "psd"
     psd_dir.mkdir()
-    (psd_dir / "psds_final.pkl").touch()
+    (psd_dir / "psds_channel_merged.pkl").touch()
     (psd_dir / "psds_LFC_RSC.pkl").touch()
     m = _make_manifest(tmp_path, {
         "A001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
@@ -126,18 +126,18 @@ def test_step6_done_when_final_pkl_exists(tmp_path):
 # ---------------------------------------------------------------------------
 
 def _setup_with_final_pkl(tmp_path: Path, combos: list[str]) -> Path:
-    """Set up filesystem + return psd_dir with psds_final.pkl created."""
+    """Set up filesystem + return psd_dir with psds_channel_merged.pkl created."""
     _setup_filesystem(tmp_path, combos=combos)
     psd_dir = tmp_path / "psd"
     psd_dir.mkdir()
-    (psd_dir / "psds_final.pkl").touch()
+    (psd_dir / "psds_channel_merged.pkl").touch()
     for combo in combos:
         (psd_dir / f"psds_{combo}.pkl").touch()
     return psd_dir
 
 
 def test_step8_blocked_when_no_final_pkl(tmp_path):
-    """Step 8 is 'blocked' until psds_final.pkl exists."""
+    """Step 8 is 'blocked' until psds_channel_merged.pkl exists."""
     _setup_filesystem(tmp_path, combos=["LFC_RSC"])
     m = _make_manifest(tmp_path, {
         "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
@@ -181,3 +181,60 @@ def test_step8_done_none_needed_when_all_ok(tmp_path):
     s8 = statuses[7]
     assert s8.kind == "done"
     assert "no drink masks needed" in s8.description.lower()
+
+
+# ---------------------------------------------------------------------------
+# Step 9: Finalize gate
+# ---------------------------------------------------------------------------
+
+def test_step9_blocked_when_no_merged_pkl(tmp_path):
+    """Step 9 is 'blocked' when psds_channel_merged.pkl doesn't exist."""
+    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
+    m = _make_manifest(tmp_path, {
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
+    })
+    statuses = compute_pipeline_status(tmp_path, m)
+    assert statuses[8].kind == "blocked"
+
+
+def test_step9_blocked_when_psd_review_pending(tmp_path):
+    """Step 9 is 'blocked' when some PSDs are still pending review."""
+    _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
+    m = _make_manifest(tmp_path, {
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status=None)},
+    })
+    statuses = compute_pipeline_status(tmp_path, m)
+    assert statuses[8].kind == "blocked"
+
+
+def test_step9_blocked_when_drink_mask_pending(tmp_path):
+    """Step 9 is 'blocked' when animals still need drink mask."""
+    _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
+    m = _make_manifest(tmp_path, {
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
+    })
+    statuses = compute_pipeline_status(tmp_path, m)
+    assert statuses[8].kind == "blocked"
+
+
+def test_step9_attention_when_all_reviewed_not_finalized(tmp_path):
+    """Step 9 is 'attention' when all PSDs are reviewed but psds_final.pkl not yet written."""
+    _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
+    m = _make_manifest(tmp_path, {
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")},
+    })
+    statuses = compute_pipeline_status(tmp_path, m)
+    s9 = statuses[8]
+    assert s9.kind == "attention"
+    assert "finalize" in s9.description.lower()
+
+
+def test_step9_done_when_final_pkl_exists(tmp_path):
+    """Step 9 is 'done' when psds_final.pkl exists."""
+    psd_dir = _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
+    (psd_dir / "psds_final.pkl").touch()
+    m = _make_manifest(tmp_path, {
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")},
+    })
+    statuses = compute_pipeline_status(tmp_path, m)
+    assert statuses[8].kind == "done"

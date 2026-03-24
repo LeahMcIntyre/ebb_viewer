@@ -1,17 +1,21 @@
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import Qt, pyqtSignal
+import time
+
+from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QFormLayout, QSpinBox, QVBoxLayout, QPushButton,
-    QMessageBox, QLabel, QLineEdit, QGroupBox, QSizePolicy, QHBoxLayout, QFrame
+    QMessageBox, QLabel, QLineEdit, QGroupBox, QSizePolicy, QHBoxLayout, QFrame,
+    QPlainTextEdit, QApplication
 )
 from PyQt6.QtGui import QFont
 from openseize.file_io import edf as edf_io
 
 from ebb_viewer.widgets.trim_to_widget import TrimToWidget
+from ebb_viewer.widgets.worker_helpers import launch_worker
 from ebb_viewer.pipeline.manifest import Manifest
-from ebb.preprocess.edf import batch, standard
+from ebb.preprocess.edf import standard
 
 
 def _fmt_hrs(hours: float) -> str:
@@ -123,6 +127,13 @@ class PreprocessPage(QWidget):
         self.btn_run = QPushButton("Run preprocessing")
         root.addWidget(self.btn_run)
 
+        # ----- Log -----
+        self.log_box = QPlainTextEdit()
+        self.log_box.setReadOnly(True)
+        self.log_box.setMaximumBlockCount(300)
+        self.log_box.setPlaceholderText("Status messages will appear here...")
+        root.addWidget(self.log_box)
+
         # Post-run hint (hidden until a run succeeds)
         self._hint_frame = QFrame()
         self._hint_frame.setFrameShape(QFrame.Shape.StyledPanel)
@@ -131,7 +142,7 @@ class PreprocessPage(QWidget):
         )
         hint_layout = QHBoxLayout(self._hint_frame)
         hint_layout.setContentsMargins(10, 6, 10, 6)
-        hint_lbl = QLabel("✓ Done. Preprocessed EDFs written to standard/.")
+        hint_lbl = QLabel("✓ Done. Preprocessed EDFs written to standard.")
         hint_layout.addWidget(hint_lbl, 1)
         btn_go_spindle = QPushButton("→ Spindle Write")
         btn_go_spindle.clicked.connect(lambda: self.navigate_to.emit("spindle_write"))
@@ -219,6 +230,15 @@ class PreprocessPage(QWidget):
         else:
             self._scan_label.setStyleSheet(self._STYLE_NORMAL)
 
+    def _log(self, msg: str):
+        self.log_box.appendPlainText(msg)
+        QApplication.processEvents()
+
+    def _on_preprocess_done(self):
+        Manifest.build_from_standard(self.project_root)
+        self.btn_run.setEnabled(True)
+        self._hint_frame.setVisible(True)
+
     # Run Preprocessing
     def _run_clicked(self):
 
@@ -255,15 +275,70 @@ class PreprocessPage(QWidget):
             "trim_to":    list(self.trim_to.value()),
         }
 
-        try:
-            batch(
-                preprocessor=standard,
-                dirpath=self.project_root,
-                target=target_dir,
-                **params,
+        existing = list(target_dir.glob("*_PREPROCESSED.edf")) if target_dir.is_dir() else []
+        if existing:
+            btn = QMessageBox.question(
+                self,
+                "Files Already Exist",
+                f"{len(existing)} preprocessed EDF(s) already exist in:\n{target_dir}\n\n"
+                "Re-running will overwrite them. Continue?",
             )
-            Manifest.build_from_standard(self.project_root)
-            self._hint_frame.setVisible(True)
+            if btn != QMessageBox.StandardButton.Yes:
+                return
 
+        self.btn_run.setEnabled(False)
+        self._hint_frame.setVisible(False)
+
+        self._preprocess_thread = QThread(self)
+        self._preprocess_worker = _PreprocessWorker(
+            project_root=self.project_root,
+            target_dir=target_dir,
+            params=params,
+        )
+        self._preprocess_worker.log.connect(self._log)
+        launch_worker(
+            self._preprocess_thread, self._preprocess_worker,
+            on_finished=self._on_preprocess_done,
+            on_error=lambda msg: (
+                self.btn_run.setEnabled(True),
+                QMessageBox.critical(self, "Preprocess failed", msg),
+            ),
+        )
+
+
+class _PreprocessWorker(QObject):
+    log = pyqtSignal(str)
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self, *, project_root, target_dir, params, parent=None):
+        super().__init__(parent)
+        self.project_root = project_root
+        self.target_dir = target_dir
+        self.params = params
+
+    def run(self):
+        try:
+            paths = list(self.project_root.glob("*.edf"))
+            if not paths:
+                self.log.emit("No EDF files found.")
+                self.finished.emit()
+                return
+            self.log.emit(f"Starting preprocessing on {len(paths)} file(s)…")
+            t0 = time.perf_counter()
+            ok = skipped = 0
+            for p in paths:
+                try:
+                    standard(p, savedir=self.target_dir, verbose=False, **self.params)
+                    self.log.emit(f"  ✓ {p.name}")
+                    ok += 1
+                except Exception as e:
+                    self.log.emit(f"  ✗ {p.name}: {e}")
+                    skipped += 1
+            elapsed = time.perf_counter() - t0
+            self.log.emit(
+                f"Done: {ok} written, {skipped} skipped — {elapsed:.2f}s"
+            )
+            self.finished.emit()
         except Exception as e:
-            QMessageBox.critical(self, "Preprocess failed", str(e))
+            self.error.emit(str(e))

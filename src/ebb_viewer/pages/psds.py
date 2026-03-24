@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget, QFormLayout, QSpinBox, QDoubleSpinBox, QVBoxLayout, QPushButton,
     QMessageBox, QLabel, QHBoxLayout, QGroupBox, QCheckBox, QGridLayout,
     QSizePolicy, QLineEdit, QApplication, QPlainTextEdit, QTableWidget,
-    QTableWidgetItem, QHeaderView, QFileDialog,
+    QTableWidgetItem, QHeaderView, QFileDialog, QFrame,
 )
 
 
@@ -25,6 +25,7 @@ CH_LABELS = ["LFC", "RSC", "LSC"]
 class PSDPage(QWidget):
 
     manifest_changed = pyqtSignal()
+    navigate_to = pyqtSignal(str)
 
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
@@ -184,18 +185,39 @@ class PSDPage(QWidget):
         self.gb_mask.setLayout(mask_form)
         root.addWidget(self.gb_mask)
 
-        # ----- Main Action Buttons -----
+        # ----- Main Action Buttons (Step 1 → Step 2) -----
         btn_row2 = QHBoxLayout()
+        btn_row2.setSpacing(8)
+
+        col1 = QVBoxLayout()
+        col1.setSpacing(2)
+        lbl_step1 = QLabel("Step 1")
+        lbl_step1.setStyleSheet("color: #888; font-size: 10px;")
         self.btn_psd = QPushButton("Compute PSDs")
         self.btn_psd.setEnabled(False)
-        btn_row2.addWidget(self.btn_psd)
+        col1.addWidget(lbl_step1)
+        col1.addWidget(self.btn_psd)
+        btn_row2.addLayout(col1)
 
-        self.btn_final = QPushButton("Build Final PKL")
+        arrow_lbl = QLabel("→")
+        arrow_lbl.setStyleSheet("color: #aaa; font-size: 16px;")
+        arrow_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        btn_row2.addWidget(arrow_lbl)
+
+        col2 = QVBoxLayout()
+        col2.setSpacing(2)
+        lbl_step2 = QLabel("Step 2")
+        lbl_step2.setStyleSheet("color: #888; font-size: 10px;")
+        self.btn_final = QPushButton("Build Channel Merged PKL")
         self.btn_final.setEnabled(False)
         self.btn_final.setToolTip(
-            "Consolidate one entry per animal (from their ok combo) into psds_final.pkl"
+            "Consolidate one entry per animal (from their ok combo) into psds_channel_merged.pkl"
         )
-        btn_row2.addWidget(self.btn_final)
+        col2.addWidget(lbl_step2)
+        col2.addWidget(self.btn_final)
+        btn_row2.addLayout(col2)
+
+        btn_row2.addStretch(1)
         root.addLayout(btn_row2)
 
         # ----- Log -----
@@ -204,6 +226,23 @@ class PSDPage(QWidget):
         self.log_box.setMaximumBlockCount(300)
         self.log_box.setPlaceholderText("Status messages will appear here...")
         root.addWidget(self.log_box)
+
+        # Hint frame — updated dynamically after each step
+        self._hint_frame = QFrame()
+        self._hint_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        self._hint_frame.setStyleSheet(
+            "QFrame { background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; }"
+        )
+        hint_layout = QHBoxLayout(self._hint_frame)
+        hint_layout.setContentsMargins(10, 6, 10, 6)
+        self._hint_lbl = QLabel()
+        hint_layout.addWidget(self._hint_lbl, 1)
+        self._hint_btn_viz = QPushButton("→ PSD Visualizer")
+        self._hint_btn_viz.clicked.connect(lambda: self.navigate_to.emit("psd_review"))
+        self._hint_btn_viz.setVisible(False)
+        hint_layout.addWidget(self._hint_btn_viz)
+        self._hint_frame.setVisible(False)
+        root.addWidget(self._hint_frame)
 
         # Styling
         self.folder_gb.setObjectName("folderBox")
@@ -376,8 +415,11 @@ class PSDPage(QWidget):
         try:
             manifest = Manifest.load(self.project_root)
             out = build_final_pkl(self.project_root, manifest)
-            self._log(f"Built final PKL: {out}")
+            self._log(f"Built channel merged PKL: {out}")
             self.manifest_changed.emit()
+            self._hint_lbl.setText("✓ Channel merged PKL built — ready for PSD review.")
+            self._hint_btn_viz.setVisible(True)
+            self._hint_frame.setVisible(True)
             self._refresh_combo_table()
         except Exception as e:
             self._log(f"ERROR building final PKL: {e}")
@@ -416,17 +458,29 @@ class PSDPage(QWidget):
         has_checked = bool(self._checked_combos())
         self.btn_psd.setEnabled(has_standard and has_checked)
 
+        # Build Channel Merged PKL is only ready when every animal with
+        # sleep_qc=="ok" has a per-combo PKL — prevents silent skips.
+        from ebb_viewer.pipeline.manifest import Manifest
         psd_dir = self.project_root / "psd"
-        has_pkl = (
-            psd_dir.is_dir()
-            and any(p for p in psd_dir.glob("psds_*.pkl") if p.stem != "psds_final")
+        manifest = Manifest.load(self.project_root)
+        ok_combos = [
+            combo
+            for entry in manifest
+            for combo, run in entry.runs.items()
+            if run.sleep_qc == "ok"
+        ]
+        all_pkls_present = bool(ok_combos) and all(
+            (psd_dir / f"psds_{combo}.pkl").exists() for combo in ok_combos
         )
-        self.btn_final.setEnabled(has_pkl)
+        self.btn_final.setEnabled(all_pkls_present)
 
     def _on_psd_done(self):
         self._computing = False
         self._log("PSD computation finished.")
         self._refresh_combo_table()
+        self._hint_lbl.setText("✓ PSDs computed — click 'Build Channel Merged PKL' to continue.")
+        self._hint_btn_viz.setVisible(False)
+        self._hint_frame.setVisible(True)
 
     def _on_psd_error(self, msg: str):
         self._computing = False

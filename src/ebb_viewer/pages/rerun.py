@@ -53,7 +53,6 @@ class RerunPage(QWidget):
         super().__init__(parent)
         self.project_root = Path(project_root)
         self._row_data: list[tuple[ManifestEntry, str]] = []
-        self._upload_combos: list[str] = []
         self._build_ui()
 
     # ------------------------------------------------------------------ UI
@@ -104,10 +103,6 @@ class RerunPage(QWidget):
         self.btn_select_all = QPushButton("Select All")
         self.btn_select_all.clicked.connect(self.table.selectAll)
         btn_row.addWidget(self.btn_select_all)
-        self.btn_upload = QPushButton("Upload Rerun…")
-        self.btn_upload.setEnabled(False)
-        self.btn_upload.clicked.connect(self._upload_rerun_clicked)
-        btn_row.addWidget(self.btn_upload)
         self.btn_run = QPushButton("Run Selected")
         self.btn_run.setStyleSheet("font-weight: bold;")
         self.btn_run.clicked.connect(self._run_selected)
@@ -191,23 +186,6 @@ class RerunPage(QWidget):
         self.table.resizeRowsToContents()
         self.btn_run.setEnabled(len(pairs) > 0)
 
-        # Compute upload_combos: rerun combos with EDFs written but no CSV yet
-        seen: set[str] = set()
-        upload_combos: list[str] = []
-        for entry, combo in manifest.needs_rerun():
-            rerun_combo = entry.runs[combo].rerun_combo
-            if not rerun_combo or rerun_combo in seen:
-                continue
-            seen.add(rerun_combo)
-            edf_dir = spindle_edf_dir(rerun_combo, self.project_root)
-            if not edf_dir.is_dir() or not any(edf_dir.glob("*.edf")):
-                continue
-            csv_dir = spindle_output_dir(rerun_combo, self.project_root)
-            if not any(csv_dir.glob("*.csv")):
-                upload_combos.append(rerun_combo)
-        self._upload_combos = upload_combos
-        self.btn_upload.setEnabled(bool(upload_combos))
-
         if not pairs:
             self.table.setRowCount(1)
             placeholder = make_cell("No files pending rerun.")
@@ -263,7 +241,7 @@ class RerunPage(QWidget):
                 target_dir = spindle_edf_dir(rerun_combo, self.project_root)
                 already_written = target_dir.is_dir() and any(target_dir.glob(f"{entry.animal_id}*.edf"))
                 if already_written:
-                    self._log("  Spindle EDF already exists, skipping preprocessing.")
+                    self._log("  EDF already written — skipping to upload.")
                 else:
                     spindle_preprocess(edf_path, savedir=target_dir, channels=channels)
                 manifest.add_run(entry.animal_id, rerun_combo, source_combo=combo)
@@ -288,7 +266,6 @@ class RerunPage(QWidget):
         if written_combos:
             self._refresh()
             self.manifest_changed.emit()
-            self._hint_frame.setVisible(True)
             self._offer_upload(written_combos, written_files)
 
     def _offer_upload(self, written_combos: set[tuple[str, str]],
@@ -330,45 +307,7 @@ class RerunPage(QWidget):
             )
             launch_worker(
                 self._sr_thread, self._sr_worker,
-                on_error=lambda msg: (
-                    self._log(f"ERROR: {msg}"),
-                    QMessageBox.critical(self, "SleepyRat Error", msg),
-                ),
-            )
-
-    def _upload_rerun_clicked(self) -> None:
-        """Re-offer SleepyRat upload for rerun combos that have EDFs but no CSV yet."""
-        for rerun_combo in self._upload_combos:
-            saved = sleepyrat_config.get_combo(self.project_root, rerun_combo)
-            project = saved["project"] if saved else ""
-            default_folder = f"{self.project_root.stem}_{rerun_combo}"
-
-            dlg = _UploadDialog(
-                self,
-                rerun_combo=rerun_combo,
-                project=project,
-                remote_folder=default_folder,
-            )
-            if dlg.exec() != QDialog.DialogCode.Accepted:
-                continue
-
-            project_name = dlg.project_edit.text().strip()
-            remote_folder = dlg.folder_edit.text().strip()
-            upload_dir = spindle_edf_dir(rerun_combo, self.project_root)
-            out_dir = spindle_output_dir(rerun_combo, self.project_root)
-
-            self._sr_thread = QThread(self)
-            self._sr_worker = SleepyRatWorker(
-                project_name, remote_folder, out_dir,
-                upload_dir=upload_dir,
-            )
-            self._sr_worker.log.connect(self._log)
-            self._sr_worker.finished.connect(
-                lambda p=project_name, f=remote_folder, rc=rerun_combo:
-                    sleepyrat_config.save_combo(self.project_root, rc, p, f)
-            )
-            launch_worker(
-                self._sr_thread, self._sr_worker,
+                on_finished=lambda: self._hint_frame.setVisible(True),
                 on_error=lambda msg: (
                     self._log(f"ERROR: {msg}"),
                     QMessageBox.critical(self, "SleepyRat Error", msg),

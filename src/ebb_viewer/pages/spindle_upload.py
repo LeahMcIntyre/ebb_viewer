@@ -153,14 +153,11 @@ class SpindleUploadPage(QWidget):
         form_layout.addRow("", folder_hint)
 
         btn_row = QHBoxLayout()
-        self.btn_upload_and_download = QPushButton("Upload, Wait & Download")
-        self.btn_download_only = QPushButton("Download Labels Only")
+        self.btn_upload_and_download = QPushButton("Process Spindle")
 
         self.btn_upload_and_download.setEnabled(False)
-        self.btn_download_only.setEnabled(False)
 
         btn_row.addWidget(self.btn_upload_and_download)
-        btn_row.addWidget(self.btn_download_only)
 
         form_layout.addRow(btn_row)
 
@@ -209,7 +206,6 @@ class SpindleUploadPage(QWidget):
         )
 
         self.btn_upload_and_download.clicked.connect(self._upload_and_download_clicked)
-        self.btn_download_only.clicked.connect(self._download_only_clicked)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -308,7 +304,6 @@ class SpindleUploadPage(QWidget):
         # Upload + download also needs a local upload_dir
         can_upload_and_download = can_download_only and has_upload_dir
 
-        self.btn_download_only.setEnabled(can_download_only)
         self.btn_upload_and_download.setEnabled(can_upload_and_download)
 
 
@@ -424,7 +419,6 @@ class SpindleUploadPage(QWidget):
 
     def _launch_worker(self, project, remote_folder, out_dir, *, upload_dir=None, save_combo: str | None = None):
         self.btn_upload_and_download.setEnabled(False)
-        self.btn_download_only.setEnabled(False)
         self._pending_save = (save_combo, project, remote_folder) if save_combo else None
 
         self._sr_thread = QThread(self)

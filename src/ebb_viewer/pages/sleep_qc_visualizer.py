@@ -89,6 +89,10 @@ class SleepQCGridPage(QWidget):
         if not self._review_mode:
             for _, combo in self._manifest.pending_rerun_review():
                 self._data_cache.pop(combo, None)
+        # Refresh the combo dropdown if new spindle_outputs directories have appeared
+        # (e.g. a download completed while this page was already visible).
+        if self._discover_combos() != self._available_combos:
+            self._refresh_combos()
         self._update_reruns_badge()
 
     def showEvent(self, event):
@@ -139,7 +143,7 @@ class SleepQCGridPage(QWidget):
             for e in entries
         )
         if has_review:
-            self._hint_lbl.setText("✓ All reviewed. Some animals flagged for EDF review.")
+            self._hint_lbl.setText("Check animals flagged for EDF review.")
             self._hint_btn.setText("→ Home (review flagged EDFs)")
             self._nav_hint_dest = "home"
             self._hint_frame.setStyleSheet(
@@ -836,6 +840,7 @@ class SleepQCGridPage(QWidget):
             btn_review.setCheckable(True)
             btn_review.setChecked(status in ("needs_review", "needs_rerun"))
             if status == "needs_rerun":
+                btn_review.setText("Rerun Queued")
                 btn_review.setEnabled(False)
                 btn_review.setToolTip(
                     f"Rerun queued as {run.rerun_combo or '?'}. "
@@ -916,6 +921,7 @@ class SleepQCGridPage(QWidget):
                 btn_review.setCheckable(True)
                 btn_review.setChecked(status in ("needs_review", "needs_rerun"))
                 if status == "needs_rerun":
+                    btn_review.setText("Rerun Queued")
                     btn_review.setEnabled(False)
                     btn_review.setToolTip(
                         f"Rerun queued as {run.rerun_combo or '?'}. "

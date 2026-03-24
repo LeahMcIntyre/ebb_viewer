@@ -4,8 +4,8 @@ Covers:
 - batch_estimate passes offset_path through to estimate_psd via kwargs
 - batch_estimate passes drink_dir through correctly
 - rerun_with_drink_masks validates source_combo, writes psds_drink.pkl,
-  regenerates psds_final_drink.pkl, never touches psds_final.pkl
-- rerun_with_drink_masks raises when psds_final.pkl missing or combo mismatches
+  regenerates psds_channel_merged_drink.pkl, never touches psds_channel_merged.pkl
+- rerun_with_drink_masks raises when psds_channel_merged.pkl missing or combo mismatches
 - rerun_with_drink_masks raises when no EDF files found for target animals
 - DrinkMaskRerunWorker.run calls rerun_with_drink_masks with correct args
 - BatchEstimateWorker.run passes drink_dir=None, embeds params in PKL, saves psd_params.json
@@ -158,13 +158,13 @@ def _setup_rerun_dirs(tmp_path, animals=("AM001", "AM002"), combo="LFC_RSC"):
 
 
 def test_rerun_writes_drink_pkl_and_final_drink_pkl(tmp_path):
-    """rerun_with_drink_masks writes psds_drink.pkl and psds_final_drink.pkl;
-    psds_final.pkl is not modified."""
+    """rerun_with_drink_masks writes psds_drink.pkl and psds_channel_merged_drink.pkl;
+    psds_channel_merged.pkl is not modified."""
     standard, spindle_out, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path)
 
-    # psds_final.pkl has both animals; AM002 is the target
+    # psds_channel_merged.pkl has both animals; AM002 is the target
     final_records = [_make_psd_record("AM001"), _make_psd_record("AM002")]
-    _write_pkl(psd_dir / "psds_final.pkl", final_records)
+    _write_pkl(psd_dir / "psds_channel_merged.pkl", final_records)
 
     new_record = _make_psd_record("AM002")
 
@@ -187,8 +187,8 @@ def test_rerun_writes_drink_pkl_and_final_drink_pkl(tmp_path):
             channels=[0, 1],
         )
 
-    # psds_final.pkl is untouched
-    with open(psd_dir / "psds_final.pkl", "rb") as f:
+    # psds_channel_merged.pkl is untouched
+    with open(psd_dir / "psds_channel_merged.pkl", "rb") as f:
         final = pickle.load(f)
     assert [Path(r["path"]).stem.split("_")[0] for r in final] == ["AM001", "AM002"]
 
@@ -197,7 +197,7 @@ def test_rerun_writes_drink_pkl_and_final_drink_pkl(tmp_path):
         drink = pickle.load(f)
     assert [Path(r["path"]).stem.split("_")[0] for r in drink] == ["AM002"]
 
-    # psds_final_drink.pkl has AM001 (from final) + AM002 (from drink)
+    # psds_channel_merged_drink.pkl has AM001 (from merged) + AM002 (from drink)
     with open(final_drink_pkl, "rb") as f:
         merged = pickle.load(f)
     ids = [Path(r["path"]).stem.split("_")[0] for r in merged]
@@ -211,7 +211,7 @@ def test_rerun_accumulates_drink_pkl_across_sessions(tmp_path):
         tmp_path, animals=("AM001", "AM002")
     )
     final_records = [_make_psd_record("AM001"), _make_psd_record("AM002")]
-    _write_pkl(psd_dir / "psds_final.pkl", final_records)
+    _write_pkl(psd_dir / "psds_channel_merged.pkl", final_records)
 
     new_record = _make_psd_record("AM001")
 
@@ -244,11 +244,11 @@ def test_rerun_accumulates_drink_pkl_across_sessions(tmp_path):
 
 
 def test_rerun_raises_when_final_pkl_missing(tmp_path):
-    """FileNotFoundError raised when psds_final.pkl does not exist."""
+    """FileNotFoundError raised when psds_channel_merged.pkl does not exist."""
     standard, _, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path)
 
     from ebb.process.psd_compute import rerun_with_drink_masks
-    with pytest.raises(FileNotFoundError, match="psds_final.pkl"):
+    with pytest.raises(FileNotFoundError, match="psds_channel_merged.pkl"):
         rerun_with_drink_masks(
             psd_dir=psd_dir,
             eeg_dir=standard,
@@ -259,10 +259,10 @@ def test_rerun_raises_when_final_pkl_missing(tmp_path):
 
 
 def test_rerun_raises_on_combo_mismatch(tmp_path):
-    """ValueError raised when source_combo in psds_final.pkl differs from manifest combo."""
+    """ValueError raised when source_combo in psds_channel_merged.pkl differs from manifest combo."""
     standard, _, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path)
-    # AM001 is stored under LFC_RSC in psds_final.pkl
-    _write_pkl(psd_dir / "psds_final.pkl", [_make_psd_record("AM001", combo="LFC_RSC")])
+    # AM001 is stored under LFC_RSC in psds_channel_merged.pkl
+    _write_pkl(psd_dir / "psds_channel_merged.pkl", [_make_psd_record("AM001", combo="LFC_RSC")])
 
     from ebb.process.psd_compute import rerun_with_drink_masks
     with pytest.raises(ValueError, match="Combo mismatch"):
@@ -280,7 +280,7 @@ def test_rerun_with_drink_masks_raises_when_no_edfs(tmp_path):
     _, _, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path, animals=("AM001",))
     standard = tmp_path / "standard_empty"
     standard.mkdir()  # no EDFs
-    _write_pkl(psd_dir / "psds_final.pkl", [_make_psd_record("AM001")])
+    _write_pkl(psd_dir / "psds_channel_merged.pkl", [_make_psd_record("AM001")])
 
     from ebb.process.psd_compute import rerun_with_drink_masks
     with pytest.raises(ValueError, match="No EDF files found"):
@@ -435,6 +435,88 @@ def test_batch_worker_saves_psd_params_json(tmp_path):
     assert params_file.exists()
     saved = json.loads(params_file.read_text())
     assert saved == params
+
+
+# ---------------------------------------------------------------------------
+# Testing gaps (PIPELINE_AUDIT.md)
+# ---------------------------------------------------------------------------
+
+def test_build_final_pkl_warns_and_skips_when_combo_pkl_missing(tmp_path):
+    """Gap 1: build_final_pkl emits a warning and silently skips an animal whose
+    per-combo PKL doesn't exist. The merged PKL is still written but that animal
+    is absent from it.
+    """
+    import warnings
+    import pickle
+    from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
+
+    psd_dir = tmp_path / "psd"
+    psd_dir.mkdir()
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="standard/AM001_PREPROCESSED.edf",
+        runs={"LFC_RSC": RunEntry(sleep_qc="ok")},
+    )
+    m._entries["AM002"] = ManifestEntry(
+        animal_id="AM002",
+        preprocessed_edf="standard/AM002_PREPROCESSED.edf",
+        runs={"LFC_RSC": RunEntry(sleep_qc="ok")},
+    )
+    m.save()
+
+    # Only create PKL for AM002; AM001's PKL is missing
+    am002_record = _make_psd_record("AM002", combo="LFC_RSC")
+    _write_pkl(psd_dir / "psds_LFC_RSC.pkl", [am002_record])
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        from ebb.process.psd_compute import build_final_pkl
+        out = build_final_pkl(tmp_path, m)
+
+    # Warning emitted for missing PKL
+    assert any("PKL not found" in str(warning.message) for warning in w), \
+        "Expected a warning about the missing per-combo PKL"
+
+    # Merged PKL written but AM001 absent
+    with open(out, "rb") as f:
+        records = pickle.load(f)
+    animal_ids = {Path(r["path"]).stem.split("_")[0] for r in records}
+    assert "AM002" in animal_ids
+    assert "AM001" not in animal_ids
+
+
+def test_batch_estimate_writes_empty_pkl_when_no_matching_edfs(tmp_path):
+    """Gap 7: When no EDF files match the state CSV animal IDs, batch_estimate
+    writes an empty list to savepath rather than silently not writing.
+    """
+    import pickle
+    from unittest.mock import patch
+
+    eeg_dir = tmp_path / "standard"
+    eeg_dir.mkdir()
+    state_dir = tmp_path / "spindle_outputs" / "LFC_RSC"
+    state_dir.mkdir(parents=True)
+    (state_dir / "AM001_states.csv").touch()
+    # No EDF files in eeg_dir — no matches
+
+    savepath = tmp_path / "psd" / "psds_LFC_RSC.pkl"
+    savepath.parent.mkdir(parents=True)
+
+    with patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
+         patch("ebb.process.psd_compute.match_paths", return_value=[]):
+        from ebb.process.psd_compute import batch_estimate
+        batch_estimate(
+            eeg_dir=eeg_dir,
+            state_dir=state_dir,
+            savepath=savepath,
+        )
+
+    assert savepath.exists(), "savepath should be written even with 0 results"
+    with open(savepath, "rb") as f:
+        result = pickle.load(f)
+    assert result == [], f"Expected empty list, got {result!r}"
 
 
 # ---------------------------------------------------------------------------

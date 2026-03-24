@@ -185,7 +185,7 @@ def test_build_final_pkl_basic(tmp_path):
     ])
 
     out = build_final_pkl(tmp_path, manifest)
-    assert out == psd_dir / "psds_final.pkl"
+    assert out == psd_dir / "psds_channel_merged.pkl"
     assert out.exists()
 
     with open(out, "rb") as f:

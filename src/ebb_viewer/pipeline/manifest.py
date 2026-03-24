@@ -7,7 +7,8 @@ Stages:
   4. Sleep QC gate    flag per run: ok | needs_review | needs_rerun
   5. PSD compute      standard/ + spindle_outputs/<COMBO>/ → psd/psds_<COMBO>.pkl
   6. PSD review gate  flag per run: ok | needs_drink_mask
-  7. Final merge      psd/psds_final.pkl (one entry per animal from their ok run)
+  7. Channel merge    psd/psds_channel_merged.pkl (one entry per animal from their ok run)
+  8. Finalize         psd/psds_final.pkl (copy of _drink or _merged; written only on Finalize)
 
 The manifest lives at project_root/manifest.json.  One entry per animal;
 animal ID = first '_'-separated token of the preprocessed EDF stem.
@@ -106,6 +107,10 @@ def psd_path(channels: str, project_root: Path) -> Path:
 
 def final_psd_path(project_root: Path) -> Path:
     return project_root / "psd" / "psds_final.pkl"
+
+
+def merged_psd_path(project_root: Path) -> Path:
+    return project_root / "psd" / "psds_channel_merged.pkl"
 
 
 def drink_mask_path(run: RunEntry, project_root: Path) -> Path | None:
@@ -366,10 +371,12 @@ class Manifest:
             self.save()
         elif source_combo is not None and entry.runs[channels].source_combo is None:
             # Run exists but isn't tagged as a rerun yet — stamp it so it shows
-            # up for review. Reset sleep_qc to None so it's not silently skipped.
+            # up for review. Reset sleep_qc to None so it's not silently skipped,
+            # but never reset an ok run (that would violate the one-ok invariant).
             run = entry.runs[channels]
             run.source_combo = source_combo
-            run.sleep_qc = None
+            if run.sleep_qc != "ok":
+                run.sleep_qc = None
             self.save()
         return entry.runs[channels]
 
@@ -456,10 +463,10 @@ class Manifest:
     def pending_psd_review(self) -> list[tuple[ManifestEntry, str]]:
         """Animals with ok sleep QC whose PSD hasn't been reviewed yet.
 
-        Gated on psds_final.pkl existing — returns empty list until the final
-        PKL has been built.
+        Gated on psds_channel_merged.pkl existing — returns empty list until the
+        channel merged PKL has been built.
         """
-        if not final_psd_path(self.project_root).exists():
+        if not merged_psd_path(self.project_root).exists():
             return []
         return self._filter_runs(lambda e, r: r.sleep_qc == "ok" and r.psd_status is None)
 
@@ -476,6 +483,12 @@ class Manifest:
             lambda e, r: r.sleep_qc == "ok"
             and r.psd_status == "needs_drink_mask"
             and (root / drink_mask_rel(e.animal_id)).is_file()
+        )
+
+    def pending_drink_verification(self) -> list[tuple[ManifestEntry, str]]:
+        """Runs with drink_mask_applied — ready for Pass 2 PSD verification."""
+        return self._filter_runs(
+            lambda e, r: r.sleep_qc == "ok" and r.psd_status == "drink_mask_applied"
         )
 
     # ------------------------------------------------------------------
@@ -549,6 +562,11 @@ class Manifest:
                     sibling.sleep_qc = sibling.prev_sleep_qc
                     sibling.prev_sleep_qc = None
                     sibling.rejected_by = None
+                    # PSD status is only meaningful when sleep_qc == "ok".
+                    # Clear stale PSD metadata if the sibling isn't restored to ok.
+                    if sibling.sleep_qc != "ok":
+                        sibling.psd_status = None
+                        sibling.drink_mask = None
             # PSD review progress is only valid while sleep_qc == "ok"
             run.psd_status = None
             run.drink_mask = None

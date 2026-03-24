@@ -1,15 +1,19 @@
+import time
+
 from PyQt6.QtWidgets import (
     QVBoxLayout, QGroupBox, QGridLayout, QLabel, QCheckBox,
     QPushButton, QHBoxLayout, QSpacerItem, QSizePolicy,
-    QMessageBox, QFormLayout, QLineEdit, QWidget, QFrame
+    QMessageBox, QFormLayout, QLineEdit, QWidget, QFrame,
+    QPlainTextEdit, QApplication,
 )
 from PyQt6.QtGui import QFont
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal
 from pathlib import Path
 from typing import Optional
 
-from ebb.preprocess.edf import batch, spindle
+from ebb.preprocess.edf import spindle
 from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.widgets.worker_helpers import launch_worker
 
 
 class SpindleWritePage(QWidget):
@@ -152,6 +156,12 @@ class SpindleWritePage(QWidget):
         self._hint_frame.setVisible(False)
         root.addWidget(self._hint_frame)
 
+        self.log_box = QPlainTextEdit()
+        self.log_box.setReadOnly(True)
+        self.log_box.setMaximumBlockCount(300)
+        self.log_box.setPlaceholderText("Status messages will appear here…")
+        root.addWidget(self.log_box)
+
         root.addStretch()
 
 
@@ -251,10 +261,19 @@ class SpindleWritePage(QWidget):
             self.target_name_edit.setToolTip(str(default_target))
             target_dir = default_target
 
-        # Ensure directories exist
+        # Reject if target already exists — contents would be silently mixed
+        if target_dir.exists():
+            QMessageBox.critical(
+                self,
+                "Folder Already Exists",
+                f"The spindle output folder already exists:\n{target_dir}\n\n"
+                "Delete it first or choose a different channel combination.",
+            )
+            return
+
         try:
             spindle_root.mkdir(parents=True, exist_ok=True)
-            target_dir.mkdir(parents=True, exist_ok=False)  # Don't overwrite existing
+            target_dir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             QMessageBox.critical(
                 self,
@@ -263,18 +282,33 @@ class SpindleWritePage(QWidget):
             )
             return
 
-        try:
-            # adjust call as appropriate for your spindle module
-            batch(preprocessor=spindle,
-                dirpath=self.standard_folder,
-                target=target_dir,
-                channels=channels
-            )
-            Manifest.build_from_standard(self.project_root)
-            self._hint_frame.setVisible(True)
+        self.btn_apply.setEnabled(False)
+        self._hint_frame.setVisible(False)
 
-        except Exception as e:
-            QMessageBox.critical(self, "Spindle Preprocess failed", str(e))
+        self._spindle_thread = QThread(self)
+        self._spindle_worker = _SpindleWriteWorker(
+            standard_folder=self.standard_folder,
+            target_dir=target_dir,
+            channels=channels,
+        )
+        self._spindle_worker.log.connect(self._log)
+        launch_worker(
+            self._spindle_thread, self._spindle_worker,
+            on_finished=self._on_spindle_done,
+            on_error=lambda msg: (
+                self._validate(),
+                QMessageBox.critical(self, "Spindle Preprocess failed", msg),
+            ),
+        )
+
+    def _log(self, msg: str):
+        self.log_box.appendPlainText(msg)
+        QApplication.processEvents()
+
+    def _on_spindle_done(self):
+        Manifest.build_from_standard(self.project_root)
+        self._validate()
+        self._hint_frame.setVisible(True)
 
     # ------------ Validation ------------
     def _validate(self):
@@ -358,3 +392,41 @@ class SpindleWritePage(QWidget):
         self.combo_name_edit.setToolTip(combo_name)
         self.target_name_edit.setText(str(target))
         self.target_name_edit.setToolTip(str(target))
+
+
+class _SpindleWriteWorker(QObject):
+    log = pyqtSignal(str)
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self, *, standard_folder, target_dir, channels, parent=None):
+        super().__init__(parent)
+        self.standard_folder = standard_folder
+        self.target_dir = target_dir
+        self.channels = channels
+
+    def run(self):
+        try:
+            paths = list(self.standard_folder.glob("*.edf"))
+            if not paths:
+                self.log.emit("No EDF files found in standard folder.")
+                self.finished.emit()
+                return
+            self.log.emit(f"Starting spindle preprocessing on {len(paths)} file(s)…")
+            t0 = time.perf_counter()
+            ok = skipped = 0
+            for p in paths:
+                try:
+                    spindle(p, savedir=self.target_dir, channels=self.channels, verbose=False)
+                    self.log.emit(f"  ✓ {p.name}")
+                    ok += 1
+                except Exception as e:
+                    self.log.emit(f"  ✗ {p.name}: {e}")
+                    skipped += 1
+            elapsed = time.perf_counter() - t0
+            self.log.emit(
+                f"Done: {ok} written, {skipped} skipped — {elapsed:.2f}s"
+            )
+            self.finished.emit()
+        except Exception as e:
+            self.error.emit(str(e))

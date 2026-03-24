@@ -591,8 +591,8 @@ def test_needs_rerun(tmp_path):
 
 
 def test_pending_psd_review(tmp_path):
-    # pending_psd_review is gated on psds_final.pkl existing
-    final_pkl = tmp_path / "psd" / "psds_final.pkl"
+    # pending_psd_review is gated on psds_channel_merged.pkl existing
+    final_pkl = tmp_path / "psd" / "psds_channel_merged.pkl"
     final_pkl.parent.mkdir(parents=True)
     final_pkl.touch()
 
@@ -612,7 +612,7 @@ def test_pending_psd_review_empty_without_final_pkl(tmp_path):
     m = _make_manifest(tmp_path, {
         "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status=None)},
     })
-    # No psds_final.pkl → empty
+    # No psds_channel_merged.pkl → empty
     assert m.pending_psd_review() == []
 
 
@@ -759,3 +759,121 @@ def test_flag_needs_rerun_resets_existing_rerun_run_from_rejected(tmp_path):
     assert rerun_run.rejected_by is None
     # No CSV yet → appears in needs_rerun_pending (Rerun queue)
     assert any(e.animal_id == "AM001" for e, _ in m.needs_rerun_pending())
+
+
+# ---------------------------------------------------------------------------
+# Testing gaps (PIPELINE_AUDIT.md)
+# ---------------------------------------------------------------------------
+
+def test_add_run_does_not_reset_ok_when_stamping_source_combo(tmp_path):
+    """Gap 2: add_run stamping source_combo on an existing ok run must NOT reset sleep_qc.
+
+    Previously the elif branch unconditionally set run.sleep_qc = None, which
+    would silently violate the one-ok invariant if the run happened to be the
+    ok combo.
+    """
+    m = _make_manifest(tmp_path, {
+        "AM001": {
+            "LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok"),
+            "RSC_LSC": RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
+        },
+    })
+    # Stamp source_combo on the ok run (e.g., retroactive provenance)
+    m.add_run("AM001", "LFC_RSC", source_combo="RSC_LSC")
+
+    run = m._entries["AM001"].runs["LFC_RSC"]
+    assert run.sleep_qc == "ok", "ok run must not be reset by add_run"
+    assert run.source_combo == "RSC_LSC"
+    assert run.psd_status == "ok", "psd_status must be preserved"
+    # Sibling should still be rejected (cascade intact)
+    assert m._entries["AM001"].runs["RSC_LSC"].sleep_qc == "rejected"
+
+
+def test_dead_zone_needs_rerun_with_csv_and_no_source_combo(tmp_path):
+    """Gap 5: animal with needs_rerun + CSV present + source_combo=None is invisible
+    to both needs_rerun_pending (excluded by CSV) and pending_rerun_review
+    (excluded by missing source_combo). Documents the dead zone.
+    """
+    # Create the CSV on disk so CSV check sees it
+    csv = tmp_path / "spindle_outputs" / "RSC" / "AM001_states.csv"
+    csv.parent.mkdir(parents=True, exist_ok=True)
+    csv.touch()
+
+    m = _make_manifest(tmp_path, {
+        "AM001": {
+            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="RSC"),
+            "RSC":     RunEntry(sleep_qc=None, source_combo=None),
+        },
+    })
+
+    # CSV present → excluded from needs_rerun_pending
+    assert len(m.needs_rerun_pending()) == 0
+    # source_combo=None → excluded from pending_rerun_review
+    assert len(m.pending_rerun_review()) == 0
+    # Animal IS visible in needs_rerun() for history purposes
+    assert any(combo == "LFC_RSC" for _, combo in m.needs_rerun())
+
+
+def test_needs_rerun_pending_excludes_when_rerun_run_reviewed(tmp_path):
+    """Gap 8: needs_rerun_pending excludes when the rerun run has any non-None sleep_qc.
+
+    Covers the case where the rerun combo was cascade-rejected (sleep_qc="rejected")
+    rather than explicitly accepted — the original stays needs_rerun in the manifest
+    for history, but should no longer appear in the Rerun queue.
+    """
+    m = _make_manifest(tmp_path, {
+        "AM001": {
+            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="RSC"),
+            "RSC":     RunEntry(sleep_qc="rejected", source_combo="LFC_RSC"),
+        },
+    })
+    # Rerun run has sleep_qc="rejected" (non-None) → must not appear in queue
+    assert len(m.needs_rerun_pending()) == 0
+    # Original still shows in needs_rerun() (historical record)
+    assert any(combo == "LFC_RSC" for _, combo in m.needs_rerun())
+
+
+def test_sibling_psd_status_cleared_when_restored_to_non_ok(tmp_path):
+    """Gap 9: When un-okaying restores a sibling to a non-ok status, any stale
+    psd_status/drink_mask on that sibling must be cleared.
+
+    Without this, a sibling restored to sleep_qc=None but carrying psd_status="ok"
+    would be silently skipped by pending_psd_review() (which requires psd_status is None)
+    if the sibling is later made ok again.
+    """
+    # Set up: RSC has stale psd_status (injected directly to simulate edge case)
+    m = _make_manifest(tmp_path, {
+        "AM001": {
+            "LFC_RSC": RunEntry(sleep_qc="ok"),
+            "RSC":     RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC",
+                                prev_sleep_qc=None, psd_status="ok"),
+        },
+    })
+    # Un-ok LFC_RSC → RSC restored to sleep_qc=None (prev_sleep_qc was None)
+    m.flag_sleep_qc("AM001", "LFC_RSC", "needs_review")
+
+    rsc = m._entries["AM001"].runs["RSC"]
+    assert rsc.sleep_qc is None
+    # psd_status must be cleared since RSC is not restored to ok
+    assert rsc.psd_status is None
+    assert rsc.drink_mask is None
+
+
+def test_sibling_psd_status_preserved_when_restored_to_ok(tmp_path):
+    """Gap 9 (complement): When a sibling IS restored to ok, preserve its psd_status
+    so the user doesn't lose already-completed PSD review work.
+    """
+    # RSC was previously ok with reviewed PSD, then LFC_RSC was made ok (cascade-rejecting RSC)
+    m = _make_manifest(tmp_path, {
+        "AM001": {
+            "LFC_RSC": RunEntry(sleep_qc="ok"),
+            "RSC":     RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC",
+                                prev_sleep_qc="ok", psd_status="ok"),
+        },
+    })
+    # Un-ok LFC_RSC → RSC restored to its prev_sleep_qc="ok"
+    m.flag_sleep_qc("AM001", "LFC_RSC", "needs_review")
+
+    rsc = m._entries["AM001"].runs["RSC"]
+    assert rsc.sleep_qc == "ok"
+    assert rsc.psd_status == "ok"  # preserved — PSD review work not lost

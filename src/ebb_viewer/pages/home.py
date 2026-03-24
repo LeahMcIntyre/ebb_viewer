@@ -13,7 +13,7 @@ from ebb_viewer.widgets.tree_view import ProjectTree
 from ebb_viewer.widgets.table_helpers import make_cell
 from ebb_viewer.pipeline.manifest import (
     Manifest, ManifestEntry, RunEntry,
-    psd_path, spindle_output_dir, final_psd_path,
+    psd_path, spindle_output_dir, final_psd_path, merged_psd_path,
 )
 from ebb_viewer.pipeline.manifest import spindle_edf_dir
 from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, drink_mask_rel
@@ -64,12 +64,13 @@ _STEP_LABELS = [
     "6. PSD Computation",
     "7. PSD Review",
     "8. Drink Mask",
+    "9. Finalize",
 ]
 
 _STEP_PAGE_NAMES = [
     "preprocess", "spindle_write", "spindle_upload",
     "sleep_qc", "rerun", "psd_compute", "psd_review",
-    "drink_mask",
+    "drink_mask", "finalize",
 ]
 
 _GUIDE_ICON       = {"done": "✓", "attention": "⚠", "active": "→", "blocked": "○"}
@@ -162,8 +163,8 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
         if n_rerun_ready: parts.append(f"{n_rerun_ready} ready to review")
         s5 = StepStatus("attention", ", ".join(parts))
     elif n_rerun > 0 and n_rerun_pend == 0 and n_rerun_ready == 0:
-        s5 = StepStatus("done", f"{n_rerun} rerun{'s' if n_rerun != 1 else ''} resolved")
-    elif qc_complete:
+        s5 = StepStatus("done", f"{n_rerun} rerun{'s' if n_rerun != 1 else ''} accepted")
+    elif qc_complete and n_review == 0:
         s5 = StepStatus("done", "No reruns needed")
     else:
         s5 = StepStatus("blocked", "Requires step 4 completion")
@@ -182,15 +183,16 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     if psd_dir.is_dir():
         combos_with_pkl = {
             p.stem[len("psds_"):] for p in psd_dir.glob("psds_*.pkl")
-            if p.stem != "psds_final"
+            if p.stem not in {"psds_channel_merged", "psds_channel_merged_drink", "psds_final"}
         }
     missing_pkls = combos_with_csv - combos_with_pkl
+    merged_pkl = merged_psd_path(root)
     final_pkl = final_psd_path(root)
 
-    if final_pkl.exists() and not missing_pkls:
-        s6 = StepStatus("done", "All PSDs computed, final PKL ready")
-    elif combos_with_pkl and (missing_pkls or not final_pkl.exists()):
-        msg = f"{len(missing_pkls)} combo PKL(s) missing" if missing_pkls else "Run Build Final PKL"
+    if merged_pkl.exists() and not missing_pkls:
+        s6 = StepStatus("done", "All PSDs computed, channel merged PKL ready")
+    elif combos_with_pkl and (missing_pkls or not merged_pkl.exists()):
+        msg = f"{len(missing_pkls)} combo PKL(s) missing" if missing_pkls else "Run Build Channel Merged PKL"
         s6 = StepStatus("attention", msg)
     elif n_ok > 0 and n_review > 0:
         s6 = StepStatus(
@@ -210,12 +212,14 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     )
     if n_psd_pending > 0:
         s7 = StepStatus("attention", f"{n_psd_pending} PSD{'s' if n_psd_pending != 1 else ''} to review")
-    elif final_pkl.exists() and n_psd_pending == 0 and any_psd_reviewed:
-        s7 = StepStatus("done", "All PSDs reviewed")
     elif final_pkl.exists():
+        s7 = StepStatus("done", "All PSDs reviewed and finalized")
+    elif merged_pkl.exists() and n_psd_pending == 0 and any_psd_reviewed:
+        s7 = StepStatus("attention", "All reviewed — click Finalize to seal")
+    elif merged_pkl.exists():
         s7 = StepStatus("active", "Ready — open PSD Review page")
     else:
-        s7 = StepStatus("blocked", "Requires final PKL (step 6)")
+        s7 = StepStatus("blocked", "Requires channel merged PKL (step 6)")
 
     # --- Step 8: Drink Mask ---
     n_needs_drink = len(manifest.needs_drink_mask())
@@ -223,8 +227,8 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
         1 for e in manifest for r in e.runs.values()
         if r.psd_status == "drink_mask_applied"
     )
-    if not final_pkl.exists():
-        s8 = StepStatus("blocked", "Requires final PKL (step 6)")
+    if not merged_pkl.exists():
+        s8 = StepStatus("blocked", "Requires channel merged PKL (step 6)")
     elif n_needs_drink > 0:
         s8 = StepStatus(
             "attention",
@@ -238,7 +242,15 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     else:
         s8 = StepStatus("done", "No drink masks needed")
 
-    return [s1, s2, s3, s4, s5, s6, s7, s8]
+    # --- Step 9: Finalize ---
+    if final_pkl.exists():
+        s9 = StepStatus("done", "psds_final.pkl written")
+    elif merged_pkl.exists() and n_psd_pending == 0 and n_needs_drink == 0:
+        s9 = StepStatus("attention", "Ready — click Finalize to seal psds_final.pkl")
+    else:
+        s9 = StepStatus("blocked", "Requires all PSDs reviewed (steps 7–8)")
+
+    return [s1, s2, s3, s4, s5, s6, s7, s8, s9]
 
 
 def _any_file_for_animal(root: Path, subdir: str, channels: str, animal_id: str) -> bool:

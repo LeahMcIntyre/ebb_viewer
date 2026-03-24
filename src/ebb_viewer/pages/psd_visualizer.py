@@ -1,9 +1,9 @@
 from pathlib import Path
 from typing import Optional
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QGroupBox, QFormLayout, QHBoxLayout, QLabel,
-    QPushButton, QComboBox, QSizePolicy, QFileDialog
+    QPushButton, QComboBox, QSizePolicy, QFileDialog, QFrame,
 )
 from ebb_viewer.data_stores.psd_store import PSDStore
 from ebb_viewer.widgets.psd_graph_widget import PSDGridPage
@@ -11,6 +11,9 @@ from ebb_viewer.pipeline.manifest import Manifest
 
 
 class PSDVisualizer(QWidget):
+
+    navigate_to = pyqtSignal(str)
+
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
         self.project_root = Path(project_root)
@@ -48,6 +51,25 @@ class PSDVisualizer(QWidget):
         self._reviewing_lbl.setVisible(False)
         self.root.addWidget(self._reviewing_lbl)
 
+        # Shown when all animals are reviewed and the dataset is ready to finalize
+        self._finalize_hint = QFrame()
+        self._finalize_hint.setFrameShape(QFrame.Shape.StyledPanel)
+        self._finalize_hint.setStyleSheet(
+            "QFrame { background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; }"
+        )
+        hint_layout = QHBoxLayout(self._finalize_hint)
+        hint_layout.setContentsMargins(10, 6, 10, 6)
+        hint_lbl = QLabel("✓ All animals reviewed — ready to finalize.")
+        hint_lbl.setWordWrap(True)
+        hint_layout.addWidget(hint_lbl, 1)
+        btn_go_finalize = QPushButton("→ 9. Finalize")
+        btn_go_finalize.clicked.connect(lambda: self.navigate_to.emit("finalize"))
+        hint_layout.addWidget(btn_go_finalize)
+        self._finalize_hint.setVisible(False)
+        self.root.addWidget(self._finalize_hint)
+
+        self._is_final_view = False
+
     def _wire(self):
         self.btn_refresh.clicked.connect(self._refresh_pkl_list)
         self.btn_browse.clicked.connect(self._on_browse)
@@ -72,13 +94,14 @@ class PSDVisualizer(QWidget):
             self.cmb_file.addItem(p.name, str(p))
         self.cmb_file.blockSignals(False)
 
-        # Auto-select psds_final_drink.pkl first (most complete), then psds_final.pkl
-        final_drink_idx = self.cmb_file.findText("psds_final_drink.pkl")
-        final_idx = self.cmb_file.findText("psds_final.pkl")
-        if final_drink_idx >= 0:
-            self.cmb_file.setCurrentIndex(final_drink_idx)
-        elif final_idx >= 0:
-            self.cmb_file.setCurrentIndex(final_idx)
+        # Auto-select psds_channel_merged_drink.pkl first (Pass 2), then psds_channel_merged.pkl (Pass 1)
+        # psds_final.pkl is view-only and is never auto-selected
+        merged_drink_idx = self.cmb_file.findText("psds_channel_merged_drink.pkl")
+        merged_idx = self.cmb_file.findText("psds_channel_merged.pkl")
+        if merged_drink_idx >= 0:
+            self.cmb_file.setCurrentIndex(merged_drink_idx)
+        elif merged_idx >= 0:
+            self.cmb_file.setCurrentIndex(merged_idx)
         elif current:
             idx = self.cmb_file.findData(current)
             self.cmb_file.setCurrentIndex(idx if idx >= 0 else 0)
@@ -86,6 +109,21 @@ class PSDVisualizer(QWidget):
             self.cmb_file.setCurrentIndex(0)
 
         self._on_combo_changed()
+
+    def _check_finalize_hint(self):
+        if not self._is_final_view:
+            self._finalize_hint.setVisible(False)
+            return
+        try:
+            manifest = Manifest.load(self.project_root)
+            pending = (
+                len(manifest.pending_psd_review())
+                + len(manifest.needs_drink_mask())
+                + len(manifest.pending_drink_verification())
+            )
+            self._finalize_hint.setVisible(pending == 0)
+        except Exception:
+            self._finalize_hint.setVisible(False)
 
     def _on_combo_changed(self):
         path_str = self.cmb_file.currentData()
@@ -118,17 +156,24 @@ class PSDVisualizer(QWidget):
         if not psd_file or not Path(psd_file).is_file():
             return
 
-        _FINAL_STEMS = frozenset({"psds_final", "psds_final_drink"})
+        _FINAL_VIEW_STEMS = frozenset({"psds_channel_merged", "psds_channel_merged_drink"})
 
         channel_names = ["LFC", "RSC", "LSC"]
-        stem = Path(psd_file).stem  # e.g. "psds_LFC_RSC", "psds_final", "psds_final_drink"
-        is_final = stem in _FINAL_STEMS
-        run_channels = None if is_final else (
+        stem = Path(psd_file).stem
+        is_final_view = stem in _FINAL_VIEW_STEMS
+        is_drink_review = (stem == "psds_channel_merged_drink")
+        run_channels = None if is_final_view else (
             stem[len("psds_"):] if stem.startswith("psds_") else stem
         )
 
         fname = Path(psd_file).name
-        self._reviewing_lbl.setText(f"Reviewing: {fname}")
+        if stem == "psds_channel_merged":
+            lbl_text = f"Reviewing: {fname} (Pass 1 — flag original PSDs)"
+        elif is_drink_review:
+            lbl_text = f"Reviewing: {fname} (Pass 2 — verify drink masks)"
+        else:
+            lbl_text = f"Viewing: {fname} (view only)"
+        self._reviewing_lbl.setText(lbl_text)
         self._reviewing_lbl.setVisible(True)
 
         self.psd_store = PSDStore(psd_file, channel_names=channel_names)
@@ -137,9 +182,16 @@ class PSDVisualizer(QWidget):
             store=self.psd_store,
             channel_names=channel_names,
             states=['wake', 'nrem', 'rem'],
-            manifest=Manifest.load(self.project_root) if is_final else None,
+            manifest=Manifest.load(self.project_root) if is_final_view else None,
             run_channels=run_channels,
+            drink_review=is_drink_review,
         )
+        self._is_final_view = is_final_view
+        self._finalize_hint.setVisible(False)
+        self.psd_page.navigate_to.connect(self.navigate_to)
+        if is_final_view:
+            self.psd_page.manifest_changed.connect(self._check_finalize_hint)
+            self._check_finalize_hint()
         self.root.addWidget(self.psd_page)
 
 

@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QGroupBox, QFormLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QPlainTextEdit, QMessageBox, QApplication,
-    QLineEdit, QSizePolicy,
+    QLineEdit, QSizePolicy, QFrame,
 )
 
 from ebb_viewer.widgets.worker_helpers import launch_worker
@@ -18,6 +18,7 @@ CH_LABELS = ["LFC", "RSC", "LSC"]
 class DrinkMaskPage(QWidget):
 
     manifest_changed = pyqtSignal()
+    navigate_to = pyqtSignal(str)
 
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
@@ -127,6 +128,23 @@ class DrinkMaskPage(QWidget):
         self.log_box.setMaximumBlockCount(300)
         self.log_box.setPlaceholderText("Status messages will appear here…")
         root.addWidget(self.log_box)
+
+        # Post-run hint (hidden until a run succeeds)
+        self._hint_frame = QFrame()
+        self._hint_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        self._hint_frame.setStyleSheet(
+            "QFrame { background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; }"
+        )
+        hint_layout = QHBoxLayout(self._hint_frame)
+        hint_layout.setContentsMargins(10, 6, 10, 6)
+        hint_lbl = QLabel("✓ Drink masks applied. Review the updated PSDs in PSD Visualizer.")
+        hint_lbl.setWordWrap(True)
+        hint_layout.addWidget(hint_lbl, 1)
+        btn_go_psd = QPushButton("→ PSD Visualizer")
+        btn_go_psd.clicked.connect(lambda: self.navigate_to.emit("psd_review"))
+        hint_layout.addWidget(btn_go_psd)
+        self._hint_frame.setVisible(False)
+        root.addWidget(self._hint_frame)
 
         # Styling
         self.gb_paths.setObjectName("pathsBox")
@@ -295,15 +313,24 @@ class DrinkMaskPage(QWidget):
         self._computing = False
         from ebb_viewer.pipeline.manifest import Manifest
         manifest = Manifest.load(self.project_root)
+        failed = []
         for animal_id, combo in self._pending_animal_combos.items():
             try:
                 manifest.flag_psd(animal_id, combo, "drink_mask_applied")
-            except Exception:
-                pass
+            except Exception as e:
+                failed.append(f"{animal_id} ({combo}): {e}")
         manifest.save()
         self._pending_animal_combos = {}
-        self._log("Drink mask rerun complete. psds_drink.pkl and psds_final_drink.pkl updated.")
+        if failed:
+            msg = "\n".join(failed)
+            self._log(f"WARNING: {len(failed)} flag(s) failed:\n{msg}")
+            QMessageBox.warning(
+                self, "Partial Failure",
+                f"{len(failed)} animal(s) could not be flagged:\n\n{msg}",
+            )
+        self._log("Drink mask rerun complete. psds_drink.pkl and psds_channel_merged_drink.pkl updated.")
         self.manifest_changed.emit()
+        self._hint_frame.setVisible(True)
         self._refresh()
 
     def _on_error(self, msg: str):
@@ -357,7 +384,7 @@ class DrinkMaskRerunWorker(QObject):
                 **self.params,
             )
             self.progress.emit("  → psds_drink.pkl updated.")
-            self.progress.emit("  → psds_final_drink.pkl regenerated.")
+            self.progress.emit("  → psds_channel_merged_drink.pkl regenerated.")
             self.finished.emit()
         except Exception as e:
             self.error.emit(str(e))

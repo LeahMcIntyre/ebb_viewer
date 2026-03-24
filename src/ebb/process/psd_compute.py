@@ -383,7 +383,7 @@ def batch_estimate(
 def build_final_pkl(project_root, manifest) -> Path:
     """For each animal with sleep_qc == "ok", load their entry from
     psds_<ok_combo>.pkl, annotate with source_combo, and write to
-    psd/psds_final.pkl. Atomically replaces the file.
+    psd/psds_channel_merged.pkl. Atomically replaces the file.
     Returns the path written.
     """
     import warnings
@@ -418,7 +418,7 @@ def build_final_pkl(project_root, manifest) -> Path:
                 rec["source_combo"] = combo
                 final_records.append(rec)
 
-    out_path = psd_dir / "psds_final.pkl"
+    out_path = psd_dir / "psds_channel_merged.pkl"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_suffix(".pkl.tmp")
     with open(tmp, "wb") as f:
@@ -439,14 +439,14 @@ def rerun_with_drink_masks(
 ) -> Tuple[Path, Path]:
     """Recompute PSDs for specific animals with drink masks.
 
-    Validates that source_combo in psds_final.pkl matches the provided
+    Validates that source_combo in psds_channel_merged.pkl matches the provided
     animal_combos mapping. Results are accumulated in psds_drink.pkl
-    (replacing per animal on each call). psds_final_drink.pkl is regenerated
-    as psds_final.pkl with all psds_drink.pkl animals overriding their entries.
-    Neither psds_final.pkl nor any psds_<COMBO>.pkl is modified.
+    (replacing per animal on each call). psds_channel_merged_drink.pkl is regenerated
+    as psds_channel_merged.pkl with all psds_drink.pkl animals overriding their entries.
+    Neither psds_channel_merged.pkl nor any psds_<COMBO>.pkl is modified.
 
     Args:
-        psd_dir:       Directory containing psds_final.pkl and output pkls.
+        psd_dir:       Directory containing psds_channel_merged.pkl and output pkls.
         eeg_dir:       Directory of preprocessed EDF files.
         spindle_root:  Root of spindle_outputs/ (combo subdirs live here).
         drink_dir:     Directory of drink mask .npy files (one per animal).
@@ -456,7 +456,7 @@ def rerun_with_drink_masks(
         **kwargs:      Passed through to estimate_psd (fs, winsize, etc.).
 
     Returns:
-        Tuple of (psds_drink.pkl path, psds_final_drink.pkl path).
+        Tuple of (psds_drink.pkl path, psds_channel_merged_drink.pkl path).
     """
     import warnings, tracemalloc
 
@@ -466,31 +466,31 @@ def rerun_with_drink_masks(
     drink_dir = Path(drink_dir)
     animal_ids_set = set(animal_combos)
 
-    # --- Validate source_combo in psds_final.pkl against manifest combos ---
-    final_path = psd_dir / "psds_final.pkl"
-    if not final_path.exists():
+    # --- Validate source_combo in psds_channel_merged.pkl against manifest combos ---
+    merged_path = psd_dir / "psds_channel_merged.pkl"
+    if not merged_path.exists():
         raise FileNotFoundError(
-            f"psds_final.pkl not found at {final_path}. Build the final PKL first."
+            f"psds_channel_merged.pkl not found at {merged_path}. Build the channel merged PKL first."
         )
-    with open(final_path, "rb") as f:
-        final_data: List[dict] = pickle.load(f)
-    if isinstance(final_data, dict):
-        final_data = [final_data]
+    with open(merged_path, "rb") as f:
+        merged_data: List[dict] = pickle.load(f)
+    if isinstance(merged_data, dict):
+        merged_data = [merged_data]
 
-    final_combo_by_animal: Dict[str, str] = {}
-    for rec in final_data:
+    merged_combo_by_animal: Dict[str, str] = {}
+    for rec in merged_data:
         animal = Path(rec["path"]).stem.split("_")[0]
         if animal in animal_ids_set:
-            final_combo_by_animal.setdefault(animal, rec.get("source_combo"))
+            merged_combo_by_animal.setdefault(animal, rec.get("source_combo"))
 
     mismatches = []
     for animal_id, manifest_combo in animal_combos.items():
-        final_combo = final_combo_by_animal.get(animal_id)
-        if final_combo is None:
-            mismatches.append(f"  {animal_id}: not found in psds_final.pkl")
-        elif final_combo != manifest_combo:
+        merged_combo = merged_combo_by_animal.get(animal_id)
+        if merged_combo is None:
+            mismatches.append(f"  {animal_id}: not found in psds_channel_merged.pkl")
+        elif merged_combo != manifest_combo:
             mismatches.append(
-                f"  {animal_id}: psds_final has '{final_combo}', manifest says '{manifest_combo}'"
+                f"  {animal_id}: psds_channel_merged has '{merged_combo}', manifest says '{manifest_combo}'"
             )
     if mismatches:
         raise ValueError(
@@ -564,21 +564,21 @@ def rerun_with_drink_masks(
         pickle.dump(kept_drink + all_new_dicts, f)
     tmp.replace(drink_pkl)
 
-    # --- Regenerate psds_final_drink.pkl ---
-    # Use all accumulated drink records (not just this session's) to override final
+    # --- Regenerate psds_channel_merged_drink.pkl ---
+    # Use all accumulated drink records (not just this session's) to override merged
     with open(drink_pkl, "rb") as f:
         all_drink: List[dict] = pickle.load(f)
     drink_animals = {Path(r["path"]).stem.split("_")[0] for r in all_drink}
-    final_base_kept = [
-        r for r in final_data
+    merged_base_kept = [
+        r for r in merged_data
         if Path(r["path"]).stem.split("_")[0] not in drink_animals
     ]
-    final_drink_path = psd_dir / "psds_final_drink.pkl"
-    tmp2 = final_drink_path.with_suffix(".pkl.tmp")
+    merged_drink_path = psd_dir / "psds_channel_merged_drink.pkl"
+    tmp2 = merged_drink_path.with_suffix(".pkl.tmp")
     with open(tmp2, "wb") as f:
-        pickle.dump(final_base_kept + all_drink, f)
-    tmp2.replace(final_drink_path)
+        pickle.dump(merged_base_kept + all_drink, f)
+    tmp2.replace(merged_drink_path)
 
-    return drink_pkl, final_drink_path
+    return drink_pkl, merged_drink_path
 
 
