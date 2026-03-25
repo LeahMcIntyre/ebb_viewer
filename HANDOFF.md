@@ -274,6 +274,16 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 
 ---
 
+### Completed (this session, branch `refactor/clean-up`)
+
+#### Test fix
+- `test_build_final_pkl_warns_and_skips_when_combo_pkl_missing` — test was using same combo for both animals so the PKL existed and no warning fired. Fixed by giving the second animal a different combo (`RSC_LSC`) with no PKL on disk.
+
+#### Research notebook
+- `research/psd_from_edfs.ipynb` — tutorial notebook for computing and analysing PSDs from EDF files. Covers: loading EDF with openseize, Welch's method explainer, basic PSD, artifact masking (commutator + SD threshold), state-specific PSDs (wake/NREM/REM), loading `psds_channel_merged.pkl`, group-level plots (mean ± SEM + spaghetti), and band power summary. Uses `ebb` kernel.
+
+---
+
 ## Next Steps
 
 ### Remaining P2 items (from TODO.md)
@@ -326,8 +336,10 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 - `tests/ebb_viewer/test_manifest.py` — 79 manifest tests
 - `tests/ebb/test_drink_mask_integration.py` — 30 drink mask integration tests
 - `tests/ebb_viewer/test_compute_pipeline_status.py` — 15 pipeline status tests (steps 6, 8, 9)
+- `research/psd_from_edfs.ipynb` — tutorial notebook: load EDF → mask artifacts → state PSDs → group plots from merged PKL
 
 ## Environment
 - Conda env: `ebb-dev` (`source ~/miniconda3/etc/profile.d/conda.sh && conda activate ebb-dev`)
-- Run tests: `QT_QPA_PLATFORM=offscreen pytest` (114 passing, 13 warnings)
+- Jupyter kernel: `ebb` (registered in `~/.local/share/jupyter/kernels/ebb`)
+- Run tests: `QT_QPA_PLATFORM=offscreen pytest` (121 passing, 13 warnings)
 - Branch: `refactor/clean-up`
