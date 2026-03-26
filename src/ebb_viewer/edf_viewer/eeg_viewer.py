@@ -19,8 +19,9 @@ from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
 from ebb_viewer.edf_viewer.file_openers import pick_edf_csv, pick_mat, pick_npy_csv, pick_annotations_csv, load_annotations, pick_peaks_mat, load_peaks_mat
 from ebb_viewer.edf_viewer.mask_builder import (
-    build_default_masks, load_state_masks, load_swd_mask, load_drink_mask,
+    build_default_masks, load_state_masks, load_swd_mask, load_rpsp_mask, load_drink_mask,
     rebuild_artifact_masks, rebuild_spindle_mask, rebuild_drink_mask,
+    _SWD_COLORS,
 )
 from ebb_viewer.edf_viewer.masks_dock import MasksDock
 from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, parse_animal_id
@@ -40,6 +41,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.mask_set = build_default_masks(recording)
         self.state_set = None
         self.state_df = None
+        self._swd_load_count = 0
+        self._peaks_cutoff: dict = {}
+        self._peaks_all: dict | None = None
 
         # STFT state
         self.stft_fmin = 0
@@ -98,6 +102,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.act_load_swd = QtGui.QAction("Load SWD mask (.mat)", self)
         self.act_load_swd.triggered.connect(self.on_load_swd)
 
+        self.act_load_rpsp = QtGui.QAction("Load per-channel SWD mask (.mat)", self)
+        self.act_load_rpsp.triggered.connect(self.on_load_rpsp)
+
         self.act_load_drink = QtGui.QAction("Load Drink mask (.npy)", self)
         self.act_load_drink.triggered.connect(self.on_load_drink)
 
@@ -117,6 +124,12 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.act_load_peaks = QtGui.QAction("Load Peaks (.mat)…", self)
         self.act_load_peaks.triggered.connect(self.on_load_peaks)
 
+        self.act_peaks_show_all = QtGui.QAction("Show all peaks", self)
+        self.act_peaks_show_all.setCheckable(True)
+        self.act_peaks_show_all.setChecked(False)
+        self.act_peaks_show_all.setVisible(False)
+        self.act_peaks_show_all.toggled.connect(self._on_peaks_toggle)
+
         self.act_next_annotation = QtGui.QAction("Next Annotation", self)
         self.act_next_annotation.setShortcut("]")
         self.act_next_annotation.triggered.connect(self.trace_view.jump_to_next_annotation)
@@ -133,9 +146,11 @@ class EegMainWindow(QtWidgets.QMainWindow):
         m_file = mb.addMenu("&File")
         m_file.addAction(self.act_open)
         m_file.addAction(self.act_load_swd)
+        m_file.addAction(self.act_load_rpsp)
         m_file.addAction(self.act_load_drink)
         m_file.addAction(self.act_load_annotations)
         m_file.addAction(self.act_load_peaks)
+        m_file.addAction(self.act_peaks_show_all)
         m_file.addSeparator()
         m_file.addAction(self.act_quit)
         m_file.addAction(self.act_info)
@@ -300,16 +315,51 @@ class EegMainWindow(QtWidgets.QMainWindow):
         mat_path = pick_mat(self, self.initial_dir)
         if mat_path is None:
             return
-        
+
+        default_name = mat_path.stem
+        name, ok = QtWidgets.QInputDialog.getText(
+            self, "Name SWD Mask", "Mask name:", text=default_name
+        )
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+
+        color = _SWD_COLORS[self._swd_load_count % len(_SWD_COLORS)]
+
         try:
             _, n_samples = self.rec.data.shape
-            self.mask_set.add(load_swd_mask(mat_path, fs=self.rec.fs, n_samples=n_samples))
+            self.mask_set.add(load_swd_mask(mat_path, fs=self.rec.fs, n_samples=n_samples, name=name, color=color))
+            self._swd_load_count += 1
             self.trace_view.refresh_overlays()
             self.masks_dock.rebuild(self.mask_set, self.state_set)
             self.rec.swd_path = mat_path
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
 
+
+    def on_load_rpsp(self):
+        mat_path = pick_mat(self, self.initial_dir)
+        if mat_path is None:
+            return
+
+        default_name = mat_path.stem
+        name, ok = QtWidgets.QInputDialog.getText(
+            self, "Name SWD Mask", "Mask name:", text=default_name
+        )
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+
+        color = _SWD_COLORS[self._swd_load_count % len(_SWD_COLORS)]
+
+        try:
+            _, n_samples = self.rec.data.shape
+            self.mask_set.add(load_rpsp_mask(mat_path, fs=self.rec.fs, n_samples=n_samples, name=name, color=color))
+            self._swd_load_count += 1
+            self.trace_view.refresh_overlays()
+            self.masks_dock.rebuild(self.mask_set, self.state_set)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
 
     def on_load_drink(self):
         drink_path, offset_path = pick_npy_csv(self, self.initial_dir)
@@ -356,10 +406,18 @@ class EegMainWindow(QtWidgets.QMainWindow):
         if mat_path is None:
             return
         try:
-            peaks = load_peaks_mat(mat_path)
-            self.trace_view.set_peaks(peaks)
+            peaks_cutoff, peaks_all = load_peaks_mat(mat_path)
+            self._peaks_cutoff = peaks_cutoff
+            self._peaks_all = peaks_all
+            self.act_peaks_show_all.setChecked(False)
+            self.act_peaks_show_all.setVisible(peaks_all is not None)
+            self.trace_view.set_peaks(peaks_cutoff)
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
+
+    def _on_peaks_toggle(self, show_all: bool):
+        peaks = self._peaks_all if show_all else self._peaks_cutoff
+        self.trace_view.set_peaks(peaks)
 
     def on_open(self):
         # reuse your existing pick_edf_csv_npy

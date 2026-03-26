@@ -94,18 +94,34 @@ def pick_peaks_mat(parent=None, dir=""):
     return Path(path)
 
 
-def load_peaks_mat(mat_path) -> dict[int, "np.ndarray"]:
-    """Load a peak-times .mat file and return {ch_idx: times_in_seconds}.
+def load_peaks_mat(mat_path) -> "tuple[dict[int, np.ndarray], dict[int, np.ndarray] | None]":
+    """Load a peak-times .mat file.
 
-    Expects the mat variable ``peak_times`` shaped (1, 4) where each cell
-    contains the peak times (in seconds) for channels LFC, RSC, LSC, EMG.
+    Returns ``(peaks_cutoff, peaks_all)``.
+
+    If the file contains ``peak_times``, both values in the tuple are the same
+    dict (no toggle needed).  If the file contains ``peak_times_cutoff`` /
+    ``peak_times_all``, both are returned separately so the caller can offer a
+    toggle.  ``peaks_all`` is ``None`` when only a single dataset is present.
+
+    Each dict maps ``ch_idx`` → 1-D array of peak times in seconds
+    (channels 0–2: LFC, RSC, LSC).
     """
     import numpy as np
     import scipy.io
 
+    def _extract(var):
+        return {i: var[0, i].flatten().astype(float) for i in range(3)}
+
     mat = scipy.io.loadmat(str(mat_path))
-    peak_times = mat["peak_times"]
-    return {i: peak_times[0, i].flatten().astype(float) for i in range(1)}
+
+    if "peak_times" in mat:
+        peaks = _extract(mat["peak_times"])
+        return peaks, None
+
+    peaks_cutoff = _extract(mat["peak_times_cutoff"])
+    peaks_all = _extract(mat["peak_times_all"])
+    return peaks_cutoff, peaks_all
 
 
 def load_annotations(csv_path) -> list[tuple[float, str]]:

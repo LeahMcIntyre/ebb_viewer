@@ -426,12 +426,12 @@ class TraceView(QtWidgets.QWidget):
             if not mask.enabled:
                 continue
             brush = pg.mkBrush(*mask.color)
-            for span_start, span_end in mask.spans:
-                if span_end <= s0 or span_start >= s1:
-                    continue
-                t_a = span_start / self.fs
-                t_b = span_end / self.fs
-                for pw in self.plots:
+            for ch_idx, pw in enumerate(self.plots):
+                for span_start, span_end in mask.spans_for_channel(ch_idx):
+                    if span_end <= s0 or span_start >= s1:
+                        continue
+                    t_a = span_start / self.fs
+                    t_b = span_end / self.fs
                     item = pg.LinearRegionItem(
                         values=(t_a, t_b),
                         movable=False,

@@ -2,6 +2,7 @@ import inspect
 import re
 
 import numpy as np
+import scipy.io
 from openseize import producer as make_producer
 
 from ebb import masking
@@ -185,9 +186,40 @@ def load_state_masks(csv_path, fs: int) -> MaskSet:
         mask_set.add(Mask.from_bool(name, _STATE_COLORS[name], arr))
     return mask_set
 
-def load_swd_mask(swd_path, fs:int, n_samples:int) -> Mask:
+_SWD_COLORS = [
+    (178, 170, 248, 60),  # lavender
+    (248, 170, 178, 60),  # pink
+    (170, 248, 178, 60),  # mint
+    (248, 220, 140, 60),  # amber
+    (140, 210, 248, 60),  # sky blue
+]
+
+def load_swd_mask(swd_path, fs: int, n_samples: int, name: str = "swd", color: tuple | None = None) -> Mask:
+    if color is None:
+        color = _SWD_COLORS[0]
     arr = masking.swd(swd_path, fs=fs, n_samples=n_samples)
-    return Mask.from_bool("swd", (178, 170, 248, 60), ~arr)
+    return Mask.from_bool(name, color, ~arr)
+
+def load_rpsp_mask(rpsp_path, fs: int, n_samples: int, name: str = "rpsp", color: tuple | None = None) -> Mask:
+    """Load a per-channel SWD mask from a .mat file containing an 'rpsp' variable.
+
+    The 'rpsp' variable must be shape (n_channels, 2) where column 0 holds
+    start times and column 1 holds end times, both in seconds.
+    """
+    if color is None:
+        color = _SWD_COLORS[0]
+    mat = scipy.io.loadmat(str(rpsp_path))
+    key = [k for k in mat.keys() if not k.startswith('__')][0]
+    rpsp = mat[key]  # (n_channels, 2) object array
+      # pick key
+    intervals_by_channel = {}
+    for ch_idx in range(rpsp.shape[0]):
+        starts = rpsp[ch_idx, 0].flatten()
+        ends = rpsp[ch_idx, 1].flatten()
+        if starts.size == 0 or ends.size == 0:
+            continue
+        intervals_by_channel[ch_idx] = np.column_stack([starts, ends])
+    return Mask.from_per_channel_intervals(name, color, intervals_by_channel, fs, n_samples)
 
 def load_drink_mask(drink_path, fs:int, offset_sec:float, pad_sec:int) -> Mask:
     arr = masking.drinking_mask(drink_path, fs=fs, offset_sec=offset_sec, pad_sec=pad_sec)
