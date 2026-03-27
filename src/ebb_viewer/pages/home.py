@@ -145,9 +145,8 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
 
     elif step3_done and (n_review > 0 or n_pending_qc > 0):
         parts = []
-        # n_review to review may be a bit confusing, consider changing this
-        if n_review:     parts.append(f"{n_review} to review")
-        if n_pending_qc: parts.append(f"{n_pending_qc} pending")
+        if n_review:     parts.append(f"{n_review} flagged for EDF review")
+        if n_pending_qc: parts.append(f"{n_pending_qc} not yet assessed")
         s4 = StepStatus("attention", ", ".join(parts))
     elif step3_done:
         s4 = StepStatus("active", "Ready — review sleep QC for each animal")
@@ -205,6 +204,7 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
         s6 = StepStatus("blocked", "Requires ok sleep QC results (step 4)")
 
     # --- Step 7: PSD Review ---
+    n_needs_drink = len(manifest.needs_drink_mask())
     any_psd_reviewed = any(
         r.psd_status is not None
         for e in manifest for r in e.runs.values()
@@ -212,6 +212,8 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     )
     if n_psd_pending > 0:
         s7 = StepStatus("attention", f"{n_psd_pending} PSD{'s' if n_psd_pending != 1 else ''} to review")
+    elif n_needs_drink > 0 and merged_pkl.exists():
+        s7 = StepStatus("attention", f"{n_needs_drink} animal{'s' if n_needs_drink != 1 else ''} need drink mask")
     elif final_pkl.exists():
         s7 = StepStatus("done", "All PSDs reviewed and finalized")
     elif merged_pkl.exists() and n_psd_pending == 0 and any_psd_reviewed:
@@ -222,7 +224,7 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
         s7 = StepStatus("blocked", "Requires channel merged PKL (step 6)")
 
     # --- Step 8: Drink Mask ---
-    n_needs_drink = len(manifest.needs_drink_mask())
+    # n_needs_drink already computed above
     n_drink_applied = sum(
         1 for e in manifest for r in e.runs.values()
         if r.psd_status == "drink_mask_applied"
@@ -707,10 +709,24 @@ class HomePage(QWidget):
         rerun_ready     = manifest.pending_rerun_review()
         drink_mask      = manifest.needs_drink_mask()
 
-        self._attn_card_count = len(reviewing) + len(rerunning) + len(rerun_ready) + len(drink_mask)
+        merged_pkl = merged_psd_path(self.project_root)
+        final_pkl  = final_psd_path(self.project_root)
+        n_ok = sum(1 for e in manifest if any(r.sleep_qc == "ok" for r in e.runs.values()))
+        ready_to_finalize = (
+            n_ok > 0
+            and merged_pkl.exists()
+            and not final_pkl.exists()
+            and not manifest.pending_psd_review()
+            and not drink_mask
+        )
+
+        self._attn_card_count = (
+            len(reviewing) + len(rerunning) + len(rerun_ready)
+            + len(drink_mask) + (1 if ready_to_finalize else 0)
+        )
         self._update_attn_max_height()
 
-        if not reviewing and not rerunning and not rerun_ready and not drink_mask:
+        if not reviewing and not rerunning and not rerun_ready and not drink_mask and not ready_to_finalize:
             lbl = QLabel("All caught up ✓")
             lbl.setStyleSheet("color: #5a9a5a; font-weight: bold; padding: 4px;")
             self._attn_layout.addWidget(lbl)
@@ -724,6 +740,8 @@ class HomePage(QWidget):
             self._attn_layout.addWidget(self._make_rerun_ready_card(entry, channels))
         for entry, channels in drink_mask:
             self._attn_layout.addWidget(self._make_drink_mask_card(entry, channels))
+        if ready_to_finalize:
+            self._attn_layout.addWidget(self._make_finalize_card())
 
     def _make_card_frame(self, bg_color: str) -> "tuple[QWidget, QHBoxLayout]":
         """Create an attention card frame. Returns (widget, layout)."""
@@ -849,6 +867,20 @@ class HomePage(QWidget):
         btn_hint.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_hint.setFlat(True)
         btn_hint.clicked.connect(lambda: self.navigate_to.emit("drink_mask"))
+        h.addWidget(btn_hint)
+        return row_w
+
+    def _make_finalize_card(self) -> QWidget:
+        row_w, h = self._make_card_frame("#d4edda")
+        lbl_type = QLabel("All PSDs reviewed — ready to finalize")
+        lbl_type.setStyleSheet("color: #155724; font-style: italic;")
+        h.addWidget(lbl_type)
+        h.addStretch(1)
+        btn_hint = QPushButton("→ Finalize")
+        btn_hint.setStyleSheet("color: #155724; border: none; padding: 0; text-decoration: underline;")
+        btn_hint.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_hint.setFlat(True)
+        btn_hint.clicked.connect(lambda: self.navigate_to.emit("finalize"))
         h.addWidget(btn_hint)
         return row_w
 

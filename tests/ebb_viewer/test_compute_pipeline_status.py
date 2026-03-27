@@ -229,6 +229,33 @@ def test_step9_attention_when_all_reviewed_not_finalized(tmp_path):
     assert "finalize" in s9.description.lower()
 
 
+# ---------------------------------------------------------------------------
+# Gap 11: special PKL names excluded from combos_with_pkl
+# ---------------------------------------------------------------------------
+
+def test_step6_special_pkl_names_not_counted_as_combo_pkls(tmp_path):
+    """psds_channel_merged.pkl, psds_channel_merged_drink.pkl, and psds_final.pkl
+    must not be counted as per-combo PKLs.
+
+    Without the exclusion filter these files would make combos_with_pkl non-empty,
+    changing the step 6 branch that fires.  With the filter, only real combo PKLs
+    (e.g. psds_LFC_RSC.pkl) count — so step 6 must not report 'done' when the
+    per-combo PKL is absent even though the special PKLs are present.
+    """
+    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
+    psd_dir = tmp_path / "psd"
+    psd_dir.mkdir()
+    (psd_dir / "psds_channel_merged.pkl").touch()
+    (psd_dir / "psds_channel_merged_drink.pkl").touch()
+    (psd_dir / "psds_final.pkl").touch()
+    # psds_LFC_RSC.pkl intentionally absent
+    m = _make_manifest(tmp_path, {
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
+    })
+    statuses = compute_pipeline_status(tmp_path, m)
+    assert statuses[5].kind != "done"
+
+
 def test_step9_done_when_final_pkl_exists(tmp_path):
     """Step 9 is 'done' when psds_final.pkl exists."""
     psd_dir = _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
@@ -238,3 +265,61 @@ def test_step9_done_when_final_pkl_exists(tmp_path):
     })
     statuses = compute_pipeline_status(tmp_path, m)
     assert statuses[8].kind == "done"
+
+
+# ---------------------------------------------------------------------------
+# Gap 3: regression guard — merged_pkl deleted after partial/full review
+# ---------------------------------------------------------------------------
+
+def test_step9_blocked_when_merged_pkl_absent_despite_reviewed_animals(tmp_path):
+    """Step 9 is 'blocked' when merged_pkl is absent even if psd_status flags are set.
+
+    pending_psd_review() returns [] when merged_pkl is absent, making n_psd_pending=0.
+    Step 9 must still be 'blocked' because merged_pkl.exists() gates it.
+    """
+    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
+    m = _make_manifest(tmp_path, {
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")},
+    })
+    statuses = compute_pipeline_status(tmp_path, m)
+    assert statuses[8].kind == "blocked"
+
+
+def test_step7_blocked_when_merged_pkl_absent_despite_reviewed_animals(tmp_path):
+    """Step 7 is 'blocked' when merged_pkl is absent even if psd_status flags are set."""
+    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
+    m = _make_manifest(tmp_path, {
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")},
+    })
+    statuses = compute_pipeline_status(tmp_path, m)
+    assert statuses[6].kind == "blocked"
+
+
+# ---------------------------------------------------------------------------
+# Gap 6: step 7 must not show "done" when an animal is re-flagged after finalization
+# ---------------------------------------------------------------------------
+
+def test_step7_not_done_when_final_pkl_exists_but_animal_needs_drink_mask(tmp_path):
+    """Step 7 must not show 'done' when final_pkl exists but an animal is re-flagged needs_drink_mask.
+
+    Bug: final_pkl.exists() was checked before n_needs_drink, causing step 7 to
+    report 'done' even though a drink mask still needs to be applied.
+    """
+    psd_dir = _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
+    (psd_dir / "psds_final.pkl").touch()
+    m = _make_manifest(tmp_path, {
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
+    })
+    statuses = compute_pipeline_status(tmp_path, m)
+    assert statuses[6].kind != "done"
+
+
+def test_step7_done_when_final_pkl_exists_and_no_pending_work(tmp_path):
+    """Step 7 is 'done' when final_pkl exists and all animals are reviewed with no pending drink masks."""
+    psd_dir = _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
+    (psd_dir / "psds_final.pkl").touch()
+    m = _make_manifest(tmp_path, {
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")},
+    })
+    statuses = compute_pipeline_status(tmp_path, m)
+    assert statuses[6].kind == "done"

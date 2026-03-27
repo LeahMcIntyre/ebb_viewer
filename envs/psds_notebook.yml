@@ -1,0 +1,13 @@
+name: ebb-dev
+channels: 
+  - conda-forge
+  - defaults
+dependencies:
+  - python
+  - numpy 
+  - scipy
+  - pandas
+  - matplotlib
+  - pip
+  - pip:
+      - openseize==1.3.0

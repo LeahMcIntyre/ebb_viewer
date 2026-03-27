@@ -11,7 +11,8 @@ Covers:
 - build_from_standard: disk scanning, auto-rejection of new combos
 - filtered views: pending_sleep_qc, needs_review, needs_rerun,
                   pending_psd_review, needs_drink_mask, needs_drink_mask_rerun,
-                  pending_rerun_review
+                  pending_rerun_review, pending_drink_verification
+- filtered view mutual exclusivity: psd queues are pairwise disjoint
 - input validation errors
 """
 
@@ -877,3 +878,91 @@ def test_sibling_psd_status_preserved_when_restored_to_ok(tmp_path):
     rsc = m._entries["AM001"].runs["RSC"]
     assert rsc.sleep_qc == "ok"
     assert rsc.psd_status == "ok"  # preserved — PSD review work not lost
+
+
+# ---------------------------------------------------------------------------
+# Gap 12: orphan-cleared run is re-actionable after load()
+# ---------------------------------------------------------------------------
+
+def test_load_orphan_cleared_run_is_actionable(tmp_path):
+    """After load() clears orphaned rejected_by, the run can be flagged without error.
+
+    Extends test_load_clears_orphaned_rejected_by: verifies not just that the
+    metadata is cleared but that the run is in a valid, actionable state.
+    """
+    data = {
+        "AM001": {
+            "preprocessed_edf": "standard/AM001_PREPROCESSED.edf",
+            "notes": "",
+            "runs": {
+                "LFC_RSC": {
+                    "sleep_qc": "rejected",
+                    "rerun_combo": None, "source_combo": None,
+                    "psd_status": None, "drink_mask": None,
+                    "prev_sleep_qc": "needs_review",
+                    "rejected_by": "LSC_RSC",  # orphan — LSC_RSC not present
+                },
+            }
+        }
+    }
+    (tmp_path / "manifest.json").write_text(json.dumps(data))
+    m = Manifest.load(tmp_path)
+
+    # Orphan cleared — run should now be flaggable without raising
+    m.flag_sleep_qc("AM001", "LFC_RSC", "ok")
+    assert m.get_run("AM001", "LFC_RSC").sleep_qc == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Gap 13: PSD status queues are pairwise disjoint (no double-counting in Finalize)
+# ---------------------------------------------------------------------------
+
+def test_psd_queues_are_pairwise_disjoint(tmp_path):
+    """pending_psd_review, needs_drink_mask, and pending_drink_verification
+    are mutually exclusive — each psd_status value belongs to exactly one queue.
+
+    The Finalize page sums all three to compute a pending count; if any animal
+    appeared in more than one queue the count would be inflated.
+    """
+    (tmp_path / "psd").mkdir()
+    (tmp_path / "psd" / "psds_channel_merged.pkl").touch()  # required for pending_psd_review
+
+    m = _make_manifest(tmp_path, {
+        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status=None)},
+        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
+        "AM003": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="drink_mask_applied")},
+        "AM004": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")},
+    })
+
+    pending_review   = {(e.animal_id, c) for e, c in m.pending_psd_review()}
+    needs_drink      = {(e.animal_id, c) for e, c in m.needs_drink_mask()}
+    drink_verif      = {(e.animal_id, c) for e, c in m.pending_drink_verification()}
+
+    assert not (pending_review & needs_drink),   "overlap: pending_review ∩ needs_drink"
+    assert not (pending_review & drink_verif),   "overlap: pending_review ∩ drink_verif"
+    assert not (needs_drink    & drink_verif),   "overlap: needs_drink ∩ drink_verif"
+
+    # Each animal lands in exactly the right queue
+    assert ("AM001", "LFC_RSC") in pending_review
+    assert ("AM002", "LFC_RSC") in needs_drink
+    assert ("AM003", "LFC_RSC") in drink_verif
+    assert all(("AM004", "LFC_RSC") not in q for q in (pending_review, needs_drink, drink_verif))
+
+
+def test_finalize_pending_count_no_double_count(tmp_path):
+    """Summing the three disjoint queues gives the correct total pending count."""
+    (tmp_path / "psd").mkdir()
+    (tmp_path / "psd" / "psds_channel_merged.pkl").touch()
+
+    m = _make_manifest(tmp_path, {
+        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status=None)},
+        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
+        "AM003": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="drink_mask_applied")},
+    })
+
+    total = (
+        len(m.pending_psd_review())
+        + len(m.needs_drink_mask())
+        + len(m.pending_drink_verification())
+    )
+    assert total == 3  # one animal in each queue, no double-counting

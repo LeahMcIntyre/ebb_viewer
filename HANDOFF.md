@@ -284,18 +284,39 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 
 ---
 
-## Next Steps
+### Completed (latest session, branch `refactor/clean-up`)
 
-### Remaining P2 items (from TODO.md)
-1. **home: Remove editable channel combo from pipeline summary table** — the yellow card in Needs Attention already handles rerun combo selection; the double-click table edit is redundant
-2. **preprocess / spindle write: Add "Next →" navigation hint when done** — consistent with Rerun page; use `navigate_to` signal; also add per-file log output that currently goes to console
-3. ~~**psd: Two-step flow label update**~~ — DONE
+#### Test gaps resolved
+- **Gap 3** — regression tests added: step 7 and step 9 correctly show "blocked" when `merged_pkl` is absent even if `psd_status` flags are set in manifest
+- **Gap 6** — bug fixed + test added: step 7 was showing "done" when `final_pkl.exists()` but an animal had been re-flagged to `needs_drink_mask`. Fix: `n_needs_drink` computed before step 7; explicit `n_needs_drink > 0` branch fires before the `final_pkl.exists()` check
+- **Gap 11** — test added: special PKL names (`psds_channel_merged`, `psds_channel_merged_drink`, `psds_final`) are excluded from `combos_with_pkl`; their presence alone cannot make step 6 show "done"
+- **Gap 12** — test added: after `load()` clears orphaned `rejected_by`, the run is actionable (`flag_sleep_qc` works without error)
+- **Gap 13** — 2 tests added: `pending_psd_review`, `needs_drink_mask`, `pending_drink_verification` are pairwise disjoint; Finalize pending sum has no double-counting
+- **Gap 14** — confirmed by code reading: `showEvent` in `SleepQCGridPage` reloads manifest at line 100; no widget test needed
+
+#### UX clarity fixes (`home.py`, `psds.py`)
+- **Step 4 labels**: "N to review" → "N flagged for EDF review", "M pending" → "M not yet assessed"
+- **"Ready to Finalize" attention card** (`home.py`): green card appears in Needs Attention zone when `merged_pkl` exists, `final_pkl` absent, all PSDs reviewed, no drink masks pending, at least one ok animal. Navigates to "9. Finalize"
+- **CSV pre-flight warning** (`psds.py` `_run_clicked`): before launching `batch_estimate`, logs `⚠ COMBO: no state CSV for ANIMAL — this animal will be skipped` for any ok manifest animal missing a state CSV in `spindle_outputs/<combo>/`
+- **Drink mask rebuild guidance** (`psds.py` `_build_final_pkl`): after a successful merge build, if `psds_drink.pkl` exists, logs a note that previously applied drink masks are preserved but may need re-applying if PSD parameters changed
+
+#### P2 items done (by user, outside this session)
+- Preprocess and Spindle Write pages: "Next →" navigation hints added post-run
+
+---
+
+## Next Steps
 
 ### P3 items (from TODO.md)
 - **spindle_upload: "Upload, Wait & Download" button issue** — needs reproduction steps before fixing
-- **spindle_upload: Project names propagate on showEvent** — `_on_combo_changed` may not fire on `showEvent`
+- **spindle_upload: Project names propagate on showEvent** — `_on_combo_changed` may not fire on `showEvent`; investigable by reading the code
 - **psd: SWD masks** — scientific decision on TS required
 - **general: Run log / settings provenance** — `run_log.jsonl` append per action
+
+### Remaining audit clarity items
+- Per-animal progress in batch PSD compute — currently silent for large batches; nice-to-have
+- Hint frame timing on multi-combo rerun upload — minor, low priority
+- Stale `psds_final.pkl` warning — step 7 now correctly shows "attention" when re-flagged, but the file on disk isn't explicitly marked stale
 
 ### Additional suggestions (from TODO.md)
 - EDF format validation on import (`build_from_standard`)
@@ -305,18 +326,8 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 
 ### Testing gaps status (from PIPELINE_AUDIT.md)
 
-**Done:**
-- ~~Gap 1~~ `build_final_pkl` missing per-combo PKL — test fixed (was using same combo; updated to two combos so warning fires correctly)
-- ~~Gap 2~~ `add_run` resetting ok `sleep_qc` — fix + test added
-- ~~Gap 5~~ Dead-zone `needs_rerun` + CSV + no `source_combo` — test added
-- ~~Gap 7~~ `batch_estimate` with no matching EDFs — test added
-- ~~Gap 8~~ `needs_rerun_pending()` when `rerun_run.sleep_qc == "rejected"` — test added
-- ~~Gap 9~~ `flag_sleep_qc("ok")` sibling `psd_status` clear/preserve — tests added
-
-**Still open:**
-- **Gap 3** — `pending_psd_review()` returns `[]` when `psds_channel_merged.pkl` is deleted → Finalize step incorrectly shows "attention". Needs test + possible fix.
+**All high/medium gaps resolved.** Only one open:
 - **Gap 4** — `DrinkMaskPage._on_done` partial failure: error is now surfaced in UI, but no automated test exists (widget-level, harder to test).
-- **Gap 6** — Step 7 shows "done" even after re-flagging an animal (`final_pkl.exists()` still true). Needs a `test_compute_pipeline_status.py` test.
 
 ---
 
@@ -325,7 +336,7 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 - `src/ebb_viewer/pages/rerun.py` — rerun queue page
 - `src/ebb_viewer/pages/spindle_upload.py` — batch upload page + `SleepyRatWorker`
 - `src/ebb_viewer/pages/home.py` — pipeline summary + Needs Attention zone (9 steps)
-- `src/ebb_viewer/pages/psds.py` — PSD Computation page (Step 1 / Step 2 flow)
+- `src/ebb_viewer/pages/psds.py` — PSD Computation page (Step 1 / Step 2 flow + CSV pre-flight)
 - `src/ebb_viewer/pages/drink_mask.py` — Drink Mask page (error surfacing in `_on_done`)
 - `src/ebb_viewer/pages/finalize.py` — Finalize page (9. Finalize sidebar item)
 - `src/ebb_viewer/pages/psd_visualizer.py` — PSD Visualizer (↺ Reset button, final-file gate)
@@ -333,13 +344,13 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 - `src/ebb_viewer/pipeline/manifest.py` — `Manifest` / `ManifestEntry` / `RunEntry`
 - `src/ebb_viewer/main_window.py` — sidebar + page navigation + badge refresh + poll timer
 - `src/ebb/process/psd_compute.py` — `batch_estimate`, `rerun_with_drink_masks`, `build_final_pkl`
-- `tests/ebb_viewer/test_manifest.py` — 79 manifest tests
+- `tests/ebb_viewer/test_manifest.py` — 84 manifest tests
 - `tests/ebb/test_drink_mask_integration.py` — 30 drink mask integration tests
-- `tests/ebb_viewer/test_compute_pipeline_status.py` — 15 pipeline status tests (steps 6, 8, 9)
+- `tests/ebb_viewer/test_compute_pipeline_status.py` — 21 pipeline status tests (steps 6–9)
 - `research/psd_from_edfs.ipynb` — tutorial notebook: load EDF → mask artifacts → state PSDs → group plots from merged PKL
 
 ## Environment
 - Conda env: `ebb-dev` (`source ~/miniconda3/etc/profile.d/conda.sh && conda activate ebb-dev`)
 - Jupyter kernel: `ebb` (registered in `~/.local/share/jupyter/kernels/ebb`)
-- Run tests: `QT_QPA_PLATFORM=offscreen pytest` (121 passing, 13 warnings)
+- Run tests: `QT_QPA_PLATFORM=offscreen python -m pytest` (129 passing, 13 warnings)
 - Branch: `refactor/clean-up`

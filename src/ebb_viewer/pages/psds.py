@@ -375,6 +375,26 @@ class PSDPage(QWidget):
             return
 
         spindle_root = self.project_root / "spindle_outputs"
+
+        # Pre-flight: warn about ok animals with no state CSV (they'll be silently skipped)
+        from ebb_viewer.pipeline.manifest import Manifest
+        manifest = Manifest.load(self.project_root)
+        for combo in combos:
+            csv_animal_ids = {
+                p.stem.split("_")[0]
+                for p in (spindle_root / combo).glob("*.csv")
+            } if (spindle_root / combo).is_dir() else set()
+            ok_animals = [
+                entry.animal_id
+                for entry in manifest
+                if any(c == combo and r.sleep_qc == "ok" for c, r in entry.runs.items())
+            ]
+            missing = [a for a in ok_animals if a not in csv_animal_ids]
+            if missing:
+                self._log(
+                    f"⚠ {combo}: no state CSV for {', '.join(missing)}"
+                    f" — {'this animal' if len(missing) == 1 else 'these animals'} will be skipped"
+                )
         psd_dir = self.project_root / "psd"
         psd_dir.mkdir(parents=True, exist_ok=True)
 
@@ -416,6 +436,13 @@ class PSDPage(QWidget):
             manifest = Manifest.load(self.project_root)
             out = build_final_pkl(self.project_root, manifest)
             self._log(f"Built channel merged PKL: {out}")
+            drink_pkl = self.project_root / "psd" / "psds_drink.pkl"
+            if drink_pkl.exists():
+                self._log(
+                    "Note: previously applied drink masks are preserved in psds_drink.pkl."
+                    " If PSD parameters changed since the last drink mask run,"
+                    " re-apply them on the Drink Mask page."
+                )
             self.manifest_changed.emit()
             self._hint_lbl.setText("✓ Channel merged PKL built — ready for PSD review.")
             self._hint_btn_viz.setVisible(True)
