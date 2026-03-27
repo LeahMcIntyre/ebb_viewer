@@ -331,8 +331,8 @@ def batch_estimate(
     tracemalloc.start()
     warnings.filterwarnings("ignore", category=ResourceWarning)
 
-    # remove any path arguments from kwargs
-    [kwargs.pop(x, None) for x in ('path', 'state_path')]
+    # remove path arguments and UI-only keys that must not reach estimate_psd
+    [kwargs.pop(x, None) for x in ('path', 'state_path', 'swd_mode')]
 
     # pair the eeg paths with the state paths
     state_paths = sorted(Path(state_dir).glob('*.csv'))
@@ -343,7 +343,10 @@ def batch_estimate(
         p for p in Path(eeg_dir).glob('*PROCESSED.edf')
         if _animal_id(p) in state_animal_ids
     )
-    swd_paths = sorted(Path(swd_dir).glob("*.mat")) if swd_dir else None
+    swd_paths = sorted(
+        p for p in Path(swd_dir).glob("*.mat")
+        if _animal_id(p) in state_animal_ids
+    ) if swd_dir else None
     drink_paths = sorted(Path(drink_dir).glob("*.npy")) if drink_dir else None
 
     paired = match_paths(eeg_paths, state_paths, swd_paths, drink_paths)
@@ -434,6 +437,7 @@ def rerun_with_drink_masks(
     drink_dir: Union[str, Path],
     animal_combos: Dict[str, str],
     offset_path: Union[str, Path] = None,
+    swd_dir: Union[str, Path] = None,
     ncores: Optional[int] = None,
     **kwargs,
 ) -> Tuple[Path, Path]:
@@ -452,6 +456,7 @@ def rerun_with_drink_masks(
         drink_dir:     Directory of drink mask .npy files (one per animal).
         animal_combos: {animal_id: ok_combo} mapping for animals to rerun.
         offset_path:   Optional CSV for video-EEG time alignment.
+        swd_dir:       Optional directory of SWD .mat files (one per animal).
         ncores:        Number of parallel workers (None = auto).
         **kwargs:      Passed through to estimate_psd (fs, winsize, etc.).
 
@@ -528,7 +533,11 @@ def rerun_with_drink_masks(
             p for p in sorted(drink_dir.glob("*.npy"))
             if _animal_id(p) in animals_set
         ]
-        paired = match_paths(eeg_paths, state_paths, drink_paths=drink_paths)
+        swd_paths = [
+            p for p in sorted(Path(swd_dir).glob("*.mat"))
+            if _animal_id(p) in animals_set
+        ] if swd_dir else None
+        paired = match_paths(eeg_paths, state_paths, swd_paths=swd_paths, drink_paths=drink_paths)
 
         workers = concurrency.set_cores(ncores, len(paired))
         t0 = time.perf_counter()

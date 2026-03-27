@@ -12,6 +12,10 @@ from PyQt6.QtWidgets import (
 
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
+# Keys stored in psd_params.json that are UI/config only and must not be
+# forwarded to computation functions (rerun_with_drink_masks, estimate_psd).
+_UI_ONLY_PARAM_KEYS = frozenset({"swd_mode"})
+
 CH_LABELS = ["LFC", "RSC", "LSC"]
 
 
@@ -289,10 +293,13 @@ class DrinkMaskPage(QWidget):
         self._pending_animal_combos = animal_combos
 
         offset_path = self._detect_offset_csv()
+        swd_dir = (self.project_root / "swd") if params.get("swd_mode") == "mask_out" else None
 
         self._computing = True
         self.btn_apply.setEnabled(False)
         self._log(f"Starting drink mask rerun for {len(animal_combos)} animal(s)…")
+        if swd_dir:
+            self._log(f"  SWD mask: {swd_dir}")
 
         self.drink_thread = QThread(self)
         self.drink_worker = DrinkMaskRerunWorker(
@@ -303,6 +310,7 @@ class DrinkMaskPage(QWidget):
             animal_combos=animal_combos,
             offset_path=offset_path,
             params=params,
+            swd_dir=swd_dir,
         )
         self.drink_worker.progress.connect(self._log)
         launch_worker(self.drink_thread, self.drink_worker,
@@ -359,6 +367,7 @@ class DrinkMaskRerunWorker(QObject):
         animal_combos: dict,
         offset_path,
         params: dict,
+        swd_dir: Path = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -369,6 +378,7 @@ class DrinkMaskRerunWorker(QObject):
         self.animal_combos = animal_combos   # {animal_id: ok_combo}
         self.offset_path = offset_path
         self.params = params
+        self.swd_dir = Path(swd_dir) if swd_dir else None
 
     def run(self):
         from ebb.process.psd_compute import rerun_with_drink_masks
@@ -380,8 +390,9 @@ class DrinkMaskRerunWorker(QObject):
                 drink_dir=self.drink_dir,
                 animal_combos=self.animal_combos,
                 offset_path=self.offset_path,
+                swd_dir=self.swd_dir,
                 ncores=None,
-                **self.params,
+                **{k: v for k, v in self.params.items() if k not in _UI_ONLY_PARAM_KEYS},
             )
             self.progress.emit("  → psds_drink.pkl updated.")
             self.progress.emit("  → psds_channel_merged_drink.pkl regenerated.")

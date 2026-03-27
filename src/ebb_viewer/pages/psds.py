@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QWidget, QFormLayout, QSpinBox, QDoubleSpinBox, QVBoxLayout, QPushButton,
     QMessageBox, QLabel, QHBoxLayout, QGroupBox, QCheckBox, QGridLayout,
     QSizePolicy, QLineEdit, QApplication, QPlainTextEdit, QTableWidget,
-    QTableWidgetItem, QHeaderView, QFileDialog, QFrame,
+    QTableWidgetItem, QHeaderView, QFileDialog, QFrame, QButtonGroup, QRadioButton,
 )
 
 
@@ -37,12 +37,14 @@ class PSDPage(QWidget):
         self._wire()
         self._refresh_standard_folder()
         self._refresh_combo_table()
+        self._refresh_swd_status()
         self._load_saved_params()
 
     def showEvent(self, event):
         super().showEvent(event)
         self._refresh_standard_folder()
         self._refresh_combo_table()
+        self._refresh_swd_status()
 
     # ---------------- UI ----------------
 
@@ -185,6 +187,26 @@ class PSDPage(QWidget):
         self.gb_mask.setLayout(mask_form)
         root.addWidget(self.gb_mask)
 
+        # ----- Group 6: SWD Masks -----
+        self.gb_swd = QGroupBox("SWD Masks")
+        self.gb_swd.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        swd_v = QVBoxLayout(self.gb_swd)
+
+        self._swd_btn_group = QButtonGroup(self)
+        self._radio_swd_none = QRadioButton("No SWD mask")
+        self._radio_swd_none.setChecked(True)
+        self._radio_swd_mask = QRadioButton("Mask out SWDs")
+        self._swd_btn_group.addButton(self._radio_swd_none, 0)
+        self._swd_btn_group.addButton(self._radio_swd_mask, 1)
+        swd_v.addWidget(self._radio_swd_none)
+        swd_v.addWidget(self._radio_swd_mask)
+
+        self._lbl_swd_status = QLabel("")
+        self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px;")
+        swd_v.addWidget(self._lbl_swd_status)
+
+        root.addWidget(self.gb_swd)
+
         # ----- Main Action Buttons (Step 1 → Step 2) -----
         btn_row2 = QHBoxLayout()
         btn_row2.setSpacing(8)
@@ -250,13 +272,14 @@ class PSDPage(QWidget):
         self.gb_psd.setObjectName("psdBox")
         self.gb_spindle.setObjectName("spindleBox")
         self.gb_mask.setObjectName("maskBox")
+        self.gb_swd.setObjectName("swdBox")
         self.setStyleSheet("""
         QGroupBox#psdBox, QGroupBox#spindleBox, QGroupBox#maskBox,
-        QGroupBox#folderBox, QGroupBox#comboBox {
+        QGroupBox#folderBox, QGroupBox#comboBox, QGroupBox#swdBox {
             font: 550;
         }
         QGroupBox#psdBox *, QGroupBox#spindleBox *, QGroupBox#maskBox *,
-        QGroupBox#folderBox *, QGroupBox#comboBox * {
+        QGroupBox#folderBox *, QGroupBox#comboBox *, QGroupBox#swdBox * {
             font: 400;
         }
         """)
@@ -270,6 +293,7 @@ class PSDPage(QWidget):
         self.btn_psd.clicked.connect(self._run_clicked)
         self.btn_final.clicked.connect(self._build_final_pkl)
         self.combo_table.itemChanged.connect(lambda _: self._validate())
+        self._swd_btn_group.buttonToggled.connect(lambda *_: self._validate())
 
     # ------------- Path / table refresh -------------
 
@@ -286,6 +310,30 @@ class PSDPage(QWidget):
             )
         self.target_name_edit.setText(str(self.project_root / "psd"))
 
+
+    def _refresh_swd_status(self):
+        swd_dir = self.project_root / "swd"
+        if not swd_dir.is_dir():
+            self._lbl_swd_status.setText("swd/ not found in project root")
+            self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #888;")
+            self._radio_swd_mask.setEnabled(False)
+        else:
+            mat_count = len(list(swd_dir.glob("*.mat")))
+            if mat_count == 0:
+                self._lbl_swd_status.setText("swd/ found — no .mat files")
+                self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #c77800;")
+                self._radio_swd_mask.setEnabled(False)
+            else:
+                n = mat_count
+                self._lbl_swd_status.setText(
+                    f"✓ {n} .mat {'file' if n == 1 else 'files'} in swd/"
+                )
+                self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #2a7a2a;")
+                self._radio_swd_mask.setEnabled(True)
+        # If mask mode was selected but is no longer available, fall back to none
+        if not self._radio_swd_mask.isEnabled() and self._radio_swd_mask.isChecked():
+            self._radio_swd_none.setChecked(True)
+        self._validate()
 
     def _load_saved_params(self):
         from ebb_viewer.pipeline import psd_params
@@ -309,6 +357,8 @@ class PSDPage(QWidget):
             self.chk_all.blockSignals(True)
             self.chk_all.setChecked(all_checked)
             self.chk_all.blockSignals(False)
+        if params.get("swd_mode") == "mask_out" and self._radio_swd_mask.isEnabled():
+            self._radio_swd_mask.setChecked(True)
 
     def _refresh_combo_table(self):
         spindle_root = self.project_root / "spindle_outputs"
@@ -395,6 +445,32 @@ class PSDPage(QWidget):
                     f"⚠ {combo}: no state CSV for {', '.join(missing)}"
                     f" — {'this animal' if len(missing) == 1 else 'these animals'} will be skipped"
                 )
+
+        # Pre-flight: SWD mask — all ok animals must have a .mat file
+        swd_dir: Optional[Path] = None
+        if self._radio_swd_mask.isChecked():
+            swd_dir = self.project_root / "swd"
+            swd_animal_ids = {
+                p.stem.split("_")[0]
+                for p in swd_dir.glob("*.mat")
+            } if swd_dir.is_dir() else set()
+            all_ok_animals = {
+                entry.animal_id
+                for entry in manifest
+                if any(r.sleep_qc == "ok" for r in entry.runs.values())
+            }
+            missing_swd = sorted(all_ok_animals - swd_animal_ids)
+            if missing_swd:
+                QMessageBox.warning(
+                    self,
+                    "Missing SWD Files",
+                    "The following animals have no SWD .mat file in swd/:\n\n"
+                    + "\n".join(f"  \u2022 {a}" for a in missing_swd)
+                    + "\n\nProvide SWD files for all animals before running with SWD masking,"
+                    " or switch to 'No SWD mask'.",
+                )
+                return
+
         psd_dir = self.project_root / "psd"
         psd_dir.mkdir(parents=True, exist_ok=True)
 
@@ -423,6 +499,7 @@ class PSDPage(QWidget):
             combo_pairs=pairs,
             params=params,
             project_root=self.project_root,
+            swd_dir=swd_dir,
         )
         self.psd_worker.progress.connect(self._log)
         launch_worker(self.psd_thread, self.psd_worker,
@@ -532,6 +609,7 @@ class BatchEstimateWorker(QObject):
         params: dict,
         project_root: Path,
         offset_path=None,
+        swd_dir: Optional[Path] = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -540,6 +618,7 @@ class BatchEstimateWorker(QObject):
         self.params = params
         self.project_root = Path(project_root)
         self.offset_path = offset_path
+        self.swd_dir = swd_dir
 
     def run(self):
         from ebb.process.psd_compute import batch_estimate
@@ -550,7 +629,7 @@ class BatchEstimateWorker(QObject):
                 results = batch_estimate(
                     eeg_dir=self.eeg_dir,
                     state_dir=spindle_dir,
-                    swd_dir=None,
+                    swd_dir=self.swd_dir,
                     drink_dir=None,
                     ncores=None,
                     savepath=None,
@@ -562,7 +641,8 @@ class BatchEstimateWorker(QObject):
                     pickle.dump(records, f)
                 self.progress.emit(f"  → Saved: {savepath.name}")
 
-            psd_params.save(self.project_root, self.params)
+            swd_mode = "mask_out" if self.swd_dir is not None else "none"
+            psd_params.save(self.project_root, {**self.params, "swd_mode": swd_mode})
             self.progress.emit("  → Saved PSD params to psd/psd_params.json")
             self.finished.emit()
         except Exception as e:
