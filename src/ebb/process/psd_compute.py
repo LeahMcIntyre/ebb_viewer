@@ -7,6 +7,7 @@ import re
 import functools
 import time
 import dataclasses
+import multiprocessing
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union, Sequence
@@ -239,6 +240,12 @@ def _animal_id(p: Path, pattern: str = r"[^_]+") -> str:
 
 
 
+def _star_call(fn_args):
+    """Module-level unpacker for pool.imap — lambdas aren't picklable with spawn."""
+    fn, args = fn_args
+    return fn(*args)
+
+
 def match_paths(
     eeg_paths: Sequence[Path],
     state_paths: Sequence[Path],
@@ -298,6 +305,7 @@ def batch_estimate(
     ncores: Optional[int] = None,
     verbose: bool = True,
     savepath: Union[str, Path] = None,
+    progress_fn: Optional[callable] = None,
     **kwargs,
 ) -> List[PSDResult]:
 
@@ -361,13 +369,22 @@ def batch_estimate(
     if offset_path is not None:
         kwargs['offset_path'] = offset_path
     estimator = functools.partial(estimate_psd, **kwargs)
+    n = len(paired)
     t0 = time.perf_counter()
     if workers == 1:
-            # ---- SEQUENTIAL PATH (no multiprocessing) ----
-        results_nested = [estimator(*args) for args in paired]
+        results_nested = []
+        for i, args in enumerate(paired):
+            if progress_fn:
+                progress_fn(f"  [{i+1}/{n}] {args[0].name}…")
+            results_nested.append(estimator(*args))
     else:
-        with Pool(workers) as pool:
-            results_nested = pool.starmap(estimator, paired)
+        results_nested = []
+        ctx = multiprocessing.get_context("spawn")
+        with ctx.Pool(workers) as pool:
+            for i, result in enumerate(pool.imap(_star_call, [(estimator, a) for a in paired])):
+                if progress_fn:
+                    progress_fn(f"  [{i+1}/{n}] done")
+                results_nested.append(result)
 
     elapsed = time.perf_counter() - t0
     print(f'Batch processed {len(paired)} files in {elapsed} secs')
@@ -544,7 +561,8 @@ def rerun_with_drink_masks(
         if workers == 1:
             results_nested = [estimator(*args) for args in paired]
         else:
-            with Pool(workers) as pool:
+            ctx = multiprocessing.get_context("spawn")
+            with ctx.Pool(workers) as pool:
                 results_nested = pool.starmap(estimator, paired)
         elapsed = time.perf_counter() - t0
         print(f"Drink-mask rerun ({combo}): {len(paired)} files in {elapsed:.1f}s")

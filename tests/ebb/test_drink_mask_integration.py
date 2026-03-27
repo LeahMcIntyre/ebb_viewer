@@ -135,6 +135,196 @@ def test_batch_estimate_passes_drink_dir(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# _star_call
+# ---------------------------------------------------------------------------
+
+def test_star_call_unpacks_and_calls():
+    """_star_call((fn, args)) calls fn(*args) and returns the result."""
+    from ebb.process.psd_compute import _star_call
+
+    def add(a, b, c):
+        return a + b + c
+
+    assert _star_call((add, (1, 2, 3))) == 6
+
+
+def test_star_call_passes_all_positional_args():
+    """_star_call forwards every element of args as a positional argument."""
+    from ebb.process.psd_compute import _star_call
+
+    received = []
+
+    def capture(*args):
+        received.extend(args)
+        return args
+
+    _star_call((capture, ("x", "y", None, 42)))
+    assert received == ["x", "y", None, 42]
+
+
+# ---------------------------------------------------------------------------
+# batch_estimate: spawn context
+# ---------------------------------------------------------------------------
+
+def _make_spawn_fake_ctx(imap_results):
+    """Return a fake multiprocessing context whose Pool.imap yields imap_results."""
+    fake_pool = MagicMock()
+    fake_pool.__enter__ = lambda s: s
+    fake_pool.__exit__ = lambda *_: None
+    fake_pool.imap.return_value = iter(imap_results)
+    fake_ctx = MagicMock()
+    fake_ctx.Pool.return_value = fake_pool
+    return fake_ctx, fake_pool
+
+
+def test_batch_estimate_parallel_uses_spawn_context(tmp_path):
+    """batch_estimate uses get_context('spawn') in parallel mode — not fork."""
+    standard = tmp_path / "standard"
+    standard.mkdir()
+    spindle_out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle_out.mkdir(parents=True)
+
+    paired = [
+        (standard / "AM001_foo_PREPROCESSED.edf", spindle_out / "AM001.csv", None, None),
+        (standard / "AM002_foo_PREPROCESSED.edf", spindle_out / "AM002.csv", None, None),
+    ]
+    fake_ctx, _ = _make_spawn_fake_ctx([[], []])
+
+    with _make_batch_estimate_patches(paired, workers=2), \
+         patch("ebb.process.psd_compute.multiprocessing.get_context", return_value=fake_ctx) as mock_get_ctx:
+        from ebb.process.psd_compute import batch_estimate
+        batch_estimate(eeg_dir=standard, state_dir=spindle_out)
+
+    mock_get_ctx.assert_called_once_with("spawn")
+
+
+def test_batch_estimate_sequential_does_not_use_spawn_context(tmp_path):
+    """In sequential mode (workers=1), get_context is never called."""
+    standard = tmp_path / "standard"
+    standard.mkdir()
+    spindle_out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle_out.mkdir(parents=True)
+
+    with _make_batch_estimate_patches([], workers=1), \
+         patch("ebb.process.psd_compute.multiprocessing.get_context") as mock_get_ctx:
+        from ebb.process.psd_compute import batch_estimate
+        batch_estimate(eeg_dir=standard, state_dir=spindle_out)
+
+    mock_get_ctx.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# batch_estimate: progress_fn
+# ---------------------------------------------------------------------------
+
+def _make_batch_estimate_patches(paired, workers=1):
+    """Return a context-manager stack that patches the three collaborators."""
+    from contextlib import ExitStack
+    from unittest.mock import patch
+
+    stack = ExitStack()
+    stack.enter_context(patch("ebb.process.psd_compute.match_paths", return_value=paired))
+    stack.enter_context(patch("ebb.process.psd_compute.concurrency.set_cores", return_value=workers))
+    return stack
+
+
+def test_progress_fn_called_once_per_file_sequential(tmp_path):
+    """progress_fn is called exactly once per file in sequential mode (workers=1),
+    with a message containing the filename and a [i/n] counter."""
+    standard = tmp_path / "standard"
+    standard.mkdir()
+    spindle_out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle_out.mkdir(parents=True)
+
+    edf_a = standard / "AM001_foo_PREPROCESSED.edf"
+    edf_b = standard / "AM002_foo_PREPROCESSED.edf"
+    edf_a.touch()
+    edf_b.touch()
+    (spindle_out / "AM001_states.csv").touch()
+    (spindle_out / "AM002_states.csv").touch()
+
+    paired = [
+        (edf_a, spindle_out / "AM001_states.csv", None, None),
+        (edf_b, spindle_out / "AM002_states.csv", None, None),
+    ]
+
+    messages = []
+
+    with _make_batch_estimate_patches(paired, workers=1), \
+         patch("ebb.process.psd_compute.estimate_psd", return_value=[]):
+        from ebb.process.psd_compute import batch_estimate
+        batch_estimate(
+            eeg_dir=standard,
+            state_dir=spindle_out,
+            progress_fn=messages.append,
+        )
+
+    assert len(messages) == 2
+    assert "[1/2]" in messages[0]
+    assert "AM001_foo_PREPROCESSED.edf" in messages[0]
+    assert "[2/2]" in messages[1]
+    assert "AM002_foo_PREPROCESSED.edf" in messages[1]
+
+
+def test_progress_fn_called_once_per_file_parallel(tmp_path):
+    """progress_fn is called exactly once per file in parallel mode (workers > 1)."""
+    standard = tmp_path / "standard"
+    standard.mkdir()
+    spindle_out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle_out.mkdir(parents=True)
+
+    edf_a = standard / "AM001_foo_PREPROCESSED.edf"
+    edf_b = standard / "AM002_foo_PREPROCESSED.edf"
+    edf_a.touch()
+    edf_b.touch()
+    (spindle_out / "AM001_states.csv").touch()
+    (spindle_out / "AM002_states.csv").touch()
+
+    paired = [
+        (edf_a, spindle_out / "AM001_states.csv", None, None),
+        (edf_b, spindle_out / "AM002_states.csv", None, None),
+    ]
+
+    messages = []
+
+    # Fake pool whose imap returns results in order, one per file
+    class FakePool:
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def imap(self, fn, items): return ([] for _ in items)
+
+    fake_ctx = MagicMock()
+    fake_ctx.Pool.return_value = FakePool()
+
+    with _make_batch_estimate_patches(paired, workers=2), \
+         patch("ebb.process.psd_compute.multiprocessing.get_context", return_value=fake_ctx):
+        from ebb.process.psd_compute import batch_estimate
+        batch_estimate(
+            eeg_dir=standard,
+            state_dir=spindle_out,
+            progress_fn=messages.append,
+        )
+
+    assert len(messages) == 2
+    assert "[1/2]" in messages[0]
+    assert "[2/2]" in messages[1]
+
+
+def test_progress_fn_none_does_not_raise(tmp_path):
+    """progress_fn=None (default) runs without error."""
+    standard = tmp_path / "standard"
+    standard.mkdir()
+    spindle_out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle_out.mkdir(parents=True)
+
+    paired = []
+
+    with _make_batch_estimate_patches(paired, workers=1):
+        from ebb.process.psd_compute import batch_estimate
+        batch_estimate(eeg_dir=standard, state_dir=spindle_out)  # no progress_fn
+
+
+# ---------------------------------------------------------------------------
 # rerun_with_drink_masks
 # ---------------------------------------------------------------------------
 

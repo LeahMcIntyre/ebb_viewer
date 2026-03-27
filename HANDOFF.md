@@ -284,7 +284,7 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 
 ---
 
-### Completed (latest session, branch `refactor/clean-up`)
+### Completed (previous session, branch `refactor/clean-up`)
 
 #### Test gaps resolved
 - **Gap 3** — regression tests added: step 7 and step 9 correctly show "blocked" when `merged_pkl` is absent even if `psd_status` flags are set in manifest
@@ -305,16 +305,46 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 
 ---
 
+### Completed (latest session, branch `refactor/clean-up`)
+
+#### SWD mask threading through drink mask rerun
+- `rerun_with_drink_masks` (`psd_compute.py`) now accepts `swd_dir` parameter; per-combo loop filters `.mat` files to `animals_set` and passes `swd_paths` to `match_paths`
+- `DrinkMaskRerunWorker` (`drink_mask.py`) accepts and stores `swd_dir`; passes it to `rerun_with_drink_masks`
+- `DrinkMaskPage._apply_clicked` derives `swd_dir = project_root / "swd"` when `params["swd_mode"] == "mask_out"`, logs it, and passes to worker
+- SWD mask is now applied consistently in drink mask reruns whenever it was used in the original PSD computation
+
+#### Spindle upload UX fixes (`spindle_upload.py`)
+- **Remote folder auto-update on combo switch**: `_on_upload_combo_changed` now updates `remote_folder_edit` when the field contains a previous auto-generated value (starts with `project_root.stem + "_"`), not only when empty — switching combos correctly updates the default remote folder name
+- **SleepyRat project list auto-fetch**: added `_projects_fetched` flag; `showEvent` calls `_refresh_projects_clicked()` on first show only — no repeated error dialogs if the server is unreachable
+
+#### Per-animal progress in `batch_estimate` (`psd_compute.py`)
+- Added `progress_fn: Optional[callable] = None` parameter
+- Sequential path (workers=1): calls `progress_fn(f"  [{i+1}/{n}] {filename}…")` before each file
+- Parallel path (workers>1): uses `pool.imap` (via `_star_call`) to call `progress_fn(f"  [{i+1}/{n}] done")` as each worker finishes
+- `BatchEstimateWorker` passes `progress_fn=self.progress.emit` so per-file progress appears in the Qt log box
+- 3 tests added: sequential calls per-file with counter + filename; parallel calls per-file; `None` default doesn't raise
+
+#### Preprocess and Spindle Write workers now use `ebb.preprocess.edf.batch`
+- `_PreprocessWorker.run()` (`preprocess.py`) replaced manual `for` loop with `batch_preprocess(standard, ...)` — uses `Pool` for true parallelism
+- `_SpindleWriteWorker.run()` (`spindle.py`) replaced manual `for` loop with `batch_preprocess(spindle, ...)` — same
+
+#### Fork-in-multithread fix — `get_context("spawn")` everywhere
+- All `Pool` usages now use `multiprocessing.get_context("spawn")` instead of the default fork Pool: `edf.batch`, `batch_estimate` (imap path), `rerun_with_drink_masks` (starmap path)
+- Eliminates `DeprecationWarning: This process is multi-threaded, use of fork() may lead to deadlocks` when running from Qt
+- `_star_call(fn_args)` added at module level in `psd_compute.py` — unpacks `(fn, args)` tuple for `pool.imap` (lambdas aren't picklable with spawn)
+- 6 tests added: `_star_call` correctness (2); `batch_estimate` uses spawn in parallel, not in sequential (2); `edf.batch` uses spawn in parallel, not in sequential (2)
+
+#### Tests — 138 passing
+
+---
+
 ## Next Steps
 
 ### P3 items (from TODO.md)
 - **spindle_upload: "Upload, Wait & Download" button issue** — needs reproduction steps before fixing
-- **spindle_upload: Project names propagate on showEvent** — `_on_combo_changed` may not fire on `showEvent`; investigable by reading the code
-- **psd: SWD masks** — scientific decision on TS required
 - **general: Run log / settings provenance** — `run_log.jsonl` append per action
 
 ### Remaining audit clarity items
-- Per-animal progress in batch PSD compute — currently silent for large batches; nice-to-have
 - Hint frame timing on multi-combo rerun upload — minor, low priority
 - Stale `psds_final.pkl` warning — step 7 now correctly shows "attention" when re-flagged, but the file on disk isn't explicitly marked stale
 
@@ -334,23 +364,27 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 ## Key Files
 - `src/ebb_viewer/pages/sleep_qc_visualizer.py` — Sleep QC page (group + animal + review modes)
 - `src/ebb_viewer/pages/rerun.py` — rerun queue page
-- `src/ebb_viewer/pages/spindle_upload.py` — batch upload page + `SleepyRatWorker`
+- `src/ebb_viewer/pages/spindle_upload.py` — batch upload page + `SleepyRatWorker`; remote folder auto-update + project list auto-fetch on first show
 - `src/ebb_viewer/pages/home.py` — pipeline summary + Needs Attention zone (9 steps)
-- `src/ebb_viewer/pages/psds.py` — PSD Computation page (Step 1 / Step 2 flow + CSV pre-flight)
-- `src/ebb_viewer/pages/drink_mask.py` — Drink Mask page (error surfacing in `_on_done`)
+- `src/ebb_viewer/pages/psds.py` — PSD Computation page (Step 1 / Step 2 flow + CSV pre-flight + SWD mask option)
+- `src/ebb_viewer/pages/drink_mask.py` — Drink Mask page; SWD dir threaded through worker
 - `src/ebb_viewer/pages/finalize.py` — Finalize page (9. Finalize sidebar item)
 - `src/ebb_viewer/pages/psd_visualizer.py` — PSD Visualizer (↺ Reset button, final-file gate)
+- `src/ebb_viewer/pages/preprocess.py` — Preprocess page; worker uses `edf.batch` for parallel execution
+- `src/ebb_viewer/pages/spindle.py` — Spindle Write page; worker uses `edf.batch` for parallel execution
 - `src/ebb_viewer/widgets/psd_graph_widget.py` — PSD grid + flag buttons (OK / Drink Mask / ↺ Reset)
 - `src/ebb_viewer/pipeline/manifest.py` — `Manifest` / `ManifestEntry` / `RunEntry`
 - `src/ebb_viewer/main_window.py` — sidebar + page navigation + badge refresh + poll timer
-- `src/ebb/process/psd_compute.py` — `batch_estimate`, `rerun_with_drink_masks`, `build_final_pkl`
+- `src/ebb/process/psd_compute.py` — `batch_estimate` (progress_fn + spawn), `rerun_with_drink_masks` (swd_dir + spawn), `build_final_pkl`, `_star_call`
+- `src/ebb/preprocess/edf.py` — `batch` (spawn context for multiprocessing)
 - `tests/ebb_viewer/test_manifest.py` — 84 manifest tests
-- `tests/ebb/test_drink_mask_integration.py` — 30 drink mask integration tests
+- `tests/ebb/test_drink_mask_integration.py` — 39 drink mask + batch_estimate tests
+- `tests/ebb/test_preprocess_batch.py` — 4 batch preprocess tests (including spawn context)
 - `tests/ebb_viewer/test_compute_pipeline_status.py` — 21 pipeline status tests (steps 6–9)
 - `research/psd_from_edfs.ipynb` — tutorial notebook: load EDF → mask artifacts → state PSDs → group plots from merged PKL
 
 ## Environment
 - Conda env: `ebb-dev` (`source ~/miniconda3/etc/profile.d/conda.sh && conda activate ebb-dev`)
 - Jupyter kernel: `ebb` (registered in `~/.local/share/jupyter/kernels/ebb`)
-- Run tests: `QT_QPA_PLATFORM=offscreen python -m pytest` (129 passing, 13 warnings)
+- Run tests: `QT_QPA_PLATFORM=offscreen python -m pytest` (138 passing)
 - Branch: `refactor/clean-up`

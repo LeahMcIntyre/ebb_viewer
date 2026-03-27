@@ -38,6 +38,7 @@ class SpindleUploadPage(QWidget):
         self.project_root = Path(project_root)
         self._api: Optional[SleepyRatAPI] = None
         self._pending_save: Optional[tuple[str, str, str]] = None  # (combo, project, remote_folder)
+        self._projects_fetched = False
 
         self._build_ui()
         self._wire()
@@ -210,6 +211,9 @@ class SpindleUploadPage(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self._refresh_spindle_dirs()
+        if not self._projects_fetched:
+            self._projects_fetched = True
+            self._refresh_projects_clicked()
         self._update_run_enabled()
 
     # ------------- Helpers -------------
@@ -283,8 +287,11 @@ class SpindleUploadPage(QWidget):
             self.output_dir_edit.setText(str(out_dir) if out_dir else "")
 
             combo = self._current_combo_name()
-            if combo and not self.remote_folder_edit.text().strip():
-                self.remote_folder_edit.setText(self.project_root.stem + '_' + combo)
+            if combo:
+                current = self.remote_folder_edit.text().strip()
+                auto_prefix = self.project_root.stem + "_"
+                if not current or current.startswith(auto_prefix):
+                    self.remote_folder_edit.setText(auto_prefix + combo)
 
         self._update_run_enabled()
 

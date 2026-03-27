@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import time
 from functools import partial
+import multiprocessing
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Callable, Iterable, Sequence, Union, Optional
@@ -142,7 +143,8 @@ def batch(
     func = partial(preprocessor, savedir=target, **kwargs)
 
     if use_multiprocessing and workers > 1:
-        with Pool(workers) as pool:
+        ctx = multiprocessing.get_context("spawn")
+        with ctx.Pool(workers) as pool:
             outs = pool.map(func, paths)
     else:
         outs = [func(p) for p in paths]

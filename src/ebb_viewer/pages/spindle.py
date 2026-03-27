@@ -11,7 +11,7 @@ from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal
 from pathlib import Path
 from typing import Optional
 
-from ebb.preprocess.edf import spindle
+from ebb.preprocess.edf import spindle, batch as batch_preprocess
 from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
@@ -407,26 +407,21 @@ class _SpindleWriteWorker(QObject):
 
     def run(self):
         try:
-            paths = list(self.standard_folder.glob("*.edf"))
-            if not paths:
+            n = sum(1 for _ in self.standard_folder.glob("*.edf"))
+            if not n:
                 self.log.emit("No EDF files found in standard folder.")
                 self.finished.emit()
                 return
-            self.log.emit(f"Starting spindle preprocessing on {len(paths)} file(s)…")
+            self.log.emit(f"Starting spindle preprocessing on {n} file(s)…")
             t0 = time.perf_counter()
-            ok = skipped = 0
-            for p in paths:
-                try:
-                    spindle(p, savedir=self.target_dir, channels=self.channels, verbose=False)
-                    self.log.emit(f"  ✓ {p.name}")
-                    ok += 1
-                except Exception as e:
-                    self.log.emit(f"  ✗ {p.name}: {e}")
-                    skipped += 1
-            elapsed = time.perf_counter() - t0
-            self.log.emit(
-                f"Done: {ok} written, {skipped} skipped — {elapsed:.2f}s"
+            outs = batch_preprocess(
+                spindle, self.standard_folder,
+                target=self.target_dir,
+                channels=self.channels,
+                verbose=False,
             )
+            elapsed = time.perf_counter() - t0
+            self.log.emit(f"Done: {len(outs)} file(s) written — {elapsed:.2f}s")
             self.finished.emit()
         except Exception as e:
             self.error.emit(str(e))

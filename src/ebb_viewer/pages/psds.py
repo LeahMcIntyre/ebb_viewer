@@ -318,15 +318,14 @@ class PSDPage(QWidget):
             self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #888;")
             self._radio_swd_mask.setEnabled(False)
         else:
-            mat_count = len(list(swd_dir.glob("*.mat")))
+            mat_count = sum(1 for _ in swd_dir.glob("*.mat"))
             if mat_count == 0:
                 self._lbl_swd_status.setText("swd/ found — no .mat files")
                 self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #c77800;")
                 self._radio_swd_mask.setEnabled(False)
             else:
-                n = mat_count
                 self._lbl_swd_status.setText(
-                    f"✓ {n} .mat {'file' if n == 1 else 'files'} in swd/"
+                    f"✓ {mat_count} .mat {'file' if mat_count == 1 else 'files'} in swd/"
                 )
                 self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #2a7a2a;")
                 self._radio_swd_mask.setEnabled(True)
@@ -450,10 +449,7 @@ class PSDPage(QWidget):
         swd_dir: Optional[Path] = None
         if self._radio_swd_mask.isChecked():
             swd_dir = self.project_root / "swd"
-            swd_animal_ids = {
-                p.stem.split("_")[0]
-                for p in swd_dir.glob("*.mat")
-            } if swd_dir.is_dir() else set()
+            swd_animal_ids = {p.stem.split("_")[0] for p in swd_dir.glob("*.mat")}
             all_ok_animals = {
                 entry.animal_id
                 for entry in manifest
@@ -634,6 +630,7 @@ class BatchEstimateWorker(QObject):
                     ncores=None,
                     savepath=None,
                     offset_path=self.offset_path,
+                    progress_fn=self.progress.emit,
                     **self.params,
                 )
                 records = [{**dataclasses.asdict(r), "params": self.params} for r in results]
