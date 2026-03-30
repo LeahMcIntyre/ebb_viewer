@@ -40,6 +40,10 @@ class SleepyRatAPI:
                                 headers=self.headers)
         return response.json() 
 
+    def folder_names(self, project) -> list[str]:
+        """Return a simple list of folder names for a project."""
+        return self.get_folders(project)
+
     def create_folder(self, project, folder_name):
         response = requests.post(f"{self.base_url}/projects/{project}/folders",
                                headers=self.headers,

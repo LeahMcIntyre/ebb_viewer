@@ -39,6 +39,7 @@ class SpindleUploadPage(QWidget):
         self._api: Optional[SleepyRatAPI] = None
         self._pending_save: Optional[tuple[str, str, str]] = None  # (combo, project, remote_folder)
         self._projects_fetched = False
+        self._known_folders: Optional[set[str]] = None
 
         self._build_ui()
         self._wire()
@@ -142,16 +143,22 @@ class SpindleUploadPage(QWidget):
         form_layout.addRow("", proj_hint)
 
         # --- SleepyRat remote folder name ---
-        self.remote_folder_edit = QLineEdit()
+        self.remote_folder_edit = QComboBox()
+        self.remote_folder_edit.setEditable(True)
         form_layout.addRow("Remote folder name:", self.remote_folder_edit)
 
-        folder_hint = QLabel(
+        folder_desc = QLabel(
             "Inside the selected SleepyRat project, submissions will be grouped "
             "in this folder (e.g. PHP_6w_LFC_RSC)."
         )
-        folder_hint.setStyleSheet("color:#777; font-size:10px;")
-        folder_hint.setWordWrap(True)
-        form_layout.addRow("", folder_hint)
+        folder_desc.setStyleSheet("color:#777; font-size:10px;")
+        folder_desc.setWordWrap(True)
+        form_layout.addRow("", folder_desc)
+
+        self.remote_folder_hint = QLabel("")
+        self.remote_folder_hint.setStyleSheet("color:#555; font-size:10px;")
+        self.remote_folder_hint.setWordWrap(True)
+        form_layout.addRow("", self.remote_folder_hint)
 
         btn_row = QHBoxLayout()
         self.btn_upload_and_download = QPushButton("Process Spindle")
@@ -197,13 +204,13 @@ class SpindleUploadPage(QWidget):
         # SleepyRat project list
         self.btn_refresh_projects.clicked.connect(self._refresh_projects_clicked)
         self.btn_new_project.clicked.connect(self._new_project_clicked)
-        self.project_list.currentRowChanged.connect(
-            lambda _: self._update_run_enabled()
+        self.project_list.currentItemChanged.connect(
+            lambda *_: self._on_project_selected()
         )
 
         # Remote folder text
-        self.remote_folder_edit.textChanged.connect(
-            lambda _: self._update_run_enabled()
+        self.remote_folder_edit.currentTextChanged.connect(
+            lambda _: (self._update_run_enabled(), self._update_folder_hint())
         )
 
         self.btn_upload_and_download.clicked.connect(self._upload_and_download_clicked)
@@ -288,16 +295,66 @@ class SpindleUploadPage(QWidget):
 
             combo = self._current_combo_name()
             if combo:
-                current = self.remote_folder_edit.text().strip()
+                current = self.remote_folder_edit.currentText().strip()
                 auto_prefix = self.project_root.stem + "_"
                 if not current or current.startswith(auto_prefix):
-                    self.remote_folder_edit.setText(auto_prefix + combo)
+                    self.remote_folder_edit.setCurrentText(auto_prefix + combo)
 
         self._update_run_enabled()
 
+    def _on_project_selected(self):
+        self._known_folders = None
+        item = self.project_list.currentItem()
+        if item is None:
+            self._update_folder_hint()
+            self._update_run_enabled()
+            return
+        project = item.text().strip()
+        current_text = self.remote_folder_edit.currentText()
+        self.remote_folder_edit.blockSignals(True)
+        self.remote_folder_edit.clear()
+        self.remote_folder_edit.setCurrentText(current_text)
+        self.remote_folder_edit.blockSignals(False)
+        self._update_folder_hint()
+        self._update_run_enabled()
+        self._fetch_folders(project)
+
+    def _fetch_folders(self, project: str):
+        api = self._ensure_api()
+        try:
+            names = api.folder_names(project)
+        except Exception as e:
+            self._log(f"Could not fetch folders for '{project}': {e}")
+            return
+        self._on_folders_fetched(project, names)
+
+    def _on_folders_fetched(self, project: str, names: list[str]):
+        self._known_folders = set(names)
+        current_text = self.remote_folder_edit.currentText()
+        self.remote_folder_edit.blockSignals(True)
+        self.remote_folder_edit.clear()
+        for name in sorted(names):
+            self.remote_folder_edit.addItem(name)
+        self.remote_folder_edit.setCurrentText(current_text)
+        self.remote_folder_edit.blockSignals(False)
+        self._update_folder_hint()
+        self._update_run_enabled()
+
+    def _update_folder_hint(self):
+        text = self.remote_folder_edit.currentText().strip()
+        if self._known_folders is None or not text:
+            self.remote_folder_hint.setText("")
+        elif text in self._known_folders:
+            self.remote_folder_hint.setText(
+                "Existing folder — already-uploaded files will be skipped; "
+                "missing labels will be downloaded."
+            )
+        else:
+            self.remote_folder_hint.setText("New folder — will be created on upload.")
+
     def _update_run_enabled(self):
         upload_dir = self._current_upload_dir()
-        remote_folder = self.remote_folder_edit.text().strip()
+        remote_folder = self.remote_folder_edit.currentText().strip()
 
         has_upload_dir = upload_dir is not None
         has_remote_folder = bool(remote_folder)
@@ -377,7 +434,7 @@ class SpindleUploadPage(QWidget):
     def _get_common_run_context(self):
         """Return (project, remote_folder, upload_dir, out_dir) or show errors and return None."""
         upload_dir = self._current_upload_dir()
-        remote_folder = self.remote_folder_edit.text().strip()
+        remote_folder = self.remote_folder_edit.currentText().strip()
 
         # SleepyRat project
         item = self.project_list.currentItem()
