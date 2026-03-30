@@ -55,6 +55,7 @@ class MainWindow(QMainWindow):
 
         self.pagelist = QListWidget()
         self.pagelist.setFixedWidth(160)
+        self.pagelist.setMinimumHeight(350)
         sidebar_layout.addWidget(self.pagelist)
         sidebar_layout.addStretch(1)
 
@@ -91,6 +92,7 @@ class MainWindow(QMainWindow):
             ("6. PSD Computation", 6),
             ("7. PSD Visualizer",  7),
             ("8. Drink Mask",      8),
+            None,
             ("9. Finalize",        9),
         ]
         self._row_to_stack: dict[int, int] = {}
@@ -144,7 +146,7 @@ class MainWindow(QMainWindow):
             "psd_compute":    9,
             "psd_review":     10,
             "drink_mask":     11,
-            "finalize":       12,
+            "finalize":       13,
         }
         self.home_page.navigate_to.connect(
             lambda name: self.pagelist.setCurrentRow(_page_rows[name])
