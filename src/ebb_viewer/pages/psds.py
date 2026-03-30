@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QLabel, QHBoxLayout, QGroupBox, QCheckBox, QGridLayout,
     QSizePolicy, QLineEdit, QApplication, QPlainTextEdit, QTableWidget,
     QTableWidgetItem, QHeaderView, QFileDialog, QFrame, QButtonGroup, QRadioButton,
+    QToolButton,
 )
 
 
@@ -103,6 +104,22 @@ class PSDPage(QWidget):
 
         root.addWidget(self.combo_gb)
 
+        # ----- Collapsible: Advanced PSD Settings -----
+        self._btn_adv = QToolButton()
+        self._btn_adv.setText("  Advanced PSD Settings")
+        self._btn_adv.setCheckable(True)
+        self._btn_adv.setChecked(False)
+        self._btn_adv.setArrowType(Qt.ArrowType.RightArrow)
+        self._btn_adv.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._btn_adv.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        root.addWidget(self._btn_adv)
+
+        self._adv_container = QWidget()
+        adv_v = QVBoxLayout(self._adv_container)
+        adv_v.setContentsMargins(0, 0, 0, 0)
+        adv_v.setSpacing(4)
+        self._adv_container.setVisible(False)
+
         # ----- Group 3: PSD Settings -----
         self.gb_psd = QGroupBox("PSD Settings")
         self.gb_psd.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
@@ -141,7 +158,7 @@ class PSDPage(QWidget):
         fs_form.addRow("Sampling freq:", self.spin_fs)
         psd_v.addLayout(fs_form)
 
-        root.addWidget(self.gb_psd)
+        adv_v.addWidget(self.gb_psd)
 
         # ----- Group 4: Spindle Noise Mask -----
         self.gb_spindle = QGroupBox("Spindle Noise Mask: Applied To All States")
@@ -156,7 +173,7 @@ class PSDPage(QWidget):
 
         spindle_form.addRow("Spindle Noise Threshold:", self.dspin_noise)
         self.gb_spindle.setLayout(spindle_form)
-        root.addWidget(self.gb_spindle)
+        adv_v.addWidget(self.gb_spindle)
 
         # ----- Group 5: SD Mask -----
         self.gb_mask = QGroupBox("Standard Deviation Mask: Applied Only To Wake")
@@ -185,7 +202,8 @@ class PSDPage(QWidget):
         mask_form.addRow("Radius:", self.dspin_radius)
         mask_form.addRow("Z-threshold:", self.dspin_z)
         self.gb_mask.setLayout(mask_form)
-        root.addWidget(self.gb_mask)
+        adv_v.addWidget(self.gb_mask)
+        root.addWidget(self._adv_container)
 
         # ----- Group 6: SWD Masks -----
         self.gb_swd = QGroupBox("SWD Masks")
@@ -294,6 +312,13 @@ class PSDPage(QWidget):
         self.btn_final.clicked.connect(self._build_final_pkl)
         self.combo_table.itemChanged.connect(lambda _: self._validate())
         self._swd_btn_group.buttonToggled.connect(lambda *_: self._validate())
+        self._btn_adv.clicked.connect(self._toggle_advanced)
+
+    def _toggle_advanced(self, checked: bool):
+        self._adv_container.setVisible(checked)
+        self._btn_adv.setArrowType(
+            Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
+        )
 
     # ------------- Path / table refresh -------------
 

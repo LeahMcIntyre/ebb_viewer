@@ -3,7 +3,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 
 from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtGui import QAction, QKeySequence
+from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QToolBar, QToolButton, QSizePolicy, QStyle, QMenu, QPushButton, QMessageBox,
@@ -65,6 +65,7 @@ class PSDGridPage(QWidget):
         if self.cmb_animal.count():
             self._render()
         self._update_flag_status()
+        self._install_shortcuts()
 
 
     # ---------------- UI BUILDERS ----------------
@@ -236,6 +237,20 @@ class PSDGridPage(QWidget):
                     p.setXLink(self.first_plot)
 
 
+
+    # ---------------- SHORTCUTS ----------------
+
+    def _install_shortcuts(self):
+        ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        for key, slot in [
+            (Qt.Key.Key_Left,  self._prev_animal),
+            (Qt.Key.Key_Right, self._next_animal),
+            ("O",              self._flag_psd_ok),
+            ("D",              self._flag_drink_mask),
+        ]:
+            sc = QShortcut(QKeySequence(key), self)
+            sc.setContext(ctx)
+            sc.activated.connect(slot)
 
     # ---------------- TOGGLES / NAV ----------------
 

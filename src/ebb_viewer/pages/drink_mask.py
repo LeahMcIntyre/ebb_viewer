@@ -245,16 +245,23 @@ class DrinkMaskPage(QWidget):
             "color: #8a4400;" if n_missing else "color: #1a5c1a;"
         )
 
+        _AMBER = QColor("#fff3cd")
         self._table.setRowCount(0)
         for entry, combo in flagged:
             is_ready = (entry.animal_id, combo) in ready_set
             row = self._table.rowCount()
             self._table.insertRow(row)
-            self._table.setItem(row, 0, QTableWidgetItem(f"{entry.animal_id} ({combo})"))
-            self._table.setItem(row, 1, QTableWidgetItem("needs_drink_mask"))
-            mask_item = QTableWidgetItem("✓ found" if is_ready else "✗ missing")
-            mask_item.setForeground(QColor("#2a7a2a") if is_ready else QColor("#aa2222"))
-            self._table.setItem(row, 2, mask_item)
+            items = [
+                QTableWidgetItem(f"{entry.animal_id} ({combo})"),
+                QTableWidgetItem("needs_drink_mask"),
+                QTableWidgetItem("✓ found" if is_ready else "✗ missing"),
+            ]
+            items[2].setForeground(QColor("#2a7a2a") if is_ready else QColor("#aa2222"))
+            if not is_ready:
+                for item in items:
+                    item.setBackground(_AMBER)
+            for col, item in enumerate(items):
+                self._table.setItem(row, col, item)
         self._table.setVisible(True)
 
         has_params = (self.project_root / "psd" / "psd_params.json").exists()

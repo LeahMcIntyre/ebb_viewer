@@ -140,6 +140,13 @@ class SpindleWritePage(QWidget):
         root.addWidget(gb)
         root.addLayout(actions)
 
+
+        self.log_box = QPlainTextEdit()
+        self.log_box.setReadOnly(True)
+        self.log_box.setMaximumBlockCount(300)
+        self.log_box.setPlaceholderText("Status messages will appear here…")
+        root.addWidget(self.log_box)
+
         # Post-run hint (hidden until a run succeeds)
         self._hint_frame = QFrame()
         self._hint_frame.setFrameShape(QFrame.Shape.StyledPanel)
@@ -155,12 +162,6 @@ class SpindleWritePage(QWidget):
         hint_layout.addWidget(btn_go_upload)
         self._hint_frame.setVisible(False)
         root.addWidget(self._hint_frame)
-
-        self.log_box = QPlainTextEdit()
-        self.log_box.setReadOnly(True)
-        self.log_box.setMaximumBlockCount(300)
-        self.log_box.setPlaceholderText("Status messages will appear here…")
-        root.addWidget(self.log_box)
 
         root.addStretch()
 
