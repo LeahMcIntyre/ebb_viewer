@@ -460,6 +460,17 @@ class Manifest:
                 result.append((entry, combo))
         return result
 
+    def ready_for_psd(self) -> list[ManifestEntry]:
+        """Animals that have exactly 1 run marked ok — the gate for PSD computation.
+
+        An animal passes when exactly one of its runs has sleep_qc == "ok".
+        Animals with 0 ok runs (pending, needs_rerun, etc.) or 2+ ok runs are excluded.
+        """
+        return [
+            entry for entry in self
+            if sum(1 for r in entry.runs.values() if r.sleep_qc == "ok") == 1
+        ]
+
     def pending_psd_review(self) -> list[tuple[ManifestEntry, str]]:
         """Animals with ok sleep QC whose PSD hasn't been reviewed yet.
 

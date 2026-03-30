@@ -111,6 +111,8 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     n_pending_qc  = len(manifest.pending_sleep_qc())
     n_ok          = sum(1 for e in manifest if any(r.sleep_qc == "ok" for r in e.runs.values()))
     n_rerun       = len(manifest.needs_rerun())
+    n_animals     = sum(1 for _ in manifest)
+    n_ready_psd   = len(manifest.ready_for_psd())
     n_rerun_pend  = len(manifest.needs_rerun_pending())
     n_rerun_ready = len(manifest.pending_rerun_review())
     n_psd_pending = len(manifest.pending_psd_review())
@@ -188,20 +190,20 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     merged_pkl = merged_psd_path(root)
     final_pkl = final_psd_path(root)
 
+    all_ready_for_psd = n_animals > 0 and n_ready_psd == n_animals
+
     if merged_pkl.exists() and not missing_pkls:
         s6 = StepStatus("done", "All PSDs computed, channel merged PKL ready")
     elif combos_with_pkl and (missing_pkls or not merged_pkl.exists()):
         msg = f"{len(missing_pkls)} combo PKL(s) missing" if missing_pkls else "Run Build Channel Merged PKL"
         s6 = StepStatus("attention", msg)
-    elif n_ok > 0 and n_review > 0:
-        s6 = StepStatus(
-            "attention",
-            f"⚠ {n_review} animal{'s' if n_review != 1 else ''} still need Sleep QC review",
-        )
+    elif all_ready_for_psd:
+        s6 = StepStatus("active", f"Ready — {n_animals} animal{'s' if n_animals != 1 else ''} each have exactly 1 ok run")
     elif n_ok > 0:
-        s6 = StepStatus("active", f"{n_ok} ok animal{'s' if n_ok != 1 else ''} — ready to compute PSDs")
+        n_not_ready = n_animals - n_ready_psd
+        s6 = StepStatus("blocked", f"{n_not_ready} animal{'s' if n_not_ready != 1 else ''} not yet ready")
     else:
-        s6 = StepStatus("blocked", "Requires ok sleep QC results (step 4)")
+        s6 = StepStatus("blocked", "Requires all animals to have exactly 1 ok run (step 4)")
 
     # --- Step 7: PSD Review ---
     n_needs_drink = len(manifest.needs_drink_mask())

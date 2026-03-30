@@ -118,8 +118,8 @@ class RerunPage(QWidget):
         hint_layout = QHBoxLayout(self._hint_frame)
         hint_layout.setContentsMargins(10, 6, 10, 6)
         hint_lbl = QLabel(
-            "✓ Spindle EDFs written. Upload them to SleepyRat, "
-            "then go to Sleep QC to review the new results."
+            "✓ Spindle EDFs written, uploaded to SleepyRate, and downloaded. "
+            "Go to Sleep QC to review the new results."
         )
         hint_lbl.setWordWrap(True)
         hint_layout.addWidget(hint_lbl, 1)

@@ -220,14 +220,22 @@ class EegMainWindow(QtWidgets.QMainWindow):
         qc_tb.setObjectName("QCToolbar")
         qc_tb.setMovable(False)
 
+        spacer = QtWidgets.QWidget()
+        spacer.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        qc_tb.addWidget(spacer)
+
         self._qc_status_label = QtWidgets.QLabel()
         self._qc_status_label.setMinimumWidth(130)
         qc_tb.addWidget(self._qc_status_label)
         qc_tb.addSeparator()
 
-        act_ok = QtGui.QAction("✓ Mark OK", self)
-        act_ok.triggered.connect(self._flag_qc_ok)
-        qc_tb.addAction(act_ok)
+        self._act_ok = QtGui.QAction("✓ Mark OK", self)
+        self._act_ok.setCheckable(True)
+        self._act_ok.triggered.connect(self._flag_qc_ok)
+        qc_tb.addAction(self._act_ok)
 
         qc_tb.addSeparator()
 
@@ -243,9 +251,10 @@ class EegMainWindow(QtWidgets.QMainWindow):
                 self._rerun_combo.setCurrentText(others[0])
         qc_tb.addWidget(self._rerun_combo)
 
-        act_rerun = QtGui.QAction("Needs Rerun", self)
-        act_rerun.triggered.connect(self._flag_qc_rerun)
-        qc_tb.addAction(act_rerun)
+        self._act_rerun = QtGui.QAction("Needs Rerun", self)
+        self._act_rerun.setCheckable(True)
+        self._act_rerun.triggered.connect(self._flag_qc_rerun)
+        qc_tb.addAction(self._act_rerun)
 
         self._update_qc_status()
 
@@ -271,6 +280,8 @@ class EegMainWindow(QtWidgets.QMainWindow):
         txt = (status or "unflagged").replace("_", " ")
         self._qc_status_label.setText(f"QC [{self.run_channels}]: {txt}")
         self._qc_status_label.setStyleSheet(_STYLE.get(status, ""))
+        self._act_ok.setChecked(status == "ok")
+        self._act_rerun.setChecked(status == "needs_rerun")
 
     def _on_mask_rebuild(self, mask) -> None:
         name = mask.name
