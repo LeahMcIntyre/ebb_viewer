@@ -18,11 +18,14 @@ class TrimToWidget(QWidget):
             box.setRange(self._min, self._max)
             box.setSingleStep(step)
 
+        or_lbl = QLabel("or")
+        or_lbl.setStyleSheet("color: #666; font-size: 11px;")
+
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        #lay.addWidget(QLabel("Start"))
+        lay.setSpacing(6)
         lay.addWidget(self.start)
-        #lay.addWidget(QLabel("End"))
+        lay.addWidget(or_lbl)
         lay.addWidget(self.end)
 
         #Set values as default value and enforce order

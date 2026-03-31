@@ -99,10 +99,15 @@ class PreprocessPage(QWidget):
         self.fs_original = QSpinBox()
         self.fs_original.setRange(250, 10000)
         self.fs_original.setValue(DEFAULT_FS)
+        fs_lbl = QLabel("Original Sampling Frequency (Hz):")
+        fs_lbl.setToolTip("Original sampling frequency of the EDF files (in Hz)")
 
         self.downsample = QSpinBox()
         self.downsample.setRange(1, 100)
         self.downsample.setValue(DEFAULT_DOWNSAMPLE)
+
+        ds_lbl = QLabel("Downsample Factor")
+        ds_lbl.setToolTip("Factor by which to downsample the EDF files")
 
         self._hz_label = QLabel()
         self._hz_label.setStyleSheet("color: #555; font-size: 11px;")
@@ -118,9 +123,22 @@ class PreprocessPage(QWidget):
         # placeholder; real values set in _apply_state_to_ui()
         self.trim_to = TrimToWidget(values=DEFAULT_TRIM_TO)
 
-        form.addRow("Original Sampling Frequency", self.fs_original)
-        form.addRow("Downsample Factor",           ds_row)
-        form.addRow("Trim To (hrs)",               self.trim_to)
+        trim_lbl = QLabel("Trim To (hrs)")
+        trim_lbl.setToolTip(
+            "Two fallback trim targets (hours).\n"
+            "Each EDF is trimmed to the longest value that is ≤ its duration.\n"
+            "Example: targets [48, 72] — a 60h recording trims to 48h; an 80h recording trims to 72h.\n"
+            "Recordings shorter than the smaller value will fail."
+        )
+
+        self._trim_hint_label = QLabel()
+        self._trim_hint_label.setWordWrap(True)
+        self._trim_hint_label.setStyleSheet("color: #666; font-size: 10px;")
+
+        form.addRow(fs_lbl, self.fs_original)
+        form.addRow(ds_lbl,           ds_row)
+        form.addRow(trim_lbl,                      self.trim_to)
+        form.addRow("",                            self._trim_hint_label)
 
         root.addWidget(settings_gb)
 
@@ -171,7 +189,7 @@ class PreprocessPage(QWidget):
         self.fs_original.valueChanged.connect(self._update_hz_label)
         self.downsample.valueChanged.connect(self._update_hz_label)
         self._update_hz_label()
-        self.trim_to.changed.connect(self._update_scan_warning)
+        self.trim_to.changed.connect(self._update_trim_hint)
 
     def _update_hz_label(self) -> None:
         fs = self.fs_original.value()
@@ -219,15 +237,47 @@ class PreprocessPage(QWidget):
             dur_str = f"{_fmt_hrs(min_hrs)} – {_fmt_hrs(max_hrs)}"
 
         self._scan_label.setText(f"Found {n} file{'s' if n != 1 else ''} · {dur_str}")
-        self._update_scan_warning()
+        self._update_trim_hint()
 
-    def _update_scan_warning(self) -> None:
-        if self._min_duration_hrs is None:
+    def _update_trim_hint(self) -> None:
+        trim_vals = sorted(self.trim_to.value())
+        trim_min, trim_max = trim_vals[0], trim_vals[1]
+
+        if not self._durations_hrs:
+            # No durations known yet — show the rule in plain English
+            self._trim_hint_label.setText(
+                f"Each EDF trims to the longest target that fits its duration. "
+                f"Recordings shorter than {trim_min}h will fail."
+            )
+            self._trim_hint_label.setStyleSheet("color: #666; font-size: 10px;")
+            self._scan_label.setStyleSheet(self._STYLE_NORMAL)
             return
-        trim_min = self.trim_to.value()[0]
-        if self._min_duration_hrs < trim_min:
+
+        counts: dict[int, int] = {trim_min: 0, trim_max: 0}
+        n_error = 0
+        for d in self._durations_hrs:
+            if d >= trim_max:
+                counts[trim_max] += 1
+            elif d >= trim_min:
+                counts[trim_min] += 1
+            else:
+                n_error += 1
+
+        parts = []
+        for val in (trim_max, trim_min):
+            if counts[val]:
+                parts.append(f"{counts[val]} recording{'s' if counts[val] != 1 else ''} → {val}h")
+
+        if n_error:
+            self._trim_hint_label.setText(
+                (f"{', '.join(parts)} · " if parts else "") +
+                f"⚠ {n_error} recording{'s' if n_error != 1 else ''} shorter than {trim_min}h will fail"
+            )
+            self._trim_hint_label.setStyleSheet("color: #c0392b; font-size: 10px;")
             self._scan_label.setStyleSheet(self._STYLE_WARNING)
         else:
+            self._trim_hint_label.setText(", ".join(parts))
+            self._trim_hint_label.setStyleSheet("color: #1a5c1a; font-size: 10px;")
             self._scan_label.setStyleSheet(self._STYLE_NORMAL)
 
     def _log(self, msg: str):
@@ -329,7 +379,7 @@ class _PreprocessWorker(QObject):
             outs = batch_preprocess(
                 standard, self.project_root,
                 target=self.target_dir,
-                verbose=False,
+                verbose=True,
                 **self.params,
             )
             elapsed = time.perf_counter() - t0

@@ -419,7 +419,7 @@ class _SpindleWriteWorker(QObject):
                 spindle, self.standard_folder,
                 target=self.target_dir,
                 channels=self.channels,
-                verbose=False,
+                verbose=True,
             )
             elapsed = time.perf_counter() - t0
             self.log.emit(f"Done: {len(outs)} file(s) written — {elapsed:.2f}s")

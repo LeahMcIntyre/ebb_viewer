@@ -341,8 +341,9 @@ class HomePage(QWidget):
         self._attn_scroll.setWidget(self._attn_container)
         self._attn_scroll.setWidgetResizable(True)
         self._attn_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._attn_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        root_layout.addWidget(self._attn_scroll)
+        self._attn_scroll.setMinimumHeight(160)
+        self._attn_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        root_layout.addWidget(self._attn_scroll, 1)
 
         # --- pipeline summary table (collapsible) ---
         summary_hdr = QHBoxLayout()

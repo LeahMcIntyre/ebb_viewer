@@ -71,8 +71,25 @@ class DrinkMaskPage(QWidget):
 
         self.lbl_offset_csv = QLineEdit("None")
         self.lbl_offset_csv.setReadOnly(True)
-        paths_form.addRow("Video Offset CSV:", self.lbl_offset_csv)
+        offset_tooltip = (
+            "Optional CSV in drink_masks/ with columns:\n"
+            "  Animal  — animal ID (the part before the first '_', e.g. 'Mice-1234')\n"
+            "  Offset  — seconds the video starts after the EEG recording begins\n"
+            "            (positive = video starts later; use 0 if simultaneous)"
+        )
+        self.lbl_offset_csv.setToolTip(offset_tooltip)
 
+        offset_row_lbl = QLabel("Video Offset CSV:")
+        offset_row_lbl.setToolTip(offset_tooltip)
+        paths_form.addRow(offset_row_lbl, self.lbl_offset_csv)
+
+        self._lbl_offset_hint = QLabel(
+            "Place a CSV with 'Animal' and 'Offset' (seconds) columns in drink_masks/ to align video timestamps."
+        )
+        self._lbl_offset_hint.setWordWrap(True)
+        self._lbl_offset_hint.setStyleSheet("color: #666; font-size: 11px; padding-left: 2px;")
+
+        paths_form.addRow("", self._lbl_offset_hint)
         root.addWidget(self.gb_paths)
 
         # ----- Group 2: PSD Params (read-only) -----
@@ -141,7 +158,7 @@ class DrinkMaskPage(QWidget):
         )
         hint_layout = QHBoxLayout(self._hint_frame)
         hint_layout.setContentsMargins(10, 6, 10, 6)
-        hint_lbl = QLabel("✓ Drink masks applied. Review the updated PSDs in PSD Visualizer.")
+        hint_lbl = QLabel("✓ Drink masks applied. Review the updated PSDs in PSD Visualizer (plot 'psds_channel_merged_drink.pkl').")
         hint_lbl.setWordWrap(True)
         hint_layout.addWidget(hint_lbl, 1)
         btn_go_psd = QPushButton("→ PSD Visualizer")
@@ -194,7 +211,39 @@ class DrinkMaskPage(QWidget):
             self._lbl_mask_count.setStyleSheet("color: gray;")
 
         csv = self._detect_offset_csv()
-        self.lbl_offset_csv.setText(str(csv.name) if csv else "None")
+        if csv is None:
+            self.lbl_offset_csv.setText("None")
+            self._lbl_offset_hint.setText(
+                "Place a CSV with 'Animal' and 'Offset' (seconds) columns in drink_masks/ to align video timestamps."
+            )
+            self._lbl_offset_hint.setStyleSheet("color: #666; font-size: 11px; padding-left: 2px;")
+        else:
+            self.lbl_offset_csv.setText(csv.name)
+            try:
+                import csv as _csv
+                with csv.open(newline="") as fh:
+                    header = next(_csv.reader(fh))
+                cols = {c.strip() for c in header}
+                missing = {"Animal", "Offset"} - cols
+                if missing:
+                    self._lbl_offset_hint.setText(
+                        f"⚠ CSV is missing required column(s): {', '.join(sorted(missing))}. "
+                        "Expected: 'Animal' (ID before first '_') and 'Offset' (seconds video starts after EEG)."
+                    )
+                    self._lbl_offset_hint.setStyleSheet(
+                        "color: #c0392b; font-size: 11px; padding-left: 2px;"
+                    )
+                else:
+                    self._lbl_offset_hint.setText(
+                        "✓ CSV looks valid. 'Animal' = ID before first '_'; "
+                        "'Offset' = seconds the video starts after the EEG recording begins."
+                    )
+                    self._lbl_offset_hint.setStyleSheet(
+                        "color: #1a5c1a; font-size: 11px; padding-left: 2px;"
+                    )
+            except Exception:
+                self._lbl_offset_hint.setText("Could not read CSV headers.")
+                self._lbl_offset_hint.setStyleSheet("color: #c0392b; font-size: 11px; padding-left: 2px;")
 
     def _refresh_params(self):
         from ebb_viewer.pipeline import psd_params

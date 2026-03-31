@@ -305,6 +305,38 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 
 ---
 
+### Completed (this session, branch `refactor/spindle_upload` → merged into `refactor/clean-up`)
+
+#### Spindle Upload page — remote folder visibility (`spindle_upload.py`, `sleepyrat.py`)
+- `SleepyRatAPI.folder_names(project)` added — returns list of existing folder names for a project
+- `remote_folder_edit` changed from `QLineEdit` to editable `QComboBox`; populated with existing remote folders when a project is selected (synchronous call reusing `self._api`)
+- Dynamic hint label below the field: "Existing folder — already-uploaded files will be skipped; missing labels will be downloaded." or "New folder — will be created on upload." based on whether current text matches a known folder
+- Stale folder list cleared (items cleared, text preserved) on project switch
+
+#### QC toolbar UX (`edf_viewer/eeg_viewer.py`)
+- "✓ Mark OK" and "Needs Rerun" `QAction`s made checkable (`setCheckable(True)`)
+- `_update_qc_status()` now calls `setChecked` on both actions — button stays visually pressed to match current manifest state, including on initial load
+- QC toolbar items pushed to right edge via expanding spacer widget
+
+#### PSD computation page overhaul (`psds.py`)
+- **Gate**: `manifest.ready_for_psd()` added to `manifest.py` — returns animals with exactly 1 ok run (any number of total runs). `_validate()` gates "Run PSD Pipeline" on all animals being ready, standard folder existing, and at least one spindle combo with CSVs
+- **Single button**: two-step "Compute PSDs" + "Build Channel Merged PKL" replaced with one "Run PSD Pipeline" button; `_on_psd_done()` automatically calls `_build_final_pkl()` after computation
+- **Combo table**: checkbox column removed — table is now read-only status display; "Ok Runs" column added (green count from manifest per combo); 4 columns: Combo, CSVs, Ok Runs, PKL Status
+- **Channel-merged PKL status line**: below the combo table, "Channel merged PKL: ✓ exists" (green) or "not yet built" (gray); `merged_psd_path` imported at top level
+- **Gate label**: explains why button is blocked (e.g. "3 animals not ready — each needs exactly 1 ok run")
+- **Summary label**: below the button when gate is met, e.g. "LFC_LSC (5 animals), LFC_RSC (8 animals) → psds_channel_merged.pkl"
+- **SWD count warning**: red label when `.mat` file count doesn't match animal count in manifest
+- **Imports**: all inline `from ebb_viewer.pipeline...` and `from ebb.process...` imports moved to top of file
+
+#### Home page step 6 gate (`home.py`)
+- Step 6 "active" now requires `n_ready_psd == n_animals` (all animals have exactly 1 ok run) instead of `n_ok > 0`
+- "attention" shows count of animals not yet ready; "blocked" when no animals have any ok run
+
+#### Sidebar width (`main_window.py`)
+- `pagelist.setMinimumHeight(350)` added to make sidebar list taller without expanding to full window height
+
+---
+
 ### Completed (latest session, branch `refactor/clean-up`)
 
 #### SWD mask threading through drink mask rerun
@@ -343,6 +375,7 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 ### P3 items (from TODO.md)
 - **spindle_upload: "Upload, Wait & Download" button issue** — needs reproduction steps before fixing
 - **general: Run log / settings provenance** — `run_log.jsonl` append per action
+- **psds.py: improve merge log** — `_build_final_pkl` currently logs just the output path; improve to log per-combo animal counts (e.g. "LFC_RSC → 8 animals, LFC_LSC → 5 animals → psds_channel_merged.pkl")
 
 ### Remaining audit clarity items
 - Hint frame timing on multi-combo rerun upload — minor, low priority
@@ -364,9 +397,9 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 ## Key Files
 - `src/ebb_viewer/pages/sleep_qc_visualizer.py` — Sleep QC page (group + animal + review modes)
 - `src/ebb_viewer/pages/rerun.py` — rerun queue page
-- `src/ebb_viewer/pages/spindle_upload.py` — batch upload page + `SleepyRatWorker`; remote folder auto-update + project list auto-fetch on first show
+- `src/ebb_viewer/pages/spindle_upload.py` — batch upload page + `SleepyRatWorker`; remote folder combo with existing-folder hints; project list auto-fetch on first show
 - `src/ebb_viewer/pages/home.py` — pipeline summary + Needs Attention zone (9 steps)
-- `src/ebb_viewer/pages/psds.py` — PSD Computation page (Step 1 / Step 2 flow + CSV pre-flight + SWD mask option)
+- `src/ebb_viewer/pages/psds.py` — PSD Computation page (single "Run PSD Pipeline" button, ready_for_psd gate, Ok Runs column, summary label, merged PKL status line)
 - `src/ebb_viewer/pages/drink_mask.py` — Drink Mask page; SWD dir threaded through worker
 - `src/ebb_viewer/pages/finalize.py` — Finalize page (9. Finalize sidebar item)
 - `src/ebb_viewer/pages/psd_visualizer.py` — PSD Visualizer (↺ Reset button, final-file gate)
@@ -387,4 +420,4 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 - Conda env: `ebb-dev` (`source ~/miniconda3/etc/profile.d/conda.sh && conda activate ebb-dev`)
 - Jupyter kernel: `ebb` (registered in `~/.local/share/jupyter/kernels/ebb`)
 - Run tests: `QT_QPA_PLATFORM=offscreen python -m pytest` (138 passing)
-- Branch: `refactor/clean-up`
+- Branch: `refactor/spindle_upload` (current work); `refactor/clean-up` (base)
