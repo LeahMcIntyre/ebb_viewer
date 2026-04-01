@@ -567,26 +567,27 @@ def test_batch_worker_saves_pkl_with_params(tmp_path):
     import ebb.process.psd_compute as psd_mod
     orig = psd_mod.batch_estimate
     psd_mod.batch_estimate = lambda **kw: [fake_result]
-
-    import ebb_viewer.pages.psds as psds_mod
-    orig_asdict = psds_mod.dataclasses.asdict
-
-    def fake_asdict(obj):
-        return dict(fake_result_dict)
-
-    psds_mod.dataclasses.asdict = fake_asdict
     try:
-        from ebb_viewer.pages.psds import BatchEstimateWorker
-        worker = BatchEstimateWorker(
-            eeg_dir=tmp_path / "standard",
-            combo_pairs=[(spindle_dir, savepath)],
-            params=params,
-            project_root=tmp_path,
-        )
-        worker.run()
+        import ebb_viewer.pages.psds as psds_mod
+        orig_asdict = psds_mod.dataclasses.asdict
+
+        def fake_asdict(obj):
+            return dict(fake_result_dict)
+
+        psds_mod.dataclasses.asdict = fake_asdict
+        try:
+            from ebb_viewer.pages.psds import BatchEstimateWorker
+            worker = BatchEstimateWorker(
+                eeg_dir=tmp_path / "standard",
+                combo_pairs=[(spindle_dir, savepath)],
+                params=params,
+                project_root=tmp_path,
+            )
+            worker.run()
+        finally:
+            psds_mod.dataclasses.asdict = orig_asdict
     finally:
         psd_mod.batch_estimate = orig
-        psds_mod.dataclasses.asdict = orig_asdict
 
     with open(savepath, "rb") as f:
         records = pickle.load(f)

@@ -201,7 +201,7 @@ class SleepQCGridPage(QWidget):
 
         self.btn_offset = QPushButton("6AM Start")
         self.btn_offset.setCheckable(True)
-        self.btn_offset.setChecked(False)
+        self.btn_offset.setChecked(True)
         top.addWidget(self.btn_offset)
 
         top.addStretch(1)
@@ -692,8 +692,18 @@ class SleepQCGridPage(QWidget):
         return df.assign(bin_start_hr=df["bin_start_sec"] / 3600.0), "bin_start_hr"
 
     def _prepare_plots(self) -> None:
+        bottom_metric = self.METRIC_ORDER[-1][0]
         for p in self._plots.values():
             p.clear()
+        for state in self.STATE_ORDER:
+            self._plots[(bottom_metric, state)].getAxis("bottom").setTicks(None)
+
+    def _apply_hour_of_day_ticks(self, x_vals) -> None:
+        """Replace bottom-axis tick labels with hour-of-day (x % 24) for offset mode."""
+        ticks = [[(float(x), str(int(x) % 24)) for x in sorted(set(x_vals)) if int(x) % 6 == 0]]
+        bottom_metric = self.METRIC_ORDER[-1][0]
+        for state in self.STATE_ORDER:
+            self._plots[(bottom_metric, state)].getAxis("bottom").setTicks(ticks)
 
     def _update_all_plots(self, *_) -> None:
         if self.btn_spindle.isChecked():
@@ -739,6 +749,9 @@ class SleepQCGridPage(QWidget):
                     p.plot(dm[x_col].to_numpy(), dm[metric].to_numpy(),
                            pen=pg.mkPen(color=mouse_colors[mid], width=1.5))
 
+        if self.btn_offset.isChecked() and not df.empty:
+            self._apply_hour_of_day_ticks(df[x_col].unique())
+
         self._update_legend_group(mice, mouse_colors)
 
     def _render_animal(self) -> None:
@@ -782,6 +795,12 @@ class SleepQCGridPage(QWidget):
         ref_combo = self._get_ref_combo()
         if ref_combo is not None:
             self._draw_ref_mean(ref_combo)
+
+        if self.btn_offset.isChecked() and drawn_combos:
+            last_df = self._get_df(drawn_combos[-1])
+            if last_df is not None and not last_df.empty:
+                last_df, x_col = self._ensure_x_col(last_df)
+                self._apply_hour_of_day_ticks(last_df[x_col].unique())
 
         self._update_legend_animal(drawn_combos, ref_combo)
 
