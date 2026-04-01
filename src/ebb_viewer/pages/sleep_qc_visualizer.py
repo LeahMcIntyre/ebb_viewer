@@ -1142,6 +1142,7 @@ class SpindleFractionPlot(QWidget):
         pi = self._pw.getPlotItem()
         pi.showGrid(x=False, y=True, alpha=0.3)
         pi.setLabel('left', 'Fraction of state masked by spindles')
+        pi.getAxis('left').enableAutoSIPrefix(False)
         pi.getAxis('bottom').setStyle(tickTextOffset=8)
         layout.addWidget(self._pw)
 
