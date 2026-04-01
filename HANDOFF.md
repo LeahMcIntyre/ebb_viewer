@@ -370,6 +370,52 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 
 ---
 
+### Completed (this session, branch `TEST/SWD_Detection`)
+
+#### Spindle Mask Fraction view in Sleep QC (`sleep_qc_visualizer.py`, `sleep_compute.py`)
+
+**Motivation:** Identify outlier animals based on how much of their sleep is flagged as spindle-masked, without leaving the Sleep QC page.
+
+**New function** `compute_spindle_fractions(state_dir)` in `ebb/process/sleep_compute.py`:
+- Reads the `state` column (not `rawstate`) from each spindle output CSV
+- `w/n/r` = clean epochs; `1/2/3` = spindle-masked Wake/NREM/REM epochs
+- Returns long-form DataFrame: `mouse_id, state, clean_count, spindle_count, total_count, fraction`
+- Includes a `Total` row per animal (sum across all states)
+- State order: Wake → NREM → REM → Total (ordered categorical)
+- Uses `collections.Counter` for epoch counting
+
+**New widget** `SpindleFractionPlot` at the bottom of `sleep_qc_visualizer.py`:
+- Box-and-strip chart: IQR box + median + whiskers + jittered scatter per state
+- Outliers (IQR × 1.5) labeled with `mouse_id` in red
+- Current/highlighted animal shown as a larger blue dot
+- Clicking any dot selects it → action strip appears below the chart
+- Action strip shows: `Selected: {animal}` label + `Flag for Review` button + `×` dismiss
+- `Flag for Review` button shows disabled with explanatory text if the animal is already `needs_review` or `needs_rerun` (rerun status is protected — cannot be overwritten)
+- `review_requested` signal → parent flags the animal in the manifest for the current combo
+
+**Integration in `SleepQCGridPage`**:
+- `_data_cache` extended from 2-tuple to 3-tuple `(df, df_offset, df_frac)` per combo
+- **Sleep / Spindle Mask toggle** right-aligned in the top bar (replaces earlier embedded position); the two buttons act as a mutually exclusive pair
+- When Spindle Mask is active: grid hidden, `SpindleFractionPlot` shown; `Highlight:` animal dropdown stays active for cross-referencing; combo selector always enabled
+- When returning to Sleep view: `_set_mode(self._mode)` restores the correct controls (no duplicated visibility logic)
+- `_on_frac_animal_selected`: updates highlight + reads manifest status for strip button state
+- `_on_frac_review_requested`: hard guard against overwriting `needs_rerun`; calls existing `_flag_sleep_qc`
+- Strip cleared on combo change and on entering Spindle Mask view
+
+**Key bugs fixed during development:**
+- `_refresh_animal_combo` unpacked `(df, _)` from cache; changed to `(df, *_)` for 3-tuples
+- `set_data` was resetting the strip on every highlight update (triggered by dot click → signal chain); fixed by removing the reset from `set_data` and calling `clear_selection()` only on explicit resets
+- `_btn_review` stayed disabled after flagging one animal; fixed by resetting button state at the start of `_on_dot_clicked`
+
+**Simplify cleanup applied:**
+- Manual counting loop → `Counter`
+- `mids == current_animal` vectorized comparison instead of list comprehension
+- `QFont` created once outside outlier label loop
+- `_dismiss` delegates to `clear_selection()` (was duplicating 3 lines)
+- `_set_spindle_mask_mode(False)` branch calls `_set_mode(self._mode)` instead of duplicating visibility logic
+
+---
+
 ## Next Steps
 
 ### P3 items (from TODO.md)

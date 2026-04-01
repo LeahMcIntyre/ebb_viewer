@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import csv
+from collections import Counter
 
 import re
 from typing import Union
@@ -170,5 +171,65 @@ def compute_sleep_bins_df_offset(
 
         sleep_dfs.append(df_mouse)
 
-    return pd.concat(sleep_dfs, ignore_index=True)   
+    return pd.concat(sleep_dfs, ignore_index=True)
 
+
+def compute_spindle_fractions(state_dir: Union[str, Path]) -> pd.DataFrame:
+    """
+    Compute per-animal, per-state spindle mask fractions from spindle output CSVs.
+
+    Reads the ``rawstate`` column from each CSV. Clean epoch labels are ``w``/``n``/``r``;
+    spindle-masked labels are ``1`` (Wake), ``2`` (NREM), ``3`` (REM). Returns a long-form
+    DataFrame with one row per (animal × state) plus a ``Total`` row per animal.
+
+    Columns: mouse_id, state, clean_count, spindle_count, total_count, fraction
+    State order: Wake, NREM, REM, Total.
+    """
+    CLEAN_KEY    = {'Wake': 'w',  'NREM': 'n',  'REM': 'r'}
+    ARTIFACT_KEY = {'Wake': '1',  'NREM': '2',  'REM': '3'}
+    STATE_ORDER  = ['Wake', 'NREM', 'REM']
+
+    rows: list[dict] = []
+    for state_path in sorted(Path(state_dir).glob('*.csv')):
+        animal = state_path.stem.split('_')[0]
+        with open(state_path, 'r') as f:
+            reader = csv.reader(f)
+            header = next(reader)
+            if 'state' not in header:
+                raise ValueError(f"'state' column not found in {state_path.name}")
+            idx = header.index('state')
+            counts = Counter(row[idx] for row in reader)
+
+        for state in STATE_ORDER:
+            clean   = counts.get(CLEAN_KEY[state], 0)
+            spindle = counts.get(ARTIFACT_KEY[state], 0)
+            total   = clean + spindle
+            rows.append({
+                'mouse_id':      animal,
+                'state':         state,
+                'clean_count':   clean,
+                'spindle_count': spindle,
+                'total_count':   total,
+                'fraction':      spindle / total if total > 0 else float('nan'),
+            })
+
+        total_spindle = sum(counts.get(k, 0) for k in ('1', '2', '3'))
+        total_all     = total_spindle + sum(counts.get(k, 0) for k in ('w', 'n', 'r'))
+        rows.append({
+            'mouse_id':      animal,
+            'state':         'Total',
+            'clean_count':   total_all - total_spindle,
+            'spindle_count': total_spindle,
+            'total_count':   total_all,
+            'fraction':      total_spindle / total_all if total_all > 0 else float('nan'),
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=[
+            'mouse_id', 'state', 'clean_count', 'spindle_count', 'total_count', 'fraction'
+        ])
+
+    df = pd.DataFrame(rows)
+    state_cat = pd.CategoricalDtype(['Wake', 'NREM', 'REM', 'Total'], ordered=True)
+    df['state'] = df['state'].astype(state_cat)
+    return df

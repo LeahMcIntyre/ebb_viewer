@@ -210,24 +210,12 @@ class MainWindow(QMainWindow):
         except Exception:
             return
 
-        # PSD Computation badge: combos with CSVs but no per-combo PKL,
-        # only shown once at least one animal has an ok sleep QC result.
-        spindle_outputs = self.project_root / "spindle_outputs"
-        psd_dir = self.project_root / "psd"
-        n_ok = sum(
-            1 for e in manifest
-            if any(r.sleep_qc == "ok" for r in e.runs.values())
+        # PSD Computation badge: show (1) when every animal has at least one ok run.
+        entries = list(manifest)
+        psd_compute_count = int(
+            len(entries) > 0
+            and all(any(r.sleep_qc == "ok" for r in e.runs.values()) for e in entries)
         )
-        psd_compute_count = 0
-        if spindle_outputs.is_dir() and n_ok > 0:
-            for combo_dir in spindle_outputs.iterdir():
-                if not combo_dir.is_dir():
-                    continue
-                if (
-                    any(combo_dir.glob("*.csv"))
-                    and not (psd_dir / f"psds_{combo_dir.name}.pkl").exists()
-                ):
-                    psd_compute_count += 1
 
         counts = {
             "needs_review":         len(manifest.needs_review()),
@@ -244,8 +232,7 @@ class MainWindow(QMainWindow):
             n = counts[method]
             item.setText(f"{base}  ({n})" if n > 0 else base)
 
-        # PSD Computation badge (row 9) — computed from filesystem, not manifest -> I do not like how this is done
-        # TODO: Compute from manifest (which edfs are marked as okay)
+        # PSD Computation badge (row 9)
         psd_compute_row = next(
             (r for r, lbl in self._row_base_label.items() if lbl == "6. PSD Computation"),
             None,
