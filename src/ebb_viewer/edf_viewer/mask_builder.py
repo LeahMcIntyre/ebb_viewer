@@ -188,19 +188,31 @@ def load_state_masks(csv_path, fs: int) -> MaskSet:
 
 def _annotation_param_specs() -> dict:
     return {
-        "keywords": ParamSpec(desc="Comma-separated substrings to match in annotation labels (case-insensitive)"),
-        "pad_sec":  ParamSpec(min=0.0, max=3600.0, step=1.0, decimals=1, units="s",
-                              desc="Seconds to mask after each matching annotation start"),
+        "keywords":       ParamSpec(desc="Comma-separated labels to match (case-insensitive)"),
+        "match_mode":     ParamSpec(desc="'contains' — substring match; 'exact' — full label match"),
+        "pad_before_sec": ParamSpec(min=0.0, max=3600.0, step=1.0, decimals=1, units="s",
+                                    desc="Seconds to mask before each matching annotation"),
+        "pad_after_sec":  ParamSpec(min=0.0, max=3600.0, step=1.0, decimals=1, units="s",
+                                    desc="Seconds to mask after each matching annotation"),
     }
 
 
-def build_annotation_mask(annotation_path, keywords: list[str], pad_sec: float,
-                           n_samples: int, fs: float) -> Mask:
+def build_annotation_mask(annotation_path, keywords: list[str],
+                           pad_before_sec: float, pad_after_sec: float,
+                           match_mode: str, n_samples: int, fs: float) -> Mask:
     """Build an annotation keyword mask from a Pinnacle annotation file."""
-    arr = keyword_mask(annotation_path, keywords=keywords, pad_sec=pad_sec,
-                       size=n_samples, fs=fs)
+    arr = keyword_mask(
+        annotation_path, keywords=keywords,
+        pad_before_sec=pad_before_sec, pad_after_sec=pad_after_sec,
+        match_mode=match_mode, size=n_samples, fs=fs,
+    )
     m = Mask.from_bool("annotation", (150, 0, 200, 60), ~arr)
-    m.metadata.update({"keywords": ", ".join(keywords), "pad_sec": pad_sec})
+    m.metadata.update({
+        "keywords": ", ".join(keywords),
+        "match_mode": match_mode,
+        "pad_before_sec": pad_before_sec,
+        "pad_after_sec": pad_after_sec,
+    })
     m.param_specs.update(_annotation_param_specs())
     return m
 
@@ -208,8 +220,13 @@ def build_annotation_mask(annotation_path, keywords: list[str], pad_sec: float,
 def rebuild_annotation_mask(annotation_path, n_samples: int, fs: float, meta: dict) -> Mask:
     """Recompute annotation mask from its current metadata dict."""
     keywords = [k.strip() for k in meta["keywords"].split(",") if k.strip()]
-    arr = keyword_mask(annotation_path, keywords=keywords, pad_sec=meta["pad_sec"],
-                       size=n_samples, fs=fs)
+    arr = keyword_mask(
+        annotation_path, keywords=keywords,
+        pad_before_sec=meta.get("pad_before_sec", 0.0),
+        pad_after_sec=meta.get("pad_after_sec", 0.0),
+        match_mode=meta.get("match_mode", "contains"),
+        size=n_samples, fs=fs,
+    )
     m = Mask.from_bool("annotation", (150, 0, 200, 60), ~arr)
     m.metadata.update(meta)
     m.param_specs.update(_annotation_param_specs())

@@ -25,6 +25,7 @@ from openseize.filtering.iir import Notch
 
 from ebb.core import concurrency, metastores
 from ebb import masking
+from ebb.masking.annotations import keyword_mask
 
 @dataclasses.dataclass
 class PSDResult:
@@ -37,8 +38,10 @@ class PSDResult:
     comm_out_frac: float
     sd_out_frac: float
     swd_out_frac: float
+    ann_out_frac: float
     used_swd: bool
     used_drink: bool
+    used_ann: bool
     freqs: npt.NDArray[np.floating]
     psd: npt.NDArray[np.floating]
 
@@ -54,6 +57,7 @@ def estimate_psd(
     state_path: Union[str, Path],
     swd_path: Union[str, Path] = None,
     drink_path: Union[str, Path] = None,
+    annotation_path: Union[str, Path] = None,
     offset_path: Union[str, Path] = None,
     channels: List = [0, 1, 2],
     winsize: int = 180,
@@ -66,6 +70,10 @@ def estimate_psd(
     noise_thresh: float = 0.5,
     drink_pad: int = 2,
     s_prob: float = None,
+    ann_keywords: Optional[List[str]] = None,
+    ann_match_mode: str = "contains",
+    ann_pad_before_sec: float = 0.0,
+    ann_pad_after_sec: float = 0.0,
     **kwargs,
 ) -> List[PSDResult]:
     """
@@ -168,8 +176,24 @@ def estimate_psd(
         else:
             drink_mask = np.ones(pro.shape[-1], dtype=bool)
 
+        # Build annotation mask if a path and keywords were provided
+        n_samples = pro.shape[-1]
+        _ann_keywords = ann_keywords or []
+        if annotation_path is not None and _ann_keywords:
+            ann_mask = keyword_mask(
+                annotation_path,
+                keywords=_ann_keywords,
+                size=n_samples,
+                fs=fs,
+                pad_before_sec=ann_pad_before_sec,
+                pad_after_sec=ann_pad_after_sec,
+                match_mode=ann_match_mode,
+            )
+        else:
+            ann_mask = np.ones(n_samples, dtype=bool)
+
         #Combine all artifact masks
-        artifact_mask = comm_mask & spindle_mask & swd_mask & drink_mask
+        artifact_mask = comm_mask & spindle_mask & swd_mask & drink_mask & ann_mask
 
 
         metamask = metastores.MetaMask(threshold=artifact_mask, **state_masks)
@@ -201,8 +225,7 @@ def estimate_psd(
             spindle_out = out_fraction(spindle_mask, st_mask)
             comm_out = out_fraction(comm_mask, st_mask)
             swd_out = out_fraction(swd_mask, st_mask)
-
-
+            ann_out = out_fraction(ann_mask, st_mask)
 
             if verbose:
                 print(f'Computing PSD for producer with mask: {combo_state}',
@@ -220,8 +243,10 @@ def estimate_psd(
                     comm_out_frac=float(comm_out),
                     sd_out_frac=float(sd_out),
                     swd_out_frac=float(swd_out),
+                    ann_out_frac=float(ann_out),
                     used_swd=bool(swd_path is not None),
                     used_drink=bool(drink_path is not None),
+                    used_ann=bool(annotation_path is not None and _ann_keywords),
                     freqs=freqs,
                     psd=psds,
                 )
@@ -306,6 +331,7 @@ def batch_estimate(
     verbose: bool = True,
     savepath: Union[str, Path] = None,
     progress_fn: Optional[callable] = None,
+    ann_params: Optional[dict] = None,
     **kwargs,
 ) -> List[PSDResult]:
 
@@ -340,7 +366,20 @@ def batch_estimate(
     warnings.filterwarnings("ignore", category=ResourceWarning)
 
     # remove path arguments and UI-only keys that must not reach estimate_psd
-    [kwargs.pop(x, None) for x in ('path', 'state_path', 'swd_mode')]
+    [kwargs.pop(x, None) for x in ('path', 'state_path', 'swd_mode', 'ann_enabled')]
+
+    # unpack annotation params
+    ann_keywords = ann_match_mode = ann_pad_before = ann_pad_after = None
+    ann_by_animal: Dict[str, Path] = {}
+    if ann_params:
+        ann_dir = ann_params.get("ann_dir")
+        ann_keywords = ann_params.get("keywords") or []
+        ann_match_mode = ann_params.get("match_mode", "contains")
+        ann_pad_before = ann_params.get("pad_before_sec", 0.0)
+        ann_pad_after = ann_params.get("pad_after_sec", 0.0)
+        if ann_dir and Path(ann_dir).is_dir():
+            for f in list(Path(ann_dir).glob("*.txt")) + list(Path(ann_dir).glob("*.csv")):
+                ann_by_animal[_animal_id(f)] = f
 
     # pair the eeg paths with the state paths
     state_paths = sorted(Path(state_dir).glob('*.csv'))
@@ -357,9 +396,14 @@ def batch_estimate(
     ) if swd_dir else None
     drink_paths = sorted(Path(drink_dir).glob("*.npy")) if drink_dir else None
 
-    paired = match_paths(eeg_paths, state_paths, swd_paths, drink_paths)
+    paired_base = match_paths(eeg_paths, state_paths, swd_paths, drink_paths)
 
-    
+    # Extend to 5-tuples: (eeg, state, swd, drink, annotation_path_or_None)
+    paired = [
+        (*base, ann_by_animal.get(_animal_id(base[0])))
+        for base in paired_base
+    ]
+
     # set number of cpu workers and print to stdout
     workers = concurrency.set_cores(ncores, len(paired))
     msg = f'Executing Batch on {len(paired)} files using' f' {workers} cores.'
@@ -368,6 +412,13 @@ def batch_estimate(
     # construct a partial to pass to Multiprocess pool
     if offset_path is not None:
         kwargs['offset_path'] = offset_path
+    if ann_params:
+        kwargs.update({
+            'ann_keywords': ann_keywords,
+            'ann_match_mode': ann_match_mode,
+            'ann_pad_before_sec': ann_pad_before,
+            'ann_pad_after_sec': ann_pad_after,
+        })
     estimator = functools.partial(estimate_psd, **kwargs)
     n = len(paired)
     t0 = time.perf_counter()

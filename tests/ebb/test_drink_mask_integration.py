@@ -622,9 +622,11 @@ def test_batch_worker_saves_psd_params_json(tmp_path):
     params_file = tmp_path / "psd" / "psd_params.json"
     assert params_file.exists()
     saved = json.loads(params_file.read_text())
-    # saved includes swd_mode alongside the compute params
-    assert {k: v for k, v in saved.items() if k != "swd_mode"} == params
+    # saved includes swd_mode and ann_enabled alongside the compute params
+    extra_keys = {"swd_mode", "ann_enabled"}
+    assert {k: v for k, v in saved.items() if k not in extra_keys} == params
     assert saved["swd_mode"] == "none"
+    assert saved["ann_enabled"] is False
 
 
 # ---------------------------------------------------------------------------

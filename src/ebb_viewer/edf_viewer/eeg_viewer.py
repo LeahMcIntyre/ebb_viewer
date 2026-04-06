@@ -39,7 +39,7 @@ class AnnotationMaskDialog(QtWidgets.QDialog):
     def __init__(self, annotations: list[tuple[float, str]], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Mask from Annotations")
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(440)
         self._annotations = annotations
 
         layout = QtWidgets.QVBoxLayout(self)
@@ -55,23 +55,45 @@ class AnnotationMaskDialog(QtWidgets.QDialog):
         layout.addWidget(labels_box)
 
         # --- keyword entry ---
-        layout.addWidget(QtWidgets.QLabel("Keywords (comma-separated, case-insensitive substring match):"))
+        layout.addWidget(QtWidgets.QLabel("Keywords (comma-separated, case-insensitive):"))
         self._keyword_edit = QtWidgets.QLineEdit()
         self._keyword_edit.setPlaceholderText("e.g.  drink, artifact")
         layout.addWidget(self._keyword_edit)
 
+        # --- match mode ---
+        mode_row = QtWidgets.QHBoxLayout()
+        mode_row.addWidget(QtWidgets.QLabel("Match mode:"))
+        self._radio_contains = QtWidgets.QRadioButton("Contains")
+        self._radio_exact = QtWidgets.QRadioButton("Exact")
+        self._radio_contains.setChecked(True)
+        self._radio_contains.setToolTip("Match any label that contains the keyword as a substring")
+        self._radio_exact.setToolTip("Match only labels that equal the keyword exactly")
+        mode_row.addWidget(self._radio_contains)
+        mode_row.addWidget(self._radio_exact)
+        mode_row.addStretch()
+        layout.addLayout(mode_row)
+
         # --- padding ---
-        pad_row = QtWidgets.QHBoxLayout()
-        pad_row.addWidget(QtWidgets.QLabel("Pad after annotation start:"))
-        self._pad_spin = QtWidgets.QDoubleSpinBox()
-        self._pad_spin.setRange(0.0, 3600.0)
-        self._pad_spin.setSingleStep(1.0)
-        self._pad_spin.setDecimals(1)
-        self._pad_spin.setSuffix(" s")
-        self._pad_spin.setValue(10.0)
-        pad_row.addWidget(self._pad_spin)
-        pad_row.addStretch()
-        layout.addLayout(pad_row)
+        form = QtWidgets.QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self._pad_before_spin = QtWidgets.QDoubleSpinBox()
+        self._pad_before_spin.setRange(0.0, 3600.0)
+        self._pad_before_spin.setSingleStep(1.0)
+        self._pad_before_spin.setDecimals(1)
+        self._pad_before_spin.setSuffix(" s")
+        self._pad_before_spin.setValue(0.0)
+        form.addRow("Pad before:", self._pad_before_spin)
+
+        self._pad_after_spin = QtWidgets.QDoubleSpinBox()
+        self._pad_after_spin.setRange(0.0, 3600.0)
+        self._pad_after_spin.setSingleStep(1.0)
+        self._pad_after_spin.setDecimals(1)
+        self._pad_after_spin.setSuffix(" s")
+        self._pad_after_spin.setValue(10.0)
+        form.addRow("Pad after:", self._pad_after_spin)
+
+        layout.addLayout(form)
 
         # --- live match count ---
         self._count_lbl = QtWidgets.QLabel()
@@ -88,6 +110,7 @@ class AnnotationMaskDialog(QtWidgets.QDialog):
         layout.addWidget(buttons)
 
         self._keyword_edit.textChanged.connect(self._update_count)
+        self._radio_contains.toggled.connect(self._update_count)
         self._update_count()
 
     def _update_count(self) -> None:
@@ -95,15 +118,24 @@ class AnnotationMaskDialog(QtWidgets.QDialog):
         if not keywords:
             self._count_lbl.setText("")
             return
-        n_match = sum(
-            1 for _, label in self._annotations
-            if any(kw in label.strip().lower() for kw in keywords)
-        )
+        exact = self._radio_exact.isChecked()
+        if exact:
+            kw_set = set(keywords)
+            n_match = sum(
+                1 for _, label in self._annotations
+                if label.strip().lower() in kw_set
+            )
+        else:
+            n_match = sum(
+                1 for _, label in self._annotations
+                if any(kw in label.strip().lower() for kw in keywords)
+            )
         self._count_lbl.setText(f"{n_match} of {len(self._annotations)} annotations match")
 
-    def values(self) -> tuple[list[str], float]:
+    def values(self) -> tuple[list[str], float, float, str]:
         keywords = [k.strip() for k in self._keyword_edit.text().split(",") if k.strip()]
-        return keywords, self._pad_spin.value()
+        match_mode = "exact" if self._radio_exact.isChecked() else "contains"
+        return keywords, self._pad_before_spin.value(), self._pad_after_spin.value(), match_mode
 
 
 class EegMainWindow(QtWidgets.QMainWindow):
@@ -194,6 +226,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.act_load_annotations = QtGui.QAction("Load Annotations…", self)
         self.act_load_annotations.triggered.connect(self.on_load_annotations)
 
+        self.act_load_annotation_dir = QtGui.QAction("Load Annotation Directory…", self)
+        self.act_load_annotation_dir.triggered.connect(self.on_load_annotation_dir)
+
         self.act_mask_annotations = QtGui.QAction("Mask from Annotations…", self)
         self.act_mask_annotations.setEnabled(False)
         self.act_mask_annotations.triggered.connect(self.on_mask_from_annotations)
@@ -216,6 +251,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         m_file.addAction(self.act_load_swd)
         m_file.addAction(self.act_load_drink)
         m_file.addAction(self.act_load_annotations)
+        m_file.addAction(self.act_load_annotation_dir)
         m_file.addAction(self.act_mask_annotations)
         m_file.addSeparator()
         m_file.addAction(self.act_quit)
@@ -440,16 +476,41 @@ class EegMainWindow(QtWidgets.QMainWindow):
             except Exception as e:
                 QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
 
+    def _load_annotation_file(self, csv_path: Path) -> None:
+        """Load a single annotation file and enable masking."""
+        ann = load_annotations(csv_path)
+        self.trace_view.set_annotations(ann)
+        self._annotations = ann
+        self._annotation_path = csv_path
+        self.act_mask_annotations.setEnabled(True)
+
     def on_load_annotations(self):
         csv_path = pick_annotations_csv(self, self.initial_dir)
         if csv_path is None:
             return
         try:
-            annotations = load_annotations(csv_path)
-            self.trace_view.set_annotations(annotations)
-            self._annotations = annotations
-            self._annotation_path = csv_path
-            self.act_mask_annotations.setEnabled(True)
+            self._load_annotation_file(csv_path)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
+
+    def on_load_annotation_dir(self):
+        """Select an annotation directory; auto-match the file for the current animal."""
+        dir_path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Select Annotation Directory", self.initial_dir
+        )
+        if not dir_path:
+            return
+        animal_id = self.rec.edf_path.stem.split("_")[0]
+        matches = sorted(Path(dir_path).glob(f"{animal_id}*.txt")) + \
+                  sorted(Path(dir_path).glob(f"{animal_id}*.csv"))
+        if not matches:
+            QtWidgets.QMessageBox.warning(
+                self, "No Annotation File Found",
+                f"No annotation file starting with '{animal_id}' found in:\n{dir_path}"
+            )
+            return
+        try:
+            self._load_annotation_file(matches[0])
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
 
@@ -457,7 +518,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         dlg = AnnotationMaskDialog(self._annotations, parent=self)
         if not dlg.exec():
             return
-        keywords, pad_sec = dlg.values()
+        keywords, pad_before_sec, pad_after_sec, match_mode = dlg.values()
         if not keywords:
             QtWidgets.QMessageBox.warning(self, "No keywords", "Enter at least one keyword.")
             return
@@ -465,7 +526,8 @@ class EegMainWindow(QtWidgets.QMainWindow):
             _, n_samples = self.rec.data.shape
             mask = build_annotation_mask(
                 self._annotation_path, keywords=keywords,
-                pad_sec=pad_sec, n_samples=n_samples, fs=self.rec.fs,
+                pad_before_sec=pad_before_sec, pad_after_sec=pad_after_sec,
+                match_mode=match_mode, n_samples=n_samples, fs=self.rec.fs,
             )
             self.mask_set.add(mask)
             self.trace_view.refresh_overlays()
