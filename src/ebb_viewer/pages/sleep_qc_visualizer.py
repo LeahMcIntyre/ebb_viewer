@@ -161,7 +161,7 @@ class SleepQCGridPage(QWidget):
             )
             self._hint_frame.setVisible(True)
         elif all_have_ok:
-            self._hint_lbl.setText("✓ All reviewed — ready for PSD computation.")
+            self._hint_lbl.setText("✓ All spindle metrics checked — ready for PSD computation.")
             self._hint_btn.setText("→ PSD Computation")
             self._nav_hint_dest = "psd_compute"
             self._hint_frame.setStyleSheet(
@@ -183,9 +183,21 @@ class SleepQCGridPage(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
 
+        lbl = QLabel("Sleep Quality Check Visualizer")
+        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        desc = QLabel(
+            "Review sleep staging results for each animal and channel combination. "
+            "Flag animals as ok, needs review, or needs rerun based on sleep metrics and the fraction of each state masked by artifact. "
+            "Animals flagged for rerun can be reprocessed with a different channel combination from the Rerun Queue."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #555; font-size: 12px;")
+        layout.addWidget(lbl)
+        layout.addWidget(desc)
+
         # --- top bar ---
         top = QHBoxLayout()
-
+        
         top.addWidget(QLabel("Combo:"))
         self.cmb_combo = QComboBox()
         self.cmb_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
@@ -463,6 +475,8 @@ class SleepQCGridPage(QWidget):
                 self._data_cache.pop(combo, None)
             self._available_combos = new_combos
             self._ensure_all_combos_loaded()
+            # Always show sleep data in review mode, not the spindle fraction plot.
+            self._set_spindle_mask_mode(False)
             if self._mode != "animal":
                 self._set_mode("animal")
             else:
@@ -922,7 +936,7 @@ class SleepQCGridPage(QWidget):
         if not self._manifest.pending_rerun_review():
             self._refresh_animal_combo()
             self._update_all_plots()
-            QMessageBox.information(self, "Review Complete", "All reruns have been reviewed.")
+            QMessageBox.information(self, "Review Complete", "All spindle reruns have been checked.")
             self.btn_reruns_ready.setChecked(False)
             return
         current = self.cmb_animal.currentText()
@@ -1137,6 +1151,103 @@ class SleepQCGridPage(QWidget):
             ref_lbl.setStyleSheet("color: #999;")
             n_rows = (len(combos) + 1) // 2
             self.legend_layout.addWidget(ref_lbl, n_rows, 0, 1, 2)
+
+        # Fraction comparison table (review mode only)
+        if self._review_mode and animal:
+            frac_widget = self._make_fraction_comparison_widget(animal, combos)
+            if frac_widget is not None:
+                insert_row = (len(combos) + 1) // 2 + (1 if ref_combo else 0)
+                self.legend_layout.addWidget(frac_widget, insert_row, 0, 1, 2)
+
+    def _get_animal_fractions(self, animal: str, combo: str) -> dict[str, float] | None:
+        """Return {state: fraction} for one animal from the cache, or None if unavailable."""
+        pair = self._data_cache.get(combo)
+        if pair is None:
+            return None
+        df_frac = pair[2]
+        rows = df_frac[(df_frac["mouse_id"] == animal) & (df_frac["state"] != "Total")]
+        if rows.empty:
+            return None
+        return dict(zip(rows["state"], rows["fraction"]))
+
+    def _make_fraction_comparison_widget(self, animal: str, combos: list[str]) -> QWidget | None:
+        """Build a compact spindle-fraction comparison table for review mode.
+
+        Shows one row per combo that has fraction data, with rerun combos marked.
+        Values are coloured green/red relative to their source combo.
+        """
+        STATES = ["Wake", "NREM", "REM"]
+
+        # Collect fractions; skip combos with no data
+        rows: list[tuple[str, str | None, dict[str, float]]] = []
+        for combo in combos:
+            run = self._manifest.get_run(animal, combo)
+            source_combo = run.source_combo if run else None
+            fracs = self._get_animal_fractions(animal, combo)
+            if fracs:
+                rows.append((combo, source_combo, fracs))
+
+        if len(rows) < 2:
+            return None
+
+        # Build source → fracs lookup for delta colouring
+        source_fracs: dict[str, dict[str, float]] = {
+            combo: fracs for combo, source, fracs in rows if source is None
+        }
+
+        frame = QFrame()
+        frame.setStyleSheet(
+            "QFrame { border: 1px solid #ddd; border-radius: 3px; "
+            "background: #fafafa; padding: 2px; }"
+        )
+        grid = QGridLayout(frame)
+        grid.setContentsMargins(6, 4, 6, 4)
+        grid.setSpacing(4)
+
+        # Header
+        hdr = QLabel("Spindle masked fraction:")
+        hdr.setStyleSheet("font-size: 10px; color: #666; font-weight: bold;")
+        grid.addWidget(hdr, 0, 0, 1, len(STATES) + 1)
+
+        for col, state in enumerate(STATES, start=1):
+            lbl = QLabel(state)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setStyleSheet("font-size: 10px; color: #555;")
+            grid.addWidget(lbl, 1, col)
+
+        # Data rows
+        for row_i, (combo, source_combo, fracs) in enumerate(rows, start=2):
+            tag = "  ← rerun" if source_combo else ""
+            name_lbl = QLabel(f"{combo}{tag}")
+            name_lbl.setStyleSheet(
+                "font-size: 10px; font-style: italic;" if source_combo
+                else "font-size: 10px;"
+            )
+            grid.addWidget(name_lbl, row_i, 0)
+
+            orig = source_fracs.get(source_combo or "") or source_fracs.get(combo)
+            for col, state in enumerate(STATES, start=1):
+                val = fracs.get(state)
+                if val is None:
+                    grid.addWidget(QLabel("—"), row_i, col)
+                    continue
+                pct_lbl = QLabel(f"{val:.0%}")
+                pct_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                pct_lbl.setStyleSheet("font-size: 10px;")
+                if source_combo and orig:
+                    orig_val = orig.get(state)
+                    if orig_val is not None:
+                        if val < orig_val - 0.01:
+                            pct_lbl.setStyleSheet(
+                                "font-size: 10px; color: #2a7a2a; font-weight: bold;"
+                            )
+                        elif val > orig_val + 0.01:
+                            pct_lbl.setStyleSheet(
+                                "font-size: 10px; color: #c0392b; font-weight: bold;"
+                            )
+                grid.addWidget(pct_lbl, row_i, col)
+
+        return frame
 
     # ------------------------------------------------------------------
     # Reset helpers (manually-rejected runs with no cascade history)

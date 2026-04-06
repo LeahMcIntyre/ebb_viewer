@@ -64,7 +64,7 @@ class RerunPage(QWidget):
         # Header
         hdr = QHBoxLayout()
         lbl = QLabel("Spindle Rerun Queue")
-        lbl.setStyleSheet("font-weight: bold; font-size: 15px;")
+        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
         hdr.addWidget(lbl)
         hdr.addStretch(1)
         btn_refresh = QPushButton("Refresh")
@@ -73,8 +73,8 @@ class RerunPage(QWidget):
         layout.addLayout(hdr)
 
         desc = QLabel(
-            "Files flagged during Sleep QC to be rerun with a different channel combination. "
-            "Select rows and click Run to write the new spindle EDFs."
+            "Animals flagged during Sleep QC for reprocessing with a different channel combination. "
+            "Select rows and click Run to generate new spindle EDFs and re-submit them to Spindle."
         )
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #555; font-size: 12px;")

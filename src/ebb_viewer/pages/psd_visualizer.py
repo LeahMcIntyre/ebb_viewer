@@ -24,6 +24,25 @@ class PSDVisualizer(QWidget):
 
     def _build_ui(self):
         self.root = QVBoxLayout(self)
+
+        lbl = QLabel("PSD Visualizer")
+        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        desc = QLabel(
+            "Review merged PSDs for each animal before finalizing. "
+            "Mark 'needs drink mask' if sidebands are visible around 52 and 68 Hz (water bottle artifact). "
+            "Mark 'ok' otherwise."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #555; font-size: 12px;")
+
+        lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        desc.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+
+        self.root.addWidget(lbl)
+        self.root.addWidget(desc)
+
+
         folder_gb = QGroupBox("File Selection")
         folder_gb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 

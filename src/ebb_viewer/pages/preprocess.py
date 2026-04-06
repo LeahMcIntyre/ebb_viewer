@@ -51,6 +51,18 @@ class PreprocessPage(QWidget):
     def _build_ui(self):
         root = QVBoxLayout(self)
 
+        lbl = QLabel("Preprocess EDFs")
+        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        desc = QLabel(
+            "Trim, downsample, and standardize raw EDF files. "
+            "Processed files are written to the standard/ folder."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #555; font-size: 12px;")
+
+        root.addWidget(lbl)
+        root.addWidget(desc)
+
         # Folder Selection Box
         folder_gb = QGroupBox("Folder Selection")
         folder_gb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)

@@ -78,6 +78,20 @@ class SpindleUploadPage(QWidget):
     def _build_ui(self):
         root = QVBoxLayout(self)
 
+        lbl = QLabel("Sleep Staging — Upload & Download")
+        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        desc = QLabel(
+            "Select a Spindle project and folder to upload EDF files for sleep scoring. Epochs are classified as "
+            "Wake, NREM, or REM in 4-second windows. If the remote folder already exists, only new files will be "
+            "uploaded; already-processed files will be skipped. Label CSVs are downloaded automatically when ready."
+        )
+
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #555; font-size: 12px;")
+
+        root.addWidget(lbl)
+        root.addWidget(desc)
+
         gb = QGroupBox("SleepyRat Upload")
         form_layout = QFormLayout(gb)
 
@@ -148,7 +162,7 @@ class SpindleUploadPage(QWidget):
         form_layout.addRow("Remote folder name:", self.remote_folder_edit)
 
         folder_desc = QLabel(
-            "Inside the selected SleepyRat project, submissions will be grouped "
+            "Inside the selected SleepyRat project, edf files will be grouped "
             "in this folder (e.g. PHP_6w_LFC_RSC)."
         )
         folder_desc.setStyleSheet("color:#777; font-size:10px;")
@@ -178,6 +192,13 @@ class SpindleUploadPage(QWidget):
         self.log_box.setMaximumBlockCount(500)
         self.log_box.setPlaceholderText("Status messages will appear here...")
         root.addWidget(self.log_box)
+
+        spindle_citation = QLabel(
+            "sleepyRat Team. (2026). sleepyRat: Web platform for automated rodent sleep scoring based on EEG/EMG analysis [Software]. https://sleepyrat.ai/"
+        )
+        spindle_citation.setWordWrap(True)
+        spindle_citation.setStyleSheet("color: #555; font-size: 12px;")
+        root.addWidget(spindle_citation)
 
         # Post-download hint (hidden until a download succeeds)
         self._hint_frame = QFrame()
@@ -346,7 +367,7 @@ class SpindleUploadPage(QWidget):
             self.remote_folder_hint.setText("")
         elif text in self._known_folders:
             self.remote_folder_hint.setText(
-                "Existing folder — already-uploaded files will be skipped; "
+                "Existing folder — already-uploaded edf files will be skipped; "
                 "missing labels will be downloaded."
             )
         else:
@@ -568,7 +589,7 @@ class SleepyRatWorker(QObject):
 
             if self.files is not None:
                 # Explicit file list (rerun path) — check remote before uploading anything.
-                self.log.emit("Checking for existing submissions on SleepyRat...")
+                self.log.emit("Checking for existing edf files on SleepyRat...")
                 existing = self._existing_stems(api, self.project, self.remote_folder)
 
                 to_upload = [p for p in self.files if _norm_stem(p) not in existing]
@@ -587,17 +608,17 @@ class SleepyRatWorker(QObject):
                     if not ok:
                         raise RuntimeError("Processing did not finish within the wait limit.")
                 else:
-                    self.log.emit("All files already on SleepyRat, skipping upload and wait.")
+                    self.log.emit("All edf files already on SleepyRat, skipping upload and wait.")
 
             elif self.upload_dir is not None:
                 # Directory batch — glob EDFs, skip already-uploaded by remote check.
                 edfs = sorted(self.upload_dir.glob("*.edf"))
-                self.log.emit("Checking for existing submissions on SleepyRat...")
+                self.log.emit("Checking for existing edf files on SleepyRat...")
                 existing = self._existing_stems(api, self.project, self.remote_folder)
                 to_upload = [p for p in edfs if _norm_stem(p) not in existing]
                 already_there = len(edfs) - len(to_upload)
                 if already_there:
-                    self.log.emit(f"Skipping {already_there} already-uploaded file(s).")
+                    self.log.emit(f"Skipping {already_there} already-uploaded edf file(s).")
                 for p in to_upload:
                     self.log.emit(f"Uploading {p.name}...")
                     api.upload_edf(self.project, self.remote_folder, p)
@@ -607,14 +628,14 @@ class SleepyRatWorker(QObject):
                     if not ok:
                         raise RuntimeError("Processing did not finish within the wait limit.")
                 else:
-                    self.log.emit("All files already uploaded, skipping wait.")
+                    self.log.emit("All edf files already uploaded, skipping wait.")
 
-            self.log.emit("Checking remote submissions...")
+            self.log.emit("Checking remote files...")
             info = api.get_submissions(self.project, self.remote_folder)
             submissions = info.get("submissions", [])
             if not submissions:
                 raise RuntimeError(
-                    f"No submissions found in project='{self.project}', "
+                    f"No files found in project='{self.project}', "
                     f"folder='{self.remote_folder}'"
                 )
 
@@ -637,7 +658,7 @@ class SleepyRatWorker(QObject):
             skipped = len(names) - len(to_download)
             if skipped:
                 self.log.emit(f"Skipping {skipped} already-downloaded file(s).")
-            self.log.emit(f"Downloading {len(to_download)} label(s) to {self.out_dir}...")
+            self.log.emit(f"Downloading {len(to_download)} sleep state csv(s) to {self.out_dir}...")
             for name in to_download:
                 out_path = self.out_dir / (Path(name).stem + "_labels.csv")
                 labels = api.download_labels(self.project, self.remote_folder, name, threshold=0.5)

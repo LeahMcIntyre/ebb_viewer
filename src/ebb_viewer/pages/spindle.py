@@ -45,6 +45,20 @@ class SpindleWritePage(QWidget):
     def _build_ui(self):
         root = QVBoxLayout(self)
 
+
+        lbl = QLabel("Create Spindle EDFs")
+        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        desc = QLabel(
+            "Prepare standard EDFs for sleep staging by selecting the EEG channel combination to include. "
+            "EMG is always included. Output files are written to spindle_edfs/."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #555; font-size: 12px;")
+
+        root.addWidget(lbl)
+        root.addWidget(desc)
+
+
         # ----- Folder selection group -----
         folder_gb = QGroupBox("Folder Selection")
         folder_gb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)

@@ -57,6 +57,20 @@ class PSDPage(QWidget):
     def _build_ui(self):
         root = QVBoxLayout(self)
 
+        lbl = QLabel("PSD Computation")
+        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        desc = QLabel(
+            "Compute power spectral densities from sleep-scored EDF files. "
+            "A separate PSD file is produced for each channel combination. "
+            "Each animal must have exactly one combination marked 'ok' in Sleep QC — "
+            "those ok runs are then merged into a single combined file per combo for downstream analysis."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #555; font-size: 12px;")
+
+        root.addWidget(lbl)
+        root.addWidget(desc)
+
         # ----- Group 1: Folder Selection -----
         self.folder_gb = QGroupBox("Folder Selection")
         self.folder_gb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
@@ -113,14 +127,48 @@ class PSDPage(QWidget):
 
         root.addWidget(self.combo_gb)
 
+        # ----- Group 3: SWD Masks -----
+        self.gb_swd = QGroupBox("SWD Masks")
+        self.gb_swd.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        swd_v = QVBoxLayout(self.gb_swd)
+
+        self._swd_btn_group = QButtonGroup(self)
+        self._radio_swd_none = QRadioButton("No SWD mask")
+        self._radio_swd_none.setChecked(True)
+        self._radio_swd_mask = QRadioButton("Mask out SWDs")
+        self._swd_btn_group.addButton(self._radio_swd_none, 0)
+        self._swd_btn_group.addButton(self._radio_swd_mask, 1)
+        swd_v.addWidget(self._radio_swd_none)
+        swd_v.addWidget(self._radio_swd_mask)
+
+        swd_hint = QLabel(
+            "To use SWD masking, place one .mat file of SWD timestamps per animal in a swd/ folder "
+            "in the project root (e.g. project/swd/AnimalID_*.mat)."
+        )
+        swd_hint.setWordWrap(True)
+        swd_hint.setStyleSheet("font-size: 10px; color: #777; padding-left: 4px; padding-top: 2px;")
+        swd_v.addWidget(swd_hint)
+
+        self._lbl_swd_status = QLabel("")
+        self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px;")
+        swd_v.addWidget(self._lbl_swd_status)
+
+        root.addWidget(self.gb_swd)
+
         # ----- Collapsible: Advanced PSD Settings -----
         self._btn_adv = QToolButton()
-        self._btn_adv.setText("  Advanced PSD Settings")
+        self._btn_adv.setText("Advanced PSD Settings")
         self._btn_adv.setCheckable(True)
         self._btn_adv.setChecked(False)
         self._btn_adv.setArrowType(Qt.ArrowType.RightArrow)
         self._btn_adv.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._btn_adv.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._btn_adv.setStyleSheet(
+            "QToolButton { border: 1px solid #ccc; border-radius: 3px;"
+            " padding: 3px 6px; background: #f5f5f5; color: #444; font-size: 11px; }"
+            "QToolButton:checked { background: #eaeaea; }"
+            "QToolButton:hover { background: #ebebeb; }"
+        )
         root.addWidget(self._btn_adv)
 
         self._adv_container = QWidget()
@@ -129,7 +177,7 @@ class PSDPage(QWidget):
         adv_v.setSpacing(4)
         self._adv_container.setVisible(False)
 
-        # ----- Group 3: PSD Settings -----
+        # ----- Group 4: PSD Settings -----
         self.gb_psd = QGroupBox("PSD Settings")
         self.gb_psd.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         psd_v = QVBoxLayout(self.gb_psd)
@@ -169,7 +217,7 @@ class PSDPage(QWidget):
 
         adv_v.addWidget(self.gb_psd)
 
-        # ----- Group 4: Spindle Noise Mask -----
+        # ----- Group 5: Spindle Noise Mask -----
         self.gb_spindle = QGroupBox("Spindle Noise Mask: Applied To All States")
         self.gb_spindle.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         spindle_form = QFormLayout()
@@ -184,7 +232,7 @@ class PSDPage(QWidget):
         self.gb_spindle.setLayout(spindle_form)
         adv_v.addWidget(self.gb_spindle)
 
-        # ----- Group 5: SD Mask -----
+        # ----- Group 6: SD Mask -----
         self.gb_mask = QGroupBox("Standard Deviation Mask: Applied Only To Wake")
         self.gb_mask.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         mask_form = QFormLayout()
@@ -213,26 +261,6 @@ class PSDPage(QWidget):
         self.gb_mask.setLayout(mask_form)
         adv_v.addWidget(self.gb_mask)
         root.addWidget(self._adv_container)
-
-        # ----- Group 6: SWD Masks -----
-        self.gb_swd = QGroupBox("SWD Masks")
-        self.gb_swd.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        swd_v = QVBoxLayout(self.gb_swd)
-
-        self._swd_btn_group = QButtonGroup(self)
-        self._radio_swd_none = QRadioButton("No SWD mask")
-        self._radio_swd_none.setChecked(True)
-        self._radio_swd_mask = QRadioButton("Mask out SWDs")
-        self._swd_btn_group.addButton(self._radio_swd_none, 0)
-        self._swd_btn_group.addButton(self._radio_swd_mask, 1)
-        swd_v.addWidget(self._radio_swd_none)
-        swd_v.addWidget(self._radio_swd_mask)
-
-        self._lbl_swd_status = QLabel("")
-        self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px;")
-        swd_v.addWidget(self._lbl_swd_status)
-
-        root.addWidget(self.gb_swd)
 
         # ----- Main Action Button -----
         btn_row2 = QHBoxLayout()
