@@ -76,6 +76,8 @@ class SleepQCGridPage(QWidget):
         self._mode: str = "group"
         self._review_mode: bool = False
         self._nav_hint_dest: str = ""
+        self._highlighted_animal: str | None = None
+        self._show_ref_median: bool = False
 
         self._plots: dict[tuple[str, str], pg.PlotItem] = {}
 
@@ -107,9 +109,12 @@ class SleepQCGridPage(QWidget):
         # downloaded since the last time this combo was loaded.
         for _, combo in self._manifest.pending_rerun_review():
             self._data_cache.pop(combo, None)
+        self._highlighted_animal = None
         self._update_reruns_badge()
         self._refresh_combos()
-        if self._mode == "animal":
+        if self.btn_spindle.isChecked():
+            self._set_spindle_mask_mode(True)
+        elif self._mode == "animal":
             self._ensure_all_combos_loaded()
             self._refresh_animal_combo()
             self._update_all_plots()
@@ -208,6 +213,13 @@ class SleepQCGridPage(QWidget):
         self.btn_offset.setCheckable(True)
         self.btn_offset.setChecked(True)
         smc.addWidget(self.btn_offset)
+
+        smc.addWidget(_vsep(self))
+
+        self.btn_median = QPushButton("Median")
+        self.btn_median.setCheckable(True)
+        self.btn_median.setChecked(False)
+        smc.addWidget(self.btn_median)
 
         self._sleep_mode_controls.setVisible(False)
         top.addWidget(self._sleep_mode_controls)
@@ -314,12 +326,12 @@ class SleepQCGridPage(QWidget):
         self.legend_layout.setColumnStretch(0, 1)
         self.legend_layout.setColumnStretch(1, 1)
 
-        legend_scroll = QScrollArea()
-        legend_scroll.setWidget(self.legend_container)
-        legend_scroll.setWidgetResizable(True)
-        legend_scroll.setFixedHeight(140)
-        legend_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        layout.addWidget(legend_scroll)
+        self._legend_scroll = QScrollArea()
+        self._legend_scroll.setWidget(self.legend_container)
+        self._legend_scroll.setWidgetResizable(True)
+        self._legend_scroll.setFixedHeight(160)
+        self._legend_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        layout.addWidget(self._legend_scroll)
 
         # Navigation hint (hidden until all animals in combo are reviewed)
         self._hint_frame = QFrame()
@@ -341,6 +353,7 @@ class SleepQCGridPage(QWidget):
         self.btn_group.clicked.connect(lambda: self._set_mode("group"))
         self.btn_animal.clicked.connect(lambda: self._set_mode("animal"))
         self.btn_offset.toggled.connect(self._update_all_plots)
+        self.btn_median.toggled.connect(self._on_median_toggled)
         self.btn_view_sleep.clicked.connect(lambda: self._set_spindle_mask_mode(False))
         self.btn_spindle.clicked.connect(lambda: self._set_spindle_mask_mode(True))
         self._frac_widget.animal_clicked.connect(self._on_frac_animal_selected)
@@ -386,6 +399,7 @@ class SleepQCGridPage(QWidget):
         self.grid.setVisible(not spindle)
         self._frac_widget.setVisible(spindle)
         self._sleep_mode_controls.setVisible(not spindle)
+        self._legend_scroll.setVisible(not spindle)
         if spindle:
             self.cmb_combo.setEnabled(True)
             self._group_controls.setVisible(False)
@@ -395,6 +409,7 @@ class SleepQCGridPage(QWidget):
             self._refresh_animal_combo()
             self._frac_widget.clear_selection()
             self._refresh_frac_plot()
+            self._render_group()
         else:
             if self._review_mode:
                 self._lbl_animal.setText("Animal (review):")
@@ -524,6 +539,7 @@ class SleepQCGridPage(QWidget):
     def _on_combo_changed(self, combo: str) -> None:
         if not combo:
             return
+        self._highlighted_animal = None
         self._load_combo(combo)
         pair = self._data_cache.get(combo)
         if pair is not None:
@@ -774,14 +790,21 @@ class SleepQCGridPage(QWidget):
                         continue
                     dm[metric] = dm[metric].fillna(0)
                     dm = dm.sort_values(x_col)
-                    width = 2.5 if mid in spindle_outliers else 1.5
+                    if self._highlighted_animal:
+                        alpha = 255 if mid == self._highlighted_animal else 80
+                    else:
+                        alpha = 255
                     p.plot(dm[x_col].to_numpy(), dm[metric].to_numpy(),
-                           pen=pg.mkPen(color=mouse_colors[mid], width=width))
+                           pen=pg.mkPen(color=(*mouse_colors[mid], alpha), width=1.5))
 
         if self.btn_offset.isChecked() and not df.empty:
             self._apply_hour_of_day_ticks(df[x_col].unique())
 
-        self._update_legend_group(mice, mouse_colors)
+        ref_combo = self._get_ref_combo() if self._show_ref_median else None
+        if ref_combo is not None:
+            self._draw_ref_median(ref_combo)
+
+        self._update_legend_group(mice, mouse_colors, ref_combo)
 
     def _render_animal(self) -> None:
         animal = self.cmb_animal.currentText()
@@ -804,9 +827,11 @@ class SleepQCGridPage(QWidget):
             color = self._COMBO_COLORS.get(combo, (100, 100, 100))
             run = self._manifest.get_run(animal, combo)
             is_rerun = run is not None and run.source_combo is not None
-            is_outlier = animal in self._get_spindle_outlier_animals(combo)
+            outlier_combos = self._get_spindle_outlier_animals(combo)
+            is_outlier = animal in outlier_combos
+            alpha = 255 if (not outlier_combos or is_outlier) else 80
             pen = pg.mkPen(
-                color=color, width=3.5 if is_outlier else 2.0,
+                color=(*color, alpha), width=2.0,
                 style=Qt.PenStyle.DashLine if is_rerun else Qt.PenStyle.SolidLine,
             )
             for state in self.STATE_ORDER:
@@ -821,10 +846,10 @@ class SleepQCGridPage(QWidget):
                     )
             drawn_combos.append(combo)
 
-        # Group mean reference overlay
+        # Group median reference overlay
         ref_combo = self._get_ref_combo()
         if ref_combo is not None:
-            self._draw_ref_mean(ref_combo)
+            self._draw_ref_median(ref_combo)
 
         if self.btn_offset.isChecked() and drawn_combos:
             last_df = self._get_df(drawn_combos[-1])
@@ -835,8 +860,12 @@ class SleepQCGridPage(QWidget):
         self._update_legend_animal(drawn_combos, ref_combo)
 
     # ------------------------------------------------------------------
-    # Group mean reference overlay
+    # Group median reference overlay
     # ------------------------------------------------------------------
+    def _on_median_toggled(self, checked: bool) -> None:
+        self._show_ref_median = checked
+        self._update_all_plots()
+
     def _get_ref_combo(self) -> str | None:
         """Return combo with most ok animals; prefer LFC_RSC."""
         ok_counts: dict[str, int] = {}
@@ -848,29 +877,20 @@ class SleepQCGridPage(QWidget):
             return None
         return "LFC_RSC" if "LFC_RSC" in ok_counts else max(ok_counts, key=ok_counts.__getitem__)
 
-    def _draw_ref_mean(self, combo: str) -> None:
-        """Draw group mean reference as a dashed gray line on all plots."""
+    def _draw_ref_median(self, combo: str) -> None:
+        """Draw group median reference as a dashed line on all plots."""
         df = self._get_df(combo)
         if df is None or df.empty:
             return
-        ok_animals = {
-            entry.animal_id
-            for entry in self._manifest
-            for c, run in entry.runs.items()
-            if c == combo and run.sleep_qc == "ok"
-        }
-        if not ok_animals:
-            return
         df, x_col = self._ensure_x_col(df)
-        sub = df[df["mouse_id"].isin(ok_animals)]
         metrics = [m for m, _ in self.METRIC_ORDER]
-        mean_df = sub.groupby(["state", x_col])[metrics].mean().reset_index()
+        median_df = df.groupby(["state", x_col])[metrics].median().reset_index()
 
-        ref_pen = pg.mkPen(color=(160, 160, 160), width=1.5,
+        ref_pen = pg.mkPen(color=(80, 80, 80), width=2.5,
                            style=Qt.PenStyle.DashLine)
         for state in self.STATE_ORDER:
             for metric, _ in self.METRIC_ORDER:
-                panel = mean_df[mean_df["state"] == state].sort_values(x_col)
+                panel = median_df[median_df["state"] == state].sort_values(x_col)
                 if panel.empty:
                     continue
                 self._plots[(metric, state)].plot(
@@ -914,6 +934,10 @@ class SleepQCGridPage(QWidget):
     # ------------------------------------------------------------------
     # Legend
     # ------------------------------------------------------------------
+    def _on_legend_highlight(self, mid: str, checked: bool) -> None:
+        self._highlighted_animal = mid if checked else None
+        self._update_all_plots()
+
     def _clear_legend(self) -> None:
         while self.legend_layout.count():
             item = self.legend_layout.takeAt(0)
@@ -949,7 +973,8 @@ class SleepQCGridPage(QWidget):
         cmap = mpl.colormaps["tab10"] if n <= 10 else mpl.colormaps["tab20"]
         return {mid: tuple(int(255 * c) for c in cmap(i)[:3]) for i, mid in enumerate(mice)}
 
-    def _update_legend_group(self, mice: list[str], mouse_colors: dict) -> None:
+    def _update_legend_group(self, mice: list[str], mouse_colors: dict,
+                              ref_combo: str | None = None) -> None:
         self._clear_legend()
         combo = self.cmb_combo.currentText()
         spindle_outliers = self._get_spindle_outlier_animals(combo)
@@ -961,13 +986,23 @@ class SleepQCGridPage(QWidget):
             rejected_by = run.rejected_by if run else None
 
             row_w, row_l = self._make_legend_row_frame(color, status)
-            label_text = str(mid)
+            btn_highlight = QPushButton(str(mid))
+            btn_highlight.setFlat(True)
+            btn_highlight.setCheckable(True)
+            btn_highlight.setChecked(mid == self._highlighted_animal)
+            btn_highlight.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn_highlight.setStyleSheet(
+                "QPushButton { text-align: left; padding: 0 2px; font-weight: normal; }"
+                "QPushButton:checked { font-weight: bold; text-decoration: underline; }"
+            )
+            btn_highlight.clicked.connect(lambda checked, m=mid: self._on_legend_highlight(m, checked))
+            row_l.addWidget(btn_highlight)
             if mid in spindle_outliers:
-                label_text += ' <span style="color:#c0392b;font-size:9px;font-style:italic;">[spindle outlier]</span>'
-            lbl = QLabel(label_text)
-            lbl.setTextFormat(Qt.TextFormat.RichText)
-            row_l.addWidget(lbl)
+                outlier_lbl = QLabel('<span style="color:#c0392b;font-size:9px;font-style:italic;">[spindle outlier]</span>')
+                outlier_lbl.setTextFormat(Qt.TextFormat.RichText)
+                row_l.addWidget(outlier_lbl)
 
+            row_l.addStretch(1)
             btn_ok = QPushButton("OK")
             btn_ok.setFixedHeight(22)
             btn_ok.setCheckable(True)
@@ -1005,6 +1040,12 @@ class SleepQCGridPage(QWidget):
                     row_l.addWidget(btn_reset)
 
             self.legend_layout.addWidget(row_w, i // 2, i % 2)
+
+        if ref_combo is not None:
+            n_rows = (len(mice) + 1) // 2
+            ref_lbl = QLabel(f"─ ─  Group median, all animals ({ref_combo})")
+            ref_lbl.setStyleSheet("color: #999;")
+            self.legend_layout.addWidget(ref_lbl, n_rows, 0, 1, 2)
 
     def _update_legend_animal(self, combos: list[str],
                                ref_combo: str | None = None) -> None:
@@ -1092,7 +1133,7 @@ class SleepQCGridPage(QWidget):
 
         # Reference line label
         if ref_combo is not None:
-            ref_lbl = QLabel(f"─ ─  Group mean ({ref_combo})")
+            ref_lbl = QLabel(f"─ ─  Group median, all animals ({ref_combo})")
             ref_lbl.setStyleSheet("color: #999;")
             n_rows = (len(combos) + 1) // 2
             self.legend_layout.addWidget(ref_lbl, n_rows, 0, 1, 2)

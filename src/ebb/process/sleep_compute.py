@@ -174,20 +174,27 @@ def compute_sleep_bins_df_offset(
     return pd.concat(sleep_dfs, ignore_index=True)
 
 
-def compute_spindle_fractions(state_dir: Union[str, Path]) -> pd.DataFrame:
+def compute_spindle_fractions(
+    state_dir: Union[str, Path],
+    noise_prob_threshold: float = 0.5,
+) -> pd.DataFrame:
     """
     Compute per-animal, per-state spindle mask fractions from spindle output CSVs.
 
-    Reads the ``rawstate`` column from each CSV. Clean epoch labels are ``w``/``n``/``r``;
-    spindle-masked labels are ``1`` (Wake), ``2`` (NREM), ``3`` (REM). Returns a long-form
-    DataFrame with one row per (animal × state) plus a ``Total`` row per animal.
+    Reads the ``rawstate`` column (``w``/``n``/``r``) to determine sleep state and the
+    ``noise_probs`` column to determine whether each epoch is spindle-masked.  An epoch
+    is counted as spindle-masked when its noise probability is >= ``noise_prob_threshold``
+    (default 0.5).
+
+    Returns a long-form DataFrame with one row per (animal × state) plus a ``Total``
+    row per animal.
 
     Columns: mouse_id, state, clean_count, spindle_count, total_count, fraction
     State order: Wake, NREM, REM, Total.
     """
-    CLEAN_KEY    = {'Wake': 'w',  'NREM': 'n',  'REM': 'r'}
-    ARTIFACT_KEY = {'Wake': '1',  'NREM': '2',  'REM': '3'}
-    STATE_ORDER  = ['Wake', 'NREM', 'REM']
+    STATE_RAW   = {'Wake': 'w', 'NREM': 'n', 'REM': 'r'}
+    RAW_VALID   = set(STATE_RAW.values())
+    STATE_ORDER = ['Wake', 'NREM', 'REM']
 
     rows: list[dict] = []
     for state_path in sorted(Path(state_dir).glob('*.csv')):
@@ -195,30 +202,45 @@ def compute_spindle_fractions(state_dir: Union[str, Path]) -> pd.DataFrame:
         with open(state_path, 'r') as f:
             reader = csv.reader(f)
             header = next(reader)
-            if 'state' not in header:
-                raise ValueError(f"'state' column not found in {state_path.name}")
-            idx = header.index('state')
-            counts = Counter(row[idx] for row in reader)
+            if 'rawstate' not in header:
+                raise ValueError(f"'rawstate' column not found in {state_path.name}")
+            if 'noise_probs' not in header:
+                raise ValueError(f"'noise_probs' column not found in {state_path.name}")
+            raw_idx   = header.index('rawstate')
+            noise_idx = header.index('noise_probs')
 
-        for state in STATE_ORDER:
-            clean   = counts.get(CLEAN_KEY[state], 0)
-            spindle = counts.get(ARTIFACT_KEY[state], 0)
+            clean_counts   = Counter()
+            spindle_counts = Counter()
+            for row in reader:
+                raw = row[raw_idx]
+                if raw not in RAW_VALID:
+                    continue
+                if float(row[noise_idx]) >= noise_prob_threshold:
+                    spindle_counts[raw] += 1
+                else:
+                    clean_counts[raw] += 1
+
+        for state_label in STATE_ORDER:
+            raw     = STATE_RAW[state_label]
+            clean   = clean_counts[raw]
+            spindle = spindle_counts[raw]
             total   = clean + spindle
             rows.append({
                 'mouse_id':      animal,
-                'state':         state,
+                'state':         state_label,
                 'clean_count':   clean,
                 'spindle_count': spindle,
                 'total_count':   total,
                 'fraction':      spindle / total if total > 0 else float('nan'),
             })
 
-        total_spindle = sum(counts.get(k, 0) for k in ('1', '2', '3'))
-        total_all     = total_spindle + sum(counts.get(k, 0) for k in ('w', 'n', 'r'))
+        total_spindle = sum(spindle_counts.values())
+        total_clean   = sum(clean_counts.values())
+        total_all     = total_clean + total_spindle
         rows.append({
             'mouse_id':      animal,
             'state':         'Total',
-            'clean_count':   total_all - total_spindle,
+            'clean_count':   total_clean,
             'spindle_count': total_spindle,
             'total_count':   total_all,
             'fraction':      total_spindle / total_all if total_all > 0 else float('nan'),
