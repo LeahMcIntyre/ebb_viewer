@@ -45,7 +45,7 @@ def _setup_filesystem(tmp_path: Path, *, combos: list[str]) -> None:
 # ---------------------------------------------------------------------------
 
 def test_step6_active_when_all_qc_resolved(tmp_path):
-    """Step 6 is 'active' when n_ok > 0 and no animals need Sleep QC review."""
+    """Step 6 is 'active' when all animals each have exactly 1 ok run."""
     _setup_filesystem(tmp_path, combos=["LFC_RSC"])
     m = _make_manifest(tmp_path, {
         "A001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
@@ -53,11 +53,11 @@ def test_step6_active_when_all_qc_resolved(tmp_path):
     statuses = compute_pipeline_status(tmp_path, m)
     s6 = statuses[5]
     assert s6.kind == "active"
-    assert "ready to compute" in s6.description
+    assert "1 ok run" in s6.description
 
 
-def test_step6_attention_when_review_pending_and_ok_exists(tmp_path):
-    """Step 6 is 'attention' (not 'active') when some animals still need EDF review."""
+def test_step6_blocked_when_review_pending_and_ok_exists(tmp_path):
+    """Step 6 is 'blocked' when some animals still need EDF review."""
     _setup_filesystem(tmp_path, combos=["LFC_RSC"])
     m = _make_manifest(tmp_path, {
         "A001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
@@ -65,12 +65,12 @@ def test_step6_attention_when_review_pending_and_ok_exists(tmp_path):
     })
     statuses = compute_pipeline_status(tmp_path, m)
     s6 = statuses[5]
-    assert s6.kind == "attention"
-    assert "Sleep QC" in s6.description
+    assert s6.kind == "blocked"
+    assert "1" in s6.description
 
 
-def test_step6_attention_message_includes_count(tmp_path):
-    """Step 6 attention message names the number of animals still needing review."""
+def test_step6_blocked_message_includes_not_ready_count(tmp_path):
+    """Step 6 blocked message names the number of animals not yet ready."""
     _setup_filesystem(tmp_path, combos=["LFC_RSC"])
     m = _make_manifest(tmp_path, {
         "A001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
@@ -79,7 +79,7 @@ def test_step6_attention_message_includes_count(tmp_path):
     })
     statuses = compute_pipeline_status(tmp_path, m)
     s6 = statuses[5]
-    assert s6.kind == "attention"
+    assert s6.kind == "blocked"
     assert "2" in s6.description
 
 
@@ -94,12 +94,16 @@ def test_step6_blocked_when_no_ok_animals(tmp_path):
     assert s6.kind == "blocked"
 
 
-def test_step6_active_when_review_animals_are_rejected(tmp_path):
-    """Rejected animals don't trigger the attention gate — only needs_review does."""
+def test_step6_active_when_cascade_rejected_run_exists(tmp_path):
+    """An animal with one ok run and one cascade-rejected run is still ready for PSD."""
     _setup_filesystem(tmp_path, combos=["LFC_RSC"])
     m = _make_manifest(tmp_path, {
         "A001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
-        "A002": {"LFC_RSC": RunEntry(sleep_qc="rejected")},
+        # A002: LFC_RSC ok, LSC_RSC cascade-rejected — still has exactly 1 ok run
+        "A002": {
+            "LFC_RSC": RunEntry(sleep_qc="ok"),
+            "LSC_RSC": RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
+        },
     })
     statuses = compute_pipeline_status(tmp_path, m)
     s6 = statuses[5]

@@ -500,14 +500,14 @@ def _run_batch_worker(tmp_path, params=None, offset_path=None):
     pairs = [(spindle_dir, savepath)]
     calls = []
 
-    import ebb.process.psd_compute as psd_mod
-    orig = psd_mod.batch_estimate
+    import ebb_viewer.pages.psds as psds_mod
+    orig = psds_mod.batch_estimate
 
     def recording_be(**kw):
         calls.append(kw)
         return []  # empty results list
 
-    psd_mod.batch_estimate = recording_be
+    psds_mod.batch_estimate = recording_be
     try:
         from ebb_viewer.pages.psds import BatchEstimateWorker
         worker = BatchEstimateWorker(
@@ -519,7 +519,7 @@ def _run_batch_worker(tmp_path, params=None, offset_path=None):
         )
         worker.run()
     finally:
-        psd_mod.batch_estimate = orig
+        psds_mod.batch_estimate = orig
 
     return calls, savepath
 
@@ -564,30 +564,27 @@ def test_batch_worker_saves_pkl_with_params(tmp_path):
     fake_result = MagicMock()
     fake_result_dict = {"path": "AM001_PREPROCESSED.edf", "psd": [1.0]}
 
-    import ebb.process.psd_compute as psd_mod
-    orig = psd_mod.batch_estimate
-    psd_mod.batch_estimate = lambda **kw: [fake_result]
+    import ebb_viewer.pages.psds as psds_mod
+    orig_be = psds_mod.batch_estimate
+    orig_asdict = psds_mod.dataclasses.asdict
+
+    def fake_asdict(obj):
+        return dict(fake_result_dict)
+
+    psds_mod.batch_estimate = lambda **kw: [fake_result]
+    psds_mod.dataclasses.asdict = fake_asdict
     try:
-        import ebb_viewer.pages.psds as psds_mod
-        orig_asdict = psds_mod.dataclasses.asdict
-
-        def fake_asdict(obj):
-            return dict(fake_result_dict)
-
-        psds_mod.dataclasses.asdict = fake_asdict
-        try:
-            from ebb_viewer.pages.psds import BatchEstimateWorker
-            worker = BatchEstimateWorker(
-                eeg_dir=tmp_path / "standard",
-                combo_pairs=[(spindle_dir, savepath)],
-                params=params,
-                project_root=tmp_path,
-            )
-            worker.run()
-        finally:
-            psds_mod.dataclasses.asdict = orig_asdict
+        from ebb_viewer.pages.psds import BatchEstimateWorker
+        worker = BatchEstimateWorker(
+            eeg_dir=tmp_path / "standard",
+            combo_pairs=[(spindle_dir, savepath)],
+            params=params,
+            project_root=tmp_path,
+        )
+        worker.run()
     finally:
-        psd_mod.batch_estimate = orig
+        psds_mod.batch_estimate = orig_be
+        psds_mod.dataclasses.asdict = orig_asdict
 
     with open(savepath, "rb") as f:
         records = pickle.load(f)
@@ -607,9 +604,9 @@ def test_batch_worker_saves_psd_params_json(tmp_path):
     spindle_dir.mkdir(parents=True)
     savepath = psd_dir / "psds_LFC_RSC.pkl"
 
-    import ebb.process.psd_compute as psd_mod
-    orig = psd_mod.batch_estimate
-    psd_mod.batch_estimate = lambda **kw: []
+    import ebb_viewer.pages.psds as psds_mod
+    orig = psds_mod.batch_estimate
+    psds_mod.batch_estimate = lambda **kw: []
     try:
         from ebb_viewer.pages.psds import BatchEstimateWorker
         worker = BatchEstimateWorker(
@@ -620,7 +617,7 @@ def test_batch_worker_saves_psd_params_json(tmp_path):
         )
         worker.run()
     finally:
-        psd_mod.batch_estimate = orig
+        psds_mod.batch_estimate = orig
 
     params_file = tmp_path / "psd" / "psd_params.json"
     assert params_file.exists()
