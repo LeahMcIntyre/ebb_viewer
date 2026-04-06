@@ -416,7 +416,7 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 
 ---
 
-### Completed (latest session, branch `refactor/sleep_qc_addition`)
+### Completed (sessions, branch `refactor/sleep_qc_addition`)
 
 #### Spindle Mask view — UI polish (`sleep_qc_visualizer.py`)
 
@@ -441,33 +441,100 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 - `_apply_hour_of_day_ticks`: filters to only multiples of 6 (`int(x) % 6 == 0`) — ticks at 6, 12, 18, 0 instead of every 2-hour bin
 - `_prepare_plots` now calls `setTicks(None)` on bottom axes when clearing — restores auto ticks when switching back from offset mode
 
-#### Test fix — cross-test pollution (`test_drink_mask_integration.py`)
-- `test_batch_worker_saves_pkl_with_params` was setting `psd_mod.batch_estimate = lambda` before entering `try`, then `import ebb_viewer.pages.psds` raised `ImportError`, so the `finally` never ran and the lambda leaked permanently into the module
-- Fixed: moved `psd_mod.batch_estimate = lambda` inside an outer `try/finally` so it is always restored
-- Effect: `test_batch_estimate_filters_eeg_by_state_csv` in `test_psd_pipeline.py` now passes when run after the drink mask tests
+#### Sleep QC visualizer — further UX changes (`sleep_qc_visualizer.py`)
 
-#### New tests (`tests/ebb/test_sleep_compute.py` — 8 tests)
-- `test_single_animal_fractions` — per-state counts and fractions; zero-count state gives NaN
-- `test_total_row` — Total row aggregates all spindle/clean epochs
-- `test_all_spindle_masked` — fraction = 1.0
-- `test_no_spindle_masked` — fraction = 0.0
-- `test_multiple_animals` — multiple CSVs → multiple animals, independent
-- `test_empty_directory` — empty DataFrame with correct columns
-- `test_missing_state_column_raises` — ValueError with clear message
-- `test_state_column_is_ordered_categorical` — Wake → NREM → REM → Total order
+**Alpha-based highlighting (group mode):**
+- Outlier dimming replaced line-width changes: when a user clicks an animal name in the legend, that animal goes to alpha=255, all others dim to alpha=80
+- `self._highlighted_animal: str | None` — set via clickable flat QPushButton in legend (bold+underlined when checked); cleared on combo change and `showEvent`
+- If no highlight is set, all lines are at full alpha (no automatic outlier dimming on load)
+- Outlier tag (`[spindle outlier]`) is a separate `QLabel` next to the button, not part of the button text — prevents OK/Review buttons from shifting right
+- `row_l.addStretch(1)` between label area and OK/Review buttons anchors buttons regardless of outlier tag presence
+
+**Group median reference line:**
+- `_draw_ref_median(combo)` — median over **all** animals in the combo (not ok-only), dark gray pen (80,80,80), width 2.5, dashed
+- `_get_ref_combo()` still picks the reference combo by most-ok-animals count (prefers LFC_RSC)
+- **Group mode**: toggled by "Median" button (`self._show_ref_median`, off by default) in `_sleep_mode_controls`
+- **Animal/Review mode**: always shown
+- Legend label: `"─ ─  Group median, all animals ({ref_combo})"`
+
+**Spindle mask mode first-load fix:**
+- `showEvent` calls `_set_spindle_mask_mode(True)` when `btn_spindle.isChecked()` — this was the only way to correctly set visibility, label ("Highlight:"), group controls hidden state, and legend on first show
+- `_set_spindle_mask_mode(True)` now also calls `_render_group()` to populate the legend
+- `_legend_scroll` hidden in spindle mask mode (legend has no plots to reference)
+- `_legend_scroll.setFixedHeight(160)` (was 140)
+- `self._highlighted_animal` reset in `showEvent` so stale highlight from a prior visit doesn't persist with no visual indicator
+
+#### `compute_spindle_fractions` redesign (`ebb/process/sleep_compute.py`)
+
+Changed from reading the `state` column (`w/n/r/1/2/3`) to reading `rawstate` + `noise_probs`:
+- `rawstate` (always `w/n/r`) determines sleep state
+- `noise_probs >= noise_prob_threshold` (default 0.5) determines artifact status
+- `noise_prob_threshold: float = 0.5` parameter added — explicit, configurable, consistent with SleepyRat's own threshold
+- Raises `ValueError` if `rawstate` **or** `noise_probs` column is missing
+
+**Tests updated** (`tests/ebb/test_sleep_compute.py` — 13 tests):
+- `write_state_csv` helper rewritten: now accepts `list[tuple[str, float]]` (rawstate, noise_prob) pairs
+- Added `test_threshold_parameter` — boundary at threshold (≥ masks, < is clean), raising threshold reduces count
+- Added `test_missing_noise_probs_column_raises`
+- Renamed `test_missing_state_column_raises` → `test_missing_rawstate_column_raises`
+
+#### Pre-existing test failures fixed (both were on the base branch)
+
+**`test_drink_mask_integration.py` (4 tests):** `batch_estimate` is imported directly in `psds.py` (`from ebb.process.psd_compute import batch_estimate`), so patching `psd_mod.batch_estimate` had no effect. Fixed all three helpers to patch `ebb_viewer.pages.psds.batch_estimate` instead.
+
+**`test_compute_pipeline_status.py` (4 tests):** Step 6 logic was redesigned — "attention" state removed, replaced by "blocked" when not all animals are `ready_for_psd`. Tests updated:
+- Description assertion updated to match new wording
+- "attention" → "blocked" for needs_review scenario
+- `test_step6_active_when_review_animals_are_rejected` fixed to use a realistic manifest state (A002 with LFC_RSC=ok + LSC_RSC=cascade-rejected) rather than an artificial solo-rejected run that can't occur in practice
+
+**Tests — 151 passing (0 failing)**
+
+#### Annotation mask — `ebb/masking/annotations.py` + EEG viewer
+
+**New function `keyword_mask`** (`ebb/masking/annotations.py`):
+- `keyword_mask(path, keywords, pad_sec, size, fs, **kwargs)`
+- Reads a Pinnacle annotation file via openseize (same as existing `artifact()`)
+- Matches annotations by **case-insensitive substring** (not exact label match like `artifact`)
+- Masks `[t, t + pad_sec)` from each matching annotation's start; `pad_sec` is the primary duration control since many annotations only mark event onset
+- Times adjusted relative to first annotation, consistent with `artifact()`
+- Suitable for use in PSD computation pipeline (takes a file path, returns a bool array)
+
+**`mask_builder.py`:**
+- `build_annotation_mask(annotation_path, keywords, pad_sec, n_samples, fs) → Mask`
+- `rebuild_annotation_mask(annotation_path, n_samples, fs, meta) → Mask`
+- Mask name: `"annotation"`, color: purple `(150, 0, 200, 60)`
+- Metadata: `keywords` (comma-separated string) + `pad_sec` (float) → right-click Parameters dialog works for re-editing
+- `_annotation_param_specs()`: pad_sec has ParamSpec(min=0, max=3600, units="s"); keywords has desc only (QLineEdit in dialog)
+
+**`eeg_viewer.py`:**
+- `self._annotations: list[tuple[float, str]]` and `self._annotation_path` stored on load
+- `act_mask_annotations` — disabled until annotations loaded; enabled by `on_load_annotations`
+- `AnnotationMaskDialog`: shows unique annotation labels found (read-only preview), keyword QLineEdit, padding QDoubleSpinBox, live "X of Y annotations match" counter (updates on every keystroke)
+- `on_mask_from_annotations()`: calls `build_annotation_mask`, adds to `mask_set`, rebuilds dock
+- `_on_mask_rebuild()`: handles `name == "annotation"` — calls `rebuild_annotation_mask`
+- Menu item under File: "Mask from Annotations…" (below "Load Annotations…")
+
+**What didn't work / key decisions:**
+- Initially considered making `keyword_mask` take an already-parsed `list[tuple[float, str]]` — rejected in favour of taking a file path so the function is usable for PSD computation without requiring the viewer's annotation loading infrastructure
+- The dialog shows already-loaded annotations (from `self._annotations`) for the live preview, while the actual mask computation reads the file path via openseize — these can differ slightly if openseize's Pinnacle reader parses times differently from `load_annotations`'s custom CSV parser; acceptable for now
 
 ---
 
 ## Next Steps
 
+### Annotation mask — follow-on work
+- Consider exposing `keyword_mask` as a step in the PSD computation pipeline (similar to drink mask): add an "Annotation Mask" page or integrate into the Drink Mask page
+- Tests for `keyword_mask` in `tests/ebb/test_annotations.py` — currently untested
+- The `pad_sec=0` edge case: currently `max(1, int(0 * fs))` = 1 sample minimum; decide if this is the right behaviour or if 0 should truly mask nothing
+
 ### P3 items (from TODO.md)
 - **spindle_upload: "Upload, Wait & Download" button issue** — needs reproduction steps before fixing
 - **general: Run log / settings provenance** — `run_log.jsonl` append per action
-- **psds.py: improve merge log** — `_build_final_pkl` currently logs just the output path; improve to log per-combo animal counts (e.g. "LFC_RSC → 8 animals, LFC_LSC → 5 animals → psds_channel_merged.pkl")
+- **psds.py: improve merge log** — log per-combo animal counts after build
 
 ### Remaining audit clarity items
 - Hint frame timing on multi-combo rerun upload — minor, low priority
-- Stale `psds_final.pkl` warning — step 7 now correctly shows "attention" when re-flagged, but the file on disk isn't explicitly marked stale
+- Stale `psds_final.pkl` warning — step 7 shows "attention" when re-flagged, but file on disk isn't explicitly marked stale
 
 ### Additional suggestions (from TODO.md)
 - EDF format validation on import (`build_from_standard`)
@@ -475,37 +542,41 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 - Manifest backup before destructive ops
 - Drink Mask page: highlight missing .npy files in orange
 
-### Testing gaps status (from PIPELINE_AUDIT.md)
-
-**All high/medium gaps resolved.** Only one open:
-- **Gap 4** — `DrinkMaskPage._on_done` partial failure: error is now surfaced in UI, but no automated test exists (widget-level, harder to test).
+### Testing gaps
+- **Gap 4** — `DrinkMaskPage._on_done` partial failure: surfaced in UI, no automated test (widget-level)
+- **`keyword_mask`** — no tests yet
 
 ---
 
 ## Key Files
-- `src/ebb_viewer/pages/sleep_qc_visualizer.py` — Sleep QC page (group + animal + review modes)
+- `src/ebb_viewer/pages/sleep_qc_visualizer.py` — Sleep QC page (group + animal + review modes + spindle fraction view)
 - `src/ebb_viewer/pages/rerun.py` — rerun queue page
-- `src/ebb_viewer/pages/spindle_upload.py` — batch upload page + `SleepyRatWorker`; remote folder combo with existing-folder hints; project list auto-fetch on first show
+- `src/ebb_viewer/pages/spindle_upload.py` — batch upload page + `SleepyRatWorker`
 - `src/ebb_viewer/pages/home.py` — pipeline summary + Needs Attention zone (9 steps)
-- `src/ebb_viewer/pages/psds.py` — PSD Computation page (single "Run PSD Pipeline" button, ready_for_psd gate, Ok Runs column, summary label, merged PKL status line)
+- `src/ebb_viewer/pages/psds.py` — PSD Computation page
 - `src/ebb_viewer/pages/drink_mask.py` — Drink Mask page; SWD dir threaded through worker
-- `src/ebb_viewer/pages/finalize.py` — Finalize page (9. Finalize sidebar item)
-- `src/ebb_viewer/pages/psd_visualizer.py` — PSD Visualizer (↺ Reset button, final-file gate)
-- `src/ebb_viewer/pages/preprocess.py` — Preprocess page; worker uses `edf.batch` for parallel execution
-- `src/ebb_viewer/pages/spindle.py` — Spindle Write page; worker uses `edf.batch` for parallel execution
-- `src/ebb_viewer/widgets/psd_graph_widget.py` — PSD grid + flag buttons (OK / Drink Mask / ↺ Reset)
+- `src/ebb_viewer/pages/finalize.py` — Finalize page
+- `src/ebb_viewer/pages/psd_visualizer.py` — PSD Visualizer
+- `src/ebb_viewer/pages/preprocess.py` — Preprocess page
+- `src/ebb_viewer/pages/spindle.py` — Spindle Write page
+- `src/ebb_viewer/widgets/psd_graph_widget.py` — PSD grid + flag buttons
 - `src/ebb_viewer/pipeline/manifest.py` — `Manifest` / `ManifestEntry` / `RunEntry`
 - `src/ebb_viewer/main_window.py` — sidebar + page navigation + badge refresh + poll timer
-- `src/ebb/process/psd_compute.py` — `batch_estimate` (progress_fn + spawn), `rerun_with_drink_masks` (swd_dir + spawn), `build_final_pkl`, `_star_call`
-- `src/ebb/preprocess/edf.py` — `batch` (spawn context for multiprocessing)
+- `src/ebb_viewer/edf_viewer/eeg_viewer.py` — EEG viewer; `AnnotationMaskDialog`; annotation mask wiring
+- `src/ebb_viewer/edf_viewer/mask_builder.py` — mask build/rebuild functions incl. `build_annotation_mask`, `rebuild_annotation_mask`
+- `src/ebb/masking/annotations.py` — `artifact()` + new `keyword_mask()`
+- `src/ebb/process/psd_compute.py` — `batch_estimate`, `rerun_with_drink_masks`, `build_final_pkl`, `_star_call`
+- `src/ebb/process/sleep_compute.py` — `compute_spindle_fractions` (rawstate + noise_probs)
+- `src/ebb/preprocess/edf.py` — `batch` (spawn context)
 - `tests/ebb_viewer/test_manifest.py` — 84 manifest tests
-- `tests/ebb/test_drink_mask_integration.py` — 39 drink mask + batch_estimate tests
-- `tests/ebb/test_preprocess_batch.py` — 4 batch preprocess tests (including spawn context)
-- `tests/ebb_viewer/test_compute_pipeline_status.py` — 21 pipeline status tests (steps 6–9)
-- `research/psd_from_edfs.ipynb` — tutorial notebook: load EDF → mask artifacts → state PSDs → group plots from merged PKL
+- `tests/ebb/test_drink_mask_integration.py` — drink mask + batch_estimate tests (patching fixed)
+- `tests/ebb/test_sleep_compute.py` — 13 tests for `compute_spindle_fractions`
+- `tests/ebb/test_preprocess_batch.py` — 4 batch preprocess tests
+- `tests/ebb_viewer/test_compute_pipeline_status.py` — pipeline status tests (step 6 logic updated)
+- `research/psd_from_edfs.ipynb` — tutorial notebook
 
 ## Environment
 - Conda env: `ebb-dev` (`source ~/miniconda3/etc/profile.d/conda.sh && conda activate ebb-dev`)
 - Jupyter kernel: `ebb` (registered in `~/.local/share/jupyter/kernels/ebb`)
-- Run tests: `QT_QPA_PLATFORM=offscreen python -m pytest` (138 passing)
-- Branch: `refactor/spindle_upload` (current work); `refactor/clean-up` (base)
+- Run tests: `QT_QPA_PLATFORM=offscreen LD_LIBRARY_PATH="$CONDA_PREFIX/lib" python -m pytest` (151 passing)
+- Branch: `refactor/sleep_qc_addition` (current); `refactor/clean-up` (base)

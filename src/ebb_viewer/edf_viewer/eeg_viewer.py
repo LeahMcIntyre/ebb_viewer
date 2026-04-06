@@ -21,11 +21,89 @@ from ebb_viewer.edf_viewer.file_openers import pick_edf_csv, pick_mat, pick_npy_
 from ebb_viewer.edf_viewer.mask_builder import (
     build_default_masks, load_state_masks, load_swd_mask, load_drink_mask,
     rebuild_artifact_masks, rebuild_spindle_mask, rebuild_drink_mask,
+    build_annotation_mask, rebuild_annotation_mask,
 )
 from ebb_viewer.edf_viewer.masks_dock import MasksDock
 from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, parse_animal_id
 
 
+
+
+class AnnotationMaskDialog(QtWidgets.QDialog):
+    """Dialog for building a mask from annotation keyword matching.
+
+    Shows the unique annotation labels found in the loaded file so the user
+    knows what keywords to enter.  A live count updates as the user types.
+    """
+
+    def __init__(self, annotations: list[tuple[float, str]], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Mask from Annotations")
+        self.setMinimumWidth(420)
+        self._annotations = annotations
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        # --- unique labels for reference ---
+        unique = sorted({label for _, label in annotations if label.strip()})
+        ref_lbl = QtWidgets.QLabel("Annotation labels found:")
+        layout.addWidget(ref_lbl)
+        labels_box = QtWidgets.QPlainTextEdit()
+        labels_box.setPlainText("\n".join(unique))
+        labels_box.setReadOnly(True)
+        labels_box.setFixedHeight(90)
+        layout.addWidget(labels_box)
+
+        # --- keyword entry ---
+        layout.addWidget(QtWidgets.QLabel("Keywords (comma-separated, case-insensitive substring match):"))
+        self._keyword_edit = QtWidgets.QLineEdit()
+        self._keyword_edit.setPlaceholderText("e.g.  drink, artifact")
+        layout.addWidget(self._keyword_edit)
+
+        # --- padding ---
+        pad_row = QtWidgets.QHBoxLayout()
+        pad_row.addWidget(QtWidgets.QLabel("Pad after annotation start:"))
+        self._pad_spin = QtWidgets.QDoubleSpinBox()
+        self._pad_spin.setRange(0.0, 3600.0)
+        self._pad_spin.setSingleStep(1.0)
+        self._pad_spin.setDecimals(1)
+        self._pad_spin.setSuffix(" s")
+        self._pad_spin.setValue(10.0)
+        pad_row.addWidget(self._pad_spin)
+        pad_row.addStretch()
+        layout.addLayout(pad_row)
+
+        # --- live match count ---
+        self._count_lbl = QtWidgets.QLabel()
+        self._count_lbl.setStyleSheet("color: #555; font-style: italic;")
+        layout.addWidget(self._count_lbl)
+
+        # --- buttons ---
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Ok |
+            QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._keyword_edit.textChanged.connect(self._update_count)
+        self._update_count()
+
+    def _update_count(self) -> None:
+        keywords = [k.strip().lower() for k in self._keyword_edit.text().split(",") if k.strip()]
+        if not keywords:
+            self._count_lbl.setText("")
+            return
+        n_match = sum(
+            1 for _, label in self._annotations
+            if any(kw in label.strip().lower() for kw in keywords)
+        )
+        self._count_lbl.setText(f"{n_match} of {len(self._annotations)} annotations match")
+
+    def values(self) -> tuple[list[str], float]:
+        keywords = [k.strip() for k in self._keyword_edit.text().split(",") if k.strip()]
+        return keywords, self._pad_spin.value()
 
 
 class EegMainWindow(QtWidgets.QMainWindow):
@@ -40,6 +118,8 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.mask_set = build_default_masks(recording)
         self.state_set = None
         self.state_df = None
+        self._annotations: list[tuple[float, str]] = []
+        self._annotation_path = None
 
         # STFT state
         self.stft_fmin = 0
@@ -114,6 +194,10 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.act_load_annotations = QtGui.QAction("Load Annotations…", self)
         self.act_load_annotations.triggered.connect(self.on_load_annotations)
 
+        self.act_mask_annotations = QtGui.QAction("Mask from Annotations…", self)
+        self.act_mask_annotations.setEnabled(False)
+        self.act_mask_annotations.triggered.connect(self.on_mask_from_annotations)
+
         self.act_next_annotation = QtGui.QAction("Next Annotation", self)
         self.act_next_annotation.setShortcut("]")
         self.act_next_annotation.triggered.connect(self.trace_view.jump_to_next_annotation)
@@ -132,6 +216,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         m_file.addAction(self.act_load_swd)
         m_file.addAction(self.act_load_drink)
         m_file.addAction(self.act_load_annotations)
+        m_file.addAction(self.act_mask_annotations)
         m_file.addSeparator()
         m_file.addAction(self.act_quit)
         m_file.addAction(self.act_info)
@@ -297,6 +382,13 @@ class EegMainWindow(QtWidgets.QMainWindow):
         elif name == "drink" and self.rec.drink_path:
             new_drink = rebuild_drink_mask(self.rec.drink_path, self.rec.fs, mask.metadata)
             self.mask_set.add(new_drink)
+        elif name == "annotation" and self._annotation_path:
+            _, n_samples = self.rec.data.shape
+            new_ann = rebuild_annotation_mask(
+                self._annotation_path, n_samples=n_samples,
+                fs=self.rec.fs, meta=mask.metadata,
+            )
+            self.mask_set.add(new_ann)
 
         self.trace_view.refresh_overlays()
         self.masks_dock.rebuild(self.mask_set, self.state_set)
@@ -355,8 +447,31 @@ class EegMainWindow(QtWidgets.QMainWindow):
         try:
             annotations = load_annotations(csv_path)
             self.trace_view.set_annotations(annotations)
+            self._annotations = annotations
+            self._annotation_path = csv_path
+            self.act_mask_annotations.setEnabled(True)
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
+
+    def on_mask_from_annotations(self):
+        dlg = AnnotationMaskDialog(self._annotations, parent=self)
+        if not dlg.exec():
+            return
+        keywords, pad_sec = dlg.values()
+        if not keywords:
+            QtWidgets.QMessageBox.warning(self, "No keywords", "Enter at least one keyword.")
+            return
+        try:
+            _, n_samples = self.rec.data.shape
+            mask = build_annotation_mask(
+                self._annotation_path, keywords=keywords,
+                pad_sec=pad_sec, n_samples=n_samples, fs=self.rec.fs,
+            )
+            self.mask_set.add(mask)
+            self.trace_view.refresh_overlays()
+            self.masks_dock.rebuild(self.mask_set, self.state_set)
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Mask Error", f"{type(e).__name__}: {e}")
 
     def on_open(self):
         # reuse your existing pick_edf_csv_npy

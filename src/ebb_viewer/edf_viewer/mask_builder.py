@@ -5,6 +5,7 @@ import numpy as np
 from openseize import producer as make_producer
 
 from ebb import masking
+from ebb.masking.annotations import keyword_mask
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.masks import Mask, MaskSet, ParamSpec
 
@@ -184,6 +185,36 @@ def load_state_masks(csv_path, fs: int) -> MaskSet:
         arr = masking.state(csv_path, labels, fs=fs, winsize=4, include=True)
         mask_set.add(Mask.from_bool(name, _STATE_COLORS[name], arr))
     return mask_set
+
+def _annotation_param_specs() -> dict:
+    return {
+        "keywords": ParamSpec(desc="Comma-separated substrings to match in annotation labels (case-insensitive)"),
+        "pad_sec":  ParamSpec(min=0.0, max=3600.0, step=1.0, decimals=1, units="s",
+                              desc="Seconds to mask after each matching annotation start"),
+    }
+
+
+def build_annotation_mask(annotation_path, keywords: list[str], pad_sec: float,
+                           n_samples: int, fs: float) -> Mask:
+    """Build an annotation keyword mask from a Pinnacle annotation file."""
+    arr = keyword_mask(annotation_path, keywords=keywords, pad_sec=pad_sec,
+                       size=n_samples, fs=fs)
+    m = Mask.from_bool("annotation", (150, 0, 200, 60), ~arr)
+    m.metadata.update({"keywords": ", ".join(keywords), "pad_sec": pad_sec})
+    m.param_specs.update(_annotation_param_specs())
+    return m
+
+
+def rebuild_annotation_mask(annotation_path, n_samples: int, fs: float, meta: dict) -> Mask:
+    """Recompute annotation mask from its current metadata dict."""
+    keywords = [k.strip() for k in meta["keywords"].split(",") if k.strip()]
+    arr = keyword_mask(annotation_path, keywords=keywords, pad_sec=meta["pad_sec"],
+                       size=n_samples, fs=fs)
+    m = Mask.from_bool("annotation", (150, 0, 200, 60), ~arr)
+    m.metadata.update(meta)
+    m.param_specs.update(_annotation_param_specs())
+    return m
+
 
 def load_swd_mask(swd_path, fs:int, n_samples:int) -> Mask:
     arr = masking.swd(swd_path, fs=fs, n_samples=n_samples)
