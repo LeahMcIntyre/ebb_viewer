@@ -187,35 +187,42 @@ class SleepQCGridPage(QWidget):
         self.cmb_combo.setMinimumWidth(100)
         top.addWidget(self.cmb_combo)
 
-        top.addWidget(_vsep(self))
+        self._sleep_mode_controls = QWidget()
+        smc = QHBoxLayout(self._sleep_mode_controls)
+        smc.setContentsMargins(0, 0, 0, 0)
+        smc.setSpacing(top.spacing())
+
+        smc.addWidget(_vsep(self))
 
         self.btn_group = QPushButton("Group")
         self.btn_group.setCheckable(True)
         self.btn_group.setChecked(True)
         self.btn_animal = QPushButton("Animal")
         self.btn_animal.setCheckable(True)
-        top.addWidget(self.btn_group)
-        top.addWidget(self.btn_animal)
+        smc.addWidget(self.btn_group)
+        smc.addWidget(self.btn_animal)
 
-        top.addWidget(_vsep(self))
+        smc.addWidget(_vsep(self))
 
         self.btn_offset = QPushButton("6AM Start")
         self.btn_offset.setCheckable(True)
         self.btn_offset.setChecked(True)
-        top.addWidget(self.btn_offset)
+        smc.addWidget(self.btn_offset)
 
+        self._sleep_mode_controls.setVisible(False)
+        top.addWidget(self._sleep_mode_controls)
         top.addStretch(1)
 
         # --- view toggle (right-aligned) ---
         top.addWidget(_vsep(self))
-        self.btn_view_sleep = QPushButton("Sleep")
-        self.btn_view_sleep.setCheckable(True)
-        self.btn_view_sleep.setChecked(True)
         self.btn_spindle = QPushButton("Spindle Mask")
         self.btn_spindle.setCheckable(True)
-        self.btn_spindle.setChecked(False)
-        top.addWidget(self.btn_view_sleep)
+        self.btn_spindle.setChecked(True)
+        self.btn_view_sleep = QPushButton("Sleep")
+        self.btn_view_sleep.setCheckable(True)
+        self.btn_view_sleep.setChecked(False)
         top.addWidget(self.btn_spindle)
+        top.addWidget(self.btn_view_sleep)
 
         top.addWidget(_vsep(self))
 
@@ -291,11 +298,12 @@ class SleepQCGridPage(QWidget):
                 p.setTitle(f"{self.STATE_DEF[state]}: {metric_label}", size="10pt")
                 self._plots[(metric, state)] = p
 
-        layout.addWidget(self.grid, stretch=1)
-
         self._frac_widget = SpindleFractionPlot()
-        self._frac_widget.setVisible(False)
+        self._frac_widget.setVisible(True)
         layout.addWidget(self._frac_widget, stretch=1)
+
+        self.grid.setVisible(False)
+        layout.addWidget(self.grid, stretch=1)
 
         # --- legend (in a scroll area so the plot grid can't collapse it) ---
         self.legend_container = QWidget()
@@ -377,6 +385,7 @@ class SleepQCGridPage(QWidget):
         self.btn_spindle.setChecked(spindle)
         self.grid.setVisible(not spindle)
         self._frac_widget.setVisible(spindle)
+        self._sleep_mode_controls.setVisible(not spindle)
         if spindle:
             self.cmb_combo.setEnabled(True)
             self._group_controls.setVisible(False)
@@ -698,6 +707,24 @@ class SleepQCGridPage(QWidget):
         for state in self.STATE_ORDER:
             self._plots[(bottom_metric, state)].getAxis("bottom").setTicks(None)
 
+    def _get_spindle_outlier_animals(self, combo: str) -> set:
+        """Return animal IDs that are IQR × 1.5 outliers in any state of the spindle fraction data."""
+        df_frac = self._get_frac_df(combo)
+        if df_frac is None or df_frac.empty:
+            return set()
+        outliers: set = set()
+        for state in df_frac["state"].unique():
+            sdf = df_frac[df_frac["state"] == state].dropna(subset=["fraction"])
+            if len(sdf) < 4:
+                continue
+            fracs = sdf["fraction"].to_numpy(dtype=float)
+            q1, q3 = np.percentile(fracs, [25, 75])
+            iqr = q3 - q1
+            lo, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
+            mask = (fracs < lo) | (fracs > hi)
+            outliers.update(sdf["mouse_id"].to_numpy()[mask])
+        return outliers
+
     def _apply_hour_of_day_ticks(self, x_vals) -> None:
         """Replace bottom-axis tick labels with hour-of-day (x % 24) for offset mode."""
         ticks = [[(float(x), str(int(x) % 24)) for x in sorted(set(x_vals)) if int(x) % 6 == 0]]
@@ -727,6 +754,7 @@ class SleepQCGridPage(QWidget):
 
         df, x_col = self._ensure_x_col(df)
         mouse_colors = self._build_mouse_color_map(mice)
+        spindle_outliers = self._get_spindle_outlier_animals(combo)
 
         for state in self.STATE_ORDER:
             for metric, _ in self.METRIC_ORDER:
@@ -746,8 +774,9 @@ class SleepQCGridPage(QWidget):
                         continue
                     dm[metric] = dm[metric].fillna(0)
                     dm = dm.sort_values(x_col)
+                    width = 2.5 if mid in spindle_outliers else 1.5
                     p.plot(dm[x_col].to_numpy(), dm[metric].to_numpy(),
-                           pen=pg.mkPen(color=mouse_colors[mid], width=1.5))
+                           pen=pg.mkPen(color=mouse_colors[mid], width=width))
 
         if self.btn_offset.isChecked() and not df.empty:
             self._apply_hour_of_day_ticks(df[x_col].unique())
@@ -775,8 +804,9 @@ class SleepQCGridPage(QWidget):
             color = self._COMBO_COLORS.get(combo, (100, 100, 100))
             run = self._manifest.get_run(animal, combo)
             is_rerun = run is not None and run.source_combo is not None
+            is_outlier = animal in self._get_spindle_outlier_animals(combo)
             pen = pg.mkPen(
-                color=color, width=2.0,
+                color=color, width=3.5 if is_outlier else 2.0,
                 style=Qt.PenStyle.DashLine if is_rerun else Qt.PenStyle.SolidLine,
             )
             for state in self.STATE_ORDER:
@@ -922,6 +952,7 @@ class SleepQCGridPage(QWidget):
     def _update_legend_group(self, mice: list[str], mouse_colors: dict) -> None:
         self._clear_legend()
         combo = self.cmb_combo.currentText()
+        spindle_outliers = self._get_spindle_outlier_animals(combo)
 
         for i, mid in enumerate(mice):
             color = mouse_colors[mid]
@@ -930,7 +961,12 @@ class SleepQCGridPage(QWidget):
             rejected_by = run.rejected_by if run else None
 
             row_w, row_l = self._make_legend_row_frame(color, status)
-            row_l.addWidget(QLabel(str(mid)))
+            label_text = str(mid)
+            if mid in spindle_outliers:
+                label_text += ' <span style="color:#c0392b;font-size:9px;font-style:italic;">[spindle outlier]</span>'
+            lbl = QLabel(label_text)
+            lbl.setTextFormat(Qt.TextFormat.RichText)
+            row_l.addWidget(lbl)
 
             btn_ok = QPushButton("OK")
             btn_ok.setFixedHeight(22)
@@ -983,9 +1019,11 @@ class SleepQCGridPage(QWidget):
 
             row_w, row_l = self._make_legend_row_frame(color, status)
 
-            combo_label = QLabel(
-                f"{combo}  ← rerun of {source_combo}" if source_combo else combo
-            )
+            base_text = f"{combo}  ← rerun of {source_combo}" if source_combo else combo
+            if animal and animal in self._get_spindle_outlier_animals(combo):
+                base_text += ' <span style="color:#c0392b;font-size:9px;font-style:italic;">[spindle outlier]</span>'
+            combo_label = QLabel(base_text)
+            combo_label.setTextFormat(Qt.TextFormat.RichText)
             if source_combo:
                 combo_label.setStyleSheet("font-style: italic;")
             row_l.addWidget(combo_label)

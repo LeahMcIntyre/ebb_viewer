@@ -370,7 +370,7 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 
 ---
 
-### Completed (this session, branch `TEST/SWD_Detection`)
+### Completed (this session, branch `refactor/sleep_qc_addition`)
 
 #### Spindle Mask Fraction view in Sleep QC (`sleep_qc_visualizer.py`, `sleep_compute.py`)
 
@@ -413,6 +413,48 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 - `QFont` created once outside outlier label loop
 - `_dismiss` delegates to `clear_selection()` (was duplicating 3 lines)
 - `_set_spindle_mask_mode(False)` branch calls `_set_mode(self._mode)` instead of duplicating visibility logic
+
+---
+
+### Completed (latest session, branch `refactor/sleep_qc_addition`)
+
+#### Spindle Mask view — UI polish (`sleep_qc_visualizer.py`)
+
+**Layout and defaults:**
+- Spindle Mask widget moved to appear *above* the sleep plot grid in the layout
+- "Spindle Mask" button now comes first in the top bar and is **selected by default** (sleep grid hidden on load)
+- "Sleep" button comes second; starts unchecked
+
+**Sleep-specific controls hidden in Spindle Mask mode:**
+- Group, Animal, and 6AM Start buttons (plus their separators) wrapped in `_sleep_mode_controls` container widget
+- Container hidden when Spindle Mask is active, shown when switching to Sleep — top bar is visually clean in spindle mode
+- `_sleep_mode_controls` starts hidden to match the default spindle-selected state
+
+**Outlier highlighting in sleep plots:**
+- `_get_spindle_outlier_animals(combo) -> set` — runs same IQR × 1.5 rule per state as `SpindleFractionPlot`; requires ≥ 4 animals in a state; returns union across all states
+- Group mode: outlier animals' lines drawn at width 2.5 (vs 1.5 for normal)
+- Animal mode: if current animal is an outlier for a combo, its line drawn at width 3.5 (vs 2.0)
+- Legend tag: outlier animals get `[spindle outlier]` appended inline in the QLabel using HTML `<span>` (red, 9px, italic) — buttons not pushed over
+
+**X-axis fix — 6AM Start mode:**
+- `enableAutoSIPrefix(False)` added to the left axis of `SpindleFractionPlot` — prevents pyqtgraph showing values as 400–500 with "× 0.001" label
+- `_apply_hour_of_day_ticks`: filters to only multiples of 6 (`int(x) % 6 == 0`) — ticks at 6, 12, 18, 0 instead of every 2-hour bin
+- `_prepare_plots` now calls `setTicks(None)` on bottom axes when clearing — restores auto ticks when switching back from offset mode
+
+#### Test fix — cross-test pollution (`test_drink_mask_integration.py`)
+- `test_batch_worker_saves_pkl_with_params` was setting `psd_mod.batch_estimate = lambda` before entering `try`, then `import ebb_viewer.pages.psds` raised `ImportError`, so the `finally` never ran and the lambda leaked permanently into the module
+- Fixed: moved `psd_mod.batch_estimate = lambda` inside an outer `try/finally` so it is always restored
+- Effect: `test_batch_estimate_filters_eeg_by_state_csv` in `test_psd_pipeline.py` now passes when run after the drink mask tests
+
+#### New tests (`tests/ebb/test_sleep_compute.py` — 8 tests)
+- `test_single_animal_fractions` — per-state counts and fractions; zero-count state gives NaN
+- `test_total_row` — Total row aggregates all spindle/clean epochs
+- `test_all_spindle_masked` — fraction = 1.0
+- `test_no_spindle_masked` — fraction = 0.0
+- `test_multiple_animals` — multiple CSVs → multiple animals, independent
+- `test_empty_directory` — empty DataFrame with correct columns
+- `test_missing_state_column_raises` — ValueError with clear message
+- `test_state_column_is_ordered_categorical` — Wake → NREM → REM → Total order
 
 ---
 
