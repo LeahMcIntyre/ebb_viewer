@@ -507,6 +507,7 @@ def rerun_with_drink_masks(
     offset_path: Union[str, Path] = None,
     swd_dir: Union[str, Path] = None,
     ncores: Optional[int] = None,
+    ann_params: Optional[dict] = None,
     **kwargs,
 ) -> Tuple[Path, Path]:
     """Recompute PSDs for specific animals with drink masks.
@@ -526,6 +527,7 @@ def rerun_with_drink_masks(
         offset_path:   Optional CSV for video-EEG time alignment.
         swd_dir:       Optional directory of SWD .mat files (one per animal).
         ncores:        Number of parallel workers (None = auto).
+        ann_params:    Optional annotation mask config dict (same format as batch_estimate).
         **kwargs:      Passed through to estimate_psd (fs, winsize, etc.).
 
     Returns:
@@ -581,6 +583,24 @@ def rerun_with_drink_masks(
     if offset_path is not None:
         kwargs["offset_path"] = offset_path
 
+    # Unpack annotation params (mirrors batch_estimate)
+    ann_by_animal: Dict[str, Path] = {}
+    if ann_params:
+        ann_dir = ann_params.get("ann_dir")
+        ann_keywords = ann_params.get("keywords") or []
+        ann_match_mode = ann_params.get("match_mode", "contains")
+        ann_pad_before = ann_params.get("pad_before_sec", 0.0)
+        ann_pad_after = ann_params.get("pad_after_sec", 0.0)
+        if ann_dir and Path(ann_dir).is_dir():
+            for f in list(Path(ann_dir).glob("*.txt")) + list(Path(ann_dir).glob("*.csv")):
+                ann_by_animal[_animal_id(f)] = f
+        kwargs.update({
+            "ann_keywords": ann_keywords,
+            "ann_match_mode": ann_match_mode,
+            "ann_pad_before_sec": ann_pad_before,
+            "ann_pad_after_sec": ann_pad_after,
+        })
+
     estimator = functools.partial(estimate_psd, **kwargs)
     all_new_dicts: List[dict] = []
 
@@ -605,7 +625,11 @@ def rerun_with_drink_masks(
             p for p in sorted(Path(swd_dir).glob("*.mat"))
             if _animal_id(p) in animals_set
         ] if swd_dir else None
-        paired = match_paths(eeg_paths, state_paths, swd_paths=swd_paths, drink_paths=drink_paths)
+        base_paired = match_paths(eeg_paths, state_paths, swd_paths=swd_paths, drink_paths=drink_paths)
+        paired = [
+            (*base, ann_by_animal.get(_animal_id(base[0])))
+            for base in base_paired
+        ]
 
         workers = concurrency.set_cores(ncores, len(paired))
         t0 = time.perf_counter()

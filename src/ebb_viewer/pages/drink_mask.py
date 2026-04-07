@@ -14,7 +14,11 @@ from ebb_viewer.widgets.worker_helpers import launch_worker
 
 # Keys stored in psd_params.json that are UI/config only and must not be
 # forwarded to computation functions (rerun_with_drink_masks, estimate_psd).
-_UI_ONLY_PARAM_KEYS = frozenset({"swd_mode"})
+_UI_ONLY_PARAM_KEYS = frozenset({
+    "swd_mode",
+    "ann_enabled", "ann_dir", "ann_keywords", "ann_match_mode",
+    "ann_pad_before", "ann_pad_after",
+})
 
 CH_LABELS = ["LFC", "RSC", "LSC"]
 
@@ -358,6 +362,17 @@ class DrinkMaskPage(QWidget):
             self._log(f"  SWD mask: {swd_dir}")
 
         self.drink_thread = QThread(self)
+        ann_params = None
+        if params.get("ann_enabled") and params.get("ann_dir"):
+            kw_raw = params.get("ann_keywords", "")
+            ann_params = {
+                "ann_dir": params["ann_dir"],
+                "keywords": [k.strip() for k in kw_raw.split(",") if k.strip()],
+                "match_mode": params.get("ann_match_mode", "contains"),
+                "pad_before_sec": float(params.get("ann_pad_before", 0.0)),
+                "pad_after_sec": float(params.get("ann_pad_after", 0.0)),
+            }
+
         self.drink_worker = DrinkMaskRerunWorker(
             psd_dir=self.project_root / "psd",
             eeg_dir=standard_folder,
@@ -367,6 +382,7 @@ class DrinkMaskPage(QWidget):
             offset_path=offset_path,
             params=params,
             swd_dir=swd_dir,
+            ann_params=ann_params,
         )
         self.drink_worker.progress.connect(self._log)
         launch_worker(self.drink_thread, self.drink_worker,
@@ -424,6 +440,7 @@ class DrinkMaskRerunWorker(QObject):
         offset_path,
         params: dict,
         swd_dir: Path = None,
+        ann_params: dict = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -435,6 +452,7 @@ class DrinkMaskRerunWorker(QObject):
         self.offset_path = offset_path
         self.params = params
         self.swd_dir = Path(swd_dir) if swd_dir else None
+        self.ann_params = ann_params
 
     def run(self):
         from ebb.process.psd_compute import rerun_with_drink_masks
@@ -448,6 +466,7 @@ class DrinkMaskRerunWorker(QObject):
                 offset_path=self.offset_path,
                 swd_dir=self.swd_dir,
                 ncores=None,
+                ann_params=self.ann_params,
                 **{k: v for k, v in self.params.items() if k not in _UI_ONLY_PARAM_KEYS},
             )
             self.progress.emit("  → psds_drink.pkl updated.")

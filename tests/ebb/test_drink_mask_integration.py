@@ -465,6 +465,128 @@ def test_rerun_raises_on_combo_mismatch(tmp_path):
         )
 
 
+def test_rerun_injects_ann_kwargs_when_ann_params_provided(tmp_path):
+    """ann_params keywords, match mode, and padding are injected into the estimator partial."""
+    standard, spindle_out, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path, animals=("AM001",))
+    ann_dir = tmp_path / "annotations"
+    ann_dir.mkdir()
+
+    _write_pkl(psd_dir / "psds_channel_merged.pkl", [_make_psd_record("AM001")])
+
+    captured_kwargs = {}
+
+    def fake_partial(fn, **kwargs):
+        captured_kwargs.update(kwargs)
+        return MagicMock(return_value=[])
+
+    with patch("ebb.process.psd_compute.match_paths",
+               return_value=[(standard / "AM001_foo_PREPROCESSED.edf",
+                              spindle_out / "AM001_states.csv", None,
+                              drink_dir / "AM001.npy")]), \
+         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
+         patch("ebb.process.psd_compute.functools.partial", side_effect=fake_partial):
+        from ebb.process.psd_compute import rerun_with_drink_masks
+        rerun_with_drink_masks(
+            psd_dir=psd_dir,
+            eeg_dir=standard,
+            spindle_root=tmp_path / "spindle_outputs",
+            drink_dir=drink_dir,
+            animal_combos={"AM001": "LFC_RSC"},
+            ann_params={
+                "ann_dir": ann_dir,
+                "keywords": ["drink"],
+                "match_mode": "exact",
+                "pad_before_sec": 0.5,
+                "pad_after_sec": 3.0,
+            },
+        )
+
+    assert captured_kwargs["ann_keywords"] == ["drink"]
+    assert captured_kwargs["ann_match_mode"] == "exact"
+    assert captured_kwargs["ann_pad_before_sec"] == 0.5
+    assert captured_kwargs["ann_pad_after_sec"] == 3.0
+
+
+def test_rerun_no_ann_kwargs_when_ann_params_none(tmp_path):
+    """When ann_params is None, no annotation kwargs are added to the estimator."""
+    standard, spindle_out, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path, animals=("AM001",))
+    _write_pkl(psd_dir / "psds_channel_merged.pkl", [_make_psd_record("AM001")])
+
+    captured_kwargs = {}
+
+    def fake_partial(fn, **kwargs):
+        captured_kwargs.update(kwargs)
+        return MagicMock(return_value=[])
+
+    with patch("ebb.process.psd_compute.match_paths", return_value=[]), \
+         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
+         patch("ebb.process.psd_compute.functools.partial", side_effect=fake_partial):
+        from ebb.process.psd_compute import rerun_with_drink_masks
+        rerun_with_drink_masks(
+            psd_dir=psd_dir,
+            eeg_dir=standard,
+            spindle_root=tmp_path / "spindle_outputs",
+            drink_dir=drink_dir,
+            animal_combos={"AM001": "LFC_RSC"},
+        )
+
+    assert "ann_keywords" not in captured_kwargs
+    assert "ann_match_mode" not in captured_kwargs
+
+
+def test_rerun_extends_pairs_with_annotation_paths(tmp_path):
+    """Each paired tuple includes the matching annotation file as the 5th element;
+    animals without a file get None."""
+    standard, spindle_out, drink_dir, psd_dir = _setup_rerun_dirs(
+        tmp_path, animals=("AM001", "AM002")
+    )
+    ann_dir = tmp_path / "annotations"
+    ann_dir.mkdir()
+
+    # Only AM001 has an annotation file
+    ann_file = ann_dir / "AM001_events.txt"
+    ann_file.touch()
+
+    _write_pkl(psd_dir / "psds_channel_merged.pkl", [
+        _make_psd_record("AM001"), _make_psd_record("AM002"),
+    ])
+
+    called_with = []
+
+    def fake_estimate_psd(*args, **kwargs):
+        called_with.append(args)
+        return []
+
+    base_pairs = [
+        (standard / "AM001_foo_PREPROCESSED.edf", spindle_out / "AM001_states.csv", None, drink_dir / "AM001.npy"),
+        (standard / "AM002_foo_PREPROCESSED.edf", spindle_out / "AM002_states.csv", None, drink_dir / "AM002.npy"),
+    ]
+
+    with patch("ebb.process.psd_compute.match_paths", return_value=base_pairs), \
+         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
+         patch("ebb.process.psd_compute.estimate_psd", side_effect=fake_estimate_psd):
+        from ebb.process.psd_compute import rerun_with_drink_masks
+        rerun_with_drink_masks(
+            psd_dir=psd_dir,
+            eeg_dir=standard,
+            spindle_root=tmp_path / "spindle_outputs",
+            drink_dir=drink_dir,
+            animal_combos={"AM001": "LFC_RSC", "AM002": "LFC_RSC"},
+            ann_params={
+                "ann_dir": ann_dir,
+                "keywords": ["event"],
+                "match_mode": "contains",
+                "pad_before_sec": 0.0,
+                "pad_after_sec": 0.0,
+            },
+        )
+
+    am001_args = next(a for a in called_with if "AM001" in str(a[0]))
+    am002_args = next(a for a in called_with if "AM002" in str(a[0]))
+    assert am001_args[4] == ann_file
+    assert am002_args[4] is None
+
+
 def test_rerun_with_drink_masks_raises_when_no_edfs(tmp_path):
     """ValueError raised when no EDF files match the target animal IDs."""
     _, _, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path, animals=("AM001",))
@@ -795,6 +917,79 @@ def test_drink_mask_rerun_worker_injects_offset_path(tmp_path):
         psd_mod.rerun_with_drink_masks = orig
 
     assert calls[0].get("offset_path") == offset_csv
+
+
+def test_drink_worker_passes_ann_params_to_rerun(tmp_path):
+    """DrinkMaskRerunWorker forwards ann_params to rerun_with_drink_masks."""
+    drink_dir = tmp_path / "drink_masks"
+    drink_dir.mkdir()
+    ann_dir = tmp_path / "annotations"
+    ann_dir.mkdir()
+
+    calls = []
+
+    import ebb.process.psd_compute as psd_mod
+    orig = psd_mod.rerun_with_drink_masks
+    psd_mod.rerun_with_drink_masks = lambda **kw: calls.append(kw)
+
+    try:
+        from ebb_viewer.pages.drink_mask import DrinkMaskRerunWorker
+        worker = DrinkMaskRerunWorker(
+            psd_dir=tmp_path / "psd",
+            eeg_dir=tmp_path / "standard",
+            spindle_root=tmp_path / "spindle_outputs",
+            drink_dir=drink_dir,
+            animal_combos={"AM001": "LFC_RSC"},
+            offset_path=None,
+            params={"fs": 250, "winsize": 180, "radius": 0.5, "nstd": 5.0, "noise_thresh": 0.5},
+            ann_params={
+                "ann_dir": ann_dir,
+                "keywords": ["drink"],
+                "match_mode": "exact",
+                "pad_before_sec": 1.0,
+                "pad_after_sec": 5.0,
+            },
+        )
+        worker.run()
+    finally:
+        psd_mod.rerun_with_drink_masks = orig
+
+    assert len(calls) == 1
+    passed = calls[0].get("ann_params")
+    assert passed is not None
+    assert passed["keywords"] == ["drink"]
+    assert passed["match_mode"] == "exact"
+    assert passed["pad_before_sec"] == 1.0
+    assert passed["pad_after_sec"] == 5.0
+
+
+def test_drink_worker_passes_ann_params_none_when_not_provided(tmp_path):
+    """DrinkMaskRerunWorker passes ann_params=None when not supplied."""
+    drink_dir = tmp_path / "drink_masks"
+    drink_dir.mkdir()
+
+    calls = []
+
+    import ebb.process.psd_compute as psd_mod
+    orig = psd_mod.rerun_with_drink_masks
+    psd_mod.rerun_with_drink_masks = lambda **kw: calls.append(kw)
+
+    try:
+        from ebb_viewer.pages.drink_mask import DrinkMaskRerunWorker
+        worker = DrinkMaskRerunWorker(
+            psd_dir=tmp_path / "psd",
+            eeg_dir=tmp_path / "standard",
+            spindle_root=tmp_path / "spindle_outputs",
+            drink_dir=drink_dir,
+            animal_combos={"AM001": "LFC_RSC"},
+            offset_path=None,
+            params={"fs": 250, "winsize": 180, "radius": 0.5, "nstd": 5.0, "noise_thresh": 0.5},
+        )
+        worker.run()
+    finally:
+        psd_mod.rerun_with_drink_masks = orig
+
+    assert calls[0].get("ann_params") is None
 
 
 def test_drink_mask_rerun_worker_emits_error_on_exception(tmp_path):

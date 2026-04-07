@@ -243,6 +243,130 @@ def test_build_final_pkl_multiple_combos(tmp_path):
     assert by_animal["AM002"]["source_combo"] == "LSC_RSC"
 
 
+# ---------------------------------------------------------------------------
+# batch_estimate: annotation mask params
+# ---------------------------------------------------------------------------
+
+def test_batch_estimate_injects_ann_kwargs(tmp_path):
+    """ann_params keywords, match mode, and padding are injected into the estimator partial."""
+    from unittest.mock import patch
+
+    standard = tmp_path / "standard"
+    standard.mkdir()
+    spindle_out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle_out.mkdir(parents=True)
+    ann_dir = tmp_path / "annotations"
+    ann_dir.mkdir()
+
+    captured_kwargs = {}
+
+    def fake_partial(fn, **kwargs):
+        captured_kwargs.update(kwargs)
+        return lambda *a: []
+
+    with patch("ebb.process.psd_compute.match_paths", return_value=[]), \
+         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
+         patch("ebb.process.psd_compute.functools.partial", side_effect=fake_partial):
+        from ebb.process.psd_compute import batch_estimate
+        batch_estimate(
+            eeg_dir=standard,
+            state_dir=spindle_out,
+            ann_params={
+                "ann_dir": ann_dir,
+                "keywords": ["artifact", "noise"],
+                "match_mode": "contains",
+                "pad_before_sec": 1.0,
+                "pad_after_sec": 2.0,
+            },
+        )
+
+    assert captured_kwargs["ann_keywords"] == ["artifact", "noise"]
+    assert captured_kwargs["ann_match_mode"] == "contains"
+    assert captured_kwargs["ann_pad_before_sec"] == 1.0
+    assert captured_kwargs["ann_pad_after_sec"] == 2.0
+
+
+def test_batch_estimate_no_ann_kwargs_when_ann_params_none(tmp_path):
+    """When ann_params is None, no annotation kwargs reach the estimator."""
+    from unittest.mock import patch
+
+    standard = tmp_path / "standard"
+    standard.mkdir()
+    spindle_out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle_out.mkdir(parents=True)
+
+    captured_kwargs = {}
+
+    def fake_partial(fn, **kwargs):
+        captured_kwargs.update(kwargs)
+        return lambda *a: []
+
+    with patch("ebb.process.psd_compute.match_paths", return_value=[]), \
+         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
+         patch("ebb.process.psd_compute.functools.partial", side_effect=fake_partial):
+        from ebb.process.psd_compute import batch_estimate
+        batch_estimate(eeg_dir=standard, state_dir=spindle_out)
+
+    assert "ann_keywords" not in captured_kwargs
+    assert "ann_match_mode" not in captured_kwargs
+
+
+def test_batch_estimate_extends_pairs_with_annotation_paths(tmp_path):
+    """Each paired tuple has the matching annotation file as a 5th element;
+    animals without a file get None."""
+    from unittest.mock import patch
+
+    standard = tmp_path / "standard"
+    standard.mkdir()
+    spindle_out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle_out.mkdir(parents=True)
+    ann_dir = tmp_path / "annotations"
+    ann_dir.mkdir()
+
+    edf_a = standard / "AM001_foo_PREPROCESSED.edf"
+    edf_b = standard / "AM002_foo_PREPROCESSED.edf"
+    edf_a.touch()
+    edf_b.touch()
+    (spindle_out / "AM001_states.csv").touch()
+    (spindle_out / "AM002_states.csv").touch()
+
+    # Only AM001 has an annotation file
+    ann_file = ann_dir / "AM001_events.txt"
+    ann_file.touch()
+
+    called_with = []
+
+    def fake_estimate_psd(*args, **kwargs):
+        called_with.append(args)
+        return []
+
+    base_pairs = [
+        (edf_a, spindle_out / "AM001_states.csv", None, None),
+        (edf_b, spindle_out / "AM002_states.csv", None, None),
+    ]
+
+    with patch("ebb.process.psd_compute.match_paths", return_value=base_pairs), \
+         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
+         patch("ebb.process.psd_compute.estimate_psd", side_effect=fake_estimate_psd):
+        from ebb.process.psd_compute import batch_estimate
+        batch_estimate(
+            eeg_dir=standard,
+            state_dir=spindle_out,
+            ann_params={
+                "ann_dir": ann_dir,
+                "keywords": ["event"],
+                "match_mode": "contains",
+                "pad_before_sec": 0.0,
+                "pad_after_sec": 0.0,
+            },
+        )
+
+    am001_args = next(a for a in called_with if "AM001" in str(a[0]))
+    am002_args = next(a for a in called_with if "AM002" in str(a[0]))
+    assert am001_args[4] == ann_file
+    assert am002_args[4] is None
+
+
 def test_build_final_pkl_missing_combo_pkl_warns(tmp_path):
     """Missing per-combo PKL emits a warning and skips that combo."""
     manifest = _FakeManifest([_FakeEntry("AM001", "LFC_RSC")])
