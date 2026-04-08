@@ -27,8 +27,9 @@ def test_batch_calls_preprocessor_once_per_edf(tmp_path: Path):
     assert all(p.exists() for p in outs)
 
 def test_batch_empty_dir_returns_empty(tmp_path: Path):
+    def noop(path, *, savedir, **k): return savedir  # won't be called
     outs = batch(
-        lambda path, *, savedir, **k: savedir,  # won't be called
+        noop,
         tmp_path,
         use_multiprocessing=False,
         verbose=False,
