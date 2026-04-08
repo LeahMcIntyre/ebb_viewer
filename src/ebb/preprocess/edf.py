@@ -68,8 +68,14 @@ def standard(
 
     header = copy.deepcopy(reader.header)
     m = downsample
-    header['samples_per_record'] = [x // m for x in header.samples_per_record]
-    header['num_records'] = int(processed.shape[axis] / (fs / m))
+    fs_out = int(fs / m)
+    # Normalize to 1-second records regardless of input record_duration.
+    # Some EDFs use non-standard record_duration (e.g. 10 s) which causes a
+    # reshape mismatch when samples_per_record is divided by m but num_records
+    # is still computed from fs_out assuming 1-second records.
+    header['record_duration'] = 1
+    header['samples_per_record'] = [fs_out] * len(header.samples_per_record)
+    header['num_records'] = int(processed.shape[axis] / fs_out)
     header['reserved_0'] = ''
     header['digital_min'] = [int(x) for x in header['digital_min']]
     header['digital_max'] = [int(x) for x in header['digital_max']]

@@ -8,6 +8,7 @@ from ebb_viewer.main_window import MainWindow  # whatever your path is
 
 def main():
     app = QApplication(sys.argv)
+    app.setStyle("Fusion")
 
     # 1. Ask user to pick a project folder
     project_dir = QFileDialog.getExistingDirectory(

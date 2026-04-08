@@ -18,10 +18,13 @@ def set_cores(requested, num_ops):
                                        perform, must be > 0
     """
 
-    if hyperthreaded():
-        available = len(Process().cpu_affinity()) - cpu_count(logical=False)
-    else:
-        available = len(Process().cpu_affinity())
+    try:
+        if hyperthreaded():
+            available = len(Process().cpu_affinity()) - cpu_count(logical=False)
+        else:
+            available = len(Process().cpu_affinity())
+    except (AttributeError, NotImplementedError, OSError):
+        available = cpu_count(logical=True) or 1
     if not requested:
         return min(available, num_ops)
     return min((requested, available, num_ops))
