@@ -90,11 +90,11 @@ def build_default_masks(rec: Recording) -> MaskSet:
         mask_pro=comm_pro,
     )[0]
 
-    c = Mask.from_bool("commutator", (255, 0, 0, 60), ~comm_mask)
+    c = Mask.from_bool("commutator", (255, 0, 0, 80), ~comm_mask)
     c.metadata.update({'value': 2000, 'radius': 250, 'pad': 250, 'min_to_pad': 10})
     c.param_specs.update(_comm_param_specs())
 
-    sd = Mask.from_bool("sd", (255, 100, 0, 60), ~sd_mask)
+    sd = Mask.from_bool("sd", (255, 100, 0, 80), ~sd_mask)
     sd.metadata.update({"nstd": 5, "winsize": 180, "radius": 0.5, "comm_mask": True})
     sd.param_specs.update(_sd_param_specs())
 
@@ -106,7 +106,7 @@ def build_default_masks(rec: Recording) -> MaskSet:
         spindle_mask = masking.spindle_noise(
             rec.csv_path, noise_thresh=0.5, fs=int(rec.fs), winsize=4, include=False
         )
-        sp = Mask.from_bool("spindle_noise", (0, 200, 120, 60), ~spindle_mask)
+        sp = Mask.from_bool("spindle_noise", (0, 200, 120, 80), ~spindle_mask)
         sp.metadata.update({"noise_thresh": 0.5})
         sp.param_specs.update(_spindle_param_specs())
         mask_set.add(sp)
@@ -144,11 +144,11 @@ def rebuild_artifact_masks(rec: Recording, comm_meta: dict, sd_meta: dict) -> tu
         mask_pro=mask_pro,
     )[0]
 
-    c = Mask.from_bool("commutator", (255, 0, 0, 60), ~comm_mask)
+    c = Mask.from_bool("commutator", (255, 0, 0, 80), ~comm_mask)
     c.metadata.update(comm_meta)
     c.param_specs.update(_comm_param_specs())
 
-    sd = Mask.from_bool("sd", (255, 100, 0, 60), ~sd_mask)
+    sd = Mask.from_bool("sd", (255, 100, 0, 80), ~sd_mask)
     sd.metadata.update(sd_meta)
     sd.param_specs.update(_sd_param_specs())
 
@@ -160,7 +160,7 @@ def rebuild_spindle_mask(csv_path, fs: int, meta: dict) -> Mask:
     arr = masking.spindle_noise(
         csv_path, noise_thresh=meta['noise_thresh'], fs=fs, winsize=4, include=False
     )
-    sp = Mask.from_bool("spindle_noise", (0, 200, 120, 60), ~arr)
+    sp = Mask.from_bool("spindle_noise", (0, 200, 120, 80), ~arr)
     sp.metadata.update(meta)
     sp.param_specs.update(_spindle_param_specs())
     return sp
@@ -171,7 +171,7 @@ def rebuild_drink_mask(drink_path, fs: int, meta: dict) -> Mask:
     arr = masking.drinking_mask(
         drink_path, fs=fs, offset_sec=meta['offset'], pad_sec=meta['pad_sec']
     )
-    d = Mask.from_bool("drink", (0, 140, 255, 60), ~arr)
+    d = Mask.from_bool("drink", (0, 140, 255, 80), ~arr)
     d.metadata.update(meta)
     d.param_specs.update({'pad_sec': ParamSpec(min=0, units="s")})
     return d
@@ -206,7 +206,7 @@ def build_annotation_mask(annotation_path, keywords: list[str],
         pad_before_sec=pad_before_sec, pad_after_sec=pad_after_sec,
         match_mode=match_mode, size=n_samples, fs=fs,
     )
-    m = Mask.from_bool("annotation", (150, 0, 200, 60), ~arr)
+    m = Mask.from_bool("annotation", (150, 0, 200, 80), ~arr)
     m.metadata.update({
         "keywords": ", ".join(keywords),
         "match_mode": match_mode,
@@ -227,7 +227,7 @@ def rebuild_annotation_mask(annotation_path, n_samples: int, fs: float, meta: di
         match_mode=meta.get("match_mode", "contains"),
         size=n_samples, fs=fs,
     )
-    m = Mask.from_bool("annotation", (150, 0, 200, 60), ~arr)
+    m = Mask.from_bool("annotation", (150, 0, 200, 80), ~arr)
     m.metadata.update(meta)
     m.param_specs.update(_annotation_param_specs())
     return m
@@ -235,11 +235,11 @@ def rebuild_annotation_mask(annotation_path, n_samples: int, fs: float, meta: di
 
 def load_swd_mask(swd_path, fs:int, n_samples:int) -> Mask:
     arr = masking.swd(swd_path, fs=fs, n_samples=n_samples)
-    return Mask.from_bool("swd", (178, 170, 248, 60), ~arr)
+    return Mask.from_bool("swd", (178, 170, 248, 80), ~arr)
 
 def load_drink_mask(drink_path, fs:int, offset_sec:float, pad_sec:int) -> Mask:
     arr = masking.drinking_mask(drink_path, fs=fs, offset_sec=offset_sec, pad_sec=pad_sec)
-    d = Mask.from_bool("drink", (0, 140, 255, 60), ~arr)
+    d = Mask.from_bool("drink", (0, 140, 255, 80), ~arr)
     d.metadata.update({"offset": offset_sec, "pad_sec": pad_sec})
     d.param_specs.update({
         'pad_sec': ParamSpec(min=0, units="s"),

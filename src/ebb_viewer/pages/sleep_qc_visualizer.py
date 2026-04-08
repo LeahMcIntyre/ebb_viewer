@@ -968,7 +968,7 @@ class SleepQCGridPage(QWidget):
         swatch.setFixedSize(30, 4)
         swatch.setStyleSheet(f"background-color: rgb({color[0]}, {color[1]}, {color[2]});")
 
-        row_w = QWidget()
+        row_w = QFrame()
         row_l = _QHBoxLayout(row_w)
         row_l.setContentsMargins(4, 2, 4, 2)
         row_l.setSpacing(4)
@@ -977,7 +977,7 @@ class SleepQCGridPage(QWidget):
         bg = self._STATUS_BG.get(status)
         row_w.setObjectName("legendRow")
         row_w.setStyleSheet(
-            f"QWidget#legendRow {{ background-color: {bg or 'transparent'};"
+            f"QFrame#legendRow {{ background-color: {bg or 'transparent'};"
             " border-radius: 3px; }"
         )
         return row_w, row_l
