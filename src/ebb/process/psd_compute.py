@@ -5,6 +5,7 @@
 import copy
 import re
 import functools
+from functools import partial
 import time
 import dataclasses
 import multiprocessing
@@ -419,7 +420,7 @@ def batch_estimate(
             'ann_pad_before_sec': ann_pad_before,
             'ann_pad_after_sec': ann_pad_after,
         })
-    estimator = functools.partial(estimate_psd, **kwargs)
+    estimator = partial(estimate_psd, **kwargs)
     n = len(paired)
     t0 = time.perf_counter()
     if workers == 1:
@@ -601,7 +602,7 @@ def rerun_with_drink_masks(
             "ann_pad_after_sec": ann_pad_after,
         })
 
-    estimator = functools.partial(estimate_psd, **kwargs)
+    estimator = partial(estimate_psd, **kwargs)
     all_new_dicts: List[dict] = []
 
     for combo, animals in combo_to_animals.items():

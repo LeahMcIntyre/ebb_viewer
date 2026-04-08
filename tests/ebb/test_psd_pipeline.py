@@ -266,7 +266,7 @@ def test_batch_estimate_injects_ann_kwargs(tmp_path):
 
     with patch("ebb.process.psd_compute.match_paths", return_value=[]), \
          patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.functools.partial", side_effect=fake_partial):
+         patch("ebb.process.psd_compute.partial", side_effect=fake_partial):
         from ebb.process.psd_compute import batch_estimate
         batch_estimate(
             eeg_dir=standard,
@@ -303,7 +303,7 @@ def test_batch_estimate_no_ann_kwargs_when_ann_params_none(tmp_path):
 
     with patch("ebb.process.psd_compute.match_paths", return_value=[]), \
          patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.functools.partial", side_effect=fake_partial):
+         patch("ebb.process.psd_compute.partial", side_effect=fake_partial):
         from ebb.process.psd_compute import batch_estimate
         batch_estimate(eeg_dir=standard, state_dir=spindle_out)
 

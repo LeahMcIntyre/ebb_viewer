@@ -75,7 +75,7 @@ def test_batch_estimate_passes_offset_path(tmp_path):
 
     with patch("ebb.process.psd_compute.match_paths", return_value=[]), \
          patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.functools.partial", side_effect=fake_partial):
+         patch("ebb.process.psd_compute.partial", side_effect=fake_partial):
         from ebb.process.psd_compute import batch_estimate
         batch_estimate(
             eeg_dir=standard,
@@ -102,7 +102,7 @@ def test_batch_estimate_no_offset_path_not_in_kwargs(tmp_path):
 
     with patch("ebb.process.psd_compute.match_paths", return_value=[]), \
          patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.functools.partial", side_effect=fake_partial):
+         patch("ebb.process.psd_compute.partial", side_effect=fake_partial):
         from ebb.process.psd_compute import batch_estimate
         batch_estimate(eeg_dir=standard, state_dir=spindle_out)
 
@@ -484,7 +484,7 @@ def test_rerun_injects_ann_kwargs_when_ann_params_provided(tmp_path):
                               spindle_out / "AM001_states.csv", None,
                               drink_dir / "AM001.npy")]), \
          patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.functools.partial", side_effect=fake_partial):
+         patch("ebb.process.psd_compute.partial", side_effect=fake_partial):
         from ebb.process.psd_compute import rerun_with_drink_masks
         rerun_with_drink_masks(
             psd_dir=psd_dir,
@@ -520,7 +520,7 @@ def test_rerun_no_ann_kwargs_when_ann_params_none(tmp_path):
 
     with patch("ebb.process.psd_compute.match_paths", return_value=[]), \
          patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.functools.partial", side_effect=fake_partial):
+         patch("ebb.process.psd_compute.partial", side_effect=fake_partial):
         from ebb.process.psd_compute import rerun_with_drink_masks
         rerun_with_drink_masks(
             psd_dir=psd_dir,
