@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QColor, QFont, QPalette
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QComboBox, QLabel, QPushButton, QSizePolicy,
@@ -952,30 +952,54 @@ class SleepQCGridPage(QWidget):
         self._highlighted_animal = mid if checked else None
         self._update_all_plots()
 
+    # Stylesheet for OK / Review checkable buttons inside legend rows.
+    # Transparent background lets the row's status color show through the full row.
+    # Explicit :checked state ensures Windows/macOS render the selected state visibly.
+    _LEGEND_BTN_STYLE = (
+        "QPushButton {"
+        "  padding: 2px 8px;"
+        "  border: 1px solid rgba(0,0,0,0.25);"
+        "  border-radius: 3px;"
+        "  background-color: transparent;"
+        "}"
+        "QPushButton:checked {"
+        "  background-color: rgba(0,0,0,0.18);"
+        "  font-weight: bold;"
+        "  border-color: rgba(0,0,0,0.5);"
+        "}"
+        "QPushButton:hover {"
+        "  border-color: rgba(0,0,0,0.45);"
+        "}"
+    )
+
     def _clear_legend(self) -> None:
         while self.legend_layout.count():
             item = self.legend_layout.takeAt(0)
             w = item.widget()
             if w:
-                w.deleteLater()
+                w.setParent(None)  # immediate removal; deleteLater defers and can leave stale visuals
 
     def _make_legend_row_frame(
         self, color: tuple, status: str | None
     ) -> "tuple[QWidget, QHBoxLayout]":
         """Create a styled legend row with a color swatch. Returns (widget, layout)."""
-        from PyQt6.QtWidgets import QFrame, QHBoxLayout as _QHBoxLayout
         swatch = QFrame()
         swatch.setFixedSize(30, 4)
-        swatch.setStyleSheet(f"background-color: rgb({color[0]}, {color[1]}, {color[2]});")
+        swatch.setAutoFillBackground(True)
+        sp = swatch.palette()
+        sp.setColor(QPalette.ColorRole.Window, QColor(*color))
+        swatch.setPalette(sp)
 
         row_w = QFrame()
-        row_l = _QHBoxLayout(row_w)
+        row_l = QHBoxLayout(row_w)
         row_l.setContentsMargins(4, 2, 4, 2)
         row_l.setSpacing(4)
         row_l.addWidget(swatch)
 
         bg = self._STATUS_BG.get(status)
         row_w.setObjectName("legendRow")
+        # background-color fills the full row; child QPushButtons are styled
+        # transparent (_LEGEND_BTN_STYLE) so the row color shows through them.
         row_w.setStyleSheet(
             f"QFrame#legendRow {{ background-color: {bg or 'transparent'};"
             " border-radius: 3px; }"
@@ -1006,8 +1030,8 @@ class SleepQCGridPage(QWidget):
             btn_highlight.setChecked(mid == self._highlighted_animal)
             btn_highlight.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_highlight.setStyleSheet(
-                "QPushButton { text-align: left; padding: 0 2px; font-weight: normal; }"
-                "QPushButton:checked { font-weight: bold; text-decoration: underline; }"
+                "QPushButton { text-align: left; padding: 0 2px; font-weight: normal; background: transparent; border: none; }"
+                "QPushButton:checked { font-weight: bold; text-decoration: underline; background: transparent; }"
             )
             btn_highlight.clicked.connect(lambda checked, m=mid: self._on_legend_highlight(m, checked))
             row_l.addWidget(btn_highlight)
@@ -1021,6 +1045,7 @@ class SleepQCGridPage(QWidget):
             btn_ok.setFixedHeight(22)
             btn_ok.setCheckable(True)
             btn_ok.setChecked(status == "ok")
+            btn_ok.setStyleSheet(self._LEGEND_BTN_STYLE)
             btn_ok.clicked.connect(lambda checked, m=mid: self._flag_sleep_qc(m, "ok" if checked else None))
             row_l.addWidget(btn_ok)
 
@@ -1028,6 +1053,7 @@ class SleepQCGridPage(QWidget):
             btn_review.setFixedHeight(22)
             btn_review.setCheckable(True)
             btn_review.setChecked(status in ("needs_review", "needs_rerun"))
+            btn_review.setStyleSheet(self._LEGEND_BTN_STYLE)
             if status == "needs_rerun":
                 btn_review.setText("Rerun Queued")
                 btn_review.setEnabled(False)
@@ -1110,6 +1136,7 @@ class SleepQCGridPage(QWidget):
                 btn_ok.setFixedHeight(22)
                 btn_ok.setCheckable(True)
                 btn_ok.setChecked(status == "ok")
+                btn_ok.setStyleSheet(self._LEGEND_BTN_STYLE)
                 btn_ok.clicked.connect(lambda checked, c=combo: self._flag_animal_ok(c, checked))
                 row_l.addWidget(btn_ok)
 
@@ -1117,6 +1144,7 @@ class SleepQCGridPage(QWidget):
                 btn_review.setFixedHeight(22)
                 btn_review.setCheckable(True)
                 btn_review.setChecked(status in ("needs_review", "needs_rerun"))
+                btn_review.setStyleSheet(self._LEGEND_BTN_STYLE)
                 if status == "needs_rerun":
                     btn_review.setText("Rerun Queued")
                     btn_review.setEnabled(False)
