@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPalette
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QComboBox, QLabel, QPushButton, QSizePolicy,
@@ -24,25 +24,6 @@ _SENTINEL = object()
 from ebb.process.sleep_compute import (
     compute_sleep_bins_df, compute_sleep_bins_df_offset, compute_spindle_fractions,
 )
-
-
-class _LegendRow(QFrame):
-    """QFrame that paints its background colour directly in paintEvent.
-
-    Qt's style engine silently skips stylesheet/palette backgrounds for
-    dynamically-added widgets on Windows.  Overriding paintEvent with a direct
-    QPainter fill guarantees the colour is applied on every repaint.
-    """
-    def __init__(self, bg_hex: str | None = None, parent=None):
-        super().__init__(parent)
-        self._bg = QColor(bg_hex) if bg_hex else None
-
-    def paintEvent(self, event):
-        if self._bg is not None:
-            from PyQt6.QtGui import QPainter
-            p = QPainter(self)
-            p.fillRect(self.rect(), self._bg)
-        super().paintEvent(event)
 
 
 class SleepQCGridPage(QWidget):
@@ -971,47 +952,34 @@ class SleepQCGridPage(QWidget):
         self._highlighted_animal = mid if checked else None
         self._update_all_plots()
 
-    # Stylesheet for OK / Review checkable buttons inside legend rows.
-    # Transparent background lets the row's status color show through the full row.
-    # Explicit :checked state ensures Windows/macOS render the selected state visibly.
-    _LEGEND_BTN_STYLE = (
-        "QPushButton {"
-        "  padding: 2px 8px;"
-        "  border: 1px solid rgba(0,0,0,0.25);"
-        "  border-radius: 3px;"
-        "  background-color: transparent;"
-        "}"
-        "QPushButton:checked {"
-        "  background-color: rgba(0,0,0,0.18);"
-        "  font-weight: bold;"
-        "  border-color: rgba(0,0,0,0.5);"
-        "}"
-        "QPushButton:hover {"
-        "  border-color: rgba(0,0,0,0.45);"
-        "}"
-    )
-
     def _clear_legend(self) -> None:
         while self.legend_layout.count():
             item = self.legend_layout.takeAt(0)
             w = item.widget()
             if w:
-                w.hide()
                 w.deleteLater()
 
     def _make_legend_row_frame(
         self, color: tuple, status: str | None
     ) -> "tuple[QWidget, QHBoxLayout]":
         """Create a styled legend row with a color swatch. Returns (widget, layout)."""
-        swatch = _LegendRow(f"rgb({color[0]},{color[1]},{color[2]})")
+        from PyQt6.QtWidgets import QFrame, QHBoxLayout as _QHBoxLayout
+        swatch = QFrame()
         swatch.setFixedSize(30, 4)
+        swatch.setStyleSheet(f"background-color: rgb({color[0]}, {color[1]}, {color[2]});")
 
-        bg = self._STATUS_BG.get(status)
-        row_w = _LegendRow(bg)
-        row_l = QHBoxLayout(row_w)
+        row_w = QWidget()
+        row_l = _QHBoxLayout(row_w)
         row_l.setContentsMargins(4, 2, 4, 2)
         row_l.setSpacing(4)
         row_l.addWidget(swatch)
+
+        bg = self._STATUS_BG.get(status)
+        row_w.setObjectName("legendRow")
+        row_w.setStyleSheet(
+            f"QWidget#legendRow {{ background-color: {bg or 'transparent'};"
+            " border-radius: 3px; }"
+        )
         return row_w, row_l
 
     def _build_mouse_color_map(self, mice: list[str]) -> dict:
@@ -1038,8 +1006,8 @@ class SleepQCGridPage(QWidget):
             btn_highlight.setChecked(mid == self._highlighted_animal)
             btn_highlight.setCursor(Qt.CursorShape.PointingHandCursor)
             btn_highlight.setStyleSheet(
-                "QPushButton { text-align: left; padding: 0 2px; font-weight: normal; background: transparent; border: none; }"
-                "QPushButton:checked { font-weight: bold; text-decoration: underline; background: transparent; }"
+                "QPushButton { text-align: left; padding: 0 2px; font-weight: normal; }"
+                "QPushButton:checked { font-weight: bold; text-decoration: underline; }"
             )
             btn_highlight.clicked.connect(lambda checked, m=mid: self._on_legend_highlight(m, checked))
             row_l.addWidget(btn_highlight)
@@ -1053,7 +1021,6 @@ class SleepQCGridPage(QWidget):
             btn_ok.setFixedHeight(22)
             btn_ok.setCheckable(True)
             btn_ok.setChecked(status == "ok")
-            btn_ok.setStyleSheet(self._LEGEND_BTN_STYLE)
             btn_ok.clicked.connect(lambda checked, m=mid: self._flag_sleep_qc(m, "ok" if checked else None))
             row_l.addWidget(btn_ok)
 
@@ -1061,7 +1028,6 @@ class SleepQCGridPage(QWidget):
             btn_review.setFixedHeight(22)
             btn_review.setCheckable(True)
             btn_review.setChecked(status in ("needs_review", "needs_rerun"))
-            btn_review.setStyleSheet(self._LEGEND_BTN_STYLE)
             if status == "needs_rerun":
                 btn_review.setText("Rerun Queued")
                 btn_review.setEnabled(False)
@@ -1094,8 +1060,6 @@ class SleepQCGridPage(QWidget):
             ref_lbl = QLabel(f"─ ─  Group median, all animals ({ref_combo})")
             ref_lbl.setStyleSheet("color: #999;")
             self.legend_layout.addWidget(ref_lbl, n_rows, 0, 1, 2)
-
-        self.legend_container.update()
 
     def _update_legend_animal(self, combos: list[str],
                                ref_combo: str | None = None) -> None:
@@ -1146,7 +1110,6 @@ class SleepQCGridPage(QWidget):
                 btn_ok.setFixedHeight(22)
                 btn_ok.setCheckable(True)
                 btn_ok.setChecked(status == "ok")
-                btn_ok.setStyleSheet(self._LEGEND_BTN_STYLE)
                 btn_ok.clicked.connect(lambda checked, c=combo: self._flag_animal_ok(c, checked))
                 row_l.addWidget(btn_ok)
 
@@ -1154,7 +1117,6 @@ class SleepQCGridPage(QWidget):
                 btn_review.setFixedHeight(22)
                 btn_review.setCheckable(True)
                 btn_review.setChecked(status in ("needs_review", "needs_rerun"))
-                btn_review.setStyleSheet(self._LEGEND_BTN_STYLE)
                 if status == "needs_rerun":
                     btn_review.setText("Rerun Queued")
                     btn_review.setEnabled(False)
@@ -1196,8 +1158,6 @@ class SleepQCGridPage(QWidget):
             if frac_widget is not None:
                 insert_row = (len(combos) + 1) // 2 + (1 if ref_combo else 0)
                 self.legend_layout.addWidget(frac_widget, insert_row, 0, 1, 2)
-
-        self.legend_container.update()
 
     def _get_animal_fractions(self, animal: str, combo: str) -> dict[str, float] | None:
         """Return {state: fraction} for one animal from the cache, or None if unavailable."""
