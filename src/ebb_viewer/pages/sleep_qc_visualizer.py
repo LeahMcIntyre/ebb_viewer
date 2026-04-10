@@ -26,6 +26,25 @@ from ebb.process.sleep_compute import (
 )
 
 
+class _LegendRow(QFrame):
+    """QFrame that paints its background colour directly in paintEvent.
+
+    Qt's style engine silently skips stylesheet/palette backgrounds for
+    dynamically-added widgets on Windows.  Overriding paintEvent with a direct
+    QPainter fill guarantees the colour is applied on every repaint.
+    """
+    def __init__(self, bg_hex: str | None = None, parent=None):
+        super().__init__(parent)
+        self._bg = QColor(bg_hex) if bg_hex else None
+
+    def paintEvent(self, event):
+        if self._bg is not None:
+            from PyQt6.QtGui import QPainter
+            p = QPainter(self)
+            p.fillRect(self.rect(), self._bg)
+        super().paintEvent(event)
+
+
 class SleepQCGridPage(QWidget):
     """
     QC page: 3×3 grid (states × metrics).
@@ -984,29 +1003,15 @@ class SleepQCGridPage(QWidget):
         self, color: tuple, status: str | None
     ) -> "tuple[QWidget, QHBoxLayout]":
         """Create a styled legend row with a color swatch. Returns (widget, layout)."""
-        swatch = QFrame()
+        swatch = _LegendRow(f"rgb({color[0]},{color[1]},{color[2]})")
         swatch.setFixedSize(30, 4)
-        swatch.setAutoFillBackground(True)
-        sp = swatch.palette()
-        sp.setColor(QPalette.ColorRole.Window, QColor(*color))
-        swatch.setPalette(sp)
 
-        row_w = QFrame()
+        bg = self._STATUS_BG.get(status)
+        row_w = _LegendRow(bg)
         row_l = QHBoxLayout(row_w)
         row_l.setContentsMargins(4, 2, 4, 2)
         row_l.setSpacing(4)
         row_l.addWidget(swatch)
-
-        bg = self._STATUS_BG.get(status)
-        if bg:
-            # Use palette + autoFillBackground instead of a stylesheet background-color.
-            # Qt's deferred style-polishing can skip newly-added widgets on Windows,
-            # causing stylesheet backgrounds to not repaint after a legend rebuild.
-            # Palette painting is immediate and reliable on all platforms.
-            p = row_w.palette()
-            p.setColor(QPalette.ColorRole.Window, QColor(bg))
-            row_w.setPalette(p)
-            row_w.setAutoFillBackground(True)
         return row_w, row_l
 
     def _build_mouse_color_map(self, mice: list[str]) -> dict:
