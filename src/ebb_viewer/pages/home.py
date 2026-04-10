@@ -141,10 +141,13 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
         s3 = StepStatus("blocked", "Requires step 2")
 
     # --- Step 4: Sleep QC ---
-    # Step 4: spindle upload/download done, no sleep qc pending, no review edfs, and at least 1 file okay
-    if step3_done and n_pending_qc == 0 and n_review == 0 and n_ok > 0:
+    # Special case: manifest was regenerated from files after a completed run.
+    # psds_final.pkl exists (project done) but sleep_qc is all None (manifest lost).
+    # Suppress the false-alarm attention state — the project is already finished.
+    if final_psd_path(root).exists() and n_ok == 0 and n_pending_qc > 0:
+        s4 = StepStatus("done", "PSDs finalized — sleep QC history not available")
+    elif step3_done and n_pending_qc == 0 and n_review == 0 and n_ok > 0:
         s4 = StepStatus("done", f"{n_ok} animal{'s' if n_ok != 1 else ''} marked ok")
-
     elif step3_done and (n_review > 0 or n_pending_qc > 0):
         parts = []
         if n_review:     parts.append(f"{n_review} flagged for EDF review")
@@ -591,6 +594,7 @@ class HomePage(QWidget):
                 # Animal exists but no runs yet — show a placeholder row
                 rows.append((entry, "", None))
 
+        final_pkl_exists = final_psd_path(self.project_root).exists()
         self.table.setRowCount(len(rows))
         for row_idx, (entry, combo, run) in enumerate(rows):
             spindle_edf_ok  = bool(combo) and _any_file_for_animal(
@@ -639,8 +643,14 @@ class HomePage(QWidget):
             # 6: Sleep QC
             edit_hint = False
             if sleep_qc is None:
-                txt = "pending" if spindle_out_ok else "—"
-                bg  = _PENDING_COLOR if spindle_out_ok else None
+                # If psds_final.pkl exists the project is complete; manifest was likely
+                # regenerated and we have no sleep_qc history — show "—" not "pending".
+                if final_pkl_exists:
+                    txt = "—"
+                    bg  = None
+                else:
+                    txt = "pending" if spindle_out_ok else "—"
+                    bg  = _PENDING_COLOR if spindle_out_ok else None
             elif sleep_qc == "needs_rerun" and run.rerun_combo:
                 rerun_run = entry.runs.get(run.rerun_combo)
                 if rerun_run and rerun_run.sleep_qc == "ok":
