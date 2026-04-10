@@ -977,7 +977,8 @@ class SleepQCGridPage(QWidget):
             item = self.legend_layout.takeAt(0)
             w = item.widget()
             if w:
-                w.setParent(None)  # immediate removal; deleteLater defers and can leave stale visuals
+                w.hide()
+                w.deleteLater()
 
     def _make_legend_row_frame(
         self, color: tuple, status: str | None
@@ -1089,6 +1090,8 @@ class SleepQCGridPage(QWidget):
             ref_lbl.setStyleSheet("color: #999;")
             self.legend_layout.addWidget(ref_lbl, n_rows, 0, 1, 2)
 
+        self.legend_container.update()
+
     def _update_legend_animal(self, combos: list[str],
                                ref_combo: str | None = None) -> None:
         self._clear_legend()
@@ -1188,6 +1191,8 @@ class SleepQCGridPage(QWidget):
             if frac_widget is not None:
                 insert_row = (len(combos) + 1) // 2 + (1 if ref_combo else 0)
                 self.legend_layout.addWidget(frac_widget, insert_row, 0, 1, 2)
+
+        self.legend_container.update()
 
     def _get_animal_fractions(self, animal: str, combo: str) -> dict[str, float] | None:
         """Return {state: fraction} for one animal from the cache, or None if unavailable."""
