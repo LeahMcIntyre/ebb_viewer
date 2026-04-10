@@ -575,8 +575,105 @@ Changed from reading the `state` column (`w/n/r/1/2/3`) to reading `rawstate` + 
 - `tests/ebb_viewer/test_compute_pipeline_status.py` — pipeline status tests (step 6 logic updated)
 - `research/psd_from_edfs.ipynb` — tutorial notebook
 
+---
+
+### Completed (this session, branch `refactor/window_compat`)
+
+#### Annotation editing with duration in EEG viewer
+
+**New file `edf_viewer/annotations_dock.py`:**
+- `EventEditDialog(QDialog)` — t0/t1 QDoubleSpinBox, label QLineEdit, red Delete button
+- `AnnotationsDock(QDockWidget)` — table with Start/End/Label columns; signals: `annotation_edited`, `annotation_deleted`, `annotation_selected`; `_rebuilding` guard to suppress spurious selection signals; `rebuild()` sorts by t0; `select_annotation()` uses `==` fallback (PyQt6 does NOT preserve object identity through QVariant round-trips — `is` always fails)
+
+**`edf_viewer/trace_view.py`:**
+- `EventViewBox(TimeClickViewBox)` — right-drag creates a preview `LinearRegionItem`; `regionCreated = pyqtSignal(float, float)` emitted on release if drag > 1e-4 s
+- `_annotations` changed from `list[tuple[float, str]]` to `list[dict]` with `{t0, t1, label}`
+- `set_annotations` draws `LinearRegionItem` fills for non-zero-duration events + `InfiniteLine` with label on ALL channels; all items have `setAcceptedMouseButtons(NoButton)` to not absorb clicks
+- `add_annotation`, `edit_annotation`, `delete_annotation`, `annotations` property
+- `jump_to_next/prev_annotation` emits `annotation_jumped(ev)` after jumping
+- Right-click-in-trace code was stripped entirely (multiple approaches failed against pyqtgraph event routing on all platforms)
+
+**`edf_viewer/file_openers.py`:**
+- `load_annotations` updated to return `(list[dict], base_dt, header_lines)` — parses full Pinnacle format (Start Time/End Time → duration) or simple format (t1 = t0)
+- `save_annotations(path, annotations, base_dt, header_lines)` — writes Pinnacle TXT
+- `pick_save_annotations_path(parent, source_path)` — default `{stem}_edited.txt`
+
+**`edf_viewer/eeg_viewer.py`:**
+- `AnnotationsDock` instantiated, added to right dock area, hidden until first annotation load
+- `_on_event_region_created`, `_on_annotation_edited`, `_on_annotation_deleted`, `_on_annotation_selected`, `_on_annotation_jumped` handlers
+- `[`/`]` shortcuts jump AND select the corresponding dock row
+- `act_save_annotations` in File menu
+
+**What didn't work:**
+- Right-click-in-trace (pyqtgraph `mouseClickEvent`, `mouseDoubleClickEvent`, viewport event filter, custom `PlotWidget` subclass) — all failed; editing is dock-only
+
+#### Windows/macOS rendering fixes (branch `refactor/window_compat`)
+
+**`edf_viewer/mask_builder.py`:** all mask alphas increased from 60 → 80 (compositing appears more washed-out on Windows)
+
+**`sleep_qc_visualizer.py` — legend row backgrounds:**
+- Previous attempts (QWidget→QFrame, stylesheet `background-color`, QPalette+autoFillBackground, `setParent(None)` vs `deleteLater()`, `legend_container.update()`) all failed on Windows
+- **Working fix:** `_LegendRow(QFrame)` subclass overrides `paintEvent` to call `QPainter.fillRect` directly — bypasses the style engine entirely, guaranteed to paint on every repaint
+
+**`sleep_qc_visualizer.py` — button checked state:**
+- `_LEGEND_BTN_STYLE` added as class constant: `background-color: transparent` + explicit `:checked { background-color: rgba(0,0,0,0.18); font-weight: bold; }` — applied to all OK/Review legend buttons
+- On Windows/macOS, checkable QPushButton shows no visual difference without explicit `:checked` styling
+
+**What didn't work for legend backgrounds (do not retry):**
+- `QFrame#legendRow { background-color: ... }` stylesheet — ignored after dynamic rebuild on Windows
+- `QPalette + setAutoFillBackground(True)` — initial render works, but not after legend rebuild
+- `hide()` + `deleteLater()` + `legend_container.update()` — did not trigger repaints of newly-added widgets
+- `setParent(None)` — same problem
+
+---
+
+## Next Steps
+
+### Windows compat — remaining items to check
+- Confirm `_LegendRow` fix works (legend colors update after clicking OK/Review on Windows)
+- Check any other pages for similar dynamic-widget repaint issues
+
+### Annotation mask follow-on
+- Tests for `keyword_mask` in `tests/ebb/test_annotations.py` — currently untested
+- Consider integrating into PSD pipeline (Drink Mask page or separate page)
+
+### P3 items (from TODO.md)
+- **spindle_upload: "Upload, Wait & Download" button issue** — needs reproduction steps
+- **general: Run log / settings provenance** — `run_log.jsonl` append per action
+- **psds.py: improve merge log** — log per-combo animal counts after build
+
+### Testing gaps
+- **Gap 4** — `DrinkMaskPage._on_done` partial failure: surfaced in UI, no automated test
+- **`keyword_mask`** — no tests yet
+
+---
+
+## Key Files
+- `src/ebb_viewer/pages/sleep_qc_visualizer.py` — Sleep QC page (group + animal + review modes + spindle fraction view + `_LegendRow`)
+- `src/ebb_viewer/pages/rerun.py` — rerun queue page
+- `src/ebb_viewer/pages/spindle_upload.py` — batch upload page + `SleepyRatWorker`
+- `src/ebb_viewer/pages/home.py` — pipeline summary + Needs Attention zone (9 steps)
+- `src/ebb_viewer/pages/psds.py` — PSD Computation page
+- `src/ebb_viewer/pages/drink_mask.py` — Drink Mask page
+- `src/ebb_viewer/pages/finalize.py` — Finalize page
+- `src/ebb_viewer/pages/psd_visualizer.py` — PSD Visualizer
+- `src/ebb_viewer/pipeline/manifest.py` — `Manifest` / `ManifestEntry` / `RunEntry`
+- `src/ebb_viewer/main_window.py` — sidebar + page navigation + badge refresh
+- `src/ebb_viewer/edf_viewer/eeg_viewer.py` — EEG viewer; annotation dock wiring; annotation mask
+- `src/ebb_viewer/edf_viewer/annotations_dock.py` — `AnnotationsDock` + `EventEditDialog`
+- `src/ebb_viewer/edf_viewer/trace_view.py` — trace rendering; `EventViewBox`; annotation display
+- `src/ebb_viewer/edf_viewer/file_openers.py` — load/save annotations (Pinnacle TXT format)
+- `src/ebb_viewer/edf_viewer/mask_builder.py` — mask build/rebuild functions
+- `src/ebb/masking/annotations.py` — `artifact()` + `keyword_mask()`
+- `src/ebb/process/psd_compute.py` — `batch_estimate`, `rerun_with_drink_masks`, `build_final_pkl`
+- `src/ebb/process/sleep_compute.py` — `compute_spindle_fractions` (rawstate + noise_probs)
+- `tests/ebb_viewer/test_manifest.py` — 84 manifest tests
+- `tests/ebb/test_drink_mask_integration.py` — drink mask + batch_estimate tests
+- `tests/ebb/test_sleep_compute.py` — 13 tests
+- `research/psd_from_edfs.ipynb` — tutorial notebook
+
 ## Environment
 - Conda env: `ebb-dev` (`source ~/miniconda3/etc/profile.d/conda.sh && conda activate ebb-dev`)
 - Jupyter kernel: `ebb` (registered in `~/.local/share/jupyter/kernels/ebb`)
 - Run tests: `QT_QPA_PLATFORM=offscreen LD_LIBRARY_PATH="$CONDA_PREFIX/lib" python -m pytest` (151 passing)
-- Branch: `refactor/sleep_qc_addition` (current); `refactor/clean-up` (base)
+- Active branch: `refactor/window_compat`; base: `refactor/sleep_qc_addition` → `refactor/clean-up`
