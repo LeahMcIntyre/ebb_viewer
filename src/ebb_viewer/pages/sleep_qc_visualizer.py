@@ -997,13 +997,15 @@ class SleepQCGridPage(QWidget):
         row_l.addWidget(swatch)
 
         bg = self._STATUS_BG.get(status)
-        row_w.setObjectName("legendRow")
-        # background-color fills the full row; child QPushButtons are styled
-        # transparent (_LEGEND_BTN_STYLE) so the row color shows through them.
-        row_w.setStyleSheet(
-            f"QFrame#legendRow {{ background-color: {bg or 'transparent'};"
-            " border-radius: 3px; }"
-        )
+        if bg:
+            # Use palette + autoFillBackground instead of a stylesheet background-color.
+            # Qt's deferred style-polishing can skip newly-added widgets on Windows,
+            # causing stylesheet backgrounds to not repaint after a legend rebuild.
+            # Palette painting is immediate and reliable on all platforms.
+            p = row_w.palette()
+            p.setColor(QPalette.ColorRole.Window, QColor(bg))
+            row_w.setPalette(p)
+            row_w.setAutoFillBackground(True)
         return row_w, row_l
 
     def _build_mouse_color_map(self, mice: list[str]) -> dict:
