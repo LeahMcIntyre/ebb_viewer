@@ -5,7 +5,7 @@ import pickle
 
 from ebb.process.psd_compute import batch_estimate, build_final_pkl
 
-from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QObject, QThread, QTime, pyqtSignal
 from ebb_viewer.widgets.worker_helpers import launch_worker
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QLabel, QHBoxLayout, QGroupBox, QCheckBox, QGridLayout,
     QSizePolicy, QLineEdit, QApplication, QPlainTextEdit, QTableWidget,
     QTableWidgetItem, QHeaderView, QFileDialog, QFrame, QButtonGroup, QRadioButton,
-    QToolButton,
+    QScrollArea, QTimeEdit, QToolButton, QDialog, QDialogButtonBox,
 )
 
 from ebb_viewer.pipeline.manifest import Manifest, merged_psd_path
@@ -28,6 +28,292 @@ DEFAULT_NSTD = 5.0
 CH_LABELS = ["LFC", "RSC", "LSC"]
 
 
+class MaskingSettingsDialog(QDialog):
+    """Modal dialog for configuring optional masking/filtering for PSD computation."""
+
+    def __init__(self, parent=None, *, swd_available: bool, swd_status_text: str,
+                 project_root: Path):
+        super().__init__(parent)
+        self.setWindowTitle("Masking & Filtering Settings")
+        self.setMinimumWidth(500)
+        self._project_root = project_root
+        self._swd_available = swd_available
+        self._swd_status_text = swd_status_text
+        self._ann_dir: Optional[Path] = None
+        self._build_ui()
+        self._wire()
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setSpacing(10)
+
+        # ── SWD Mask ──────────────────────────────────────────────────────────
+        gb_swd = QGroupBox("SWD Masks")
+        swd_v = QVBoxLayout(gb_swd)
+        self._swd_grp = QButtonGroup(self)
+        self._radio_swd_none = QRadioButton("No SWD mask")
+        self._radio_swd_none.setChecked(True)
+        self._radio_swd_mask = QRadioButton("Mask out SWDs")
+        self._radio_swd_mask.setEnabled(self._swd_available)
+        self._swd_grp.addButton(self._radio_swd_none, 0)
+        self._swd_grp.addButton(self._radio_swd_mask, 1)
+        swd_v.addWidget(self._radio_swd_none)
+        swd_v.addWidget(self._radio_swd_mask)
+        swd_hint = QLabel(
+            "To use SWD masking, place one .mat file of SWD timestamps per animal "
+            "in a swd/ folder in the project root (e.g. project/swd/AnimalID_*.mat)."
+        )
+        swd_hint.setWordWrap(True)
+        swd_hint.setStyleSheet("font-size: 10px; color: #777; padding-left: 4px; padding-top: 2px;")
+        swd_v.addWidget(swd_hint)
+        self._lbl_swd_status = QLabel(self._swd_status_text)
+        self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px;")
+        swd_v.addWidget(self._lbl_swd_status)
+        root.addWidget(gb_swd)
+
+        # ── Annotation Mask ───────────────────────────────────────────────────
+        gb_ann = QGroupBox("Annotation Mask")
+        ann_v = QVBoxLayout(gb_ann)
+        self.chk_ann = QCheckBox("Apply annotation mask")
+        ann_v.addWidget(self.chk_ann)
+
+        self._ann_body = QWidget()
+        self._ann_body.setEnabled(False)
+        ann_body_v = QVBoxLayout(self._ann_body)
+        ann_body_v.setContentsMargins(0, 4, 0, 0)
+        ann_body_v.setSpacing(6)
+
+        ann_dir_form = QFormLayout()
+        ann_dir_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        ann_dir_row = QHBoxLayout()
+        self.lbl_ann_dir = QLineEdit()
+        self.lbl_ann_dir.setReadOnly(True)
+        self.lbl_ann_dir.setPlaceholderText("No directory selected")
+        self.btn_ann_dir = QPushButton("Browse…")
+        ann_dir_row.addWidget(self.lbl_ann_dir)
+        ann_dir_row.addWidget(self.btn_ann_dir)
+        ann_dir_form.addRow("Annotation directory:", ann_dir_row)
+        ann_body_v.addLayout(ann_dir_form)
+
+        self._lbl_ann_status = QLabel("")
+        self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px;")
+        ann_body_v.addWidget(self._lbl_ann_status)
+
+        ann_kw_form = QFormLayout()
+        ann_kw_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self._ann_keyword_edit = QLineEdit()
+        self._ann_keyword_edit.setPlaceholderText("e.g.  drink, artifact")
+        ann_kw_form.addRow("Keywords:", self._ann_keyword_edit)
+        ann_body_v.addLayout(ann_kw_form)
+
+        kw_hint = QLabel("Comma-separated, case-insensitive. Annotations whose labels match will be masked.")
+        kw_hint.setWordWrap(True)
+        kw_hint.setStyleSheet("font-size: 10px; color: #777; padding-left: 4px;")
+        ann_body_v.addWidget(kw_hint)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Match mode:"))
+        self._radio_ann_contains = QRadioButton("Contains")
+        self._radio_ann_exact = QRadioButton("Exact")
+        self._radio_ann_contains.setChecked(True)
+        self._radio_ann_contains.setToolTip("Match any label containing the keyword as a substring")
+        self._radio_ann_exact.setToolTip("Match only labels that equal the keyword exactly")
+        self._ann_mode_group = QButtonGroup(self)
+        self._ann_mode_group.addButton(self._radio_ann_contains, 0)
+        self._ann_mode_group.addButton(self._radio_ann_exact, 1)
+        mode_row.addWidget(self._radio_ann_contains)
+        mode_row.addWidget(self._radio_ann_exact)
+        mode_row.addStretch()
+        ann_body_v.addLayout(mode_row)
+
+        pad_form = QFormLayout()
+        pad_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self._ann_pad_before = QDoubleSpinBox()
+        self._ann_pad_before.setRange(0.0, 3600.0)
+        self._ann_pad_before.setSingleStep(1.0)
+        self._ann_pad_before.setDecimals(1)
+        self._ann_pad_before.setSuffix(" s")
+        self._ann_pad_before.setValue(0.0)
+        self._ann_pad_after = QDoubleSpinBox()
+        self._ann_pad_after.setRange(0.0, 3600.0)
+        self._ann_pad_after.setSingleStep(1.0)
+        self._ann_pad_after.setDecimals(1)
+        self._ann_pad_after.setSuffix(" s")
+        self._ann_pad_after.setValue(10.0)
+        pad_form.addRow("Pad before:", self._ann_pad_before)
+        pad_form.addRow("Pad after:", self._ann_pad_after)
+        ann_body_v.addLayout(pad_form)
+
+        ann_v.addWidget(self._ann_body)
+        root.addWidget(gb_ann)
+
+        # ── Compute Hours (Time of Day Filter) ────────────────────────────────
+        gb_tod = QGroupBox("Compute Hours (Time of Day Filter)")
+        tod_v = QVBoxLayout(gb_tod)
+        self.chk_tod = QCheckBox("Restrict computation to specific hours")
+        tod_v.addWidget(self.chk_tod)
+
+        self._tod_body = QWidget()
+        self._tod_body.setEnabled(False)
+        tod_body_v = QVBoxLayout(self._tod_body)
+        tod_body_v.setContentsMargins(0, 4, 0, 0)
+        tod_body_v.setSpacing(6)
+
+        time_form = QFormLayout()
+        time_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self._tod_start = QTimeEdit()
+        self._tod_start.setDisplayFormat("HH:mm")
+        self._tod_start.setTime(QTime(0, 0))
+        self._tod_end = QTimeEdit()
+        self._tod_end.setDisplayFormat("HH:mm")
+        self._tod_end.setTime(QTime(23, 59))
+        time_form.addRow("Start time:", self._tod_start)
+        time_form.addRow("End time:", self._tod_end)
+        tod_body_v.addLayout(time_form)
+
+        wrap_hint = QLabel(
+            "If end < start the window wraps midnight (e.g. 20:00–08:00 = dark phase)."
+        )
+        wrap_hint.setWordWrap(True)
+        wrap_hint.setStyleSheet("font-size: 10px; color: #777; padding-left: 4px;")
+        tod_body_v.addWidget(wrap_hint)
+
+        day_row = QHBoxLayout()
+        self._radio_tod_all = QRadioButton("All days")
+        self._radio_tod_all.setChecked(True)
+        self._radio_tod_sel = QRadioButton("Specific days:")
+        self._tod_days_edit = QLineEdit()
+        self._tod_days_edit.setPlaceholderText("0,1,2  (0 = recording start date)")
+        self._tod_days_edit.setEnabled(False)
+        day_row.addWidget(self._radio_tod_all)
+        day_row.addWidget(self._radio_tod_sel)
+        day_row.addWidget(self._tod_days_edit, 1)
+        tod_body_v.addLayout(day_row)
+
+        tod_v.addWidget(self._tod_body)
+        root.addWidget(gb_tod)
+
+        # ── Buttons ───────────────────────────────────────────────────────────
+        btn_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btn_box.accepted.connect(self._on_accept)
+        btn_box.rejected.connect(self.reject)
+        root.addWidget(btn_box)
+
+    def _wire(self):
+        self.chk_ann.toggled.connect(lambda checked: self._ann_body.setEnabled(checked))
+        self.chk_ann.toggled.connect(self._refresh_ann_status)
+        self.btn_ann_dir.clicked.connect(self._choose_ann_dir)
+        self._ann_keyword_edit.textChanged.connect(self._refresh_ann_status)
+        self.chk_tod.toggled.connect(lambda checked: self._tod_body.setEnabled(checked))
+        self._radio_tod_all.toggled.connect(
+            lambda checked: self._tod_days_edit.setEnabled(not checked)
+        )
+
+    def _on_accept(self):
+        if self.chk_tod.isChecked() and self._radio_tod_sel.isChecked():
+            raw = self._tod_days_edit.text().strip()
+            try:
+                [int(x) for x in raw.split(",") if x.strip()]
+            except ValueError:
+                QMessageBox.warning(
+                    self, "Invalid Days", "Day indices must be comma-separated integers."
+                )
+                return
+        self.accept()
+
+    def _choose_ann_dir(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self, "Select Annotation Directory", str(self._project_root)
+        )
+        if not path:
+            return
+        self._ann_dir = Path(path)
+        self.lbl_ann_dir.setText(str(self._ann_dir))
+        self._refresh_ann_status()
+
+    def _refresh_ann_status(self) -> None:
+        if not self.chk_ann.isChecked() or self._ann_dir is None:
+            self._lbl_ann_status.setText("")
+            return
+        if not self._ann_dir.is_dir():
+            self._lbl_ann_status.setText("Directory not found")
+            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #c0392b;")
+            return
+        manifest = Manifest.load(self._project_root)
+        animal_ids = [e.animal_id for e in manifest]
+        n_animals = len(animal_ids)
+        n_found = sum(
+            1 for aid in animal_ids
+            if any(self._ann_dir.glob(f"{aid}*.txt")) or any(self._ann_dir.glob(f"{aid}*.csv"))
+        )
+        if n_animals == 0:
+            self._lbl_ann_status.setText("No animals in manifest")
+            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #888;")
+        elif n_found == n_animals:
+            self._lbl_ann_status.setText(f"✓ {n_found} of {n_animals} animals have annotation files")
+            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #2a7a2a;")
+        elif n_found == 0:
+            self._lbl_ann_status.setText(f"No annotation files found for any of the {n_animals} animals")
+            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #c0392b;")
+        else:
+            self._lbl_ann_status.setText(f"⚠ {n_found} of {n_animals} animals have annotation files")
+            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #c77800;")
+
+    def load_params(self, params: dict) -> None:
+        if params.get("swd_mode") == "mask_out" and self._swd_available:
+            self._radio_swd_mask.setChecked(True)
+        else:
+            self._radio_swd_none.setChecked(True)
+        if params.get("ann_dir"):
+            p = Path(params["ann_dir"])
+            if p.is_dir():
+                self._ann_dir = p
+                self.lbl_ann_dir.setText(str(p))
+        if params.get("ann_keywords"):
+            self._ann_keyword_edit.setText(params["ann_keywords"])
+        if params.get("ann_match_mode") == "exact":
+            self._radio_ann_exact.setChecked(True)
+        if "ann_pad_before" in params:
+            self._ann_pad_before.setValue(params["ann_pad_before"])
+        if "ann_pad_after" in params:
+            self._ann_pad_after.setValue(params["ann_pad_after"])
+        if params.get("ann_enabled"):
+            self.chk_ann.setChecked(True)
+            self._refresh_ann_status()
+        if params.get("time_filter_enabled"):
+            self.chk_tod.setChecked(True)
+        if params.get("tod_start"):
+            h, m = (int(x) for x in params["tod_start"].split(":"))
+            self._tod_start.setTime(QTime(h, m))
+        if params.get("tod_end"):
+            h, m = (int(x) for x in params["tod_end"].split(":"))
+            self._tod_end.setTime(QTime(h, m))
+        if params.get("time_filter_days") is not None:
+            self._radio_tod_sel.setChecked(True)
+            self._tod_days_edit.setText(",".join(str(d) for d in params["time_filter_days"]))
+
+    def get_params(self) -> dict:
+        params = {
+            "swd_mode": "mask_out" if self._radio_swd_mask.isChecked() else "none",
+            "ann_enabled": self.chk_ann.isChecked(),
+            "ann_dir": self._ann_dir,
+            "ann_keywords": self._ann_keyword_edit.text().strip(),
+            "ann_match_mode": "exact" if self._radio_ann_exact.isChecked() else "contains",
+            "ann_pad_before": self._ann_pad_before.value(),
+            "ann_pad_after": self._ann_pad_after.value(),
+            "time_filter_enabled": self.chk_tod.isChecked(),
+            "tod_start": self._tod_start.time().toString("HH:mm") if self.chk_tod.isChecked() else None,
+            "tod_end": self._tod_end.time().toString("HH:mm") if self.chk_tod.isChecked() else None,
+            "time_filter_days": None,
+        }
+        if self.chk_tod.isChecked() and self._radio_tod_sel.isChecked():
+            raw = self._tod_days_edit.text().strip()
+            params["time_filter_days"] = [int(x) for x in raw.split(",") if x.strip()]
+        return params
+
+
 class PSDPage(QWidget):
 
     manifest_changed = pyqtSignal()
@@ -37,11 +323,14 @@ class PSDPage(QWidget):
         super().__init__(parent)
         self.project_root = Path(project_root)
         self.standard_folder: Optional[Path] = None
-        self._ann_dir: Optional[Path] = None
         self._computing = False
+        self._masking_params: dict = {}
+        self._swd_available: bool = False
+        self._swd_status_text: str = ""
 
         self._build_ui()
         self._wire()
+        self._update_masking_summary()
         self._refresh_standard_folder()
         self._refresh_combo_table()
         self._refresh_swd_status()
@@ -56,7 +345,18 @@ class PSDPage(QWidget):
     # ---------------- UI ----------------
 
     def _build_ui(self):
-        root = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        outer.addWidget(scroll)
+
+        content = QWidget()
+        scroll.setWidget(content)
+        root = QVBoxLayout(content)
+        root.setContentsMargins(8, 8, 8, 8)
 
         lbl = QLabel("PSD Computation")
         lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
@@ -128,116 +428,29 @@ class PSDPage(QWidget):
 
         root.addWidget(self.combo_gb)
 
-        # ----- Group 3: SWD Masks -----
-        self.gb_swd = QGroupBox("SWD Masks")
-        self.gb_swd.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        swd_v = QVBoxLayout(self.gb_swd)
-
-        self._swd_btn_group = QButtonGroup(self)
-        self._radio_swd_none = QRadioButton("No SWD mask")
-        self._radio_swd_none.setChecked(True)
-        self._radio_swd_mask = QRadioButton("Mask out SWDs")
-        self._swd_btn_group.addButton(self._radio_swd_none, 0)
-        self._swd_btn_group.addButton(self._radio_swd_mask, 1)
-        swd_v.addWidget(self._radio_swd_none)
-        swd_v.addWidget(self._radio_swd_mask)
-
-        swd_hint = QLabel(
-            "To use SWD masking, place one .mat file of SWD timestamps per animal in a swd/ folder "
-            "in the project root (e.g. project/swd/AnimalID_*.mat)."
+        # ----- Masking & Filtering summary bar -----
+        masking_bar = QFrame()
+        masking_bar.setFrameShape(QFrame.Shape.StyledPanel)
+        masking_bar.setStyleSheet(
+            "QFrame { background: #f7f7f7; border: 1px solid #d0d0d0; border-radius: 3px; }"
         )
-        swd_hint.setWordWrap(True)
-        swd_hint.setStyleSheet("font-size: 10px; color: #777; padding-left: 4px; padding-top: 2px;")
-        swd_v.addWidget(swd_hint)
+        masking_bar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        bar_layout = QHBoxLayout(masking_bar)
+        bar_layout.setContentsMargins(10, 6, 6, 6)
 
-        self._lbl_swd_status = QLabel("")
-        self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px;")
-        swd_v.addWidget(self._lbl_swd_status)
+        lbl_masking_hdr = QLabel("Masking & Filtering:")
+        lbl_masking_hdr.setStyleSheet("font-size: 11px; color: #444;")
+        bar_layout.addWidget(lbl_masking_hdr)
 
-        root.addWidget(self.gb_swd)
+        self._masking_summary_lbl = QLabel()
+        self._masking_summary_lbl.setStyleSheet("font-size: 11px;")
+        bar_layout.addWidget(self._masking_summary_lbl, 1)
 
-        # ----- Group 4: Annotation Mask -----
-        self.gb_ann = QGroupBox("Annotation Mask")
-        self.gb_ann.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        ann_v = QVBoxLayout(self.gb_ann)
+        self._btn_configure_masking = QPushButton("Configure…")
+        self._btn_configure_masking.setFixedWidth(90)
+        bar_layout.addWidget(self._btn_configure_masking)
 
-        self.chk_ann = QCheckBox("Apply annotation mask")
-        ann_v.addWidget(self.chk_ann)
-
-        # Body — everything inside is enabled/disabled as a unit via setEnabled
-        self._ann_body = QWidget()
-        ann_body_v = QVBoxLayout(self._ann_body)
-        ann_body_v.setContentsMargins(0, 4, 0, 0)
-        ann_body_v.setSpacing(6)
-        self._ann_body.setEnabled(False)
-
-        # Directory picker
-        ann_dir_form = QFormLayout()
-        ann_dir_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        ann_dir_row = QHBoxLayout()
-        self.lbl_ann_dir = QLineEdit()
-        self.lbl_ann_dir.setReadOnly(True)
-        self.lbl_ann_dir.setPlaceholderText("No directory selected")
-        self.btn_ann_dir = QPushButton("Browse…")
-        ann_dir_row.addWidget(self.lbl_ann_dir)
-        ann_dir_row.addWidget(self.btn_ann_dir)
-        ann_dir_form.addRow("Annotation directory:", ann_dir_row)
-        ann_body_v.addLayout(ann_dir_form)
-
-        self._lbl_ann_status = QLabel("")
-        self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px;")
-        ann_body_v.addWidget(self._lbl_ann_status)
-
-        # Keywords
-        ann_kw_form = QFormLayout()
-        ann_kw_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        self._ann_keyword_edit = QLineEdit()
-        self._ann_keyword_edit.setPlaceholderText("e.g.  drink, artifact")
-        ann_kw_form.addRow("Keywords:", self._ann_keyword_edit)
-        ann_body_v.addLayout(ann_kw_form)
-
-        kw_hint = QLabel("Comma-separated, case-insensitive. Annotations whose labels match will be masked.")
-        kw_hint.setWordWrap(True)
-        kw_hint.setStyleSheet("font-size: 10px; color: #777; padding-left: 4px;")
-        ann_body_v.addWidget(kw_hint)
-
-        # Match mode
-        mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel("Match mode:"))
-        self._radio_ann_contains = QRadioButton("Contains")
-        self._radio_ann_exact = QRadioButton("Exact")
-        self._radio_ann_contains.setChecked(True)
-        self._radio_ann_contains.setToolTip("Match any label containing the keyword as a substring")
-        self._radio_ann_exact.setToolTip("Match only labels that equal the keyword exactly")
-        self._ann_mode_group = QButtonGroup(self)
-        self._ann_mode_group.addButton(self._radio_ann_contains, 0)
-        self._ann_mode_group.addButton(self._radio_ann_exact, 1)
-        mode_row.addWidget(self._radio_ann_contains)
-        mode_row.addWidget(self._radio_ann_exact)
-        mode_row.addStretch()
-        ann_body_v.addLayout(mode_row)
-
-        # Padding
-        pad_form = QFormLayout()
-        pad_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        self._ann_pad_before = QDoubleSpinBox()
-        self._ann_pad_before.setRange(0.0, 3600.0)
-        self._ann_pad_before.setSingleStep(1.0)
-        self._ann_pad_before.setDecimals(1)
-        self._ann_pad_before.setSuffix(" s")
-        self._ann_pad_before.setValue(0.0)
-        self._ann_pad_after = QDoubleSpinBox()
-        self._ann_pad_after.setRange(0.0, 3600.0)
-        self._ann_pad_after.setSingleStep(1.0)
-        self._ann_pad_after.setDecimals(1)
-        self._ann_pad_after.setSuffix(" s")
-        self._ann_pad_after.setValue(10.0)
-        pad_form.addRow("Pad before:", self._ann_pad_before)
-        pad_form.addRow("Pad after:", self._ann_pad_after)
-        ann_body_v.addLayout(pad_form)
-
-        ann_v.addWidget(self._ann_body)
-        root.addWidget(self.gb_ann)
+        root.addWidget(masking_bar)
 
         # ----- Collapsible: Advanced PSD Settings -----
         self._btn_adv = QToolButton()
@@ -366,6 +579,7 @@ class PSDPage(QWidget):
         self.log_box = QPlainTextEdit()
         self.log_box.setReadOnly(True)
         self.log_box.setMaximumBlockCount(300)
+        self.log_box.setMinimumHeight(140)
         self.log_box.setPlaceholderText("Status messages will appear here...")
         root.addWidget(self.log_box)
 
@@ -392,16 +606,13 @@ class PSDPage(QWidget):
         self.gb_psd.setObjectName("psdBox")
         self.gb_spindle.setObjectName("spindleBox")
         self.gb_mask.setObjectName("maskBox")
-        self.gb_swd.setObjectName("swdBox")
-        self.gb_ann.setObjectName("annBox")
         self.setStyleSheet("""
         QGroupBox#psdBox, QGroupBox#spindleBox, QGroupBox#maskBox,
-        QGroupBox#folderBox, QGroupBox#comboBox, QGroupBox#swdBox, QGroupBox#annBox {
+        QGroupBox#folderBox, QGroupBox#comboBox {
             font: 550;
         }
         QGroupBox#psdBox *, QGroupBox#spindleBox *, QGroupBox#maskBox *,
-        QGroupBox#folderBox *, QGroupBox#comboBox *, QGroupBox#swdBox *,
-        QGroupBox#annBox * {
+        QGroupBox#folderBox *, QGroupBox#comboBox * {
             font: 400;
         }
         """)
@@ -413,11 +624,8 @@ class PSDPage(QWidget):
         self.btn_standard.clicked.connect(self._choose_standard_folder)
         self.btn_refresh_table.clicked.connect(self._refresh_combo_table)
         self.btn_run_pipeline.clicked.connect(self._run_pipeline_clicked)
-        self._swd_btn_group.buttonToggled.connect(lambda *_: self._validate())
         self._btn_adv.clicked.connect(self._toggle_advanced)
-        self.chk_ann.toggled.connect(self._on_ann_toggled)
-        self.btn_ann_dir.clicked.connect(self._choose_ann_dir)
-        self._ann_keyword_edit.textChanged.connect(self._validate)
+        self._btn_configure_masking.clicked.connect(self._open_masking_dialog)
 
     def _toggle_advanced(self, checked: bool):
         self._adv_container.setVisible(checked)
@@ -441,80 +649,71 @@ class PSDPage(QWidget):
         self.target_name_edit.setText(str(self.project_root / "psd"))
 
 
-    def _on_ann_toggled(self, checked: bool) -> None:
-        self._ann_body.setEnabled(checked)
-        self._validate()
-
-    def _choose_ann_dir(self) -> None:
-        path = QFileDialog.getExistingDirectory(
-            self, "Select Annotation Directory", str(self.project_root)
-        )
-        if not path:
-            return
-        self._ann_dir = Path(path)
-        self.lbl_ann_dir.setText(str(self._ann_dir))
-        self._refresh_ann_status()
-
-    def _refresh_ann_status(self) -> None:
-        if not self.chk_ann.isChecked() or self._ann_dir is None:
-            self._lbl_ann_status.setText("")
-            return
-        if not self._ann_dir.is_dir():
-            self._lbl_ann_status.setText("Directory not found")
-            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #c0392b;")
-            self._validate()
-            return
-        manifest = Manifest.load(self.project_root)
-        animal_ids = [e.animal_id for e in manifest]
-        n_animals = len(animal_ids)
-        n_found = sum(
-            1 for aid in animal_ids
-            if any(self._ann_dir.glob(f"{aid}*.txt")) or any(self._ann_dir.glob(f"{aid}*.csv"))
-        )
-        if n_animals == 0:
-            self._lbl_ann_status.setText("No animals in manifest")
-            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #888;")
-        elif n_found == n_animals:
-            self._lbl_ann_status.setText(f"✓ {n_found} of {n_animals} animals have annotation files")
-            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #2a7a2a;")
-        elif n_found == 0:
-            self._lbl_ann_status.setText(f"No annotation files found for any of the {n_animals} animals")
-            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #c0392b;")
-        else:
-            self._lbl_ann_status.setText(f"⚠ {n_found} of {n_animals} animals have annotation files")
-            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #c77800;")
-        self._validate()
-
     def _refresh_swd_status(self):
         swd_dir = self.project_root / "swd"
         if not swd_dir.is_dir():
-            self._lbl_swd_status.setText("swd/ not found in project root")
-            self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #888;")
-            self._radio_swd_mask.setEnabled(False)
+            self._swd_available = False
+            self._swd_status_text = "swd/ not found in project root"
         else:
             mat_count = sum(1 for _ in swd_dir.glob("*.mat"))
             if mat_count == 0:
-                self._lbl_swd_status.setText("swd/ found — no .mat files")
-                self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #c77800;")
-                self._radio_swd_mask.setEnabled(False)
+                self._swd_available = False
+                self._swd_status_text = "swd/ found — no .mat files"
             else:
                 n_animals = sum(1 for _ in Manifest.load(self.project_root))
                 if n_animals > 0 and mat_count != n_animals:
-                    self._lbl_swd_status.setText(
+                    self._swd_status_text = (
                         f"⚠ {mat_count} .mat {'file' if mat_count == 1 else 'files'} in swd/ "
                         f"(expected {n_animals})"
                     )
-                    self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #c0392b;")
                 else:
-                    self._lbl_swd_status.setText(
+                    self._swd_status_text = (
                         f"✓ {mat_count} .mat {'file' if mat_count == 1 else 'files'} in swd/"
                     )
-                    self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #2a7a2a;")
-                self._radio_swd_mask.setEnabled(True)
-        # If mask mode was selected but is no longer available, fall back to none
-        if not self._radio_swd_mask.isEnabled() and self._radio_swd_mask.isChecked():
-            self._radio_swd_none.setChecked(True)
+                self._swd_available = True
+        # If SWD mask was selected but is no longer available, fall back to none
+        if not self._swd_available and self._masking_params.get("swd_mode") == "mask_out":
+            self._masking_params["swd_mode"] = "none"
+            self._update_masking_summary()
         self._validate()
+
+    def _open_masking_dialog(self):
+        dlg = MaskingSettingsDialog(
+            self,
+            swd_available=self._swd_available,
+            swd_status_text=self._swd_status_text,
+            project_root=self.project_root,
+        )
+        dlg.load_params(self._masking_params)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._masking_params = dlg.get_params()
+            self._update_masking_summary()
+            self._validate()
+
+    def _update_masking_summary(self):
+        p = self._masking_params
+        parts = []
+
+        if p.get("swd_mode") == "mask_out":
+            parts.append('<span style="color:#1a6b1a">SWD: masked ✓</span>')
+        else:
+            parts.append('<span style="color:#888">SWD: off</span>')
+
+        if p.get("ann_enabled"):
+            kw = p.get("ann_keywords", "")
+            short = (kw[:14] + "…") if len(kw) > 14 else kw
+            parts.append(f'<span style="color:#1a6b1a">Annotation: &quot;{short}&quot; ✓</span>')
+        else:
+            parts.append('<span style="color:#888">Annotation: off</span>')
+
+        if p.get("time_filter_enabled"):
+            start = p.get("tod_start", "?")
+            end = p.get("tod_end", "?")
+            parts.append(f'<span style="color:#1a5c8a">Hours: {start}–{end} ✓</span>')
+        else:
+            parts.append('<span style="color:#888">Hours: off</span>')
+
+        self._masking_summary_lbl.setText("  ·  ".join(parts))
 
     def _load_saved_params(self):
 
@@ -538,24 +737,20 @@ class PSDPage(QWidget):
             self.chk_all.blockSignals(True)
             self.chk_all.setChecked(all_checked)
             self.chk_all.blockSignals(False)
-        if params.get("swd_mode") == "mask_out" and self._radio_swd_mask.isEnabled():
-            self._radio_swd_mask.setChecked(True)
-        if params.get("ann_dir"):
-            p = Path(params["ann_dir"])
-            if p.is_dir():
-                self._ann_dir = p
-                self.lbl_ann_dir.setText(str(p))
-        if params.get("ann_keywords"):
-            self._ann_keyword_edit.setText(params["ann_keywords"])
-        if params.get("ann_match_mode") == "exact":
-            self._radio_ann_exact.setChecked(True)
-        if "ann_pad_before" in params:
-            self._ann_pad_before.setValue(params["ann_pad_before"])
-        if "ann_pad_after" in params:
-            self._ann_pad_after.setValue(params["ann_pad_after"])
-        if params.get("ann_enabled"):
-            self.chk_ann.setChecked(True)
-            self._refresh_ann_status()
+        self._masking_params = {
+            "swd_mode": params.get("swd_mode", "none"),
+            "ann_enabled": bool(params.get("ann_enabled", False)),
+            "ann_dir": Path(params["ann_dir"]) if params.get("ann_dir") else None,
+            "ann_keywords": params.get("ann_keywords", ""),
+            "ann_match_mode": params.get("ann_match_mode", "contains"),
+            "ann_pad_before": params.get("ann_pad_before", 0.0),
+            "ann_pad_after": params.get("ann_pad_after", 10.0),
+            "time_filter_enabled": bool(params.get("time_filter_enabled", False)),
+            "tod_start": params.get("tod_start"),
+            "tod_end": params.get("tod_end"),
+            "time_filter_days": params.get("time_filter_days"),
+        }
+        self._update_masking_summary()
 
     def _refresh_combo_table(self):
 
@@ -655,7 +850,7 @@ class PSDPage(QWidget):
 
         # Pre-flight: SWD mask — all ok animals must have a .mat file
         swd_dir: Optional[Path] = None
-        if self._radio_swd_mask.isChecked():
+        if self._masking_params.get("swd_mode") == "mask_out":
             swd_dir = self.project_root / "swd"
             swd_animal_ids = {p.stem.split("_")[0] for p in swd_dir.glob("*.mat")}
             all_ok_animals = {
@@ -692,15 +887,25 @@ class PSDPage(QWidget):
             "noise_thresh": float(self.dspin_noise.value()),
         }
 
+        mp = self._masking_params
         ann_params = None
-        if self.chk_ann.isChecked() and self._ann_dir is not None:
+        if mp.get("ann_enabled") and mp.get("ann_dir") is not None:
+            ann_dir = mp["ann_dir"]
             ann_params = {
-                "ann_dir": self._ann_dir,
-                "keywords": [k.strip() for k in self._ann_keyword_edit.text().split(",") if k.strip()],
-                "match_mode": "exact" if self._radio_ann_exact.isChecked() else "contains",
-                "pad_before_sec": self._ann_pad_before.value(),
-                "pad_after_sec": self._ann_pad_after.value(),
+                "ann_dir": ann_dir,
+                "keywords": [k.strip() for k in mp.get("ann_keywords", "").split(",") if k.strip()],
+                "match_mode": mp.get("ann_match_mode", "contains"),
+                "pad_before_sec": mp.get("ann_pad_before", 0.0),
+                "pad_after_sec": mp.get("ann_pad_after", 10.0),
             }
+
+        if mp.get("time_filter_enabled"):
+            params["tod_start"] = mp.get("tod_start")
+            params["tod_end"] = mp.get("tod_end")
+            params["time_filter_days"] = mp.get("time_filter_days")
+            params["time_filter_enabled"] = True
+        else:
+            params["time_filter_enabled"] = False
 
         self._computing = True
         self.btn_run_pipeline.setEnabled(False)
@@ -788,10 +993,11 @@ class PSDPage(QWidget):
 
         # Annotation mask gate
         ann_ok = True
-        if self.chk_ann.isChecked():
-            if self._ann_dir is None or not self._ann_dir.is_dir():
+        if self._masking_params.get("ann_enabled"):
+            ann_dir = self._masking_params.get("ann_dir")
+            if ann_dir is None or not Path(ann_dir).is_dir():
                 ann_ok = False
-            elif not self._ann_keyword_edit.text().strip():
+            elif not self._masking_params.get("ann_keywords", "").strip():
                 ann_ok = False
 
         self.btn_run_pipeline.setEnabled(has_standard and all_ready and has_combos and ann_ok)
@@ -813,7 +1019,8 @@ class PSDPage(QWidget):
             self._gate_label.setText("No spindle output combos found — complete upload/download first")
             self._summary_label.setText("")
         elif not ann_ok:
-            if self._ann_dir is None or not self._ann_dir.is_dir():
+            ann_dir = self._masking_params.get("ann_dir")
+            if ann_dir is None or not Path(ann_dir).is_dir():
                 self._gate_label.setText("Annotation mask enabled — select a valid annotation directory")
             else:
                 self._gate_label.setText("Annotation mask enabled — enter at least one keyword")
@@ -899,6 +1106,11 @@ class BatchEstimateWorker(QObject):
 
             swd_mode = "mask_out" if self.swd_dir is not None else "none"
             saved = {**self.params, "swd_mode": swd_mode}
+            saved["time_filter_enabled"] = self.params.get("time_filter_enabled", False)
+            if self.params.get("time_filter_enabled"):
+                saved["tod_start"] = self.params.get("tod_start")
+                saved["tod_end"] = self.params.get("tod_end")
+                saved["time_filter_days"] = self.params.get("time_filter_days")
             if self.ann_params is not None:
                 saved.update({
                     "ann_enabled": True,

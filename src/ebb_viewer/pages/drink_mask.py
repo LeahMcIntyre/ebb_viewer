@@ -114,6 +114,9 @@ class DrinkMaskPage(QWidget):
             self._param_labels[key] = lbl
             params_form.addRow(display + ":", lbl)
 
+        self._lbl_compute_hours = QLabel("—")
+        params_form.addRow("Compute hours:", self._lbl_compute_hours)
+
         root.addWidget(self.gb_params)
 
         # ----- Group 3: Animals pending drink mask -----
@@ -256,6 +259,8 @@ class DrinkMaskPage(QWidget):
             for lbl in self._param_labels.values():
                 lbl.setText("— (run Compute PSDs first)")
                 lbl.setStyleSheet("color: gray;")
+            self._lbl_compute_hours.setText("— (run Compute PSDs first)")
+            self._lbl_compute_hours.setStyleSheet("color: gray;")
             return
         for key, lbl in self._param_labels.items():
             lbl.setStyleSheet("")
@@ -264,6 +269,17 @@ class DrinkMaskPage(QWidget):
                 lbl.setText(", ".join(names) if names else "—")
             else:
                 lbl.setText(str(params.get(key, "—")))
+
+        if params.get("time_filter_enabled"):
+            start = params.get("tod_start", "?")
+            end = params.get("tod_end", "?")
+            days = params.get("time_filter_days")
+            day_str = "all days" if days is None else f"days {', '.join(str(d) for d in days)}"
+            self._lbl_compute_hours.setText(f"{start}–{end}  ({day_str})")
+            self._lbl_compute_hours.setStyleSheet("color: #1a5c8a; font-weight: bold;")
+        else:
+            self._lbl_compute_hours.setText("off (all hours included)")
+            self._lbl_compute_hours.setStyleSheet("color: gray;")
 
     def _refresh_animals(self):
         from ebb_viewer.pipeline.manifest import Manifest

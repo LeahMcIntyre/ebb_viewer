@@ -1,3 +1,4 @@
+from datetime import datetime, time as dtime, timedelta
 from pathlib import Path
 from typing import List, Optional, Tuple, Union, Iterable
 
@@ -139,6 +140,72 @@ def swd(path: Union[str, Path],
     swd_mask = _intervals_to_bool_false(iv, n_samples)
 
     return swd_mask
+
+def time_of_day_mask(
+    start_datetime: datetime,
+    n_samples: int,
+    fs: float,
+    tod_start: dtime,
+    tod_end: dtime,
+    selected_days: Optional[List[int]] = None,
+) -> np.ndarray:
+    """Return a boolean mask (True = keep) for samples within the given
+    time-of-day window.  Wraps midnight when tod_end < tod_start.
+
+    Args:
+        start_datetime:
+            Datetime of the first sample in the recording.
+        n_samples:
+            Total number of samples in the recording.
+        fs:
+            Sampling rate in Hz.
+        tod_start:
+            Start of the keep window (clock time).
+        tod_end:
+            End of the keep window (clock time).  If tod_end < tod_start,
+            the window wraps midnight (e.g. 20:00–08:00 = dark phase).
+        selected_days:
+            0-based day indices (relative to the recording start date) to
+            include.  None = all days.
+
+    Returns:
+        A 1-D boolean array where samples inside the window are True.
+    """
+    duration_s = n_samples / fs
+    wraps = tod_end < tod_start
+    intervals = []
+    d = 0
+    while True:
+        day_date = start_datetime.date() + timedelta(days=d)
+        earliest = datetime.combine(day_date, tod_start)
+        if (earliest - start_datetime).total_seconds() > duration_s:
+            break
+
+        if selected_days is None or d in selected_days:
+            if not wraps:
+                win_start = datetime.combine(day_date, tod_start)
+                win_end = datetime.combine(day_date, tod_end)
+            else:
+                win_start = datetime.combine(day_date, tod_start)
+                win_end = datetime.combine(day_date + timedelta(days=1), tod_end)
+            intervals.append((
+                (win_start - start_datetime).total_seconds(),
+                (win_end - start_datetime).total_seconds(),
+            ))
+        d += 1
+
+    if not intervals:
+        return np.zeros(n_samples, dtype=bool)
+
+    iv = _seconds_to_intervals(np.array(intervals), fs, n_samples)
+    if iv.size == 0:
+        return np.zeros(n_samples, dtype=bool)
+
+    mask = np.zeros(n_samples, dtype=bool)
+    for s, e in iv:
+        mask[s:e] = True
+    return mask
+
 
 def _normalize_intervals(iv: np.ndarray, n: int) -> np.ndarray:
     """Clip to [0,n], drop empty, sort, and merge touching/overlapping intervals."""

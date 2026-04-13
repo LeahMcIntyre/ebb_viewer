@@ -75,6 +75,9 @@ def estimate_psd(
     ann_match_mode: str = "contains",
     ann_pad_before_sec: float = 0.0,
     ann_pad_after_sec: float = 0.0,
+    tod_start: Optional[str] = None,
+    tod_end: Optional[str] = None,
+    time_filter_days: Optional[List[int]] = None,
     **kwargs,
 ) -> List[PSDResult]:
     """
@@ -193,8 +196,25 @@ def estimate_psd(
         else:
             ann_mask = np.ones(n_samples, dtype=bool)
 
+        # Build time-of-day mask if requested
+        if tod_start is not None and tod_end is not None:
+            from datetime import datetime, time as dtime
+            start_str = reader.header.start_time   # "HH.MM.SS"
+            date_str  = reader.header.start_date   # "DD.MM.YY"
+            start_dt  = datetime.strptime(f"{date_str} {start_str}", "%d.%m.%y %H.%M.%S")
+            h0, m0 = (int(x) for x in tod_start.split(":"))
+            h1, m1 = (int(x) for x in tod_end.split(":"))
+            tod_mask = masking.time_of_day_mask(
+                start_dt, n_samples, fs,
+                tod_start=dtime(h0, m0),
+                tod_end=dtime(h1, m1),
+                selected_days=time_filter_days,
+            )
+        else:
+            tod_mask = np.ones(n_samples, dtype=bool)
+
         #Combine all artifact masks
-        artifact_mask = comm_mask & spindle_mask & swd_mask & drink_mask & ann_mask
+        artifact_mask = comm_mask & spindle_mask & swd_mask & drink_mask & ann_mask & tod_mask
 
 
         metamask = metastores.MetaMask(threshold=artifact_mask, **state_masks)
@@ -367,7 +387,7 @@ def batch_estimate(
     warnings.filterwarnings("ignore", category=ResourceWarning)
 
     # remove path arguments and UI-only keys that must not reach estimate_psd
-    [kwargs.pop(x, None) for x in ('path', 'state_path', 'swd_mode', 'ann_enabled')]
+    [kwargs.pop(x, None) for x in ('path', 'state_path', 'swd_mode', 'ann_enabled', 'time_filter_enabled')]
 
     # unpack annotation params
     ann_keywords = ann_match_mode = ann_pad_before = ann_pad_after = None
@@ -580,7 +600,7 @@ def rerun_with_drink_masks(
 
     tracemalloc.start()
     warnings.filterwarnings("ignore", category=ResourceWarning)
-    [kwargs.pop(x, None) for x in ("path", "state_path")]
+    [kwargs.pop(x, None) for x in ("path", "state_path", "time_filter_enabled")]
     if offset_path is not None:
         kwargs["offset_path"] = offset_path
 
