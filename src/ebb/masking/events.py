@@ -141,6 +141,72 @@ def swd(path: Union[str, Path],
 
     return swd_mask
 
+def hour_window_mask(
+    recording_start: datetime,
+    n_samples: int,
+    fs: float,
+    hour_windows: List[Tuple[float, float]],
+    selected_days: Optional[List[int]] = None,
+) -> Tuple[npt.NDArray[np.bool_], List[Tuple[datetime, datetime]]]:
+    """Return (bool_mask, used_windows) for samples within any of the given hour windows.
+
+    hour_windows is a list of (hour_start, hour_end) pairs in decimal hours (e.g. 10.0, 12.0).
+    Windows must not overlap. When hour_end < hour_start the window wraps midnight
+    (e.g. (20.0, 6.0) = dark phase).
+
+    used_windows is a flat list of (actual_start, actual_end) datetime pairs across all
+    windows and calendar days, sorted by start time. Partial windows appear naturally:
+    their start or end will differ from the requested hours when clipped by the recording
+    boundaries.
+
+    Args:
+        recording_start: Datetime of the first sample.
+        n_samples:       Total number of samples in the recording.
+        fs:              Sampling rate in Hz.
+        hour_windows:    List of (hour_start, hour_end) pairs.
+        selected_days:   0-based calendar-day indices to include; None = all days.
+
+    Returns:
+        mask:         1-D boolean array where samples inside any window are True.
+        used_windows: List of (actual_start, actual_end) datetimes, sorted by start.
+    """
+    recording_end = recording_start + timedelta(seconds=n_samples / fs)
+    midnight0 = recording_start.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    all_intervals_s: List[Tuple[float, float]] = []
+    all_used_windows: List[Tuple[datetime, datetime]] = []
+
+    for hour_start, hour_end in hour_windows:
+        wraps = hour_end < hour_start
+        d = 0
+        while True:
+            req_start = midnight0 + timedelta(days=d,         seconds=hour_start * 3600)
+            req_end   = midnight0 + timedelta(days=d + wraps, seconds=hour_end   * 3600)
+            if req_start >= recording_end:
+                break
+            if req_end > recording_start:
+                if selected_days is None or d in selected_days:
+                    actual_start = max(req_start, recording_start)
+                    actual_end   = min(req_end,   recording_end)
+                    if actual_start < actual_end:
+                        all_used_windows.append((actual_start, actual_end))
+                        all_intervals_s.append((
+                            (actual_start - recording_start).total_seconds(),
+                            (actual_end   - recording_start).total_seconds(),
+                        ))
+            d += 1
+
+    if not all_intervals_s:
+        return np.zeros(n_samples, dtype=bool), []
+
+    all_used_windows.sort(key=lambda w: w[0])
+    iv = _seconds_to_intervals(np.array(all_intervals_s), fs, n_samples)
+    mask = np.zeros(n_samples, dtype=bool)
+    for s, e in iv:
+        mask[s:e] = True
+    return mask, all_used_windows
+
+
 def time_of_day_mask(
     start_datetime: datetime,
     n_samples: int,

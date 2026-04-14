@@ -40,6 +40,7 @@ class MaskingSettingsDialog(QDialog):
         self._swd_available = swd_available
         self._swd_status_text = swd_status_text
         self._ann_dir: Optional[Path] = None
+        self._hw_recordings: Optional[List[Tuple]] = None  # cached [(rec_start, n_samples), ...]
         self._build_ui()
         self._wire()
 
@@ -147,51 +148,69 @@ class MaskingSettingsDialog(QDialog):
         ann_v.addWidget(self._ann_body)
         root.addWidget(gb_ann)
 
-        # ── Compute Hours (Time of Day Filter) ────────────────────────────────
-        gb_tod = QGroupBox("Compute Hours (Time of Day Filter)")
-        tod_v = QVBoxLayout(gb_tod)
-        self.chk_tod = QCheckBox("Restrict computation to specific hours")
-        tod_v.addWidget(self.chk_tod)
+        # ── Compute Hours ─────────────────────────────────────────────────────
+        gb_hw = QGroupBox("Compute Hours")
+        hw_v = QVBoxLayout(gb_hw)
+        self.chk_hour_window = QCheckBox("Restrict to clock-time window")
+        hw_v.addWidget(self.chk_hour_window)
 
-        self._tod_body = QWidget()
-        self._tod_body.setEnabled(False)
-        tod_body_v = QVBoxLayout(self._tod_body)
-        tod_body_v.setContentsMargins(0, 4, 0, 0)
-        tod_body_v.setSpacing(6)
+        self._hw_body = QWidget()
+        self._hw_body.setEnabled(False)
+        hw_body_v = QVBoxLayout(self._hw_body)
+        hw_body_v.setContentsMargins(0, 4, 0, 0)
+        hw_body_v.setSpacing(6)
 
-        time_form = QFormLayout()
-        time_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        self._tod_start = QTimeEdit()
-        self._tod_start.setDisplayFormat("HH:mm")
-        self._tod_start.setTime(QTime(0, 0))
-        self._tod_end = QTimeEdit()
-        self._tod_end.setDisplayFormat("HH:mm")
-        self._tod_end.setTime(QTime(23, 59))
-        time_form.addRow("Start time:", self._tod_start)
-        time_form.addRow("End time:", self._tod_end)
-        tod_body_v.addLayout(time_form)
+        # defined-windows list
+        self._hw_windows_widget = QWidget()
+        self._hw_windows_layout = QVBoxLayout(self._hw_windows_widget)
+        self._hw_windows_layout.setContentsMargins(0, 0, 0, 0)
+        self._hw_windows_layout.setSpacing(2)
+        hw_body_v.addWidget(self._hw_windows_widget)
 
-        wrap_hint = QLabel(
-            "If end < start the window wraps midnight (e.g. 20:00–08:00 = dark phase)."
-        )
+        # add-row
+        add_row = QHBoxLayout()
+        self.spin_add_start = QSpinBox()
+        self.spin_add_start.setRange(0, 23)
+        self.spin_add_start.setSuffix(" h")
+        self.spin_add_end = QSpinBox()
+        self.spin_add_end.setRange(0, 23)
+        self.spin_add_end.setSuffix(" h")
+        self.spin_add_end.setValue(1)
+        self.btn_add_window = QPushButton("Add")
+        self.btn_add_window.setFixedWidth(48)
+        add_row.addWidget(self.spin_add_start)
+        add_row.addWidget(QLabel("–"))
+        add_row.addWidget(self.spin_add_end)
+        add_row.addWidget(self.btn_add_window)
+        add_row.addStretch()
+        hw_body_v.addLayout(add_row)
+
+        wrap_hint = QLabel("If end < start the window wraps midnight (e.g. 20–6 = dark phase).")
         wrap_hint.setWordWrap(True)
         wrap_hint.setStyleSheet("font-size: 10px; color: #777; padding-left: 4px;")
-        tod_body_v.addWidget(wrap_hint)
+        hw_body_v.addWidget(wrap_hint)
 
-        day_row = QHBoxLayout()
-        self._radio_tod_all = QRadioButton("All days")
-        self._radio_tod_all.setChecked(True)
-        self._radio_tod_sel = QRadioButton("Specific days:")
-        self._tod_days_edit = QLineEdit()
-        self._tod_days_edit.setPlaceholderText("0,1,2  (0 = recording start date)")
-        self._tod_days_edit.setEnabled(False)
-        day_row.addWidget(self._radio_tod_all)
-        day_row.addWidget(self._radio_tod_sel)
-        day_row.addWidget(self._tod_days_edit, 1)
-        tod_body_v.addLayout(day_row)
+        day_mode_row = QHBoxLayout()
+        self._radio_hw_all = QRadioButton("All days")
+        self._radio_hw_all.setChecked(True)
+        self._radio_hw_sel = QRadioButton("Specific days:")
+        self._hw_day_group = QButtonGroup(self)
+        self._hw_day_group.addButton(self._radio_hw_all, 0)
+        self._hw_day_group.addButton(self._radio_hw_sel, 1)
+        self._hw_days_edit = QLineEdit()
+        self._hw_days_edit.setPlaceholderText("0,1,2  (0 = recording start date)")
+        self._hw_days_edit.setEnabled(False)
+        day_mode_row.addWidget(self._radio_hw_all)
+        day_mode_row.addWidget(self._radio_hw_sel)
+        day_mode_row.addWidget(self._hw_days_edit, 1)
+        hw_body_v.addLayout(day_mode_row)
 
-        tod_v.addWidget(self._tod_body)
-        root.addWidget(gb_tod)
+        self._hw_partial_label = QLabel("")
+        self._hw_partial_label.setWordWrap(True)
+        hw_body_v.addWidget(self._hw_partial_label)
+
+        hw_v.addWidget(self._hw_body)
+        root.addWidget(gb_hw)
 
         # ── Buttons ───────────────────────────────────────────────────────────
         btn_box = QDialogButtonBox(
@@ -206,21 +225,225 @@ class MaskingSettingsDialog(QDialog):
         self.chk_ann.toggled.connect(self._refresh_ann_status)
         self.btn_ann_dir.clicked.connect(self._choose_ann_dir)
         self._ann_keyword_edit.textChanged.connect(self._refresh_ann_status)
-        self.chk_tod.toggled.connect(lambda checked: self._tod_body.setEnabled(checked))
-        self._radio_tod_all.toggled.connect(
-            lambda checked: self._tod_days_edit.setEnabled(not checked)
-        )
+        self.chk_hour_window.toggled.connect(self._on_hw_toggled)
+        self._radio_hw_all.toggled.connect(lambda checked: self._hw_days_edit.setEnabled(not checked))
+        self.btn_add_window.clicked.connect(self._on_add_window_clicked)
+        self._hw_days_edit.textChanged.connect(self._refresh_hour_window_preview)
 
-    def _on_accept(self):
-        if self.chk_tod.isChecked() and self._radio_tod_sel.isChecked():
-            raw = self._tod_days_edit.text().strip()
-            try:
-                [int(x) for x in raw.split(",") if x.strip()]
-            except ValueError:
+    def _on_hw_toggled(self, checked: bool) -> None:
+        self._hw_body.setEnabled(checked)
+        if checked:
+            self._refresh_hour_window_preview()
+
+    def _get_defined_windows(self) -> List[Tuple[float, float]]:
+        """Return (hour_start, hour_end) for every row in the windows list."""
+        windows = []
+        for i in range(self._hw_windows_layout.count()):
+            row = self._hw_windows_layout.itemAt(i).widget()
+            if row is not None:
+                windows.append((row.property("hw_start"), row.property("hw_end")))
+        return windows
+
+    def _add_window_row(self, hour_start: float, hour_end: float) -> None:
+        row = QWidget()
+        row.setProperty("hw_start", hour_start)
+        row.setProperty("hw_end",   hour_end)
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.addWidget(QLabel(f"{int(hour_start)} h – {int(hour_end)} h"))
+        hl.addStretch()
+        status_lbl = QLabel("")
+        status_lbl.setStyleSheet("font-size: 10px;")
+        row.setProperty("status_label", status_lbl)
+        hl.addWidget(status_lbl)
+        btn = QPushButton("×")
+        btn.setFixedWidth(24)
+        btn.clicked.connect(lambda: self._remove_window_row(row))
+        hl.addWidget(btn)
+        self._hw_windows_layout.addWidget(row)
+        self._refresh_hour_window_preview()
+
+    def _remove_window_row(self, row: QWidget) -> None:
+        self._hw_windows_layout.removeWidget(row)
+        row.deleteLater()
+        self._refresh_hour_window_preview()
+
+    def _on_add_window_clicked(self) -> None:
+        s = float(self.spin_add_start.value())
+        e = float(self.spin_add_end.value())
+        if s == e:
+            QMessageBox.warning(self, "Invalid Window", "Start and end hour must differ.")
+            return
+        existing = self._get_defined_windows()
+        for ws, we in existing:
+            if self._windows_overlap(s, e, ws, we):
                 QMessageBox.warning(
-                    self, "Invalid Days", "Day indices must be comma-separated integers."
+                    self, "Overlapping Window",
+                    f"This window overlaps the existing window {int(ws)}–{int(we)} h."
                 )
                 return
+        self._add_window_row(s, e)
+
+    @staticmethod
+    def _windows_overlap(s1: float, e1: float, s2: float, e2: float) -> bool:
+        """Return True if two hour windows share any covered hour-of-day."""
+        def covered(s, e):
+            s, e = int(s), int(e)
+            return set(range(s, 24)) | set(range(0, e)) if e < s else set(range(s, e))
+        return bool(covered(s1, e1) & covered(s2, e2))
+
+    def _refresh_hour_window_preview(self) -> None:
+        # Clear all row badges first
+        for i in range(self._hw_windows_layout.count()):
+            row = self._hw_windows_layout.itemAt(i).widget()
+            if row is not None:
+                lbl = row.property("status_label")
+                if lbl is not None:
+                    lbl.setText("")
+
+        if not self.chk_hour_window.isChecked():
+            self._hw_partial_label.setText("")
+            return
+        hour_windows = self._get_defined_windows()
+        if not hour_windows:
+            self._hw_partial_label.setText("")
+            return
+        if self._hw_recordings is None:
+            self._read_edf_headers()
+        if not self._hw_recordings:
+            self._hw_partial_label.setText("")
+            return
+
+        selected_days = None
+        if self._radio_hw_sel.isChecked():
+            raw = self._hw_days_edit.text().strip()
+            try:
+                selected_days = [int(x) for x in raw.split(",") if x.strip()]
+            except ValueError:
+                self._hw_partial_label.setText("")
+                return
+
+        from ebb.masking import hour_window_mask
+        n_animals = len(self._hw_recordings)
+
+        # Per-window stats: full_count, partial_count, total_seconds
+        # Computed by calling hour_window_mask once per window so chunks are unambiguous.
+        win_full    = [0] * len(hour_windows)
+        win_partial = [0] * len(hour_windows)
+        win_secs    = [0.0] * len(hour_windows)
+
+        days_with_windows: set = set()
+        total_secs = 0.0
+
+        for idx, (hs, he) in enumerate(hour_windows):
+            full_s = ((he - hs) % 24 or 24) * 3600
+            for rec_start, n_samples in self._hw_recordings:
+                _, used = hour_window_mask(rec_start, n_samples, DEFAULT_FS,
+                                           [(hs, he)], selected_days)
+                if not used:
+                    continue
+                animal_clipped = False
+                for ws, we in used:
+                    days_with_windows.add((ws.date() - rec_start.date()).days)
+                    dur_s = (we - ws).total_seconds()
+                    win_secs[idx] += dur_s
+                    total_secs += dur_s
+                    if dur_s < full_s - 30:
+                        animal_clipped = True
+                if animal_clipped:
+                    win_partial[idx] += 1
+                else:
+                    win_full[idx] += 1
+
+        # Update per-row badges
+        rows = [self._hw_windows_layout.itemAt(i).widget()
+                for i in range(self._hw_windows_layout.count())]
+        rows = [r for r in rows if r is not None]
+        for idx, row in enumerate(rows):
+            lbl = row.property("status_label")
+            if lbl is None:
+                continue
+            full    = win_full[idx]
+            partial = win_partial[idx]
+            total   = full + partial
+            if total == 0:
+                lbl.setText("✗ no data")
+                lbl.setStyleSheet("font-size: 10px; color: #c0392b;")
+            elif partial > 0:
+                lbl.setText(f"⚠ clipped for {partial}/{n_animals} animals")
+                lbl.setStyleSheet("font-size: 10px; color: #c77800;")
+            else:
+                lbl.setText(f"✓ complete for {full}/{n_animals} animals")
+                lbl.setStyleSheet("font-size: 10px; color: #2a7a2a;")
+
+        # Summary line
+        any_windows = total_secs > 0
+        has_partial = any(p > 0 for p in win_partial)
+        msgs = []
+
+        if selected_days is not None:
+            missing = sorted(d for d in selected_days if d not in days_with_windows)
+            if missing:
+                days_str = ", ".join(str(d) for d in missing)
+                msgs.append(f"⚠ Day{'s' if len(missing) != 1 else ''} {days_str} not found in recording")
+
+        if not any_windows:
+            self._hw_partial_label.setText("No windows overlap any recording.")
+            self._hw_partial_label.setStyleSheet("color: #c0392b; font-size: 11px;")
+        else:
+            per_animal_h = (total_secs / n_animals) / 3600
+            summary = f"~{per_animal_h:.1f} h / animal"
+            if has_partial:
+                msgs.insert(0, f"⚠ {summary} (some windows clipped at recording boundary)")
+                self._hw_partial_label.setText("\n".join(msgs))
+                self._hw_partial_label.setStyleSheet("color: #c77800; font-size: 11px;")
+            elif msgs:
+                msgs.insert(0, f"✓ {summary}")
+                self._hw_partial_label.setText("\n".join(msgs))
+                self._hw_partial_label.setStyleSheet("color: #c77800; font-size: 11px;")
+            else:
+                self._hw_partial_label.setText(f"✓ {summary}")
+                self._hw_partial_label.setStyleSheet("color: #2a7a2a; font-size: 11px;")
+
+    def _read_edf_headers(self) -> None:
+        """Cache (rec_start, n_samples) for all standard EDFs."""
+        standard_dir = self._project_root / "standard"
+        if not standard_dir.is_dir():
+            return
+        edfs = sorted(standard_dir.glob("*PROCESSED.edf"))
+        if not edfs:
+            return
+        import warnings
+        from datetime import datetime as _datetime
+        from openseize.file_io import edf as edf_io
+        recordings = []
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ResourceWarning)
+            for edf_path in edfs:
+                try:
+                    with edf_io.Reader(str(edf_path)) as r:
+                        rec_start = _datetime.strptime(
+                            f"{r.header.start_date} {r.header.start_time}", "%d.%m.%y %H.%M.%S"
+                        )
+                        recordings.append((rec_start, r.shape[-1]))
+                except Exception:
+                    pass
+        self._hw_recordings = recordings
+
+    def _on_accept(self):
+        if self.chk_hour_window.isChecked():
+            if not self._get_defined_windows():
+                QMessageBox.warning(self, "No Windows", "Add at least one hour window.")
+                return
+            if self._radio_hw_sel.isChecked():
+                raw = self._hw_days_edit.text().strip()
+                try:
+                    [int(x) for x in raw.split(",") if x.strip()]
+                except ValueError:
+                    QMessageBox.warning(
+                        self, "Invalid Days", "Day indices must be comma-separated integers."
+                    )
+                    return
         self.accept()
 
     def _choose_ann_dir(self) -> None:
@@ -282,19 +505,19 @@ class MaskingSettingsDialog(QDialog):
         if params.get("ann_enabled"):
             self.chk_ann.setChecked(True)
             self._refresh_ann_status()
-        if params.get("time_filter_enabled"):
-            self.chk_tod.setChecked(True)
-        if params.get("tod_start"):
-            h, m = (int(x) for x in params["tod_start"].split(":"))
-            self._tod_start.setTime(QTime(h, m))
-        if params.get("tod_end"):
-            h, m = (int(x) for x in params["tod_end"].split(":"))
-            self._tod_end.setTime(QTime(h, m))
-        if params.get("time_filter_days") is not None:
-            self._radio_tod_sel.setChecked(True)
-            self._tod_days_edit.setText(",".join(str(d) for d in params["time_filter_days"]))
+        if params.get("hw_enabled"):
+            windows = params.get("hour_windows") or (
+                [params["hour_window"]] if params.get("hour_window") else []
+            )
+            for hw in windows:
+                self._add_window_row(float(hw[0]), float(hw[1]))
+            if params.get("selected_days") is not None:
+                self._radio_hw_sel.setChecked(True)
+                self._hw_days_edit.setText(",".join(str(d) for d in params["selected_days"]))
+            self.chk_hour_window.setChecked(True)
 
     def get_params(self) -> dict:
+        hw_enabled = self.chk_hour_window.isChecked()
         params = {
             "swd_mode": "mask_out" if self._radio_swd_mask.isChecked() else "none",
             "ann_enabled": self.chk_ann.isChecked(),
@@ -303,14 +526,13 @@ class MaskingSettingsDialog(QDialog):
             "ann_match_mode": "exact" if self._radio_ann_exact.isChecked() else "contains",
             "ann_pad_before": self._ann_pad_before.value(),
             "ann_pad_after": self._ann_pad_after.value(),
-            "time_filter_enabled": self.chk_tod.isChecked(),
-            "tod_start": self._tod_start.time().toString("HH:mm") if self.chk_tod.isChecked() else None,
-            "tod_end": self._tod_end.time().toString("HH:mm") if self.chk_tod.isChecked() else None,
-            "time_filter_days": None,
+            "hw_enabled": hw_enabled,
+            "hour_windows": self._get_defined_windows() if hw_enabled else None,
+            "selected_days": None,
         }
-        if self.chk_tod.isChecked() and self._radio_tod_sel.isChecked():
-            raw = self._tod_days_edit.text().strip()
-            params["time_filter_days"] = [int(x) for x in raw.split(",") if x.strip()]
+        if hw_enabled and self._radio_hw_sel.isChecked():
+            raw = self._hw_days_edit.text().strip()
+            params["selected_days"] = [int(x) for x in raw.split(",") if x.strip()]
         return params
 
 
@@ -420,6 +642,13 @@ class PSDPage(QWidget):
         self.combo_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.combo_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.combo_table.verticalHeader().setVisible(False)
+
+        self.combo_table.setMaximumHeight(150)
+        self.combo_table.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum
+        )
+
         combo_v.addWidget(self.combo_table)
 
         self._merged_pkl_label = QLabel()
@@ -706,10 +935,10 @@ class PSDPage(QWidget):
         else:
             parts.append('<span style="color:#888">Annotation: off</span>')
 
-        if p.get("time_filter_enabled"):
-            start = p.get("tod_start", "?")
-            end = p.get("tod_end", "?")
-            parts.append(f'<span style="color:#1a5c8a">Hours: {start}–{end} ✓</span>')
+        if p.get("hw_enabled"):
+            windows = p.get("hour_windows") or []
+            wins_str = ", ".join(f"{int(w[0])}–{int(w[1])}h" for w in windows) or "?"
+            parts.append(f'<span style="color:#1a5c8a">Hours: {wins_str} ✓</span>')
         else:
             parts.append('<span style="color:#888">Hours: off</span>')
 
@@ -745,10 +974,11 @@ class PSDPage(QWidget):
             "ann_match_mode": params.get("ann_match_mode", "contains"),
             "ann_pad_before": params.get("ann_pad_before", 0.0),
             "ann_pad_after": params.get("ann_pad_after", 10.0),
-            "time_filter_enabled": bool(params.get("time_filter_enabled", False)),
-            "tod_start": params.get("tod_start"),
-            "tod_end": params.get("tod_end"),
-            "time_filter_days": params.get("time_filter_days"),
+            "hw_enabled": bool(params.get("hw_enabled", False)),
+            "hour_windows": params.get("hour_windows") or (
+                [params["hour_window"]] if params.get("hour_window") else None
+            ),
+            "selected_days": params.get("selected_days"),
         }
         self._update_masking_summary()
 
@@ -899,13 +1129,12 @@ class PSDPage(QWidget):
                 "pad_after_sec": mp.get("ann_pad_after", 10.0),
             }
 
-        if mp.get("time_filter_enabled"):
-            params["tod_start"] = mp.get("tod_start")
-            params["tod_end"] = mp.get("tod_end")
-            params["time_filter_days"] = mp.get("time_filter_days")
-            params["time_filter_enabled"] = True
+        if mp.get("hw_enabled"):
+            params["hour_windows"]  = mp.get("hour_windows")
+            params["selected_days"] = mp.get("selected_days")
+            params["hw_enabled"] = True
         else:
-            params["time_filter_enabled"] = False
+            params["hw_enabled"] = False
 
         self._computing = True
         self.btn_run_pipeline.setEnabled(False)
@@ -1106,11 +1335,10 @@ class BatchEstimateWorker(QObject):
 
             swd_mode = "mask_out" if self.swd_dir is not None else "none"
             saved = {**self.params, "swd_mode": swd_mode}
-            saved["time_filter_enabled"] = self.params.get("time_filter_enabled", False)
-            if self.params.get("time_filter_enabled"):
-                saved["tod_start"] = self.params.get("tod_start")
-                saved["tod_end"] = self.params.get("tod_end")
-                saved["time_filter_days"] = self.params.get("time_filter_days")
+            saved["hw_enabled"] = self.params.get("hw_enabled", False)
+            if self.params.get("hw_enabled"):
+                saved["hour_windows"]  = self.params.get("hour_windows")
+                saved["selected_days"] = self.params.get("selected_days")
             if self.ann_params is not None:
                 saved.update({
                     "ann_enabled": True,

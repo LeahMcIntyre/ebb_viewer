@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from scipy.io import savemat
 
-from ebb.masking import swd, time_of_day_mask
+from ebb.masking import swd, time_of_day_mask, hour_window_mask
 
 
 def test_swd_empty_mat_returns_all_true(tmp_path: Path):
@@ -122,3 +122,79 @@ def test_tod_no_intervals_returns_all_false():
     n = _n(3600)  # 1-hour recording ending at 01:00
     mask = time_of_day_mask(start, n, FS, dtime(8, 0), dtime(9, 0))
     assert not mask.any()
+
+
+# ── hour_window_mask ──────────────────────────────────────────────────────────
+
+# 72h recording starting at 10:30, window 10:00–12:00.
+# Day 0: 10:30–12:00 (partial start), Days 1–2: full, Day 3: 10:00–10:30 (partial end).
+_HW_START = datetime(2024, 1, 1, 10, 30, 0)
+_HW_N = _n(72 * 3600)
+
+
+def test_hw_returns_correct_types():
+    mask, windows = hour_window_mask(_HW_START, _HW_N, FS, [(10.0, 12.0)])
+    assert mask.shape == (_HW_N,)
+    assert mask.dtype == bool
+    assert isinstance(windows, list)
+    assert all(isinstance(w, tuple) and len(w) == 2 for w in windows)
+
+
+def test_hw_partial_edge_days():
+    _, windows = hour_window_mask(_HW_START, _HW_N, FS, [(10.0, 12.0)])
+    assert len(windows) == 4
+    full_dur = 120 * 60  # 2 hours in seconds
+
+    ws0, we0 = windows[0]
+    assert ws0 == datetime(2024, 1, 1, 10, 30), "day 0 should start at recording start"
+    assert we0 == datetime(2024, 1, 1, 12,  0), "day 0 should end at window end"
+    assert (we0 - ws0).total_seconds() < full_dur, "day 0 should be partial"
+
+    ws3, we3 = windows[3]
+    assert ws3 == datetime(2024, 1, 4, 10,  0), "day 3 should start at window start"
+    assert we3 == datetime(2024, 1, 4, 10, 30), "day 3 should end at recording end"
+    assert (we3 - ws3).total_seconds() < full_dur, "day 3 should be partial"
+
+
+def test_hw_full_middle_days():
+    _, windows = hour_window_mask(_HW_START, _HW_N, FS, [(10.0, 12.0)])
+    full_dur = 120 * 60
+    for ws, we in windows[1:3]:
+        assert (we - ws).total_seconds() == full_dur, "middle days should be full windows"
+
+
+def test_hw_mask_samples_correct():
+    mask, windows = hour_window_mask(_HW_START, _HW_N, FS, [(10.0, 12.0)])
+    expected = sum(int((we - ws).total_seconds() * FS) for ws, we in windows)
+    # allow ±1 sample per window for floor/ceil rounding
+    assert abs(mask.sum() - expected) <= len(windows)
+
+
+def test_hw_selected_days_filters():
+    _, windows_all = hour_window_mask(_HW_START, _HW_N, FS, [(10.0, 12.0)])
+    mask, windows = hour_window_mask(_HW_START, _HW_N, FS, [(10.0, 12.0)], [1, 2])
+    assert len(windows) == 2
+    assert windows == windows_all[1:3]
+    # samples outside days 1 and 2 should be False
+    day1_start = _n(int((windows[0][0] - _HW_START).total_seconds()))
+    assert not mask[:day1_start].any()
+
+
+def test_hw_multiple_windows_union():
+    # 24h recording starting midnight; windows [2, 4] and [10, 12]
+    start = datetime(2024, 1, 1, 0, 0)
+    n = _n(24 * 3600)
+    mask, windows = hour_window_mask(start, n, FS, [(2.0, 4.0), (10.0, 12.0)])
+    assert len(windows) == 2
+    assert mask[_n(2 * 3600):_n(4 * 3600)].all()
+    assert mask[_n(10 * 3600):_n(12 * 3600)].all()
+    assert not mask[_n(4 * 3600):_n(10 * 3600)].any()
+    assert not mask[_n(12 * 3600):].any()
+
+
+def test_hw_no_overlap_returns_empty():
+    # 1-hour recording 10:30–11:30; window 12:00–14:00 — no overlap
+    n = _n(3600)
+    mask, windows = hour_window_mask(_HW_START, n, FS, [(12.0, 14.0)])
+    assert not mask.any()
+    assert windows == []

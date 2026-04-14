@@ -45,6 +45,8 @@ class PSDResult:
     used_ann: bool
     freqs: npt.NDArray[np.floating]
     psd: npt.NDArray[np.floating]
+    used_windows: List[Tuple[str, str]] = dataclasses.field(default_factory=list)
+    # Each tuple: (window_start_isoformat, window_end_isoformat)
 
 def out_fraction(mask: npt.NDArray[np.bool_], state_mask: npt.NDArray[np.bool_]) -> float:
     """Fraction of samples excluded by mask within a given state_mask."""
@@ -75,9 +77,8 @@ def estimate_psd(
     ann_match_mode: str = "contains",
     ann_pad_before_sec: float = 0.0,
     ann_pad_after_sec: float = 0.0,
-    tod_start: Optional[str] = None,
-    tod_end: Optional[str] = None,
-    time_filter_days: Optional[List[int]] = None,
+    hour_windows: Optional[List[Tuple[float, float]]] = None,
+    selected_days: Optional[List[int]] = None,
     **kwargs,
 ) -> List[PSDResult]:
     """
@@ -196,22 +197,20 @@ def estimate_psd(
         else:
             ann_mask = np.ones(n_samples, dtype=bool)
 
-        # Build time-of-day mask if requested
-        if tod_start is not None and tod_end is not None:
-            from datetime import datetime, time as dtime
+        # Build hour-window mask if requested
+        if hour_windows is not None:
+            from datetime import datetime as _datetime
             start_str = reader.header.start_time   # "HH.MM.SS"
             date_str  = reader.header.start_date   # "DD.MM.YY"
-            start_dt  = datetime.strptime(f"{date_str} {start_str}", "%d.%m.%y %H.%M.%S")
-            h0, m0 = (int(x) for x in tod_start.split(":"))
-            h1, m1 = (int(x) for x in tod_end.split(":"))
-            tod_mask = masking.time_of_day_mask(
-                start_dt, n_samples, fs,
-                tod_start=dtime(h0, m0),
-                tod_end=dtime(h1, m1),
-                selected_days=time_filter_days,
+            rec_start = _datetime.strptime(f"{date_str} {start_str}", "%d.%m.%y %H.%M.%S")
+            tod_mask, used_windows = masking.hour_window_mask(
+                rec_start, n_samples, fs, hour_windows, selected_days,
             )
+            for ws, we in used_windows:
+                print(f"  {animal}: {ws.strftime('%Y-%m-%d %H:%M')}–{we.strftime('%H:%M')}")
         else:
             tod_mask = np.ones(n_samples, dtype=bool)
+            used_windows = []
 
         #Combine all artifact masks
         artifact_mask = comm_mask & spindle_mask & swd_mask & drink_mask & ann_mask & tod_mask
@@ -270,6 +269,7 @@ def estimate_psd(
                     used_ann=bool(annotation_path is not None and _ann_keywords),
                     freqs=freqs,
                     psd=psds,
+                    used_windows=[(ws.isoformat(), we.isoformat()) for ws, we in used_windows],
                 )
 
             result.append(r)
@@ -387,7 +387,16 @@ def batch_estimate(
     warnings.filterwarnings("ignore", category=ResourceWarning)
 
     # remove path arguments and UI-only keys that must not reach estimate_psd
-    [kwargs.pop(x, None) for x in ('path', 'state_path', 'swd_mode', 'ann_enabled', 'time_filter_enabled')]
+    [kwargs.pop(x, None) for x in (
+        'path', 'state_path', 'swd_mode', 'ann_enabled',
+        'time_filter_enabled', 'tod_start', 'tod_end', 'time_filter_days',  # legacy keys
+        'hw_enabled',
+    )]
+    hour_windows  = kwargs.pop('hour_windows',  None)
+    _legacy_hw    = kwargs.pop('hour_window',   None)  # migrate old single-window saves
+    if hour_windows is None and _legacy_hw is not None:
+        hour_windows = [tuple(_legacy_hw)]
+    selected_days = kwargs.pop('selected_days', None)
 
     # unpack annotation params
     ann_keywords = ann_match_mode = ann_pad_before = ann_pad_after = None
@@ -440,7 +449,7 @@ def batch_estimate(
             'ann_pad_before_sec': ann_pad_before,
             'ann_pad_after_sec': ann_pad_after,
         })
-    estimator = partial(estimate_psd, **kwargs)
+    estimator = partial(estimate_psd, hour_windows=hour_windows, selected_days=selected_days, **kwargs)
     n = len(paired)
     t0 = time.perf_counter()
     if workers == 1:

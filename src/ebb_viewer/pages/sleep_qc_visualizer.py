@@ -882,14 +882,14 @@ class SleepQCGridPage(QWidget):
 
     def _get_ref_combo(self) -> str | None:
         """Return combo with most ok animals; prefer LFC_RSC."""
-        ok_counts: dict[str, int] = {}
+        counts: dict[str, int] = {}
         for entry in self._manifest:
             for c, run in entry.runs.items():
-                if run.sleep_qc == "ok" and c in self._available_combos:
-                    ok_counts[c] = ok_counts.get(c, 0) + 1
-        if not ok_counts:
+                if c in self._available_combos:
+                    counts[c] = counts.get(c, 0) + 1
+        if not counts:
             return None
-        return "LFC_RSC" if "LFC_RSC" in ok_counts else max(ok_counts, key=ok_counts.__getitem__)
+        return "LFC_RSC" if "LFC_RSC" in counts else max(counts, key=counts.__getitem__)
 
     def _draw_ref_median(self, combo: str) -> None:
         """Draw group median reference as a dashed line on all plots."""
@@ -1234,7 +1234,7 @@ class SleepQCGridPage(QWidget):
                 pct_lbl = QLabel(f"{val:.0%}")
                 pct_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 pct_lbl.setStyleSheet("font-size: 10px;")
-                if source_combo and orig:
+                """if source_combo and orig:
                     orig_val = orig.get(state)
                     if orig_val is not None:
                         if val < orig_val - 0.01:
@@ -1244,7 +1244,7 @@ class SleepQCGridPage(QWidget):
                         elif val > orig_val + 0.01:
                             pct_lbl.setStyleSheet(
                                 "font-size: 10px; color: #c0392b; font-weight: bold;"
-                            )
+                            )"""
                 grid.addWidget(pct_lbl, row_i, col)
 
         return frame
