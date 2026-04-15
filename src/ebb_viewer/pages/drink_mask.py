@@ -414,6 +414,7 @@ class DrinkMaskPage(QWidget):
         swd_dir = (self.project_root / "swd") if params.get("swd_mode") == "mask_out" else None
 
         self._computing = True
+        self._hint_frame.setVisible(False)
         self.btn_apply.setEnabled(False)
         self._log(f"Starting drink mask rerun for {len(animal_combos)} animal(s) in run '{run_name}'…")
         if swd_dir:

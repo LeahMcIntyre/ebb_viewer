@@ -1225,6 +1225,7 @@ class PSDPage(QWidget):
             pass
 
         self._computing = True
+        self._hint_frame.setVisible(False)
         self.btn_run_pipeline.setEnabled(False)
         self._log(f"Running PSD pipeline for {len(combos)} combo(s): {', '.join(combos)}")
 
