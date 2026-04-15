@@ -5,10 +5,9 @@ Stages:
   2. Spindle write    standard/ → spindle_edfs/<COMBO>/
   3. Upload/Download  spindle_edfs/<COMBO>/ ↔ SleepyRat → spindle_outputs/<COMBO>/
   4. Sleep QC gate    flag per run: ok | needs_review | needs_rerun
-  5. PSD compute      standard/ + spindle_outputs/<COMBO>/ → psd/psds_<COMBO>.pkl
-  6. PSD review gate  flag per run: ok | needs_drink_mask
-  7. Channel merge    psd/psds_channel_merged.pkl (one entry per animal from their ok run)
-  8. Finalize         psd/psds_final.pkl (copy of _drink or _merged; written only on Finalize)
+  5. PSD compute      standard/ + spindle_outputs/<COMBO>/ → psd/<RUN>/psds_<COMBO>.pkl
+  6. PSD review gate  flag per (run, psd_run_name): ok | needs_drink_mask
+  7. Channel merge    psd/<RUN>/psds_channel_merged.pkl
 
 The manifest lives at project_root/manifest.json.  One entry per animal;
 animal ID = first '_'-separated token of the preprocessed EDF stem.
@@ -64,9 +63,9 @@ class RunEntry:
     rerun_combo:  str | None = None   # target combo when sleep_qc == "needs_rerun"
     source_combo: str | None = None   # combo that triggered this run as a rerun
 
-    # PSD review
-    psd_status:   str | None = None   # None | "ok" | "needs_drink_mask" | "drink_mask_applied"
-    drink_mask:   str | None = None   # relative path to .npy
+    # PSD review — keyed by psd run name (e.g. "default", "light_phase")
+    psd_status:   dict = field(default_factory=dict)  # {run_name: "ok"|"needs_drink_mask"|"drink_mask_applied"}
+    drink_mask:   str | None = None   # relative path to .npy (shared across psd runs)
 
     # Cascade-rejection bookkeeping (see one-ok invariant in module docstring)
     prev_sleep_qc: str | None = None  # sleep_qc value before this run was cascade-rejected
@@ -101,16 +100,16 @@ def spindle_output_dir(channels: str, project_root: Path) -> Path:
     return project_root / "spindle_outputs" / channels
 
 
-def psd_path(channels: str, project_root: Path) -> Path:
-    return project_root / "psd" / f"psds_{channels}.pkl"
+def psd_run_dir(project_root: Path, run_name: str) -> Path:
+    return Path(project_root) / "psd" / run_name
 
 
-def final_psd_path(project_root: Path) -> Path:
-    return project_root / "psd" / "psds_final.pkl"
+def psd_path(channels: str, project_root: Path, run_name: str = "default") -> Path:
+    return psd_run_dir(project_root, run_name) / f"psds_{channels}.pkl"
 
 
-def merged_psd_path(project_root: Path) -> Path:
-    return project_root / "psd" / "psds_channel_merged.pkl"
+def merged_psd_path(project_root: Path, run_name: str = "default") -> Path:
+    return psd_run_dir(project_root, run_name) / "psds_channel_merged.pkl"
 
 
 def drink_mask_path(run: RunEntry, project_root: Path) -> Path | None:
@@ -128,7 +127,15 @@ def _run_to_dict(run: RunEntry) -> dict:
 
 
 def _run_from_dict(d: dict) -> RunEntry:
-    return RunEntry(**{k: v for k, v in d.items() if k in RunEntry.__dataclass_fields__})
+    kwargs = {k: v for k, v in d.items() if k in RunEntry.__dataclass_fields__}
+    # Migrate psd_status from old str|None → dict
+    raw = kwargs.get("psd_status")
+    if raw is None:
+        kwargs["psd_status"] = {}
+    elif isinstance(raw, str):
+        kwargs["psd_status"] = {"default": raw}
+    # else: already a dict
+    return RunEntry(**kwargs)
 
 
 def _ok_combo(entry: ManifestEntry) -> str | None:
@@ -190,7 +197,7 @@ class Manifest:
                     else:
                         runs[old_ch] = RunEntry(
                             sleep_qc=old_qc,
-                            psd_status=old_psd,
+                            psd_status={"default": old_psd} if isinstance(old_psd, str) else {},
                             drink_mask=old_drink,
                         )
                 m._entries[animal_id] = ManifestEntry(
@@ -471,36 +478,81 @@ class Manifest:
             if sum(1 for r in entry.runs.values() if r.sleep_qc == "ok") == 1
         ]
 
-    def pending_psd_review(self) -> list[tuple[ManifestEntry, str]]:
-        """Animals with ok sleep QC whose PSD hasn't been reviewed yet.
+    def pending_psd_review(self, run_name: str) -> list[tuple[ManifestEntry, str]]:
+        """Animals with ok sleep QC whose PSD hasn't been reviewed yet for run_name.
 
-        Gated on psds_channel_merged.pkl existing — returns empty list until the
-        channel merged PKL has been built.
+        Gated on psds_channel_merged.pkl existing for that run.
         """
-        if not merged_psd_path(self.project_root).exists():
+        if not merged_psd_path(self.project_root, run_name).exists():
             return []
-        return self._filter_runs(lambda e, r: r.sleep_qc == "ok" and r.psd_status is None)
-
-    def needs_drink_mask(self) -> list[tuple[ManifestEntry, str]]:
-        """Runs flagged as having drinking sidebands in the PSD."""
         return self._filter_runs(
-            lambda e, r: r.sleep_qc == "ok" and r.psd_status == "needs_drink_mask"
+            lambda e, r: r.sleep_qc == "ok" and run_name not in r.psd_status
         )
 
-    def needs_drink_mask_rerun(self) -> list[tuple[ManifestEntry, str]]:
+    def needs_drink_mask(self, run_name: str) -> list[tuple[ManifestEntry, str]]:
+        """Runs flagged as having drinking sidebands in the PSD for run_name."""
+        return self._filter_runs(
+            lambda e, r: r.sleep_qc == "ok"
+            and r.psd_status.get(run_name) == "needs_drink_mask"
+        )
+
+    def needs_drink_mask_rerun(self, run_name: str) -> list[tuple[ManifestEntry, str]]:
         """Runs flagged needs_drink_mask where the drink mask file is present on disk."""
         root = self.project_root
         return self._filter_runs(
             lambda e, r: r.sleep_qc == "ok"
-            and r.psd_status == "needs_drink_mask"
+            and r.psd_status.get(run_name) == "needs_drink_mask"
             and (root / drink_mask_rel(e.animal_id)).is_file()
         )
 
-    def pending_drink_verification(self) -> list[tuple[ManifestEntry, str]]:
+    def pending_drink_verification(self, run_name: str) -> list[tuple[ManifestEntry, str]]:
         """Runs with drink_mask_applied — ready for Pass 2 PSD verification."""
         return self._filter_runs(
-            lambda e, r: r.sleep_qc == "ok" and r.psd_status == "drink_mask_applied"
+            lambda e, r: r.sleep_qc == "ok"
+            and r.psd_status.get(run_name) == "drink_mask_applied"
         )
+
+    def all_pending_psd_review(self) -> list[tuple[ManifestEntry, str]]:
+        """Pending PSD review across ALL runs — for sidebar badge counts."""
+        from ebb_viewer.pipeline import psd_params as _pp
+        runs = _pp.list_runs(self.project_root)
+        seen: set = set()
+        result = []
+        for run_name in runs:
+            for entry, combo in self.pending_psd_review(run_name):
+                key = (entry.animal_id, combo)
+                if key not in seen:
+                    seen.add(key)
+                    result.append((entry, combo))
+        return result
+
+    def all_needs_drink_mask(self) -> list[tuple[ManifestEntry, str]]:
+        """Needs-drink-mask across ALL runs — for sidebar badge counts."""
+        from ebb_viewer.pipeline import psd_params as _pp
+        runs = _pp.list_runs(self.project_root)
+        seen: set = set()
+        result = []
+        for run_name in runs:
+            for entry, combo in self.needs_drink_mask(run_name):
+                key = (entry.animal_id, combo)
+                if key not in seen:
+                    seen.add(key)
+                    result.append((entry, combo))
+        return result
+
+    def all_pending_drink_verification(self) -> list[tuple[ManifestEntry, str]]:
+        """Pending drink verification across ALL runs — for sidebar badge counts."""
+        from ebb_viewer.pipeline import psd_params as _pp
+        runs = _pp.list_runs(self.project_root)
+        seen: set = set()
+        result = []
+        for run_name in runs:
+            for entry, combo in self.pending_drink_verification(run_name):
+                key = (entry.animal_id, combo)
+                if key not in seen:
+                    seen.add(key)
+                    result.append((entry, combo))
+        return result
 
     # ------------------------------------------------------------------
     # Flagging
@@ -576,10 +628,10 @@ class Manifest:
                     # PSD status is only meaningful when sleep_qc == "ok".
                     # Clear stale PSD metadata if the sibling isn't restored to ok.
                     if sibling.sleep_qc != "ok":
-                        sibling.psd_status = None
+                        sibling.psd_status = {}
                         sibling.drink_mask = None
             # PSD review progress is only valid while sleep_qc == "ok"
-            run.psd_status = None
+            run.psd_status = {}
             run.drink_mask = None
 
         elif old_status == "rejected":
@@ -601,22 +653,22 @@ class Manifest:
                 rerun_run.source_combo = channels
                 rerun_run.prev_sleep_qc = None
                 rerun_run.rejected_by = None
-                rerun_run.psd_status = None
+                rerun_run.psd_status = {}
                 rerun_run.drink_mask = None
 
         self.save()
 
-    def flag_psd(self, animal_id: str, channels: str, status: str) -> None:
-        """Set the PSD review flag for a specific (animal, channels) run.
+    def flag_psd(self, animal_id: str, channels: str, status: str, run_name: str = "default") -> None:
+        """Set the PSD review flag for a specific (animal, channels, run_name).
 
         Args:
             animal_id:  Animal to update.
-            channels:   Channel combo string identifying the run.
+            channels:   Channel combo string identifying the spindle run.
             status:     One of "ok", "needs_drink_mask", "drink_mask_applied".
+            run_name:   PSD run name (e.g. "light_phase").
 
         Raises:
-            ValueError: if the run's sleep_qc is not "ok" (PSD review only
-                        applies to runs that passed sleep QC).
+            ValueError: if the run's sleep_qc is not "ok".
         """
         if status not in PSD_STATUSES:
             raise ValueError(
@@ -628,12 +680,23 @@ class Manifest:
                 f"Cannot set PSD status on run {channels!r} for animal "
                 f"{animal_id!r}: sleep_qc is {run.sleep_qc!r}, expected 'ok'."
             )
-        run.psd_status = status
+        run.psd_status[run_name] = status
         if status == "drink_mask_applied":
             run.drink_mask = drink_mask_rel(animal_id)
         elif status == "ok":
-            run.drink_mask = None
-        # "needs_drink_mask": leave drink_mask as None until rerun is applied
+            # Clear drink_mask only if no other psd run still has drink_mask_applied
+            if not any(
+                v == "drink_mask_applied"
+                for k, v in run.psd_status.items()
+                if k != run_name
+            ):
+                run.drink_mask = None
+        # "needs_drink_mask": leave drink_mask as-is
+        self.save()
+
+    def reset_psd_status(self, animal_id: str, channels: str, run_name: str = "default") -> None:
+        """Clear PSD review status for a specific (animal, channels, run_name)."""
+        self._entries[animal_id].runs[channels].psd_status.pop(run_name, None)
         self.save()
 
     def reset_sleep_qc(self, animal_id: str, channels: str) -> None:
@@ -653,7 +716,7 @@ class Manifest:
                     sibling.prev_sleep_qc = None
                     sibling.rejected_by = None
             # PSD review progress is only valid while sleep_qc == "ok"
-            run.psd_status = None
+            run.psd_status = {}
             run.drink_mask = None
         run.sleep_qc = None
         run.rerun_combo = None
@@ -661,7 +724,3 @@ class Manifest:
         run.rejected_by = None
         self.save()
 
-    def reset_psd_status(self, animal_id: str, channels: str) -> None:
-        """Clear PSD review status for a specific run."""
-        self._entries[animal_id].runs[channels].psd_status = None
-        self.save()

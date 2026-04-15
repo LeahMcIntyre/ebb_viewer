@@ -13,8 +13,9 @@ from ebb_viewer.widgets.tree_view import ProjectTree
 from ebb_viewer.widgets.table_helpers import make_cell
 from ebb_viewer.pipeline.manifest import (
     Manifest, ManifestEntry, RunEntry,
-    psd_path, spindle_output_dir, final_psd_path, merged_psd_path,
+    psd_path, spindle_output_dir, merged_psd_path,
 )
+from ebb_viewer.pipeline import psd_params as _psd_params
 from ebb_viewer.pipeline.manifest import spindle_edf_dir
 from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, drink_mask_rel
 from ebb_viewer.pipeline.theme import COMBO_BADGE_HEX, STATUS_COLOR_HEX
@@ -64,13 +65,12 @@ _STEP_LABELS = [
     "6. PSD Computation",
     "7. PSD Review",
     "8. Drink Mask",
-    "9. Finalize",
 ]
 
 _STEP_PAGE_NAMES = [
     "preprocess", "spindle_write", "spindle_upload",
     "sleep_qc", "rerun", "psd_compute", "psd_review",
-    "drink_mask", "finalize",
+    "drink_mask",
 ]
 
 _GUIDE_ICON       = {"done": "✓", "attention": "⚠", "active": "→", "blocked": "○"}
@@ -115,7 +115,7 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     n_ready_psd   = len(manifest.ready_for_psd())
     n_rerun_pend  = len(manifest.needs_rerun_pending())
     n_rerun_ready = len(manifest.pending_rerun_review())
-    n_psd_pending = len(manifest.pending_psd_review())
+    n_psd_pending = len(manifest.all_pending_psd_review())
 
     # --- Step 1: Preprocess ---
     if step1_done:
@@ -141,12 +141,7 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
         s3 = StepStatus("blocked", "Requires step 2")
 
     # --- Step 4: Sleep QC ---
-    # Special case: manifest was regenerated from files after a completed run.
-    # psds_final.pkl exists (project done) but sleep_qc is all None (manifest lost).
-    # Suppress the false-alarm attention state — the project is already finished.
-    if final_psd_path(root).exists() and n_ok == 0 and n_pending_qc > 0:
-        s4 = StepStatus("done", "PSDs finalized — sleep QC history not available")
-    elif step3_done and n_pending_qc == 0 and n_review == 0 and n_ok > 0:
+    if step3_done and n_pending_qc == 0 and n_review == 0 and n_ok > 0:
         s4 = StepStatus("done", f"{n_ok} animal{'s' if n_ok != 1 else ''} marked ok")
     elif step3_done and (n_review > 0 or n_pending_qc > 0):
         parts = []
@@ -175,31 +170,14 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
 
     # --- Step 6: PSD Computation ---
     
-    #TODO: Rework how this is computed, I do not think this is clear what it means
-    psd_dir = root / "psd"
-    combos_with_csv: set[str] = set()
-    if spindle_outputs_dir.is_dir():
-        combos_with_csv = {
-            sd.name for sd in spindle_outputs_dir.iterdir()
-            if sd.is_dir() and any(sd.glob("*.csv"))
-        }
-    combos_with_pkl: set[str] = set()
-    if psd_dir.is_dir():
-        combos_with_pkl = {
-            p.stem[len("psds_"):] for p in psd_dir.glob("psds_*.pkl")
-            if p.stem not in {"psds_channel_merged", "psds_channel_merged_drink", "psds_final"}
-        }
-    missing_pkls = combos_with_csv - combos_with_pkl
-    merged_pkl = merged_psd_path(root)
-    final_pkl = final_psd_path(root)
-
+    # --- Step 6: PSD Computation ---
+    psd_runs = _psd_params.list_runs(root)
+    any_merged_pkl = any(merged_psd_path(root, rn).exists() for rn in psd_runs) if psd_runs else False
     all_ready_for_psd = n_animals > 0 and n_ready_psd == n_animals
 
-    if merged_pkl.exists() and not missing_pkls:
-        s6 = StepStatus("done", "All PSDs computed, channel merged PKL ready")
-    elif combos_with_pkl and (missing_pkls or not merged_pkl.exists()):
-        msg = f"{len(missing_pkls)} combo PKL(s) missing" if missing_pkls else "Run Build Channel Merged PKL"
-        s6 = StepStatus("attention", msg)
+    if psd_runs and any_merged_pkl:
+        n_runs = len(psd_runs)
+        s6 = StepStatus("done", f"{n_runs} run{'s' if n_runs != 1 else ''} computed — channel merged PKL ready")
     elif all_ready_for_psd:
         s6 = StepStatus("active", f"Ready — {n_animals} animal{'s' if n_animals != 1 else ''} each have exactly 1 ok run")
     elif n_ok > 0:
@@ -209,21 +187,14 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
         s6 = StepStatus("blocked", "Requires all animals to have exactly 1 ok run (step 4)")
 
     # --- Step 7: PSD Review ---
-    n_needs_drink = len(manifest.needs_drink_mask())
-    any_psd_reviewed = any(
-        r.psd_status is not None
-        for e in manifest for r in e.runs.values()
-        if r.sleep_qc == "ok"
-    )
+    n_needs_drink = len(manifest.all_needs_drink_mask())
     if n_psd_pending > 0:
         s7 = StepStatus("attention", f"{n_psd_pending} PSD{'s' if n_psd_pending != 1 else ''} to review")
-    elif n_needs_drink > 0 and merged_pkl.exists():
+    elif n_needs_drink > 0 and any_merged_pkl:
         s7 = StepStatus("attention", f"{n_needs_drink} animal{'s' if n_needs_drink != 1 else ''} need drink mask")
-    elif final_pkl.exists():
-        s7 = StepStatus("done", "All PSDs reviewed and finalized")
-    elif merged_pkl.exists() and n_psd_pending == 0 and any_psd_reviewed:
-        s7 = StepStatus("attention", "All reviewed — click Finalize to seal")
-    elif merged_pkl.exists():
+    elif any_merged_pkl and n_psd_pending == 0:
+        s7 = StepStatus("done", "All PSDs reviewed")
+    elif any_merged_pkl:
         s7 = StepStatus("active", "Ready — open PSD Review page")
     else:
         s7 = StepStatus("blocked", "Requires channel merged PKL (step 6)")
@@ -232,9 +203,9 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     # n_needs_drink already computed above
     n_drink_applied = sum(
         1 for e in manifest for r in e.runs.values()
-        if r.psd_status == "drink_mask_applied"
+        if "drink_mask_applied" in r.psd_status.values()
     )
-    if not merged_pkl.exists():
+    if not any_merged_pkl:
         s8 = StepStatus("blocked", "Requires channel merged PKL (step 6)")
     elif n_needs_drink > 0:
         s8 = StepStatus(
@@ -249,15 +220,7 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     else:
         s8 = StepStatus("done", "No drink masks needed")
 
-    # --- Step 9: Finalize ---
-    if final_pkl.exists():
-        s9 = StepStatus("done", "psds_final.pkl written")
-    elif merged_pkl.exists() and n_psd_pending == 0 and n_needs_drink == 0:
-        s9 = StepStatus("attention", "Ready — click Finalize to seal psds_final.pkl")
-    else:
-        s9 = StepStatus("blocked", "Requires all PSDs reviewed (steps 7–8)")
-
-    return [s1, s2, s3, s4, s5, s6, s7, s8, s9]
+    return [s1, s2, s3, s4, s5, s6, s7, s8]
 
 
 def _any_file_for_animal(root: Path, subdir: str, channels: str, animal_id: str) -> bool:
@@ -594,17 +557,28 @@ class HomePage(QWidget):
                 # Animal exists but no runs yet — show a placeholder row
                 rows.append((entry, "", None))
 
-        final_pkl_exists = final_psd_path(self.project_root).exists()
+        psd_runs = _psd_params.list_runs(self.project_root)
         self.table.setRowCount(len(rows))
         for row_idx, (entry, combo, run) in enumerate(rows):
             spindle_edf_ok  = bool(combo) and _any_file_for_animal(
                 self.project_root, "spindle_edfs", combo, entry.animal_id)
             spindle_out_ok  = bool(combo) and _any_file_for_animal(
                 self.project_root, "spindle_outputs", combo, entry.animal_id)
-            psd_file_ok     = bool(combo) and psd_path(combo, self.project_root).is_file()
+            psd_file_ok     = bool(combo) and any(
+                psd_path(combo, self.project_root, rn).is_file() for rn in psd_runs
+            )
 
-            sleep_qc   = run.sleep_qc   if run else None
-            psd_status = run.psd_status if run else None
+            sleep_qc       = run.sleep_qc if run else None
+            psd_status_dict = run.psd_status if run else {}
+            # Derive a single display status across all runs
+            if any(v == "needs_drink_mask" for v in psd_status_dict.values()):
+                psd_status = "needs_drink_mask"
+            elif any(v == "drink_mask_applied" for v in psd_status_dict.values()):
+                psd_status = "drink_mask_applied"
+            elif any(v == "ok" for v in psd_status_dict.values()):
+                psd_status = "ok"
+            else:
+                psd_status = None
 
             # 0: Animal
             self.table.setItem(row_idx, 0, make_cell(entry.animal_id))
@@ -643,14 +617,8 @@ class HomePage(QWidget):
             # 6: Sleep QC
             edit_hint = False
             if sleep_qc is None:
-                # If psds_final.pkl exists the project is complete; manifest was likely
-                # regenerated and we have no sleep_qc history — show "—" not "pending".
-                if final_pkl_exists:
-                    txt = "—"
-                    bg  = None
-                else:
-                    txt = "pending" if spindle_out_ok else "—"
-                    bg  = _PENDING_COLOR if spindle_out_ok else None
+                txt = "pending" if spindle_out_ok else "—"
+                bg  = _PENDING_COLOR if spindle_out_ok else None
             elif sleep_qc == "needs_rerun" and run.rerun_combo:
                 rerun_run = entry.runs.get(run.rerun_combo)
                 if rerun_run and rerun_run.sleep_qc == "ok":
@@ -717,29 +685,17 @@ class HomePage(QWidget):
             if w:
                 w.setParent(None)
 
-        reviewing       = manifest.needs_review()
-        rerunning       = manifest.needs_rerun_pending()
-        rerun_ready     = manifest.pending_rerun_review()
-        drink_mask      = manifest.needs_drink_mask()
-
-        merged_pkl = merged_psd_path(self.project_root)
-        final_pkl  = final_psd_path(self.project_root)
-        n_ok = sum(1 for e in manifest if any(r.sleep_qc == "ok" for r in e.runs.values()))
-        ready_to_finalize = (
-            n_ok > 0
-            and merged_pkl.exists()
-            and not final_pkl.exists()
-            and not manifest.pending_psd_review()
-            and not drink_mask
-        )
+        reviewing   = manifest.needs_review()
+        rerunning   = manifest.needs_rerun_pending()
+        rerun_ready = manifest.pending_rerun_review()
+        drink_mask  = manifest.all_needs_drink_mask()
 
         self._attn_card_count = (
-            len(reviewing) + len(rerunning) + len(rerun_ready)
-            + len(drink_mask) + (1 if ready_to_finalize else 0)
+            len(reviewing) + len(rerunning) + len(rerun_ready) + len(drink_mask)
         )
         self._update_attn_max_height()
 
-        if not reviewing and not rerunning and not rerun_ready and not drink_mask and not ready_to_finalize:
+        if not reviewing and not rerunning and not rerun_ready and not drink_mask:
             lbl = QLabel("All caught up ✓")
             lbl.setStyleSheet("color: #5a9a5a; font-weight: bold; padding: 4px;")
             self._attn_layout.addWidget(lbl)
@@ -753,8 +709,6 @@ class HomePage(QWidget):
             self._attn_layout.addWidget(self._make_rerun_ready_card(entry, channels))
         for entry, channels in drink_mask:
             self._attn_layout.addWidget(self._make_drink_mask_card(entry, channels))
-        if ready_to_finalize:
-            self._attn_layout.addWidget(self._make_finalize_card())
 
     def _make_card_frame(self, bg_color: str) -> "tuple[QWidget, QHBoxLayout]":
         """Create an attention card frame. Returns (widget, layout)."""
@@ -880,20 +834,6 @@ class HomePage(QWidget):
         btn_hint.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_hint.setFlat(True)
         btn_hint.clicked.connect(lambda: self.navigate_to.emit("drink_mask"))
-        h.addWidget(btn_hint)
-        return row_w
-
-    def _make_finalize_card(self) -> QWidget:
-        row_w, h = self._make_card_frame("#d4edda")
-        lbl_type = QLabel("All PSDs reviewed — ready to finalize")
-        lbl_type.setStyleSheet("color: #155724; font-style: italic;")
-        h.addWidget(lbl_type)
-        h.addStretch(1)
-        btn_hint = QPushButton("→ Finalize")
-        btn_hint.setStyleSheet("color: #155724; border: none; padding: 0; text-decoration: underline;")
-        btn_hint.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_hint.setFlat(True)
-        btn_hint.clicked.connect(lambda: self.navigate_to.emit("finalize"))
         h.addWidget(btn_hint)
         return row_w
 

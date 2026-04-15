@@ -481,16 +481,41 @@ def batch_estimate(
     return results
 
 
-def build_final_pkl(project_root, manifest) -> Path:
+def build_run_final_pkl(project_root, run_name: str = "default") -> Path:
+    """Seal a completed PSD run by writing psds_final.pkl.
+
+    Prefers psds_channel_merged_drink.pkl (drink-masked overrides applied) over
+    psds_channel_merged.pkl.  Raises FileNotFoundError if neither exists.
+    Returns the path written.
+    """
+    psd_dir = Path(project_root) / "psd" / run_name
+    drink = psd_dir / "psds_channel_merged_drink.pkl"
+    base  = psd_dir / "psds_channel_merged.pkl"
+    source = drink if drink.exists() else base
+    if not source.exists():
+        raise FileNotFoundError(
+            f"No merged PKL found in {psd_dir}. Run 'Compute PSDs' first."
+        )
+    with open(source, "rb") as f:
+        data = pickle.load(f)
+    out = psd_dir / "psds_final.pkl"
+    tmp = out.with_suffix(".pkl.tmp")
+    with open(tmp, "wb") as f:
+        pickle.dump(data, f)
+    tmp.replace(out)
+    return out
+
+
+def build_final_pkl(project_root, manifest, run_name: str = "default") -> Path:
     """For each animal with sleep_qc == "ok", load their entry from
-    psds_<ok_combo>.pkl, annotate with source_combo, and write to
-    psd/psds_channel_merged.pkl. Atomically replaces the file.
+    psds_<ok_combo>.pkl in psd/<run_name>/, annotate with source_combo, and write to
+    psd/<run_name>/psds_channel_merged.pkl. Atomically replaces the file.
     Returns the path written.
     """
     import warnings
 
     project_root = Path(project_root)
-    psd_dir = project_root / "psd"
+    psd_dir = project_root / "psd" / run_name
 
     # Group animals by their ok combo
     combo_to_animals: dict = {}
@@ -538,6 +563,7 @@ def rerun_with_drink_masks(
     swd_dir: Union[str, Path] = None,
     ncores: Optional[int] = None,
     ann_params: Optional[dict] = None,
+    run_name: str = "default",
     **kwargs,
 ) -> Tuple[Path, Path]:
     """Recompute PSDs for specific animals with drink masks.
@@ -565,7 +591,7 @@ def rerun_with_drink_masks(
     """
     import warnings, tracemalloc
 
-    psd_dir = Path(psd_dir)
+    psd_dir = Path(psd_dir) / run_name
     eeg_dir = Path(eeg_dir)
     spindle_root = Path(spindle_root)
     drink_dir = Path(drink_dir)
@@ -609,7 +635,17 @@ def rerun_with_drink_masks(
 
     tracemalloc.start()
     warnings.filterwarnings("ignore", category=ResourceWarning)
-    [kwargs.pop(x, None) for x in ("path", "state_path", "time_filter_enabled")]
+    [kwargs.pop(x, None) for x in (
+        "path", "state_path", "time_filter_enabled",
+        "swd_mode", "ann_enabled",
+        "tod_start", "tod_end", "time_filter_days",  # legacy keys
+        "hw_enabled",
+    )]
+    hour_windows  = kwargs.pop("hour_windows",  None)
+    _legacy_hw    = kwargs.pop("hour_window",   None)  # migrate old single-window saves
+    if hour_windows is None and _legacy_hw is not None:
+        hour_windows = [tuple(_legacy_hw)]
+    selected_days = kwargs.pop("selected_days", None)
     if offset_path is not None:
         kwargs["offset_path"] = offset_path
 
@@ -631,7 +667,7 @@ def rerun_with_drink_masks(
             "ann_pad_after_sec": ann_pad_after,
         })
 
-    estimator = partial(estimate_psd, **kwargs)
+    estimator = partial(estimate_psd, hour_windows=hour_windows, selected_days=selected_days, **kwargs)
     all_new_dicts: List[dict] = []
 
     for combo, animals in combo_to_animals.items():

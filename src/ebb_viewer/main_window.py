@@ -16,9 +16,9 @@ from ebb_viewer.pages.rerun import RerunPage
 from ebb_viewer.pages.psds import PSDPage
 from ebb_viewer.pages.psd_visualizer import PSDVisualizer
 from ebb_viewer.pages.drink_mask import DrinkMaskPage
-from ebb_viewer.pages.finalize import FinalizePage
 from ebb_viewer.pages.sleep_visualizer import SleepMetricsPage
 from ebb_viewer.pages.sleep_qc_visualizer import SleepQCGridPage
+from ebb_viewer.pages.finalize import FinalizePage
 from ebb_viewer.pipeline.manifest import Manifest
 
 class MainWindow(QMainWindow):
@@ -92,7 +92,6 @@ class MainWindow(QMainWindow):
             ("6. PSD Computation", 6),
             ("7. PSD Visualizer",  7),
             ("8. Drink Mask",      8),
-            None,
             ("9. Finalize",        9),
         ]
         self._row_to_stack: dict[int, int] = {}
@@ -130,10 +129,6 @@ class MainWindow(QMainWindow):
         self.drink_mask_page.navigate_to.connect(
             lambda name: self.pagelist.setCurrentRow(_page_rows[name])
         )
-        self.finalize_page.manifest_changed.connect(self._refresh_badges)
-        self.finalize_page.navigate_to.connect(
-            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
-        )
 
         # Navigation hints — pages that emit navigate_to for post-action routing
         _page_rows = {
@@ -146,7 +141,7 @@ class MainWindow(QMainWindow):
             "psd_compute":    9,
             "psd_review":     10,
             "drink_mask":     11,
-            "finalize":       13,
+            "finalize":       12,
         }
         self.home_page.navigate_to.connect(
             lambda name: self.pagelist.setCurrentRow(_page_rows[name])
@@ -170,6 +165,9 @@ class MainWindow(QMainWindow):
             lambda name: self.pagelist.setCurrentRow(_page_rows[name])
         )
         self.psd_visualizer_page.navigate_to.connect(
+            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
+        )
+        self.finalize_page.navigate_to.connect(
             lambda name: self.pagelist.setCurrentRow(_page_rows[name])
         )
 
@@ -210,19 +208,12 @@ class MainWindow(QMainWindow):
         except Exception:
             return
 
-        # PSD Computation badge: show (1) when every animal has at least one ok run.
-        entries = list(manifest)
-        psd_compute_count = int(
-            len(entries) > 0
-            and all(any(r.sleep_qc == "ok" for r in e.runs.values()) for e in entries)
-        )
-
         counts = {
             "needs_review":         len(manifest.needs_review()),
             "pending_rerun_review": len(manifest.pending_rerun_review()),
             "needs_rerun_pending":  len(manifest.needs_rerun_pending()),
-            "pending_psd_review":   len(manifest.pending_psd_review()) + len(manifest.pending_drink_verification()),
-            "needs_drink_mask":     len(manifest.needs_drink_mask()),
+            "pending_psd_review":   len(manifest.all_pending_psd_review()) + len(manifest.all_pending_drink_verification()),
+            "needs_drink_mask":     len(manifest.all_needs_drink_mask()),
         }
         for row, method in self._badge_rows.items():
             item = self.pagelist.item(row)
@@ -232,15 +223,3 @@ class MainWindow(QMainWindow):
             n = counts[method]
             item.setText(f"{base}  ({n})" if n > 0 else base)
 
-        # PSD Computation badge (row 9)
-        psd_compute_row = next(
-            (r for r, lbl in self._row_base_label.items() if lbl == "6. PSD Computation"),
-            None,
-        )
-        if psd_compute_row is not None:
-            item = self.pagelist.item(psd_compute_row)
-            if item is not None:
-                base = self._row_base_label[psd_compute_row]
-                item.setText(
-                    f"{base}  ({psd_compute_count})" if psd_compute_count > 0 else base
-                )

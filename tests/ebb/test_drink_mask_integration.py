@@ -329,7 +329,7 @@ def test_progress_fn_none_does_not_raise(tmp_path):
 # ---------------------------------------------------------------------------
 
 def _setup_rerun_dirs(tmp_path, animals=("AM001", "AM002"), combo="LFC_RSC"):
-    """Create standard/, spindle_outputs/<combo>/, drink_masks/, and psd/ dirs."""
+    """Create standard/, spindle_outputs/<combo>/, drink_masks/, and psd/default/ dirs."""
     standard = tmp_path / "standard"
     standard.mkdir(exist_ok=True)
     spindle_out = tmp_path / "spindle_outputs" / combo
@@ -338,6 +338,7 @@ def _setup_rerun_dirs(tmp_path, animals=("AM001", "AM002"), combo="LFC_RSC"):
     drink_dir.mkdir(exist_ok=True)
     psd_dir = tmp_path / "psd"
     psd_dir.mkdir(exist_ok=True)
+    (psd_dir / "default").mkdir(exist_ok=True)
 
     for aid in animals:
         (standard / f"{aid}_foo_PREPROCESSED.edf").touch()
@@ -354,7 +355,7 @@ def test_rerun_writes_drink_pkl_and_final_drink_pkl(tmp_path):
 
     # psds_channel_merged.pkl has both animals; AM002 is the target
     final_records = [_make_psd_record("AM001"), _make_psd_record("AM002")]
-    _write_pkl(psd_dir / "psds_channel_merged.pkl", final_records)
+    _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", final_records)
 
     new_record = _make_psd_record("AM002")
 
@@ -378,7 +379,7 @@ def test_rerun_writes_drink_pkl_and_final_drink_pkl(tmp_path):
         )
 
     # psds_channel_merged.pkl is untouched
-    with open(psd_dir / "psds_channel_merged.pkl", "rb") as f:
+    with open(psd_dir / "default" / "psds_channel_merged.pkl", "rb") as f:
         final = pickle.load(f)
     assert [Path(r["path"]).stem.split("_")[0] for r in final] == ["AM001", "AM002"]
 
@@ -401,7 +402,7 @@ def test_rerun_accumulates_drink_pkl_across_sessions(tmp_path):
         tmp_path, animals=("AM001", "AM002")
     )
     final_records = [_make_psd_record("AM001"), _make_psd_record("AM002")]
-    _write_pkl(psd_dir / "psds_channel_merged.pkl", final_records)
+    _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", final_records)
 
     new_record = _make_psd_record("AM001")
 
@@ -427,7 +428,7 @@ def test_rerun_accumulates_drink_pkl_across_sessions(tmp_path):
     run_rerun("AM001")
     run_rerun("AM002")
 
-    with open(psd_dir / "psds_drink.pkl", "rb") as f:
+    with open(psd_dir / "default" / "psds_drink.pkl", "rb") as f:
         drink = pickle.load(f)
     ids = [Path(r["path"]).stem.split("_")[0] for r in drink]
     assert sorted(ids) == ["AM001", "AM002"]
@@ -452,7 +453,7 @@ def test_rerun_raises_on_combo_mismatch(tmp_path):
     """ValueError raised when source_combo in psds_channel_merged.pkl differs from manifest combo."""
     standard, _, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path)
     # AM001 is stored under LFC_RSC in psds_channel_merged.pkl
-    _write_pkl(psd_dir / "psds_channel_merged.pkl", [_make_psd_record("AM001", combo="LFC_RSC")])
+    _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", [_make_psd_record("AM001", combo="LFC_RSC")])
 
     from ebb.process.psd_compute import rerun_with_drink_masks
     with pytest.raises(ValueError, match="Combo mismatch"):
@@ -471,7 +472,7 @@ def test_rerun_injects_ann_kwargs_when_ann_params_provided(tmp_path):
     ann_dir = tmp_path / "annotations"
     ann_dir.mkdir()
 
-    _write_pkl(psd_dir / "psds_channel_merged.pkl", [_make_psd_record("AM001")])
+    _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", [_make_psd_record("AM001")])
 
     captured_kwargs = {}
 
@@ -510,7 +511,7 @@ def test_rerun_injects_ann_kwargs_when_ann_params_provided(tmp_path):
 def test_rerun_no_ann_kwargs_when_ann_params_none(tmp_path):
     """When ann_params is None, no annotation kwargs are added to the estimator."""
     standard, spindle_out, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path, animals=("AM001",))
-    _write_pkl(psd_dir / "psds_channel_merged.pkl", [_make_psd_record("AM001")])
+    _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", [_make_psd_record("AM001")])
 
     captured_kwargs = {}
 
@@ -547,7 +548,7 @@ def test_rerun_extends_pairs_with_annotation_paths(tmp_path):
     ann_file = ann_dir / "AM001_events.txt"
     ann_file.touch()
 
-    _write_pkl(psd_dir / "psds_channel_merged.pkl", [
+    _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", [
         _make_psd_record("AM001"), _make_psd_record("AM002"),
     ])
 
@@ -592,7 +593,7 @@ def test_rerun_with_drink_masks_raises_when_no_edfs(tmp_path):
     _, _, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path, animals=("AM001",))
     standard = tmp_path / "standard_empty"
     standard.mkdir()  # no EDFs
-    _write_pkl(psd_dir / "psds_channel_merged.pkl", [_make_psd_record("AM001")])
+    _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", [_make_psd_record("AM001")])
 
     from ebb.process.psd_compute import rerun_with_drink_masks
     with pytest.raises(ValueError, match="No EDF files found"):
@@ -741,11 +742,11 @@ def test_batch_worker_saves_psd_params_json(tmp_path):
     finally:
         psds_mod.batch_estimate = orig
 
-    params_file = tmp_path / "psd" / "psd_params.json"
+    params_file = tmp_path / "psd" / "default" / "psd_params.json"
     assert params_file.exists()
     saved = json.loads(params_file.read_text())
-    # saved includes swd_mode and ann_enabled alongside the compute params
-    extra_keys = {"swd_mode", "ann_enabled", "time_filter_enabled"}
+    # saved includes swd_mode, ann_enabled, hw_enabled alongside the compute params
+    extra_keys = {"swd_mode", "ann_enabled", "hw_enabled"}
     assert {k: v for k, v in saved.items() if k not in extra_keys} == params
     assert saved["swd_mode"] == "none"
     assert saved["ann_enabled"] is False
@@ -769,6 +770,7 @@ def test_build_final_pkl_warns_and_skips_when_combo_pkl_missing(tmp_path):
 
     psd_dir = tmp_path / "psd"
     psd_dir.mkdir()
+    (psd_dir / "default").mkdir()
 
     # AM001 uses LFC_RSC (PKL will be present); AM002 uses RSC_LSC (PKL absent)
     m = Manifest(tmp_path)
@@ -786,7 +788,7 @@ def test_build_final_pkl_warns_and_skips_when_combo_pkl_missing(tmp_path):
 
     # Only create PKL for LFC_RSC; RSC_LSC PKL is intentionally absent
     am001_record = _make_psd_record("AM001", combo="LFC_RSC")
-    _write_pkl(psd_dir / "psds_LFC_RSC.pkl", [am001_record])
+    _write_pkl(psd_dir / "default" / "psds_LFC_RSC.pkl", [am001_record])
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")

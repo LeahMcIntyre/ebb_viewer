@@ -61,13 +61,13 @@ def test_load_missing_file_returns_empty(tmp_path):
 
 def test_save_load_roundtrip(tmp_path):
     m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
+        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
         "AM002": {"LFC_RSC": RunEntry(sleep_qc="needs_review")},
     })
     m2 = _reload(m)
 
     assert m2.get_run("AM001", "LFC_RSC").sleep_qc == "ok"
-    assert m2.get_run("AM001", "LFC_RSC").psd_status == "needs_drink_mask"
+    assert m2.get_run("AM001", "LFC_RSC").psd_status == {"default": "needs_drink_mask"}
     assert m2.get_run("AM002", "LFC_RSC").sleep_qc == "needs_review"
 
 
@@ -101,7 +101,7 @@ def test_migration_basic(tmp_path):
     run = m.get_run("AM001", "LFC_RSC")
     assert run is not None
     assert run.sleep_qc == "ok"
-    assert run.psd_status == "needs_drink_mask"
+    assert run.psd_status == {"default": "needs_drink_mask"}
 
 
 def test_migration_rerun_channels_status(tmp_path):
@@ -232,12 +232,12 @@ def test_unok_does_not_restore_independently_rejected_siblings(tmp_path):
 
 def test_unok_clears_psd_status(tmp_path):
     m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")}
+        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})}
     })
     m.flag_sleep_qc("AM001", "LFC_RSC", "needs_review")
 
     run = m.get_run("AM001", "LFC_RSC")
-    assert run.psd_status is None
+    assert run.psd_status == {}
     assert run.drink_mask is None
 
 
@@ -296,12 +296,12 @@ def test_reset_restores_cascade_siblings(tmp_path):
 
 def test_reset_clears_psd_status(tmp_path):
     m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")}
+        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"})}
     })
     m.reset_sleep_qc("AM001", "LFC_RSC")
 
     run = m.get_run("AM001", "LFC_RSC")
-    assert run.psd_status is None
+    assert run.psd_status == {}
     assert run.drink_mask is None
 
 
@@ -331,7 +331,7 @@ def test_flag_psd_sets_status(tmp_path):
         "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")}
     })
     m.flag_psd("AM001", "LFC_RSC", "needs_drink_mask")
-    assert m.get_run("AM001", "LFC_RSC").psd_status == "needs_drink_mask"
+    assert m.get_run("AM001", "LFC_RSC").psd_status == {"default": "needs_drink_mask"}
 
 
 def test_flag_psd_drink_mask_applied_sets_path(tmp_path):
@@ -340,13 +340,13 @@ def test_flag_psd_drink_mask_applied_sets_path(tmp_path):
     })
     m.flag_psd("AM001", "LFC_RSC", "drink_mask_applied")
     run = m.get_run("AM001", "LFC_RSC")
-    assert run.psd_status == "drink_mask_applied"
+    assert run.psd_status == {"default": "drink_mask_applied"}
     assert run.drink_mask == "drink_masks/AM001.npy"
 
 
 def test_flag_psd_ok_clears_drink_mask(tmp_path):
     m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="drink_mask_applied",
+        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "drink_mask_applied"},
                                       drink_mask="drink_masks/AM001.npy")}
     })
     m.flag_psd("AM001", "LFC_RSC", "ok")
@@ -593,16 +593,17 @@ def test_needs_rerun(tmp_path):
 
 def test_pending_psd_review(tmp_path):
     # pending_psd_review is gated on psds_channel_merged.pkl existing
-    final_pkl = tmp_path / "psd" / "psds_channel_merged.pkl"
-    final_pkl.parent.mkdir(parents=True)
-    final_pkl.touch()
+    run_dir = tmp_path / "psd" / "default"
+    run_dir.mkdir(parents=True)
+    (run_dir / "psd_params.json").write_text("{}")
+    (run_dir / "psds_channel_merged.pkl").touch()
 
     m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status=None)},
-        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")},
-        "AM003": {"LFC_RSC": RunEntry(sleep_qc="needs_review", psd_status=None)},
+        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
+        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"})},
+        "AM003": {"LFC_RSC": RunEntry(sleep_qc="needs_review")},
     })
-    pending = m.pending_psd_review()
+    pending = m.pending_psd_review("default")
     animal_ids = [e.animal_id for e, _ in pending]
     assert "AM001" in animal_ids
     assert "AM002" not in animal_ids   # already reviewed
@@ -611,18 +612,18 @@ def test_pending_psd_review(tmp_path):
 
 def test_pending_psd_review_empty_without_final_pkl(tmp_path):
     m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status=None)},
+        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
     })
     # No psds_channel_merged.pkl → empty
-    assert m.pending_psd_review() == []
+    assert m.pending_psd_review("default") == []
 
 
 def test_needs_drink_mask_requires_ok_sleep_qc(tmp_path):
     m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
-        "AM002": {"LFC_RSC": RunEntry(sleep_qc="needs_review", psd_status="needs_drink_mask")},
+        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
+        "AM002": {"LFC_RSC": RunEntry(sleep_qc="needs_review", psd_status={"default": "needs_drink_mask"})},
     })
-    result = m.needs_drink_mask()
+    result = m.needs_drink_mask("default")
     animal_ids = [e.animal_id for e, _ in result]
     assert "AM001" in animal_ids
     assert "AM002" not in animal_ids
@@ -634,10 +635,10 @@ def test_needs_drink_mask_rerun_requires_mask_file(tmp_path):
     mask_file.touch()
 
     m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
-        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
+        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
+        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
     })
-    result = m.needs_drink_mask_rerun()
+    result = m.needs_drink_mask_rerun("default")
     animal_ids = [e.animal_id for e, _ in result]
     assert "AM001" in animal_ids
     assert "AM002" not in animal_ids  # no mask file on disk
@@ -775,7 +776,7 @@ def test_add_run_does_not_reset_ok_when_stamping_source_combo(tmp_path):
     """
     m = _make_manifest(tmp_path, {
         "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok"),
+            "LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"}),
             "RSC_LSC": RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
         },
     })
@@ -785,7 +786,7 @@ def test_add_run_does_not_reset_ok_when_stamping_source_combo(tmp_path):
     run = m._entries["AM001"].runs["LFC_RSC"]
     assert run.sleep_qc == "ok", "ok run must not be reset by add_run"
     assert run.source_combo == "RSC_LSC"
-    assert run.psd_status == "ok", "psd_status must be preserved"
+    assert run.psd_status == {"default": "ok"}, "psd_status must be preserved"
     # Sibling should still be rejected (cascade intact)
     assert m._entries["AM001"].runs["RSC_LSC"].sleep_qc == "rejected"
 
@@ -847,7 +848,7 @@ def test_sibling_psd_status_cleared_when_restored_to_non_ok(tmp_path):
         "AM001": {
             "LFC_RSC": RunEntry(sleep_qc="ok"),
             "RSC":     RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC",
-                                prev_sleep_qc=None, psd_status="ok"),
+                                prev_sleep_qc=None, psd_status={"default": "ok"}),
         },
     })
     # Un-ok LFC_RSC → RSC restored to sleep_qc=None (prev_sleep_qc was None)
@@ -856,7 +857,7 @@ def test_sibling_psd_status_cleared_when_restored_to_non_ok(tmp_path):
     rsc = m._entries["AM001"].runs["RSC"]
     assert rsc.sleep_qc is None
     # psd_status must be cleared since RSC is not restored to ok
-    assert rsc.psd_status is None
+    assert rsc.psd_status == {}
     assert rsc.drink_mask is None
 
 
@@ -869,7 +870,7 @@ def test_sibling_psd_status_preserved_when_restored_to_ok(tmp_path):
         "AM001": {
             "LFC_RSC": RunEntry(sleep_qc="ok"),
             "RSC":     RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC",
-                                prev_sleep_qc="ok", psd_status="ok"),
+                                prev_sleep_qc="ok", psd_status={"default": "ok"}),
         },
     })
     # Un-ok LFC_RSC → RSC restored to its prev_sleep_qc="ok"
@@ -877,7 +878,7 @@ def test_sibling_psd_status_preserved_when_restored_to_ok(tmp_path):
 
     rsc = m._entries["AM001"].runs["RSC"]
     assert rsc.sleep_qc == "ok"
-    assert rsc.psd_status == "ok"  # preserved — PSD review work not lost
+    assert rsc.psd_status == {"default": "ok"}  # preserved — PSD review work not lost
 
 
 # ---------------------------------------------------------------------------
@@ -920,23 +921,22 @@ def test_load_orphan_cleared_run_is_actionable(tmp_path):
 def test_psd_queues_are_pairwise_disjoint(tmp_path):
     """pending_psd_review, needs_drink_mask, and pending_drink_verification
     are mutually exclusive — each psd_status value belongs to exactly one queue.
-
-    The Finalize page sums all three to compute a pending count; if any animal
-    appeared in more than one queue the count would be inflated.
     """
-    (tmp_path / "psd").mkdir()
-    (tmp_path / "psd" / "psds_channel_merged.pkl").touch()  # required for pending_psd_review
+    run_dir = tmp_path / "psd" / "default"
+    run_dir.mkdir(parents=True)
+    (run_dir / "psd_params.json").write_text("{}")
+    (run_dir / "psds_channel_merged.pkl").touch()  # required for pending_psd_review
 
     m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status=None)},
-        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
-        "AM003": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="drink_mask_applied")},
-        "AM004": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")},
+        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
+        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
+        "AM003": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "drink_mask_applied"})},
+        "AM004": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"})},
     })
 
-    pending_review   = {(e.animal_id, c) for e, c in m.pending_psd_review()}
-    needs_drink      = {(e.animal_id, c) for e, c in m.needs_drink_mask()}
-    drink_verif      = {(e.animal_id, c) for e, c in m.pending_drink_verification()}
+    pending_review   = {(e.animal_id, c) for e, c in m.pending_psd_review("default")}
+    needs_drink      = {(e.animal_id, c) for e, c in m.needs_drink_mask("default")}
+    drink_verif      = {(e.animal_id, c) for e, c in m.pending_drink_verification("default")}
 
     assert not (pending_review & needs_drink),   "overlap: pending_review ∩ needs_drink"
     assert not (pending_review & drink_verif),   "overlap: pending_review ∩ drink_verif"
@@ -949,20 +949,22 @@ def test_psd_queues_are_pairwise_disjoint(tmp_path):
     assert all(("AM004", "LFC_RSC") not in q for q in (pending_review, needs_drink, drink_verif))
 
 
-def test_finalize_pending_count_no_double_count(tmp_path):
+def test_pending_count_no_double_count(tmp_path):
     """Summing the three disjoint queues gives the correct total pending count."""
-    (tmp_path / "psd").mkdir()
-    (tmp_path / "psd" / "psds_channel_merged.pkl").touch()
+    run_dir = tmp_path / "psd" / "default"
+    run_dir.mkdir(parents=True)
+    (run_dir / "psd_params.json").write_text("{}")
+    (run_dir / "psds_channel_merged.pkl").touch()
 
     m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status=None)},
-        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
-        "AM003": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="drink_mask_applied")},
+        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
+        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
+        "AM003": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "drink_mask_applied"})},
     })
 
     total = (
-        len(m.pending_psd_review())
-        + len(m.needs_drink_mask())
-        + len(m.pending_drink_verification())
+        len(m.pending_psd_review("default"))
+        + len(m.needs_drink_mask("default"))
+        + len(m.pending_drink_verification("default"))
     )
     assert total == 3  # one animal in each queue, no double-counting

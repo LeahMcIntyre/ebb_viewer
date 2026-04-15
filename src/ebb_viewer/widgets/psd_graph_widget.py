@@ -33,6 +33,8 @@ class PSDGridPage(QWidget):
         manifest=None,            # optional Manifest for per-animal flagging
         run_channels: str | None = None,  # channel combo identifying which run this PSD belongs to
         drink_review: bool = False,  # Pass 2 mode: pending = drink_mask_applied animals
+        run_name: str = "default",  # PSD run name for manifest flag scoping
+        project_root=None,          # Path for drink-mask hint
     ):
         super().__init__(parent)
         self.store = store
@@ -41,6 +43,8 @@ class PSDGridPage(QWidget):
         self.manifest = manifest
         self.run_channels = run_channels
         self._drink_review = drink_review
+        self._run_name = run_name
+        self._project_root = project_root
 
         # View preferences
         self.xrange: Tuple[float, float] = (0.5, 110)  # default window to show
@@ -193,6 +197,24 @@ class PSDGridPage(QWidget):
         hint_layout.addWidget(btn_go_drink)
         self._guidance_label.setVisible(False)
         self.root.addWidget(self._guidance_label)
+
+        # Shown during Pass 1 when animal has an existing drink mask on disk
+        self._mask_hint_frame = QFrame()
+        self._mask_hint_frame.setStyleSheet(
+            "QFrame { background: #e8f4fd; border-radius: 3px; }"
+        )
+        mask_hint_layout = QHBoxLayout(self._mask_hint_frame)
+        mask_hint_layout.setContentsMargins(10, 5, 10, 5)
+        self._mask_hint_lbl = QLabel("")
+        self._mask_hint_lbl.setStyleSheet("color: #1a3a5c; background: transparent;")
+        self._mask_hint_lbl.setWordWrap(True)
+        mask_hint_layout.addWidget(self._mask_hint_lbl, 1)
+        self._btn_quick_flag_drink = QPushButton("Flag for drink mask")
+        self._btn_quick_flag_drink.setFixedHeight(26)
+        self._btn_quick_flag_drink.clicked.connect(self._flag_drink_mask)
+        mask_hint_layout.addWidget(self._btn_quick_flag_drink)
+        self._mask_hint_frame.setVisible(False)
+        self.root.addWidget(self._mask_hint_frame)
 
     def _build_grid(self):
         # Grid container
@@ -384,14 +406,12 @@ class PSDGridPage(QWidget):
         if self.manifest is None:
             return set()
         if self._drink_review:
-            # Pass 2: animals with drink_mask_applied awaiting verification
-            return {entry.animal_id for entry, _ in self.manifest.pending_drink_verification()}
+            return {entry.animal_id for entry, _ in self.manifest.pending_drink_verification(self._run_name)}
         if self.run_channels is None:
-            # Pass 1 (final PKL): any animal pending PSD review
-            return {entry.animal_id for entry, _ in self.manifest.pending_psd_review()}
+            return {entry.animal_id for entry, _ in self.manifest.pending_psd_review(self._run_name)}
         return {
             entry.animal_id
-            for entry, combo in self.manifest.pending_psd_review()
+            for entry, combo in self.manifest.pending_psd_review(self._run_name)
             if combo == self.run_channels
         }
 
@@ -417,7 +437,7 @@ class PSDGridPage(QWidget):
         combo = self._resolve_combo(animal_id)
         if animal_id is None or combo is None:
             return
-        self.manifest.flag_psd(animal_id, combo, "ok")
+        self.manifest.flag_psd(animal_id, combo, "ok", self._run_name)
         self._update_flag_status()
         self.manifest_changed.emit()
 
@@ -428,7 +448,7 @@ class PSDGridPage(QWidget):
         combo = self._resolve_combo(animal_id)
         if animal_id is None or combo is None:
             return
-        self.manifest.flag_psd(animal_id, combo, "needs_drink_mask")
+        self.manifest.flag_psd(animal_id, combo, "needs_drink_mask", self._run_name)
         self._update_flag_status()
         self.manifest_changed.emit()
 
@@ -439,7 +459,7 @@ class PSDGridPage(QWidget):
         combo = self._resolve_combo(animal_id)
         if animal_id is None or combo is None:
             return
-        self.manifest.reset_psd_status(animal_id, combo)
+        self.manifest.reset_psd_status(animal_id, combo, self._run_name)
         self._update_flag_status()
         self.manifest_changed.emit()
 
@@ -449,9 +469,25 @@ class PSDGridPage(QWidget):
         animal_id = self._manifest_animal_id()
         combo = self._resolve_combo(animal_id)
         run = self.manifest.get_run(animal_id, combo) if (animal_id and combo) else None
-        status = run.psd_status if run else None
+        status = run.psd_status.get(self._run_name) if run else None
 
         self._btn_flag_reset.setEnabled(status is not None)
+
+        # Drink-mask-on-disk hint: show during Pass 1 when status is not yet set
+        show_mask_hint = (
+            not self._drink_review
+            and status is None
+            and animal_id is not None
+            and self._project_root is not None
+            and (self._project_root / f"drink_masks/{animal_id}.npy").exists()
+        )
+        if show_mask_hint:
+            self._mask_hint_lbl.setText(
+                f"⚠ drink mask on disk from a previous run — flag for drink mask?"
+            )
+            self._mask_hint_frame.setVisible(True)
+        else:
+            self._mask_hint_frame.setVisible(False)
 
         if status == "ok":
             self._btn_flag_ok.setChecked(True)
