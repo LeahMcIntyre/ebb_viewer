@@ -31,7 +31,7 @@ from typing import (
 
 import numpy as np
 import numpy.typing as npt
-from ebbv2.core import mixins
+from ebb.core import mixins
 
 # Type definitions
 Coords = Dict[str, Union[Sequence, npt.NDArray, range]]
