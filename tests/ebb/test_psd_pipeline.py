@@ -172,9 +172,9 @@ class _FakeManifest:
 
 
 def test_build_final_pkl_basic(tmp_path):
-    psd_dir = tmp_path / "psd"
+    psd_run_dir = tmp_path / "psd" / "default"
 
-    _write_combo_pkl(psd_dir, "LFC_RSC", [
+    _write_combo_pkl(psd_run_dir, "LFC_RSC", [
         _make_psd_record("AM001", "LFC_RSC"),
         _make_psd_record("AM002", "LFC_RSC"),
     ])
@@ -185,7 +185,7 @@ def test_build_final_pkl_basic(tmp_path):
     ])
 
     out = build_final_pkl(tmp_path, manifest)
-    assert out == psd_dir / "psds_channel_merged.pkl"
+    assert out == psd_run_dir / "psds_channel_merged.pkl"
     assert out.exists()
 
     with open(out, "rb") as f:
@@ -200,9 +200,9 @@ def test_build_final_pkl_basic(tmp_path):
 
 def test_build_final_pkl_filters_to_ok_combo(tmp_path):
     """Only animals with ok sleep_qc are included."""
-    psd_dir = tmp_path / "psd"
+    psd_run_dir = tmp_path / "psd" / "default"
 
-    _write_combo_pkl(psd_dir, "LFC_RSC", [
+    _write_combo_pkl(psd_run_dir, "LFC_RSC", [
         _make_psd_record("AM001", "LFC_RSC"),
         _make_psd_record("AM002", "LFC_RSC"),
     ])
@@ -223,10 +223,10 @@ def test_build_final_pkl_filters_to_ok_combo(tmp_path):
 
 def test_build_final_pkl_multiple_combos(tmp_path):
     """Animals from different ok combos are consolidated."""
-    psd_dir = tmp_path / "psd"
+    psd_run_dir = tmp_path / "psd" / "default"
 
-    _write_combo_pkl(psd_dir, "LFC_RSC", [_make_psd_record("AM001", "LFC_RSC")])
-    _write_combo_pkl(psd_dir, "LSC_RSC", [_make_psd_record("AM002", "LSC_RSC")])
+    _write_combo_pkl(psd_run_dir, "LFC_RSC", [_make_psd_record("AM001", "LFC_RSC")])
+    _write_combo_pkl(psd_run_dir, "LSC_RSC", [_make_psd_record("AM002", "LSC_RSC")])
 
     manifest = _FakeManifest([
         _FakeEntry("AM001", "LFC_RSC"),

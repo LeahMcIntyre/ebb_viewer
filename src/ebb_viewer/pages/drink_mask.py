@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QGroupBox, QFormLayout, QTableWidget, QTableWidgetItem,
     QHeaderView, QPlainTextEdit, QMessageBox, QApplication,
-    QLineEdit, QSizePolicy, QFrame,
+    QLineEdit, QSizePolicy, QFrame, QComboBox,
 )
 
 from ebb_viewer.widgets.worker_helpers import launch_worker
@@ -39,7 +39,7 @@ class DrinkMaskPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._refresh()
+        self._refresh_run_selector()
 
     def _build_ui(self):
         root = QVBoxLayout(self)
@@ -55,11 +55,20 @@ class DrinkMaskPage(QWidget):
 
         desc = QLabel(
             "Recompute PSDs for animals flagged 'needs_drink_mask' using their .npy mask files. "
-            "PSD params are loaded from the last Compute PSDs run (read-only)."
+            "PSD params are loaded from the selected run (read-only)."
         )
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #555; font-size: 12px;")
         root.addWidget(desc)
+
+        # ----- Run selector -----
+        run_gb = QGroupBox("Run")
+        run_gb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        run_form = QFormLayout(run_gb)
+        self.cmb_run = QComboBox()
+        self.cmb_run.setMinimumWidth(180)
+        run_form.addRow("PSD Run:", self.cmb_run)
+        root.addWidget(run_gb)
 
         # ----- Group 1: Paths -----
         self.gb_paths = QGroupBox("Paths")
@@ -97,7 +106,7 @@ class DrinkMaskPage(QWidget):
         root.addWidget(self.gb_paths)
 
         # ----- Group 2: PSD Params (read-only) -----
-        self.gb_params = QGroupBox("PSD Parameters (from last compute run)")
+        self.gb_params = QGroupBox("PSD Parameters (from selected run)")
         self.gb_params.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         params_form = QFormLayout(self.gb_params)
 
@@ -110,9 +119,9 @@ class DrinkMaskPage(QWidget):
             ("nstd", "SD z-threshold"),
             ("noise_thresh", "Spindle noise threshold"),
         ]:
-            lbl = QLabel("—")
-            self._param_labels[key] = lbl
-            params_form.addRow(display + ":", lbl)
+            lbl_w = QLabel("—")
+            self._param_labels[key] = lbl_w
+            params_form.addRow(display + ":", lbl_w)
 
         self._lbl_compute_hours = QLabel("—")
         params_form.addRow("Compute hours:", self._lbl_compute_hours)
@@ -157,7 +166,7 @@ class DrinkMaskPage(QWidget):
         self.log_box.setPlaceholderText("Status messages will appear here…")
         root.addWidget(self.log_box)
 
-        # Post-run hint (hidden until a run succeeds)
+        # Post-run hint
         self._hint_frame = QFrame()
         self._hint_frame.setFrameShape(QFrame.Shape.StyledPanel)
         self._hint_frame.setStyleSheet(
@@ -165,7 +174,10 @@ class DrinkMaskPage(QWidget):
         )
         hint_layout = QHBoxLayout(self._hint_frame)
         hint_layout.setContentsMargins(10, 6, 10, 6)
-        hint_lbl = QLabel("✓ Drink masks applied. Review the updated PSDs in PSD Visualizer (plot 'psds_channel_merged_drink.pkl').")
+        hint_lbl = QLabel(
+            "✓ Drink masks applied. Review the updated PSDs in PSD Visualizer "
+            "(plot 'psds_channel_merged_drink.pkl')."
+        )
         hint_lbl.setWordWrap(True)
         hint_layout.addWidget(hint_lbl, 1)
         btn_go_psd = QPushButton("→ PSD Visualizer")
@@ -175,17 +187,42 @@ class DrinkMaskPage(QWidget):
         root.addWidget(self._hint_frame)
 
         # Styling
+        run_gb.setObjectName("runBox")
         self.gb_paths.setObjectName("pathsBox")
         self.gb_params.setObjectName("paramsBox")
         self.gb_animals.setObjectName("animalsBox")
         self.setStyleSheet("""
-        QGroupBox#pathsBox, QGroupBox#paramsBox, QGroupBox#animalsBox { font: 550; }
-        QGroupBox#pathsBox *, QGroupBox#paramsBox *, QGroupBox#animalsBox * { font: 400; }
+        QGroupBox#runBox, QGroupBox#pathsBox, QGroupBox#paramsBox, QGroupBox#animalsBox { font: 550; }
+        QGroupBox#runBox *, QGroupBox#pathsBox *, QGroupBox#paramsBox *, QGroupBox#animalsBox * { font: 400; }
         """)
 
     def _wire(self):
-        self.btn_refresh.clicked.connect(self._refresh)
+        self.btn_refresh.clicked.connect(self._refresh_run_selector)
         self.btn_apply.clicked.connect(self._apply_clicked)
+        self.cmb_run.currentIndexChanged.connect(self._on_run_changed)
+
+    # ------------- Run selector -------------
+
+    def _current_run_name(self) -> str:
+        return self.cmb_run.currentText() or "default"
+
+    def _refresh_run_selector(self):
+        from ebb_viewer.pipeline import psd_params
+        current = self.cmb_run.currentText()
+        runs = psd_params.list_runs(self.project_root)
+        self.cmb_run.blockSignals(True)
+        self.cmb_run.clear()
+        for r in runs:
+            self.cmb_run.addItem(r)
+        self.cmb_run.blockSignals(False)
+        if current in runs:
+            self.cmb_run.setCurrentText(current)
+        elif runs:
+            self.cmb_run.setCurrentIndex(0)
+        self._refresh()
+
+    def _on_run_changed(self):
+        self._refresh()
 
     # ------------- Data refresh -------------
 
@@ -254,7 +291,8 @@ class DrinkMaskPage(QWidget):
 
     def _refresh_params(self):
         from ebb_viewer.pipeline import psd_params
-        params = psd_params.load(self.project_root)
+        run_name = self._current_run_name()
+        params = psd_params.load(self.project_root, run_name)
         if params is None:
             for lbl in self._param_labels.values():
                 lbl.setText("— (run Compute PSDs first)")
@@ -270,12 +308,12 @@ class DrinkMaskPage(QWidget):
             else:
                 lbl.setText(str(params.get(key, "—")))
 
-        if params.get("time_filter_enabled"):
-            start = params.get("tod_start", "?")
-            end = params.get("tod_end", "?")
-            days = params.get("time_filter_days")
+        if params.get("hw_enabled"):
+            windows = params.get("hour_windows") or []
+            wins_str = ", ".join(f"{int(w[0])}–{int(w[1])}h" for w in windows) or "?"
+            days = params.get("selected_days")
             day_str = "all days" if days is None else f"days {', '.join(str(d) for d in days)}"
-            self._lbl_compute_hours.setText(f"{start}–{end}  ({day_str})")
+            self._lbl_compute_hours.setText(f"{wins_str}  ({day_str})")
             self._lbl_compute_hours.setStyleSheet("color: #1a5c8a; font-weight: bold;")
         else:
             self._lbl_compute_hours.setText("off (all hours included)")
@@ -283,10 +321,11 @@ class DrinkMaskPage(QWidget):
 
     def _refresh_animals(self):
         from ebb_viewer.pipeline.manifest import Manifest
+        run_name = self._current_run_name()
         try:
             manifest = Manifest.load(self.project_root)
-            flagged = manifest.needs_drink_mask()
-            ready = manifest.needs_drink_mask_rerun()
+            flagged = manifest.needs_drink_mask(run_name)
+            ready = manifest.needs_drink_mask_rerun(run_name)
         except Exception:
             flagged = []
             ready = []
@@ -333,7 +372,8 @@ class DrinkMaskPage(QWidget):
                 self._table.setItem(row, col, item)
         self._table.setVisible(True)
 
-        has_params = (self.project_root / "psd" / "psd_params.json").exists()
+        from ebb_viewer.pipeline import psd_params
+        has_params = psd_params.load(self.project_root, run_name) is not None
         self.btn_apply.setEnabled(n_ready > 0 and has_params and not self._computing)
         if not has_params:
             self.btn_apply.setText("Apply Drink Masks (run Compute PSDs first)")
@@ -348,10 +388,11 @@ class DrinkMaskPage(QWidget):
         from ebb_viewer.pipeline.manifest import Manifest
         from ebb_viewer.pipeline import psd_params
 
-        params = psd_params.load(self.project_root)
+        run_name = self._current_run_name()
+        params = psd_params.load(self.project_root, run_name)
         if params is None:
             QMessageBox.critical(self, "No PSD Params",
-                                 "psd_params.json not found. Run Compute PSDs first.")
+                                 f"psd_params.json not found for run '{run_name}'. Run Compute PSDs first.")
             return
 
         standard_folder = self.project_root / "standard"
@@ -361,19 +402,20 @@ class DrinkMaskPage(QWidget):
             return
 
         manifest = Manifest.load(self.project_root)
-        to_rerun = manifest.needs_drink_mask_rerun()
+        to_rerun = manifest.needs_drink_mask_rerun(run_name)
         if not to_rerun:
             return
 
         animal_combos = {entry.animal_id: combo for entry, combo in to_rerun}
         self._pending_animal_combos = animal_combos
+        self._pending_run_name = run_name
 
         offset_path = self._detect_offset_csv()
         swd_dir = (self.project_root / "swd") if params.get("swd_mode") == "mask_out" else None
 
         self._computing = True
         self.btn_apply.setEnabled(False)
-        self._log(f"Starting drink mask rerun for {len(animal_combos)} animal(s)…")
+        self._log(f"Starting drink mask rerun for {len(animal_combos)} animal(s) in run '{run_name}'…")
         if swd_dir:
             self._log(f"  SWD mask: {swd_dir}")
 
@@ -397,6 +439,7 @@ class DrinkMaskPage(QWidget):
             animal_combos=animal_combos,
             offset_path=offset_path,
             params=params,
+            run_name=run_name,
             swd_dir=swd_dir,
             ann_params=ann_params,
         )
@@ -409,10 +452,11 @@ class DrinkMaskPage(QWidget):
         self._computing = False
         from ebb_viewer.pipeline.manifest import Manifest
         manifest = Manifest.load(self.project_root)
+        run_name = self._pending_run_name
         failed = []
         for animal_id, combo in self._pending_animal_combos.items():
             try:
-                manifest.flag_psd(animal_id, combo, "drink_mask_applied")
+                manifest.flag_psd(animal_id, combo, "drink_mask_applied", run_name)
             except Exception as e:
                 failed.append(f"{animal_id} ({combo}): {e}")
         manifest.save()
@@ -455,6 +499,7 @@ class DrinkMaskRerunWorker(QObject):
         animal_combos: dict,
         offset_path,
         params: dict,
+        run_name: str = "default",
         swd_dir: Path = None,
         ann_params: dict = None,
         parent=None,
@@ -464,9 +509,10 @@ class DrinkMaskRerunWorker(QObject):
         self.eeg_dir = Path(eeg_dir)
         self.spindle_root = Path(spindle_root)
         self.drink_dir = Path(drink_dir)
-        self.animal_combos = animal_combos   # {animal_id: ok_combo}
+        self.animal_combos = animal_combos
         self.offset_path = offset_path
         self.params = params
+        self.run_name = run_name
         self.swd_dir = Path(swd_dir) if swd_dir else None
         self.ann_params = ann_params
 
@@ -483,6 +529,7 @@ class DrinkMaskRerunWorker(QObject):
                 swd_dir=self.swd_dir,
                 ncores=None,
                 ann_params=self.ann_params,
+                run_name=self.run_name,
                 **{k: v for k, v in self.params.items() if k not in _UI_ONLY_PARAM_KEYS},
             )
             self.progress.emit("  → psds_drink.pkl updated.")

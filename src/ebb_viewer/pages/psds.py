@@ -563,6 +563,7 @@ class PSDPage(QWidget):
         self._refresh_standard_folder()
         self._refresh_combo_table()
         self._refresh_swd_status()
+        self._refresh_run_name_hint()
 
     # ---------------- UI ----------------
 
@@ -610,6 +611,21 @@ class PSDPage(QWidget):
         self.target_name_edit = QLineEdit()
         self.target_name_edit.setReadOnly(True)
         top_form.addRow("PSD Output Root:", self.target_name_edit)
+
+        run_name_row = QHBoxLayout()
+        self._run_name_edit = QLineEdit("default")
+        self._run_name_edit.setPlaceholderText("default")
+        self._run_name_edit.setMaximumWidth(200)
+        run_name_row.addWidget(self._run_name_edit)
+        self._run_name_hint = QLabel("")
+        self._run_name_hint.setStyleSheet("font-size: 10px; color: #888;")
+        run_name_row.addWidget(self._run_name_hint, 1)
+        top_form.addRow("Run name:", run_name_row)
+
+        self._run_name_warn = QLabel("")
+        self._run_name_warn.setStyleSheet("font-size: 10px; color: #c77800;")
+        self._run_name_warn.setWordWrap(True)
+        top_form.addRow("", self._run_name_warn)
 
         root.addWidget(self.folder_gb)
 
@@ -855,6 +871,7 @@ class PSDPage(QWidget):
         self.btn_run_pipeline.clicked.connect(self._run_pipeline_clicked)
         self._btn_adv.clicked.connect(self._toggle_advanced)
         self._btn_configure_masking.clicked.connect(self._open_masking_dialog)
+        self._run_name_edit.textChanged.connect(self._on_run_name_changed)
 
     def _toggle_advanced(self, checked: bool):
         self._adv_container.setVisible(checked)
@@ -863,6 +880,35 @@ class PSDPage(QWidget):
         )
 
     # ------------- Path / table refresh -------------
+
+    def _run_name(self) -> str:
+        """Return the current run name, defaulting to 'default'."""
+        name = self._run_name_edit.text().strip()
+        return name if name else "default"
+
+    def _on_run_name_changed(self) -> None:
+        name = self._run_name_edit.text().strip()
+        if name and not psd_params.valid_run_name(name):
+            self._run_name_warn.setText(
+                "Invalid name — use letters, numbers, hyphens, underscores (max 64 chars)."
+            )
+        else:
+            existing = psd_params.list_runs(self.project_root)
+            if name in existing:
+                self._run_name_warn.setText(
+                    f"⚠ Run '{name}' already exists — re-running will overwrite its results."
+                )
+            else:
+                self._run_name_warn.setText("")
+        self.target_name_edit.setText(str(self.project_root / "psd" / (name or "default")))
+        self._refresh_combo_table()
+
+    def _refresh_run_name_hint(self) -> None:
+        existing = psd_params.list_runs(self.project_root)
+        if existing:
+            self._run_name_hint.setText("Existing: " + ", ".join(existing))
+        else:
+            self._run_name_hint.setText("")
 
     def _refresh_standard_folder(self):
         cand_std = self.project_root / "standard"
@@ -875,7 +921,7 @@ class PSDPage(QWidget):
                 f"No 'standard' folder found under {self.project_root}. "
                 "Run preprocessing first or browse manually."
             )
-        self.target_name_edit.setText(str(self.project_root / "psd"))
+        self.target_name_edit.setText(str(self.project_root / "psd" / self._run_name()))
 
 
     def _refresh_swd_status(self):
@@ -945,10 +991,20 @@ class PSDPage(QWidget):
         self._masking_summary_lbl.setText("  ·  ".join(parts))
 
     def _load_saved_params(self):
-
-        params = psd_params.load(self.project_root)
+        # Load from most recently modified run dir, falling back to "default"
+        runs = psd_params.list_runs(self.project_root)
+        run_name = "default"
+        if runs:
+            psd_dir = self.project_root / "psd"
+            run_name = max(
+                runs,
+                key=lambda r: (psd_dir / r / "psd_params.json").stat().st_mtime
+            )
+        params = psd_params.load(self.project_root, run_name)
         if params is None:
             return
+        self._run_name_edit.setText(run_name)
+        self._refresh_run_name_hint()
         if "fs" in params:
             self.spin_fs.setValue(params["fs"])
         if "winsize" in params:
@@ -998,12 +1054,13 @@ class PSDPage(QWidget):
         self.combo_table.blockSignals(True)
         self.combo_table.setRowCount(0)
 
+        run_name = self._run_name()
         if spindle_root.is_dir():
             for combo_dir in sorted(p for p in spindle_root.iterdir() if p.is_dir()):
                 combo = combo_dir.name
                 csv_count = len(list(combo_dir.glob("*.csv")))
                 ok_count = ok_runs_per_combo.get(combo, 0)
-                pkl_path = psd_dir / f"psds_{combo}.pkl"
+                pkl_path = psd_dir / run_name / f"psds_{combo}.pkl"
                 pkl_status = "✓ exists" if pkl_path.exists() else "missing"
 
                 row = self.combo_table.rowCount()
@@ -1024,7 +1081,7 @@ class PSDPage(QWidget):
 
         self.combo_table.blockSignals(False)
 
-        merged = merged_psd_path(self.project_root)
+        merged = merged_psd_path(self.project_root, run_name)
         if merged.exists():
             self._merged_pkl_label.setText("Channel merged PKL: ✓ exists")
             self._merged_pkl_label.setStyleSheet("font-size: 10px; color: #2a7a2a; padding-top: 2px;")
@@ -1100,11 +1157,18 @@ class PSDPage(QWidget):
                 )
                 return
 
-        psd_dir = self.project_root / "psd"
-        psd_dir.mkdir(parents=True, exist_ok=True)
+        run_name = self._run_name()
+        if not psd_params.valid_run_name(run_name):
+            QMessageBox.warning(self, "Invalid Run Name",
+                                "Run name must contain only letters, numbers, hyphens, "
+                                "or underscores (max 64 characters).")
+            return
+
+        psd_run_dir = self.project_root / "psd" / run_name
+        psd_run_dir.mkdir(parents=True, exist_ok=True)
 
         pairs: List[Tuple[Path, Path]] = [
-            (spindle_root / combo, psd_dir / f"psds_{combo}.pkl")
+            (spindle_root / combo, psd_run_dir / f"psds_{combo}.pkl")
             for combo in combos
         ]
 
@@ -1146,6 +1210,7 @@ class PSDPage(QWidget):
             combo_pairs=pairs,
             params=params,
             project_root=self.project_root,
+            run_name=run_name,
             swd_dir=swd_dir,
             ann_params=ann_params,
         )
@@ -1155,13 +1220,12 @@ class PSDPage(QWidget):
                       on_error=self._on_psd_error)
 
     def _build_final_pkl(self):
-
-
         try:
+            run_name = self._run_name()
             manifest = Manifest.load(self.project_root)
-            out = build_final_pkl(self.project_root, manifest)
+            out = build_final_pkl(self.project_root, manifest, run_name)
             self._log(f"Built channel merged PKL: {out}")
-            drink_pkl = self.project_root / "psd" / "psds_drink.pkl"
+            drink_pkl = self.project_root / "psd" / run_name / "psds_drink.pkl"
             if drink_pkl.exists():
                 self._log(
                     "Note: previously applied drink masks are preserved in psds_drink.pkl."
@@ -1296,6 +1360,7 @@ class BatchEstimateWorker(QObject):
         combo_pairs: List[Tuple[Path, Path]],
         params: dict,
         project_root: Path,
+        run_name: str = "default",
         offset_path=None,
         swd_dir: Optional[Path] = None,
         ann_params: Optional[dict] = None,
@@ -1306,6 +1371,7 @@ class BatchEstimateWorker(QObject):
         self.combo_pairs = combo_pairs
         self.params = params
         self.project_root = Path(project_root)
+        self.run_name = run_name
         self.offset_path = offset_path
         self.swd_dir = swd_dir
         self.ann_params = ann_params
@@ -1350,8 +1416,8 @@ class BatchEstimateWorker(QObject):
                 })
             else:
                 saved["ann_enabled"] = False
-            psd_params.save(self.project_root, saved)
-            self.progress.emit("  → Saved PSD params to psd/psd_params.json")
+            psd_params.save(self.project_root, self.run_name, saved)
+            self.progress.emit(f"  → Saved PSD params to psd/{self.run_name}/psd_params.json")
             self.finished.emit()
         except Exception as e:
             self.error.emit(str(e))

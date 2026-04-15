@@ -16,7 +16,6 @@ from ebb_viewer.pages.rerun import RerunPage
 from ebb_viewer.pages.psds import PSDPage
 from ebb_viewer.pages.psd_visualizer import PSDVisualizer
 from ebb_viewer.pages.drink_mask import DrinkMaskPage
-from ebb_viewer.pages.finalize import FinalizePage
 from ebb_viewer.pages.sleep_visualizer import SleepMetricsPage
 from ebb_viewer.pages.sleep_qc_visualizer import SleepQCGridPage
 from ebb_viewer.pipeline.manifest import Manifest
@@ -69,12 +68,10 @@ class MainWindow(QMainWindow):
         self.psd_page = PSDPage(parent=self, project_root=self.project_root)
         self.psd_visualizer_page = PSDVisualizer(parent=self, project_root=self.project_root)
         self.drink_mask_page = DrinkMaskPage(parent=self, project_root=self.project_root)
-        self.finalize_page = FinalizePage(parent=self, project_root=self.project_root)
 
         for w in (self.home_page, self.preprocess_page, self.spindle_write_page,
                   self.spindle_upload_page, self.sleep_combine_page, self.rerun_page,
-                  self.psd_page, self.psd_visualizer_page, self.drink_mask_page,
-                  self.finalize_page):
+                  self.psd_page, self.psd_visualizer_page, self.drink_mask_page):
             self.stacklayout.addWidget(w)
 
         # Build sidebar with separators.
@@ -92,8 +89,6 @@ class MainWindow(QMainWindow):
             ("6. PSD Computation", 6),
             ("7. PSD Visualizer",  7),
             ("8. Drink Mask",      8),
-            None,
-            ("9. Finalize",        9),
         ]
         self._row_to_stack: dict[int, int] = {}
         self._row_base_label: dict[int, str] = {}
@@ -130,10 +125,6 @@ class MainWindow(QMainWindow):
         self.drink_mask_page.navigate_to.connect(
             lambda name: self.pagelist.setCurrentRow(_page_rows[name])
         )
-        self.finalize_page.manifest_changed.connect(self._refresh_badges)
-        self.finalize_page.navigate_to.connect(
-            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
-        )
 
         # Navigation hints — pages that emit navigate_to for post-action routing
         _page_rows = {
@@ -146,7 +137,6 @@ class MainWindow(QMainWindow):
             "psd_compute":    9,
             "psd_review":     10,
             "drink_mask":     11,
-            "finalize":       13,
         }
         self.home_page.navigate_to.connect(
             lambda name: self.pagelist.setCurrentRow(_page_rows[name])
@@ -221,8 +211,8 @@ class MainWindow(QMainWindow):
             "needs_review":         len(manifest.needs_review()),
             "pending_rerun_review": len(manifest.pending_rerun_review()),
             "needs_rerun_pending":  len(manifest.needs_rerun_pending()),
-            "pending_psd_review":   len(manifest.pending_psd_review()) + len(manifest.pending_drink_verification()),
-            "needs_drink_mask":     len(manifest.needs_drink_mask()),
+            "pending_psd_review":   len(manifest.all_pending_psd_review()) + len(manifest.all_pending_drink_verification()),
+            "needs_drink_mask":     len(manifest.all_needs_drink_mask()),
         }
         for row, method in self._badge_rows.items():
             item = self.pagelist.item(row)

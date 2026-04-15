@@ -40,6 +40,15 @@ def _setup_filesystem(tmp_path: Path, *, combos: list[str]) -> None:
         (csv_dir / "A001_labels.csv").touch()
 
 
+def _setup_psd_run(tmp_path: Path, run_name: str = "default") -> Path:
+    """Create psd/<run_name>/ with psd_params.json + psds_channel_merged.pkl."""
+    run_dir = tmp_path / "psd" / run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "psd_params.json").write_text("{}")
+    (run_dir / "psds_channel_merged.pkl").touch()
+    return run_dir
+
+
 # ---------------------------------------------------------------------------
 # Step 6: PSD gate on Sleep QC resolved
 # ---------------------------------------------------------------------------
@@ -111,12 +120,9 @@ def test_step6_active_when_cascade_rejected_run_exists(tmp_path):
 
 
 def test_step6_done_when_final_pkl_exists(tmp_path):
-    """Step 6 is 'done' when psds_channel_merged.pkl exists regardless of review state."""
+    """Step 6 is 'done' when psds_channel_merged.pkl exists in a run directory."""
     _setup_filesystem(tmp_path, combos=["LFC_RSC"])
-    psd_dir = tmp_path / "psd"
-    psd_dir.mkdir()
-    (psd_dir / "psds_channel_merged.pkl").touch()
-    (psd_dir / "psds_LFC_RSC.pkl").touch()
+    _setup_psd_run(tmp_path)
     m = _make_manifest(tmp_path, {
         "A001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
     })
@@ -130,21 +136,19 @@ def test_step6_done_when_final_pkl_exists(tmp_path):
 # ---------------------------------------------------------------------------
 
 def _setup_with_final_pkl(tmp_path: Path, combos: list[str]) -> Path:
-    """Set up filesystem + return psd_dir with psds_channel_merged.pkl created."""
+    """Set up filesystem + return psd run_dir with psds_channel_merged.pkl created."""
     _setup_filesystem(tmp_path, combos=combos)
-    psd_dir = tmp_path / "psd"
-    psd_dir.mkdir()
-    (psd_dir / "psds_channel_merged.pkl").touch()
+    run_dir = _setup_psd_run(tmp_path)
     for combo in combos:
-        (psd_dir / f"psds_{combo}.pkl").touch()
-    return psd_dir
+        (run_dir / f"psds_{combo}.pkl").touch()
+    return run_dir
 
 
 def test_step8_blocked_when_no_final_pkl(tmp_path):
     """Step 8 is 'blocked' until psds_channel_merged.pkl exists."""
     _setup_filesystem(tmp_path, combos=["LFC_RSC"])
     m = _make_manifest(tmp_path, {
-        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
     })
     statuses = compute_pipeline_status(tmp_path, m)
     assert statuses[7].kind == "blocked"
@@ -154,8 +158,8 @@ def test_step8_attention_when_drink_mask_needed(tmp_path):
     """Step 8 is 'attention' when animals are flagged needs_drink_mask."""
     _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
     m = _make_manifest(tmp_path, {
-        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
-        "A002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
+        "A002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
     })
     statuses = compute_pipeline_status(tmp_path, m)
     s8 = statuses[7]
@@ -167,7 +171,7 @@ def test_step8_done_when_drink_masks_applied(tmp_path):
     """Step 8 is 'done' with count when all flagged animals have masks applied."""
     _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
     m = _make_manifest(tmp_path, {
-        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="drink_mask_applied")},
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "drink_mask_applied"})},
     })
     statuses = compute_pipeline_status(tmp_path, m)
     s8 = statuses[7]
@@ -179,7 +183,7 @@ def test_step8_done_none_needed_when_all_ok(tmp_path):
     """Step 8 is 'done (none needed)' when final PKL exists and no animals need a drink mask."""
     _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
     m = _make_manifest(tmp_path, {
-        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")},
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"})},
     })
     statuses = compute_pipeline_status(tmp_path, m)
     s8 = statuses[7]
@@ -187,143 +191,41 @@ def test_step8_done_none_needed_when_all_ok(tmp_path):
     assert "no drink masks needed" in s8.description.lower()
 
 
-# ---------------------------------------------------------------------------
-# Step 9: Finalize gate
-# ---------------------------------------------------------------------------
-
-def test_step9_blocked_when_no_merged_pkl(tmp_path):
-    """Step 9 is 'blocked' when psds_channel_merged.pkl doesn't exist."""
-    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
-    m = _make_manifest(tmp_path, {
-        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
-    })
-    statuses = compute_pipeline_status(tmp_path, m)
-    assert statuses[8].kind == "blocked"
-
-
-def test_step9_blocked_when_psd_review_pending(tmp_path):
-    """Step 9 is 'blocked' when some PSDs are still pending review."""
-    _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
-    m = _make_manifest(tmp_path, {
-        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status=None)},
-    })
-    statuses = compute_pipeline_status(tmp_path, m)
-    assert statuses[8].kind == "blocked"
-
-
-def test_step9_blocked_when_drink_mask_pending(tmp_path):
-    """Step 9 is 'blocked' when animals still need drink mask."""
-    _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
-    m = _make_manifest(tmp_path, {
-        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
-    })
-    statuses = compute_pipeline_status(tmp_path, m)
-    assert statuses[8].kind == "blocked"
-
-
-def test_step9_attention_when_all_reviewed_not_finalized(tmp_path):
-    """Step 9 is 'attention' when all PSDs are reviewed but psds_final.pkl not yet written."""
-    _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
-    m = _make_manifest(tmp_path, {
-        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")},
-    })
-    statuses = compute_pipeline_status(tmp_path, m)
-    s9 = statuses[8]
-    assert s9.kind == "attention"
-    assert "finalize" in s9.description.lower()
 
 
 # ---------------------------------------------------------------------------
-# Gap 11: special PKL names excluded from combos_with_pkl
+# Gap 3: regression guard — merged_pkl absent despite reviewed animals
 # ---------------------------------------------------------------------------
-
-def test_step6_special_pkl_names_not_counted_as_combo_pkls(tmp_path):
-    """psds_channel_merged.pkl, psds_channel_merged_drink.pkl, and psds_final.pkl
-    must not be counted as per-combo PKLs.
-
-    Without the exclusion filter these files would make combos_with_pkl non-empty,
-    changing the step 6 branch that fires.  With the filter, only real combo PKLs
-    (e.g. psds_LFC_RSC.pkl) count — so step 6 must not report 'done' when the
-    per-combo PKL is absent even though the special PKLs are present.
-    """
-    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
-    psd_dir = tmp_path / "psd"
-    psd_dir.mkdir()
-    (psd_dir / "psds_channel_merged.pkl").touch()
-    (psd_dir / "psds_channel_merged_drink.pkl").touch()
-    (psd_dir / "psds_final.pkl").touch()
-    # psds_LFC_RSC.pkl intentionally absent
-    m = _make_manifest(tmp_path, {
-        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
-    })
-    statuses = compute_pipeline_status(tmp_path, m)
-    assert statuses[5].kind != "done"
-
-
-def test_step9_done_when_final_pkl_exists(tmp_path):
-    """Step 9 is 'done' when psds_final.pkl exists."""
-    psd_dir = _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
-    (psd_dir / "psds_final.pkl").touch()
-    m = _make_manifest(tmp_path, {
-        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")},
-    })
-    statuses = compute_pipeline_status(tmp_path, m)
-    assert statuses[8].kind == "done"
-
-
-# ---------------------------------------------------------------------------
-# Gap 3: regression guard — merged_pkl deleted after partial/full review
-# ---------------------------------------------------------------------------
-
-def test_step9_blocked_when_merged_pkl_absent_despite_reviewed_animals(tmp_path):
-    """Step 9 is 'blocked' when merged_pkl is absent even if psd_status flags are set.
-
-    pending_psd_review() returns [] when merged_pkl is absent, making n_psd_pending=0.
-    Step 9 must still be 'blocked' because merged_pkl.exists() gates it.
-    """
-    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
-    m = _make_manifest(tmp_path, {
-        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")},
-    })
-    statuses = compute_pipeline_status(tmp_path, m)
-    assert statuses[8].kind == "blocked"
-
 
 def test_step7_blocked_when_merged_pkl_absent_despite_reviewed_animals(tmp_path):
-    """Step 7 is 'blocked' when merged_pkl is absent even if psd_status flags are set."""
+    """Step 7 is 'blocked' when no run directories exist even if psd_status flags are set."""
     _setup_filesystem(tmp_path, combos=["LFC_RSC"])
     m = _make_manifest(tmp_path, {
-        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")},
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"})},
     })
     statuses = compute_pipeline_status(tmp_path, m)
     assert statuses[6].kind == "blocked"
 
 
 # ---------------------------------------------------------------------------
-# Gap 6: step 7 must not show "done" when an animal is re-flagged after finalization
+# Gap 6: step 7 must not show "done" when an animal needs drink mask
 # ---------------------------------------------------------------------------
 
-def test_step7_not_done_when_final_pkl_exists_but_animal_needs_drink_mask(tmp_path):
-    """Step 7 must not show 'done' when final_pkl exists but an animal is re-flagged needs_drink_mask.
-
-    Bug: final_pkl.exists() was checked before n_needs_drink, causing step 7 to
-    report 'done' even though a drink mask still needs to be applied.
-    """
-    psd_dir = _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
-    (psd_dir / "psds_final.pkl").touch()
+def test_step7_not_done_when_animal_needs_drink_mask(tmp_path):
+    """Step 7 must not show 'done' when an animal is flagged needs_drink_mask."""
+    _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
     m = _make_manifest(tmp_path, {
-        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="needs_drink_mask")},
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
     })
     statuses = compute_pipeline_status(tmp_path, m)
     assert statuses[6].kind != "done"
 
 
-def test_step7_done_when_final_pkl_exists_and_no_pending_work(tmp_path):
-    """Step 7 is 'done' when final_pkl exists and all animals are reviewed with no pending drink masks."""
-    psd_dir = _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
-    (psd_dir / "psds_final.pkl").touch()
+def test_step7_done_when_all_reviewed_no_pending_work(tmp_path):
+    """Step 7 is 'done' when all PSDs are reviewed and no drink masks pending."""
+    _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
     m = _make_manifest(tmp_path, {
-        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status="ok")},
+        "A001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"})},
     })
     statuses = compute_pipeline_status(tmp_path, m)
     assert statuses[6].kind == "done"

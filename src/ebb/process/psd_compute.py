@@ -481,16 +481,16 @@ def batch_estimate(
     return results
 
 
-def build_final_pkl(project_root, manifest) -> Path:
+def build_final_pkl(project_root, manifest, run_name: str = "default") -> Path:
     """For each animal with sleep_qc == "ok", load their entry from
-    psds_<ok_combo>.pkl, annotate with source_combo, and write to
-    psd/psds_channel_merged.pkl. Atomically replaces the file.
+    psds_<ok_combo>.pkl in psd/<run_name>/, annotate with source_combo, and write to
+    psd/<run_name>/psds_channel_merged.pkl. Atomically replaces the file.
     Returns the path written.
     """
     import warnings
 
     project_root = Path(project_root)
-    psd_dir = project_root / "psd"
+    psd_dir = project_root / "psd" / run_name
 
     # Group animals by their ok combo
     combo_to_animals: dict = {}
@@ -538,6 +538,7 @@ def rerun_with_drink_masks(
     swd_dir: Union[str, Path] = None,
     ncores: Optional[int] = None,
     ann_params: Optional[dict] = None,
+    run_name: str = "default",
     **kwargs,
 ) -> Tuple[Path, Path]:
     """Recompute PSDs for specific animals with drink masks.
@@ -565,7 +566,7 @@ def rerun_with_drink_masks(
     """
     import warnings, tracemalloc
 
-    psd_dir = Path(psd_dir)
+    psd_dir = Path(psd_dir) / run_name
     eeg_dir = Path(eeg_dir)
     spindle_root = Path(spindle_root)
     drink_dir = Path(drink_dir)
