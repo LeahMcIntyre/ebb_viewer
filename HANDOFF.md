@@ -109,7 +109,7 @@ explicitly flagged `needs_drink_mask` in the PSD Visualizer.
 
 ---
 
-### Completed (this session, branch `feature/save_psd_runs` → merged into `feature/psd_compute_hours`)
+### Completed (branch `feature/save_psd_runs` → merged into `feature/psd_compute_hours`)
 
 #### Named PSD runs architecture (all of `project_save_psd_compute_plan.md`)
 - Each run lives at `psd/<run_name>/`: `psd_params.json`, `psds_<COMBO>.pkl`, `psds_channel_merged.pkl`, `psds_drink.pkl`, `psds_channel_merged_drink.pkl`, `psds_final.pkl`
@@ -145,6 +145,23 @@ explicitly flagged `needs_drink_mask` in the PSD Visualizer.
 #### Tests — 201 passing
 - 7 new SWD sample-position tests: boundary precision, multiple intervals, adjacent merge, pad_sec, clip at start/end, 1D single-interval shape
 - 7 new hour window sample-position tests: inside/outside, boundary precision, non-midnight start, overnight wrap, used_windows coverage, no bleed between windows, selected_days exact positions
+
+---
+
+### Completed (most recent session, branch `feature/psd_compute_hours`)
+
+#### Hint banner fix (`pages/psds.py`, `pages/drink_mask.py`)
+- The green "run complete" hint banners on PSD Computation and Drink Mask pages were
+  persisting when a new run was started, suggesting the pipeline was done when it wasn't
+- Fixed by adding `self._hint_frame.setVisible(False)` at the start of `_run_pipeline_clicked`
+  (psds.py) and `_apply_clicked` (drink_mask.py), just before `self._computing = True`
+- The PSD Visualizer's done-hint already handled this correctly via `_check_done_hint()`
+
+#### Verified previously flagged issues are resolved
+- Home page step 9 logic: already uses `list_runs()` — no flat `psd/psds_final.pkl` reference
+- Home page drink mask attention cards: `all_needs_drink_mask()` already iterates all runs correctly
+
+#### Tests — 201 passing (no change)
 
 ---
 
@@ -285,14 +302,16 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 - **Linter (`/simplify`) repeatedly strips `offset_path` from `BatchEstimateWorker`**: happens on every `/simplify` run. Restore: `offset_path=None` param in `__init__`, `self.offset_path = offset_path`, `offset_path=self.offset_path` in `batch_estimate` call in `psds.py`.
 - **Legend stylesheet extra `}}`**: non-f-string double `}` → Qt parse error. Must be single `}`.
 - **`toolbar.addWidget(btn).setVisible(False)` doesn't work**: must store the `QAction` return value and call `setVisible(False)` on that.
+- **Hint banners persisting across new runs**: green "run complete" banners on PSD Computation and Drink Mask pages stayed visible when a new run started. Fixed by hiding `_hint_frame` at the top of `_run_pipeline_clicked` / `_apply_clicked`.
 
 ---
 
 ## Next Steps
 
-The `feature/psd_compute_hours` branch is feature-complete and pushed to remote.
-Likely next steps before merging to `dev`:
-1. **End-to-end test with real data** — run a full pipeline from scratch with a new run name, plus a re-run with an existing name, to confirm the overwrite guard and manifest reset work in practice
-2. **Home page step 9 logic** — the home page still references old flat `psd/psds_final.pkl` for the "9. Finalize" step gate. It should check across all named runs (`list_runs()`) and look for `psds_final.pkl` in each
-3. **Home page drink mask attention cards** — these may still use the old `needs_drink_mask()` without a `run_name` arg; verify they iterate across all runs correctly
-4. **PR to `dev`** once testing passes
+The `feature/psd_compute_hours` branch is feature-complete and ready to merge to `dev`.
+Only one remaining step before merging:
+
+1. **End-to-end test with real data** — run a full pipeline from scratch with a new run name,
+   plus a re-run with an existing name, to confirm the overwrite guard and manifest reset
+   work in practice. Also verify the hint banners hide/show correctly across runs.
+2. **Merge to `dev`** once testing passes.
