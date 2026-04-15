@@ -86,6 +86,9 @@ class PSDVisualizer(QWidget):
         self._done_hint_lbl = QLabel("✓ All animals in this run reviewed.")
         self._done_hint_lbl.setWordWrap(True)
         hint_layout.addWidget(self._done_hint_lbl, 1)
+        self._btn_go_finalize = QPushButton("→ Finalize")
+        self._btn_go_finalize.clicked.connect(lambda: self.navigate_to.emit("finalize"))
+        hint_layout.addWidget(self._btn_go_finalize)
         self._done_hint.setVisible(False)
         self.root.addWidget(self._done_hint)
 
@@ -165,7 +168,12 @@ class PSDVisualizer(QWidget):
                 + len(manifest.needs_drink_mask(run_name))
                 + len(manifest.pending_drink_verification(run_name))
             )
-            self._done_hint.setVisible(pending == 0 and self.cmb_file.count() > 0)
+            complete = pending == 0 and self.cmb_file.count() > 0
+            self._done_hint.setVisible(complete)
+            if complete:
+                self._done_hint_lbl.setText(
+                    f"✓ All animals in run '{run_name}' reviewed."
+                )
         except Exception:
             self._done_hint.setVisible(False)
 

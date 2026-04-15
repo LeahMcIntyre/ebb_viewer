@@ -35,6 +35,102 @@ def test_swd_intervals_become_false(tmp_path: Path):
     assert mask[500:].all()
 
 
+def test_swd_boundary_sample_precision(tmp_path: Path):
+    # Interval 2.0s–4.0s; verify the exact boundary samples.
+    p = tmp_path / "swds.mat"
+    savemat(p, {"DEL_ts": np.array([[2.0, 4.0]])})
+    fs = 250
+    n = fs * 10
+    mask = swd(p, n_samples=n, fs=fs, label="DEL_ts", pad_sec=0)
+
+    start = int(2.0 * fs)
+    end   = int(4.0 * fs)
+
+    assert     mask[start - 1], "sample just before interval should be True"
+    assert not mask[start],     "first sample of interval should be False"
+    assert not mask[end - 1],   "last sample of interval should be False"
+    assert     mask[end],       "first sample after interval should be True"
+
+
+def test_swd_multiple_intervals(tmp_path: Path):
+    # Two separate intervals: 1–2s and 5–6s.
+    p = tmp_path / "swds.mat"
+    savemat(p, {"DEL_ts": np.array([[1.0, 2.0], [5.0, 6.0]])})
+    fs = 250
+    n = fs * 10
+    mask = swd(p, n_samples=n, fs=fs, label="DEL_ts", pad_sec=0)
+
+    assert     mask[:fs].all(),         "before first interval should be True"
+    assert not mask[fs : 2*fs].any(),   "first interval should be False"
+    assert     mask[2*fs : 5*fs].all(), "between intervals should be True"
+    assert not mask[5*fs : 6*fs].any(), "second interval should be False"
+    assert     mask[6*fs:].all(),       "after second interval should be True"
+
+
+def test_swd_adjacent_intervals_merged(tmp_path: Path):
+    # Two touching intervals (end of first == start of second) should merge.
+    p = tmp_path / "swds.mat"
+    savemat(p, {"DEL_ts": np.array([[1.0, 2.0], [2.0, 3.0]])})
+    fs = 250
+    n = fs * 10
+    mask = swd(p, n_samples=n, fs=fs, label="DEL_ts", pad_sec=0)
+
+    assert not mask[fs : 3*fs].any(), "merged interval 1–3s should all be False"
+    assert     mask[3*fs:].all(),     "after merged interval should be True"
+
+
+def test_swd_pad_sec_extends_interval(tmp_path: Path):
+    # Interval 3–4s with pad_sec=1 should mask 2–5s.
+    p = tmp_path / "swds.mat"
+    savemat(p, {"DEL_ts": np.array([[3.0, 4.0]])})
+    fs = 250
+    n = fs * 10
+    mask = swd(p, n_samples=n, fs=fs, label="DEL_ts", pad_sec=1)
+
+    assert     mask[: 2*fs].all(),      "before padded interval should be True"
+    assert not mask[2*fs : 5*fs].any(), "padded interval 2–5s should be False"
+    assert     mask[5*fs:].all(),       "after padded interval should be True"
+
+
+def test_swd_pad_clipped_at_recording_start(tmp_path: Path):
+    # Interval at 0.5s with pad_sec=1; pad extends before sample 0 — should clip.
+    p = tmp_path / "swds.mat"
+    savemat(p, {"DEL_ts": np.array([[0.5, 1.0]])})
+    fs = 250
+    n = fs * 10
+    mask = swd(p, n_samples=n, fs=fs, label="DEL_ts", pad_sec=1)
+
+    assert not mask[0],           "sample 0 should be False (pad clipped to start)"
+    assert     mask[2*fs:].all(), "after padded end (1.0+1.0=2.0s) should be True"
+    assert len(mask) == n
+
+
+def test_swd_interval_clipped_at_recording_end(tmp_path: Path):
+    # Interval 8–12s; recording is only 10s — tail should be clipped.
+    p = tmp_path / "swds.mat"
+    savemat(p, {"DEL_ts": np.array([[8.0, 12.0]])})
+    fs = 250
+    n = fs * 10
+    mask = swd(p, n_samples=n, fs=fs, label="DEL_ts", pad_sec=0)
+
+    assert     mask[: 8*fs].all(), "before interval should be True"
+    assert not mask[8*fs:].any(),  "interval clipped to recording end should be False"
+    assert len(mask) == n
+
+
+def test_swd_1d_single_interval_shape(tmp_path: Path):
+    # A single [start, stop] stored as a 1D array (scipy may squeeze it).
+    p = tmp_path / "swds.mat"
+    savemat(p, {"DEL_ts": np.array([2.0, 4.0])})  # 1D, not (1, 2)
+    fs = 250
+    n = fs * 10
+    mask = swd(p, n_samples=n, fs=fs, label="DEL_ts", pad_sec=0)
+
+    assert not mask[2*fs : 4*fs].any(), "1D single interval should be masked False"
+    assert     mask[: 2*fs].all()
+    assert     mask[4*fs:].all()
+
+
 # ── time_of_day_mask ─────────────────────────────────────────────────────────
 
 FS = 250  # samples/s
@@ -198,3 +294,122 @@ def test_hw_no_overlap_returns_empty():
     mask, windows = hour_window_mask(_HW_START, n, FS, [(12.0, 14.0)])
     assert not mask.any()
     assert windows == []
+
+
+# ── Sample-position correctness ───────────────────────────────────────────────
+# These tests verify *which* samples are True/False, not just the count.
+
+def test_hw_samples_inside_window_are_true():
+    # 24h recording starting at midnight; window 02:00–04:00.
+    # Samples at hour 1 (before), 3 (inside), 5 (after) should be F/T/F.
+    start = datetime(2024, 1, 1, 0, 0, 0)
+    n = _n(24 * 3600)
+    mask, _ = hour_window_mask(start, n, FS, [(2.0, 4.0)])
+
+    assert not mask[_n(1 * 3600)], "1h into recording (before window) should be False"
+    assert     mask[_n(3 * 3600)], "3h into recording (inside window) should be True"
+    assert not mask[_n(5 * 3600)], "5h into recording (after window) should be False"
+
+
+def test_hw_boundary_sample_precision():
+    # Window 02:00–04:00; recording starts at midnight.
+    # The first sample of the window (floor(2*3600*FS)) should be True.
+    # The sample immediately before it should be False.
+    # The last sample before window end (floor(4*3600*FS) - 1) should be True.
+    # The sample at floor(4*3600*FS) should be False.
+    start = datetime(2024, 1, 1, 0, 0, 0)
+    n = _n(24 * 3600)
+    mask, _ = hour_window_mask(start, n, FS, [(2.0, 4.0)])
+
+    win_start_sample = int(2 * 3600 * FS)
+    win_end_sample   = int(4 * 3600 * FS)
+
+    assert     mask[win_start_sample],     "first sample of window should be True"
+    assert not mask[win_start_sample - 1], "sample just before window start should be False"
+    assert     mask[win_end_sample - 1],   "last sample inside window should be True"
+    assert not mask[win_end_sample],       "first sample after window end should be False"
+
+
+def test_hw_non_midnight_start_correct_samples():
+    # Recording starts 10:30, window 10:00–12:00.
+    # Day 0: window is clipped to [10:30, 12:00] → 1.5h of True starting at sample 0.
+    # After 12:00, samples should be False until the next day's window.
+    n = _n(4 * 3600)  # 4-hour recording (ends 14:30)
+    mask, windows = hour_window_mask(_HW_START, n, FS, [(10.0, 12.0)])
+
+    # Sample 0 is 10:30 — inside the day-0 window
+    assert mask[0], "sample 0 (10:30) should be inside the clipped window"
+
+    # Sample at 1.5h = 12:00 — just at window end, should be False
+    end_sample = int(1.5 * 3600 * FS)
+    assert not mask[end_sample], "sample at 12:00 (window end) should be False"
+
+    # Sample at 2h (12:30) — outside any window
+    assert not mask[_n(2 * 3600)], "sample at 12:30 should be False"
+
+    # Day-0 window reported as starting at recording start (10:30)
+    assert windows[0][0] == _HW_START, "day-0 window should start at recording start"
+    assert windows[0][1] == datetime(2024, 1, 1, 12, 0), "day-0 window should end at 12:00"
+
+
+def test_hw_overnight_window_samples():
+    # Window (20, 6) = dark phase.  Recording starts 18:00, runs 24h.
+    # Samples 0–2h (18:00–20:00) → False.
+    # Samples from 2h onward (20:00–end, wrapping through midnight to 06:00) → True
+    # until 06:00 on day 1, then False again.
+    start = datetime(2024, 1, 1, 18, 0, 0)
+    n = _n(24 * 3600)
+    mask, windows = hour_window_mask(start, n, FS, [(20.0, 6.0)])
+
+    assert not mask[_n(1 * 3600)], "18:00+1h = 19:00, before dark phase → False"
+    assert     mask[_n(3 * 3600)], "18:00+3h = 21:00, inside dark phase → True"
+    assert     mask[_n(11 * 3600)], "18:00+11h = 05:00, inside dark phase → True"
+    assert not mask[_n(13 * 3600)], "18:00+13h = 07:00, after dark phase ends → False"
+
+    # Boundary: 2h in is exactly 20:00 (window start)
+    assert     mask[_n(2 * 3600)], "sample at 20:00 (window start) should be True"
+    assert not mask[_n(2 * 3600) - 1], "sample just before 20:00 should be False"
+
+
+def test_hw_used_windows_cover_true_samples():
+    # The union of used_windows datetimes should account for all True samples.
+    start = datetime(2024, 1, 1, 0, 0, 0)
+    n = _n(48 * 3600)
+    mask, windows = hour_window_mask(start, n, FS, [(6.0, 8.0), (14.0, 16.0)])
+
+    expected_true = sum(
+        int((we - ws).total_seconds() * FS)
+        for ws, we in windows
+    )
+    # Allow ±1 sample per window for floor/ceil rounding
+    assert abs(int(mask.sum()) - expected_true) <= len(windows), (
+        f"True sample count {mask.sum()} should be within {len(windows)} of "
+        f"expected {expected_true} from used_windows"
+    )
+
+
+def test_hw_multiple_windows_no_bleed_between():
+    # Windows [02:00–04:00] and [10:00–12:00]; samples between them should be False.
+    start = datetime(2024, 1, 1, 0, 0, 0)
+    n = _n(24 * 3600)
+    mask, _ = hour_window_mask(start, n, FS, [(2.0, 4.0), (10.0, 12.0)])
+
+    # Gap between the two windows: 04:00–10:00
+    assert not mask[_n(4 * 3600):_n(10 * 3600)].any(), \
+        "samples between windows should all be False"
+
+
+def test_hw_selected_days_exact_sample_positions():
+    # 3-day recording; window [08:00–09:00], only day 2 selected.
+    # Days 0 and 1 windows should be entirely False.
+    start = datetime(2024, 1, 1, 0, 0, 0)
+    n = _n(3 * 24 * 3600)
+    mask, _ = hour_window_mask(start, n, FS, [(8.0, 9.0)], selected_days=[2])
+
+    for day in range(3):
+        win_s = _n(day * 24 * 3600 + 8 * 3600)
+        win_e = _n(day * 24 * 3600 + 9 * 3600)
+        if day == 2:
+            assert mask[win_s:win_e].all(), "day 2 window should be all True"
+        else:
+            assert not mask[win_s:win_e].any(), f"day {day} window should be all False"

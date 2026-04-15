@@ -140,7 +140,7 @@ class MaskingSettingsDialog(QDialog):
         self._ann_pad_after.setSingleStep(1.0)
         self._ann_pad_after.setDecimals(1)
         self._ann_pad_after.setSuffix(" s")
-        self._ann_pad_after.setValue(10.0)
+        self._ann_pad_after.setValue(0.0)
         pad_form.addRow("Pad before:", self._ann_pad_before)
         pad_form.addRow("Pad after:", self._ann_pad_after)
         ann_body_v.addLayout(pad_form)
@@ -1164,6 +1164,19 @@ class PSDPage(QWidget):
                                 "or underscores (max 64 characters).")
             return
 
+        if run_name in psd_params.list_runs(self.project_root):
+            reply = QMessageBox.question(
+                self, "Overwrite Existing Run?",
+                f"Run '{run_name}' already exists.\n\n"
+                "Re-running will overwrite its PKL files and clear all PSD review "
+                "flags for this run in the manifest. This cannot be undone.\n\n"
+                "Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
         psd_run_dir = self.project_root / "psd" / run_name
         psd_run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1199,6 +1212,17 @@ class PSDPage(QWidget):
             params["hw_enabled"] = True
         else:
             params["hw_enabled"] = False
+
+        # Clear stale PSD review flags for this run so the visualizer doesn't
+        # show old decisions against freshly computed data.
+        try:
+            manifest = Manifest.load(self.project_root)
+            for entry in manifest:
+                for run in entry.runs.values():
+                    run.psd_status.pop(run_name, None)
+            manifest.save()
+        except Exception:
+            pass
 
         self._computing = True
         self.btn_run_pipeline.setEnabled(False)
