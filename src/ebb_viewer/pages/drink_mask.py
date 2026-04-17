@@ -126,6 +126,9 @@ class DrinkMaskPage(QWidget):
         self._lbl_compute_hours = QLabel("—")
         params_form.addRow("Compute hours:", self._lbl_compute_hours)
 
+        self._lbl_states = QLabel("—")
+        params_form.addRow("States:", self._lbl_states)
+
         root.addWidget(self.gb_params)
 
         # ----- Group 3: Animals pending drink mask -----
@@ -291,6 +294,7 @@ class DrinkMaskPage(QWidget):
 
     def _refresh_params(self):
         from ebb_viewer.pipeline import psd_params
+        from ebb.process.state_presets import PRESET_DISPLAY
         run_name = self._current_run_name()
         params = psd_params.load(self.project_root, run_name)
         if params is None:
@@ -299,6 +303,8 @@ class DrinkMaskPage(QWidget):
                 lbl.setStyleSheet("color: gray;")
             self._lbl_compute_hours.setText("— (run Compute PSDs first)")
             self._lbl_compute_hours.setStyleSheet("color: gray;")
+            self._lbl_states.setText("— (run Compute PSDs first)")
+            self._lbl_states.setStyleSheet("color: gray;")
             return
         for key, lbl in self._param_labels.items():
             lbl.setStyleSheet("")
@@ -318,6 +324,10 @@ class DrinkMaskPage(QWidget):
         else:
             self._lbl_compute_hours.setText("off (all hours included)")
             self._lbl_compute_hours.setStyleSheet("color: gray;")
+
+        states = psd_params.states_from_params(params)
+        self._lbl_states.setText(", ".join(PRESET_DISPLAY.get(s, s) for s in states))
+        self._lbl_states.setStyleSheet("color: #1a5c8a;")
 
     def _refresh_animals(self):
         from ebb_viewer.pipeline.manifest import Manifest

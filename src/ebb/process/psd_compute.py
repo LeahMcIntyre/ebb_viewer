@@ -27,6 +27,7 @@ from openseize.filtering.iir import Notch
 from ebb.core import concurrency, metastores
 from ebb import masking
 from ebb.masking.annotations import keyword_mask
+from ebb.process.state_presets import labels_from_presets
 
 @dataclasses.dataclass
 class PSDResult:
@@ -398,6 +399,12 @@ def batch_estimate(
         hour_windows = [tuple(_legacy_hw)]
     selected_days = kwargs.pop('selected_days', None)
 
+    # Translate preset-key list (as saved in psd_params.json) → labels dict.
+    # Explicit labels= wins; absent both → estimate_psd's default applies.
+    states = kwargs.pop('states', None)
+    if states is not None and 'labels' not in kwargs:
+        kwargs['labels'] = labels_from_presets(states)
+
     # unpack annotation params
     ann_keywords = ann_match_mode = ann_pad_before = ann_pad_after = None
     ann_by_animal: Dict[str, Path] = {}
@@ -646,6 +653,11 @@ def rerun_with_drink_masks(
     if hour_windows is None and _legacy_hw is not None:
         hour_windows = [tuple(_legacy_hw)]
     selected_days = kwargs.pop("selected_days", None)
+
+    states = kwargs.pop("states", None)
+    if states is not None and "labels" not in kwargs:
+        kwargs["labels"] = labels_from_presets(states)
+
     if offset_path is not None:
         kwargs["offset_path"] = offset_path
 

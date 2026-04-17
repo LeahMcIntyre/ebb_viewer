@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QDialog, QDialogButtonBox, QFormLayout, QGroupBox,
 )
 
+from ebb.process.state_presets import PRESET_DISPLAY
 from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest
 
@@ -35,7 +36,10 @@ class _RunSettingsDialog(QDialog):
 
         ch_indices = params.get("channels", [])
         ch_names = [CH_LABELS[i] for i in ch_indices if i < len(CH_LABELS)]
+        state_keys = psd_params.states_from_params(params)
+        state_names = ", ".join(PRESET_DISPLAY.get(k, k) for k in state_keys)
         f.addRow("Channels:",         QLabel(", ".join(ch_names) if ch_names else "—"))
+        f.addRow("States:",           QLabel(state_names or "—"))
         f.addRow("Sampling freq:",    QLabel(f"{params.get('fs', '—')} Hz"))
         f.addRow("SD window:",        QLabel(f"{params.get('winsize', '—')} s"))
         f.addRow("SD radius:",        QLabel(f"{params.get('radius', '—')} s"))

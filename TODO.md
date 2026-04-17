@@ -16,6 +16,15 @@ Consistent with the Rerun page pattern. After preprocessing: `"✓ Done. → Go 
 
 ## P3 — Larger or Needs More Context
 
+### psd: Revisit SD-threshold rule for lumped state groups
+With state-selection presets, a user can pick a lumped group like `all` (wake+nrem+rem) or `sleep` (nrem+rem). Today SD thresholding is applied only when the group is literally named `wake` (see `if 'wake' in combo_state` in `estimate_psd`). For `all`, which contains wake samples, SD probably should apply to the wake portion. For `sleep`, it should stay off. Decide the rule (likely: apply SD when the group's code list includes `"w"`), update `estimate_psd` and tests accordingly.
+
+### psd: Clarify REM-in-multiple-groups semantics
+If a user checks both `rem` and `sleep`, REM epochs feed into two PSDs (a REM-only PSD and a NREM+REM PSD). That's intentional — same epochs, different averages. Decide whether to (a) surface this in the UI with a small hint when overlapping groups are selected, or (b) leave silent. Also think about whether downstream plots/tables should visually distinguish "lumped" groups from single-state groups.
+
+### psd_visualizer: Stable panel order for custom state groups
+PSD Visualizer derives panel columns from whatever state names are in the pkl, using canonical-then-alphabetical ordering. If we ever add user-defined group names (beyond the 5 presets), confirm the ordering still makes sense, and consider a persisted user preference.
+
 ### spindle_upload: Investigate "Upload, Wait & Download" button issue
 The button flow appears broken in some cases — needs reproduction and a specific bug report before this can be fixed. Document: what input conditions trigger the failure? Does it hang, crash, or give wrong output? 
 
