@@ -9,7 +9,9 @@ from ebb.process.state_presets import (
     DEFAULT_STATES,
     PRESET_DESCRIPTIONS,
     PRESET_DISPLAY,
+    RAW_CODE_DISPLAY,
     STATE_PRESETS,
+    overlap_groups,
 )
 
 from PyQt6.QtCore import Qt, QObject, QThread, QTime, pyqtSignal
@@ -703,10 +705,21 @@ class PSDPage(QWidget):
             cb.setChecked(key in DEFAULT_STATES)
             cb.setToolTip(PRESET_DESCRIPTIONS[key])
             cb.toggled.connect(self._validate)
+            cb.toggled.connect(self._refresh_state_overlap_hint)
             self._state_boxes[key] = cb
             r, c = divmod(idx, 3)
             states_grid.addWidget(cb, r, c)
         states_v.addLayout(states_grid)
+
+        self._state_overlap_lbl = QLabel()
+        self._state_overlap_lbl.setWordWrap(True)
+        self._state_overlap_lbl.setStyleSheet(
+            "color: #8a5a00; background: #fff6e0; border: 1px solid #e5c07b;"
+            " border-radius: 3px; padding: 4px 6px; font-size: 11px;"
+        )
+        self._state_overlap_lbl.setVisible(False)
+        states_v.addWidget(self._state_overlap_lbl)
+        self._refresh_state_overlap_hint()
 
         root.addWidget(self.gb_states)
 
@@ -1067,6 +1080,7 @@ class PSDPage(QWidget):
                 cb.blockSignals(True)
                 cb.setChecked(key in valid)
                 cb.blockSignals(False)
+            self._refresh_state_overlap_hint()
         self._masking_params = {
             "swd_mode": params.get("swd_mode", "none"),
             "ann_enabled": bool(params.get("ann_enabled", False)),
@@ -1323,6 +1337,22 @@ class PSDPage(QWidget):
     def _selected_states(self) -> List[str]:
         """Return checked state preset keys in canonical order."""
         return [k for k in CANONICAL_ORDER if self._state_boxes[k].isChecked()]
+
+    def _refresh_state_overlap_hint(self) -> None:
+        overlaps = overlap_groups(self._selected_states())
+        if not overlaps:
+            self._state_overlap_lbl.setVisible(False)
+            return
+        parts = []
+        for code, groups in overlaps.items():
+            name = RAW_CODE_DISPLAY.get(code, code)
+            group_names = " + ".join(PRESET_DISPLAY[g] for g in groups)
+            parts.append(f"{name} epochs feed into {group_names}")
+        self._state_overlap_lbl.setText(
+            "Overlap: " + "; ".join(parts)
+            + ". Same epochs, different averages — intentional if that's what you want."
+        )
+        self._state_overlap_lbl.setVisible(True)
 
     # ---------- Internals ----------
 

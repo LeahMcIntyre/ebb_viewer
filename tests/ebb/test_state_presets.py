@@ -9,10 +9,26 @@ from ebb.process.state_presets import (
     DEFAULT_STATES,
     PRESET_DESCRIPTIONS,
     PRESET_DISPLAY,
+    RAW_CODE_DISPLAY,
     STATE_PRESETS,
     canonical_sort_states,
+    gather_states_from_store,
     labels_from_presets,
+    overlap_groups,
 )
+
+
+class _FakeStore:
+    """Minimal PSDStore stub matching the animals()/states(animal) surface."""
+
+    def __init__(self, per_animal: dict):
+        self._data = per_animal
+
+    def animals(self):
+        return list(self._data.keys())
+
+    def states(self, animal):
+        return list(self._data[animal])
 
 
 # ---------------------------------------------------------------------------
@@ -130,3 +146,78 @@ def test_canonical_sort_empty():
 
 def test_canonical_sort_tolerates_duplicates():
     assert canonical_sort_states(["wake", "wake", "nrem"]) == ["wake", "nrem"]
+
+
+def test_canonical_sort_mixes_presets_and_custom_names():
+    """Custom (non-preset) names come after all canonical presets, alphabetized."""
+    result = canonical_sort_states(["my_custom", "wake", "sleep", "another"])
+    assert result == ["wake", "sleep", "another", "my_custom"]
+
+
+# ---------------------------------------------------------------------------
+# overlap_groups
+# ---------------------------------------------------------------------------
+
+def test_overlap_groups_none_when_disjoint():
+    assert overlap_groups(["wake", "nrem", "rem"]) == {}
+
+
+def test_overlap_groups_none_for_single_selection():
+    assert overlap_groups(["sleep"]) == {}
+
+
+def test_overlap_groups_rem_shared_between_rem_and_sleep():
+    assert overlap_groups(["rem", "sleep"]) == {"r": ["rem", "sleep"]}
+
+
+def test_overlap_groups_all_overlaps_everything_selected():
+    out = overlap_groups(["wake", "nrem", "rem", "sleep", "all"])
+    assert out == {
+        "w": ["wake", "all"],
+        "n": ["nrem", "sleep", "all"],
+        "r": ["rem", "sleep", "all"],
+    }
+
+
+def test_overlap_groups_preserves_input_order():
+    out = overlap_groups(["sleep", "rem"])
+    assert out == {"r": ["sleep", "rem"]}
+
+
+def test_overlap_groups_ignores_unknown_keys():
+    assert overlap_groups(["rem", "sleep", "bogus"]) == {"r": ["rem", "sleep"]}
+
+
+def test_raw_code_display_covers_all_preset_codes():
+    """Every raw code referenced by STATE_PRESETS has a display name."""
+    all_codes = {c for codes in STATE_PRESETS.values() for c in codes}
+    assert all_codes <= set(RAW_CODE_DISPLAY)
+
+
+# ---------------------------------------------------------------------------
+# gather_states_from_store — locks PSDGridPage panel ordering
+# ---------------------------------------------------------------------------
+
+def test_gather_states_from_store_canonical_presets():
+    store = _FakeStore({"m1": ["rem", "wake"], "m2": ["nrem", "wake"]})
+    assert gather_states_from_store(store) == ["wake", "nrem", "rem"]
+
+
+def test_gather_states_from_store_empty_store_falls_back_to_defaults():
+    assert gather_states_from_store(_FakeStore({})) == ["wake", "nrem", "rem"]
+
+
+def test_gather_states_from_store_mixed_presets_and_custom_names():
+    """Custom group names trail canonical presets in alphabetical order."""
+    store = _FakeStore({
+        "m1": ["sleep", "zebra_group"],
+        "m2": ["wake", "alpha_group"],
+    })
+    assert gather_states_from_store(store) == [
+        "wake", "sleep", "alpha_group", "zebra_group",
+    ]
+
+
+def test_gather_states_from_store_only_custom_names():
+    store = _FakeStore({"m1": ["beta", "alpha"]})
+    assert gather_states_from_store(store) == ["alpha", "beta"]

@@ -12,6 +12,13 @@ translated to a ``labels`` dict at call time via :func:`labels_from_presets`.
 from typing import Dict, Iterable, List, Tuple
 
 
+RAW_CODE_DISPLAY: Dict[str, str] = {
+    "w": "Wake",
+    "n": "NREM",
+    "r": "REM",
+}
+
+
 STATE_PRESETS: Dict[str, List[str]] = {
     "wake":  ["w"],
     "nrem":  ["n"],
@@ -58,9 +65,47 @@ def labels_from_presets(preset_keys: Iterable[str]) -> Dict[str, List[str]]:
     return labels
 
 
+def overlap_groups(preset_keys: Iterable[str]) -> Dict[str, List[str]]:
+    """Return raw epoch codes that appear in more than one selected group.
+
+    Maps each shared code (e.g. ``"r"``) to the list of preset keys that
+    contain it, in the caller-supplied iteration order. Useful for surfacing
+    to the UI that, say, REM epochs will feed into both a REM-only PSD and a
+    lumped Sleep PSD when both groups are selected.
+
+    Unknown preset keys are ignored (consistent with
+    :func:`states_from_params`'s filtering).
+    """
+    code_to_groups: Dict[str, List[str]] = {}
+    for key in preset_keys:
+        codes = STATE_PRESETS.get(key)
+        if codes is None:
+            continue
+        for code in codes:
+            groups = code_to_groups.setdefault(code, [])
+            if key not in groups:
+                groups.append(key)
+    return {code: groups for code, groups in code_to_groups.items() if len(groups) > 1}
+
+
 def canonical_sort_states(names: Iterable[str]) -> List[str]:
     """Sort state names: presets in canonical order first, then alphabetical."""
     seen = set(names)
     ordered = [n for n in CANONICAL_ORDER if n in seen]
     extras = sorted(n for n in seen if n not in CANONICAL_ORDER)
     return ordered + extras
+
+
+def gather_states_from_store(store) -> List[str]:
+    """Union of state names across all animals in ``store``, canonically sorted.
+
+    Falls back to the three single-state presets (wake/nrem/rem) when the
+    store is empty — keeps PSDGridPage usable even when no PSDs have been
+    computed yet.
+    """
+    found: set = set()
+    for animal in store.animals():
+        found.update(store.states(animal))
+    if not found:
+        return list(CANONICAL_ORDER[:3])
+    return canonical_sort_states(found)

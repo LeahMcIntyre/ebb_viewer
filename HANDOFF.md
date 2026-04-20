@@ -165,10 +165,30 @@ explicitly flagged `needs_drink_mask` in the PSD Visualizer.
 
 ---
 
+### Completed (branch `feature/state_selection`, on top of `feature/psd_compute_hours`)
+
+#### State-selection feature (commit `2ca8303`)
+- **New module** `src/ebb/process/state_presets.py` — 5 canonical presets: `wake`, `nrem`, `rem`, `sleep` (n+r), `all` (w+n+r); `labels_from_presets()`, `canonical_sort_states()`, `DEFAULT_STATES`, `PRESET_DISPLAY`, `PRESET_DESCRIPTIONS`, `CANONICAL_ORDER`.
+- **`psd_compute.py`** — `batch_estimate` and `rerun_with_drink_masks` pop a `states` kwarg and translate it to the `labels=` dict `estimate_psd` expects. Explicit `labels=` wins; `states` never leaks downstream.
+- **`pipeline/psd_params.py`** — new `states_from_params()` with default fallback to `("wake","nrem","rem")` and silent filtering of unknown keys (covers hand-edited JSON + legacy runs).
+- **UI**:
+  - `pages/psds.py` — new "States to Compute" group box with 5 checkboxes (canonical order), loads saved selection, blocks Run if zero selected.
+  - `pages/drink_mask.py` + `pages/finalize.py` — read-only "States:" row.
+  - `pages/psd_visualizer.py` + `widgets/psd_graph_widget.py` — grid derives state columns from pkl contents via `canonical_sort_states` instead of hardcoding wake/nrem/rem.
+- **Tests** — 38 new (21 preset / 7 compute-state plumbing / 10 params).
+
+#### UX polish (TODO items 2 & 3 resolved — this session)
+- **Overlap hint** (`pages/psds.py`): when selected state groups share raw epoch codes (e.g. `rem` + `sleep` both include `r`), an amber banner below the checkboxes lists the overlaps ("REM epochs feed into REM + Sleep (NREM+REM)"). Hidden when no overlap. Refreshed on toggle and after saved-params load.
+- **Overlap detection helper** (`state_presets.py`): `overlap_groups(preset_keys) → {raw_code: [groups]}` + `RAW_CODE_DISPLAY`. Unit-tested (6 cases).
+- **Panel ordering refactor** (`state_presets.py`): extracted `gather_states_from_store(store)` (canonical-sort + empty-store fallback). `widgets/psd_graph_widget.py` delegates to it. Covered by 4 tests including mixed preset + custom-name inputs. TODO item 3 "persisted user preference" deferred — no UI path produces custom group names yet.
+- **Tests** — 12 more (+251 total).
+
+---
+
 ## Current Branch State
 
-**Active branch**: `feature/psd_compute_hours`  
-**All 201 tests passing**
+**Active branch**: `feature/state_selection` (one commit ahead of `feature/psd_compute_hours`, plus this session's overlap/ordering polish — uncommitted)  
+**All 251 tests passing**
 
 File layout for a named run:
 ```
@@ -308,10 +328,13 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 
 ## Next Steps
 
-The `feature/psd_compute_hours` branch is feature-complete and ready to merge to `dev`.
-Only one remaining step before merging:
+`feature/state_selection` is feature-complete. Open items before merging to `dev`:
 
-1. **End-to-end test with real data** — run a full pipeline from scratch with a new run name,
-   plus a re-run with an existing name, to confirm the overwrite guard and manifest reset
-   work in practice. Also verify the hint banners hide/show correctly across runs.
-2. **Merge to `dev`** once testing passes.
+1. **Commit this session's UX polish** — the overlap hint + `gather_states_from_store` refactor + tests are currently uncommitted on `feature/state_selection`. Suggested message: `UX polish: state overlap hint + stable panel order for custom state groups`.
+2. **Open TODO item: SD-threshold rule for lumped groups** (`TODO.md` §P3) — `estimate_psd` currently gates SD masking on `'wake' in combo_state`. For the `all` lumped group this probably needs to mean "apply SD when the group's code list includes `w`"; for `sleep` it should stay off. Scientific decision + code change + tests. This is the only state-selection follow-up that can silently produce wrong science.
+3. **End-to-end test with real data** — full pipeline from scratch with a new run name, plus:
+   - a re-run with an existing name (overwrite guard + manifest reset)
+   - a run selecting lumped groups (`sleep`, `all`) and confirming PSD shapes
+   - a run with overlapping groups (`rem` + `sleep`) to verify the hint appears and PSDs compute as expected
+   - verify hint banners hide/show correctly across runs
+4. **Merge `feature/state_selection` → `feature/psd_compute_hours` → `dev`** once testing passes.
