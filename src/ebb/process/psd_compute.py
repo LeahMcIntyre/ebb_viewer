@@ -147,6 +147,19 @@ def estimate_psd(
             for label, code in labels.items():
                 state_masks[label] = (masking.state(state_path, code, fs, winsize=4))
 
+        # Wake sub-mask for mixed groups that lump wake with sleep states.
+        # SD thresholding should only gate the wake portion of such groups,
+        # since SD calibrates to wake amplitudes and would over-mask quieter
+        # NREM/REM samples if applied uniformly.
+        needs_wake_sub = any('w' in codes and len(codes) > 1 for codes in labels.values())
+        if needs_wake_sub:
+            if s_prob is not None:
+                wake_sub_mask = masking.state_prob(state_path, 'w', fs, winsize=4, sprob=s_prob)
+            else:
+                wake_sub_mask = masking.state(state_path, ['w'], fs, winsize=4)
+        else:
+            wake_sub_mask = None
+
         #print(f"{animal}: {reader.shape}")
         #Compute commutator artifact threshold mask
         comm_mask = masking.commutator_threshold(pro, value=2000,
@@ -235,10 +248,15 @@ def estimate_psd(
                 print(f'mask {combo_state} has no data ... skipping')
                 continue
                 
-            if 'wake' in combo_state:
-                # Only apply sd thresholding during wake
-                mask &= sd_threshold_mask
-                sd_out = out_fraction(sd_threshold_mask, st_mask)
+            codes = labels[state_name]
+            if 'w' in codes:
+                if len(codes) == 1:
+                    mask &= sd_threshold_mask
+                    sd_out = out_fraction(sd_threshold_mask, st_mask)
+                else:
+                    # Mixed group: restrict SD to the wake samples only.
+                    mask &= (~wake_sub_mask | sd_threshold_mask)
+                    sd_out = out_fraction(sd_threshold_mask, st_mask & wake_sub_mask)
             else:
                 sd_out = 0.0
 
