@@ -6,8 +6,26 @@ import shutil
 from pathlib import Path
 from typing import List, Optional
 
+from ebb.process.state_presets import DEFAULT_STATES, STATE_PRESETS
+
 
 RUN_NAME_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+
+
+def states_from_params(params: Optional[dict]) -> List[str]:
+    """Return the list of state preset keys saved in params.
+
+    Falls back to the canonical default (wake/nrem/rem) for params that
+    predate state selection or omit the field. Unknown keys are filtered so
+    that a typo in a hand-edited json file doesn't crash loading — consumers
+    should re-validate before using.
+    """
+    if params is None:
+        return list(DEFAULT_STATES)
+    raw = params.get("states")
+    if not raw:
+        return list(DEFAULT_STATES)
+    return [k for k in raw if k in STATE_PRESETS]
 
 
 def valid_run_name(name: str) -> bool:

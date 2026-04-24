@@ -13,6 +13,7 @@ import pyqtgraph as pg
 from fooof.utils import interpolate_spectrum
 
 from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
+from ebb.process.state_presets import gather_states_from_store
 
 
 INVERSE_FILTER = np.array([2.485297985, 1.360646853, 1.145286775, 1.071699399, 1.038017048, 1.018656356, 1.007806318])
@@ -39,7 +40,10 @@ class PSDGridPage(QWidget):
         super().__init__(parent)
         self.store = store
         self.channel_names = list(channel_names)
-        self.states = list(states or ["wake", "nrem", "rem"])
+        if states is None:
+            self.states = gather_states_from_store(store)
+        else:
+            self.states = list(states)
         self.manifest = manifest
         self.run_channels = run_channels
         self._drink_review = drink_review

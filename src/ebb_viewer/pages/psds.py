@@ -4,6 +4,15 @@ import dataclasses
 import pickle
 
 from ebb.process.psd_compute import batch_estimate, build_final_pkl
+from ebb.process.state_presets import (
+    CANONICAL_ORDER,
+    DEFAULT_STATES,
+    PRESET_DESCRIPTIONS,
+    PRESET_DISPLAY,
+    RAW_CODE_DISPLAY,
+    STATE_PRESETS,
+    overlap_groups,
+)
 
 from PyQt6.QtCore import Qt, QObject, QThread, QTime, pyqtSignal
 from ebb_viewer.widgets.worker_helpers import launch_worker
@@ -673,6 +682,47 @@ class PSDPage(QWidget):
 
         root.addWidget(self.combo_gb)
 
+        # ----- Group 3: State Selection -----
+        self.gb_states = QGroupBox("States to Compute")
+        self.gb_states.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        states_v = QVBoxLayout(self.gb_states)
+        states_hint = QLabel(
+            "Select one or more state groups. A separate PSD is computed for each "
+            "checked group; lumped groups (Sleep, All) combine their underlying "
+            "epochs into a single averaged PSD."
+        )
+        states_hint.setWordWrap(True)
+        states_hint.setStyleSheet("color: #555; font-size: 11px;")
+        states_v.addWidget(states_hint)
+
+        self._state_boxes: dict[str, QCheckBox] = {}
+        states_grid = QGridLayout()
+        states_grid.setContentsMargins(0, 4, 0, 0)
+        states_grid.setHorizontalSpacing(12)
+        states_grid.setVerticalSpacing(4)
+        for idx, key in enumerate(CANONICAL_ORDER):
+            cb = QCheckBox(PRESET_DISPLAY[key])
+            cb.setChecked(key in DEFAULT_STATES)
+            cb.setToolTip(PRESET_DESCRIPTIONS[key])
+            cb.toggled.connect(self._validate)
+            cb.toggled.connect(self._refresh_state_overlap_hint)
+            self._state_boxes[key] = cb
+            r, c = divmod(idx, 3)
+            states_grid.addWidget(cb, r, c)
+        states_v.addLayout(states_grid)
+
+        self._state_overlap_lbl = QLabel()
+        self._state_overlap_lbl.setWordWrap(True)
+        self._state_overlap_lbl.setStyleSheet(
+            "color: #8a5a00; background: #fff6e0; border: 1px solid #e5c07b;"
+            " border-radius: 3px; padding: 4px 6px; font-size: 11px;"
+        )
+        self._state_overlap_lbl.setVisible(False)
+        states_v.addWidget(self._state_overlap_lbl)
+        self._refresh_state_overlap_hint()
+
+        root.addWidget(self.gb_states)
+
         # ----- Masking & Filtering summary bar -----
         masking_bar = QFrame()
         masking_bar.setFrameShape(QFrame.Shape.StyledPanel)
@@ -848,16 +898,17 @@ class PSDPage(QWidget):
         # Styling
         self.folder_gb.setObjectName("folderBox")
         self.combo_gb.setObjectName("comboBox")
+        self.gb_states.setObjectName("statesBox")
         self.gb_psd.setObjectName("psdBox")
         self.gb_spindle.setObjectName("spindleBox")
         self.gb_mask.setObjectName("maskBox")
         self.setStyleSheet("""
         QGroupBox#psdBox, QGroupBox#spindleBox, QGroupBox#maskBox,
-        QGroupBox#folderBox, QGroupBox#comboBox {
+        QGroupBox#folderBox, QGroupBox#comboBox, QGroupBox#statesBox {
             font: 550;
         }
         QGroupBox#psdBox *, QGroupBox#spindleBox *, QGroupBox#maskBox *,
-        QGroupBox#folderBox *, QGroupBox#comboBox * {
+        QGroupBox#folderBox *, QGroupBox#comboBox *, QGroupBox#statesBox * {
             font: 400;
         }
         """)
@@ -1022,6 +1073,14 @@ class PSDPage(QWidget):
             self.chk_all.blockSignals(True)
             self.chk_all.setChecked(all_checked)
             self.chk_all.blockSignals(False)
+        saved_states = params.get("states")
+        if saved_states:
+            valid = {k for k in saved_states if k in STATE_PRESETS}
+            for key, cb in self._state_boxes.items():
+                cb.blockSignals(True)
+                cb.setChecked(key in valid)
+                cb.blockSignals(False)
+            self._refresh_state_overlap_hint()
         self._masking_params = {
             "swd_mode": params.get("swd_mode", "none"),
             "ann_enabled": bool(params.get("ann_enabled", False)),
@@ -1192,6 +1251,7 @@ class PSDPage(QWidget):
             "radius": float(self.dspin_radius.value()),
             "nstd": float(self.dspin_z.value()),
             "noise_thresh": float(self.dspin_noise.value()),
+            "states": self._selected_states(),
         }
 
         mp = self._masking_params
@@ -1274,6 +1334,26 @@ class PSDPage(QWidget):
     def channel_labels(self):
         return [cb.text() for cb in self._channel_boxes]
 
+    def _selected_states(self) -> List[str]:
+        """Return checked state preset keys in canonical order."""
+        return [k for k in CANONICAL_ORDER if self._state_boxes[k].isChecked()]
+
+    def _refresh_state_overlap_hint(self) -> None:
+        overlaps = overlap_groups(self._selected_states())
+        if not overlaps:
+            self._state_overlap_lbl.setVisible(False)
+            return
+        parts = []
+        for code, groups in overlaps.items():
+            name = RAW_CODE_DISPLAY.get(code, code)
+            group_names = " + ".join(PRESET_DISPLAY[g] for g in groups)
+            parts.append(f"{name} epochs feed into {group_names}")
+        self._state_overlap_lbl.setText(
+            "Overlap: " + "; ".join(parts)
+            + ". Same epochs, different averages — intentional if that's what you want."
+        )
+        self._state_overlap_lbl.setVisible(True)
+
     # ---------- Internals ----------
 
     def _toggle_all_channels(self, checked):
@@ -1318,7 +1398,11 @@ class PSDPage(QWidget):
             elif not self._masking_params.get("ann_keywords", "").strip():
                 ann_ok = False
 
-        self.btn_run_pipeline.setEnabled(has_standard and all_ready and has_combos and ann_ok)
+        states_ok = bool(self._selected_states())
+
+        self.btn_run_pipeline.setEnabled(
+            has_standard and all_ready and has_combos and ann_ok and states_ok
+        )
 
         if not has_standard:
             self._gate_label.setText("Standard folder not found — run preprocessing first")
@@ -1342,6 +1426,9 @@ class PSDPage(QWidget):
                 self._gate_label.setText("Annotation mask enabled — select a valid annotation directory")
             else:
                 self._gate_label.setText("Annotation mask enabled — enter at least one keyword")
+            self._summary_label.setText("")
+        elif not states_ok:
+            self._gate_label.setText("Select at least one state group to compute")
             self._summary_label.setText("")
         else:
             self._gate_label.setText("")

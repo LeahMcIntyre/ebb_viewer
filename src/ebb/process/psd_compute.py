@@ -27,6 +27,7 @@ from openseize.filtering.iir import Notch
 from ebb.core import concurrency, metastores
 from ebb import masking
 from ebb.masking.annotations import keyword_mask
+from ebb.process.state_presets import labels_from_presets
 
 @dataclasses.dataclass
 class PSDResult:
@@ -146,6 +147,19 @@ def estimate_psd(
             for label, code in labels.items():
                 state_masks[label] = (masking.state(state_path, code, fs, winsize=4))
 
+        # Wake sub-mask for mixed groups that lump wake with sleep states.
+        # SD thresholding should only gate the wake portion of such groups,
+        # since SD calibrates to wake amplitudes and would over-mask quieter
+        # NREM/REM samples if applied uniformly.
+        needs_wake_sub = any('w' in codes and len(codes) > 1 for codes in labels.values())
+        if needs_wake_sub:
+            if s_prob is not None:
+                wake_sub_mask = masking.state_prob(state_path, 'w', fs, winsize=4, sprob=s_prob)
+            else:
+                wake_sub_mask = masking.state(state_path, ['w'], fs, winsize=4)
+        else:
+            wake_sub_mask = None
+
         #print(f"{animal}: {reader.shape}")
         #Compute commutator artifact threshold mask
         comm_mask = masking.commutator_threshold(pro, value=2000,
@@ -234,10 +248,15 @@ def estimate_psd(
                 print(f'mask {combo_state} has no data ... skipping')
                 continue
                 
-            if 'wake' in combo_state:
-                # Only apply sd thresholding during wake
-                mask &= sd_threshold_mask
-                sd_out = out_fraction(sd_threshold_mask, st_mask)
+            codes = labels[state_name]
+            if 'w' in codes:
+                if len(codes) == 1:
+                    mask &= sd_threshold_mask
+                    sd_out = out_fraction(sd_threshold_mask, st_mask)
+                else:
+                    # Mixed group: restrict SD to the wake samples only.
+                    mask &= (~wake_sub_mask | sd_threshold_mask)
+                    sd_out = out_fraction(sd_threshold_mask, st_mask & wake_sub_mask)
             else:
                 sd_out = 0.0
 
@@ -397,6 +416,12 @@ def batch_estimate(
     if hour_windows is None and _legacy_hw is not None:
         hour_windows = [tuple(_legacy_hw)]
     selected_days = kwargs.pop('selected_days', None)
+
+    # Translate preset-key list (as saved in psd_params.json) → labels dict.
+    # Explicit labels= wins; absent both → estimate_psd's default applies.
+    states = kwargs.pop('states', None)
+    if states is not None and 'labels' not in kwargs:
+        kwargs['labels'] = labels_from_presets(states)
 
     # unpack annotation params
     ann_keywords = ann_match_mode = ann_pad_before = ann_pad_after = None
@@ -646,6 +671,11 @@ def rerun_with_drink_masks(
     if hour_windows is None and _legacy_hw is not None:
         hour_windows = [tuple(_legacy_hw)]
     selected_days = kwargs.pop("selected_days", None)
+
+    states = kwargs.pop("states", None)
+    if states is not None and "labels" not in kwargs:
+        kwargs["labels"] = labels_from_presets(states)
+
     if offset_path is not None:
         kwargs["offset_path"] = offset_path
 

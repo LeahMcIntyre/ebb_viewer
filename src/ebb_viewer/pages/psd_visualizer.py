@@ -233,7 +233,7 @@ class PSDVisualizer(QWidget):
             self,
             store=self.psd_store,
             channel_names=channel_names,
-            states=['wake', 'nrem', 'rem'],
+            states=None,  # derived from pkl contents (see PSDGridPage)
             manifest=Manifest.load(self.project_root) if is_final_view else None,
             run_channels=run_channels,
             drink_review=is_drink_review,
