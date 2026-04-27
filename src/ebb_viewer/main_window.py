@@ -19,6 +19,7 @@ from ebb_viewer.pages.drink_mask import DrinkMaskPage
 from ebb_viewer.pages.sleep_visualizer import SleepMetricsPage
 from ebb_viewer.pages.sleep_qc_visualizer import SleepQCGridPage
 from ebb_viewer.pages.finalize import FinalizePage
+from ebb_viewer.pages.export_masks import ExportMasksPage
 from ebb_viewer.pipeline.manifest import Manifest
 
 class MainWindow(QMainWindow):
@@ -70,11 +71,12 @@ class MainWindow(QMainWindow):
         self.psd_visualizer_page = PSDVisualizer(parent=self, project_root=self.project_root)
         self.drink_mask_page = DrinkMaskPage(parent=self, project_root=self.project_root)
         self.finalize_page = FinalizePage(parent=self, project_root=self.project_root)
+        self.export_masks_page = ExportMasksPage(project_root=self.project_root, parent=self)
 
         for w in (self.home_page, self.preprocess_page, self.spindle_write_page,
                   self.spindle_upload_page, self.sleep_combine_page, self.rerun_page,
                   self.psd_page, self.psd_visualizer_page, self.drink_mask_page,
-                  self.finalize_page):
+                  self.finalize_page, self.export_masks_page):
             self.stacklayout.addWidget(w)
 
         # Build sidebar with separators.
@@ -93,6 +95,7 @@ class MainWindow(QMainWindow):
             ("7. PSD Visualizer",  7),
             ("8. Drink Mask",      8),
             ("9. Finalize",        9),
+            ("10. Export Masks",   10),
         ]
         self._row_to_stack: dict[int, int] = {}
         self._row_base_label: dict[int, str] = {}

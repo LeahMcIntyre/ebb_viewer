@@ -21,7 +21,7 @@ from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
 # Manifest builders
 # ---------------------------------------------------------------------------
 
-def _make_manifest(tmp_path: Path, animal_id: str, combo: str, drink_rel: str | None = None) -> Manifest:
+def _make_manifest(tmp_path: Path, animal_id: str, combo: str) -> Manifest:
     """Build a manifest with one OK run for a single animal/combo."""
     m = Manifest(tmp_path)
     edf_rel = f"standard/{animal_id}_2025_01_01_00_00_00_PREPROCESSED.edf"
@@ -30,10 +30,18 @@ def _make_manifest(tmp_path: Path, animal_id: str, combo: str, drink_rel: str | 
     entry = ManifestEntry(
         animal_id=animal_id,
         preprocessed_edf=edf_rel,
-        runs={combo: RunEntry(sleep_qc="ok", drink_mask=drink_rel)},
+        runs={combo: RunEntry(sleep_qc="ok")},
     )
     m._entries[animal_id] = entry
     return m
+
+
+def _drop_drink_npy(tmp_path: Path, animal_id: str) -> Path:
+    """Create a drink_masks/<animal>.npy file at the canonical path."""
+    path = tmp_path / "drink_masks" / f"{animal_id}.npy"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.touch()
+    return path
 
 
 def _make_state_csv(tmp_path: Path, animal_id: str, combo: str) -> Path:
@@ -49,18 +57,55 @@ def _make_state_csv(tmp_path: Path, animal_id: str, combo: str) -> Path:
 # ---------------------------------------------------------------------------
 
 def test_resolve_paths_finds_edf_state_and_drink(tmp_path):
-    drink_rel = "drink_masks/Mice-1_LFC_RSC.npy"
-    drink_full = tmp_path / drink_rel
-    drink_full.parent.mkdir(parents=True, exist_ok=True)
-    drink_full.touch()
-
-    manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC", drink_rel=drink_rel)
+    manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
     state_csv = _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
+    drink_full = _drop_drink_npy(tmp_path, "Mice-1")
 
     paths = me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
     assert paths.edf == tmp_path / "standard/Mice-1_2025_01_01_00_00_00_PREPROCESSED.edf"
     assert paths.state == state_csv
     assert paths.drink == drink_full
+    assert paths.swd is None  # no swd dir → None
+    assert paths.offset_csv is None  # no offset CSV in drink_masks/
+
+
+def test_resolve_paths_finds_offset_csv_in_drink_masks_dir(tmp_path):
+    """Any *.csv in drink_masks/ is treated as the offset CSV (matches Drink Mask page)."""
+    manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
+    _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
+    _drop_drink_npy(tmp_path, "Mice-1")
+    offset_csv = tmp_path / "drink_masks" / "offsets.csv"
+    offset_csv.write_text("Animal,Offset\nMice-1,3.5\n")
+    paths = me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
+    assert paths.offset_csv == offset_csv
+
+
+def test_resolve_paths_drink_discovered_by_file_presence_only(tmp_path):
+    """Drink file on disk is sufficient — manifest tracking is irrelevant for export."""
+    manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
+    _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
+    # No run.drink_mask set; just an .npy at the canonical path.
+    drink_full = _drop_drink_npy(tmp_path, "Mice-1")
+    paths = me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
+    assert paths.drink == drink_full
+
+
+def test_resolve_paths_finds_swd_when_present(tmp_path):
+    manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
+    _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
+    swd_dir = tmp_path / "swd"
+    swd_dir.mkdir()
+    swd_path = swd_dir / "Mice-1_2025_01_01.mat"
+    swd_path.touch()
+    paths = me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
+    assert paths.swd == swd_path
+
+
+def test_resolve_paths_no_swd_when_missing(tmp_path):
+    manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
+    _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
+    paths = me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
+    assert paths.swd is None
 
 
 def test_resolve_paths_unknown_animal_raises(tmp_path):
@@ -92,16 +137,8 @@ def test_resolve_paths_missing_state_csv_raises(tmp_path):
         me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
 
 
-def test_resolve_paths_stale_drink_pointer_treated_as_none(tmp_path):
-    """A drink_mask path in the manifest pointing to a deleted file shouldn't fail."""
-    manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC", drink_rel="drink_masks/missing.npy")
-    _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
-    paths = me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
-    assert paths.drink is None
-
-
-def test_resolve_paths_no_drink_when_none_in_manifest(tmp_path):
-    manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC", drink_rel=None)
+def test_resolve_paths_no_drink_when_file_missing(tmp_path):
+    manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
     _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
     paths = me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
     assert paths.drink is None

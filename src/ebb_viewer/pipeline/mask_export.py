@@ -27,9 +27,9 @@ from ebb.process.mask_export import (
 from ebb.process.state_presets import DEFAULT_STATES, labels_from_presets
 from ebb_viewer.pipeline.manifest import (
     Manifest,
-    drink_mask_path,
     spindle_output_dir,
 )
+from ebb_viewer.pipeline.naming import drink_mask_rel
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +68,8 @@ class ResolvedPaths:
     edf: Path
     state: Path
     drink: Optional[Path]
+    swd: Optional[Path]
+    offset_csv: Optional[Path]
 
 
 def resolve_paths(
@@ -76,17 +78,17 @@ def resolve_paths(
     animal_id: str,
     combo: str,
 ) -> ResolvedPaths:
-    """Locate EDF, state CSV, and drink mask for one (animal, combo).
+    """Locate EDF, state CSV, drink mask, and SWD MAT for one (animal, combo).
 
-    Raises ``ValueError`` with a descriptive message if any required file is
-    missing or the manifest doesn't contain the (animal, combo) pair.
+    Drink and SWD are optional — they're discovered by presence:
+    ``project_root/swd/<animal_id>_*.mat`` for SWD, manifest-tracked relative
+    path for drink. Raises ``ValueError`` only for required files.
     """
     entry = manifest.get(animal_id)
     if entry is None:
         raise ValueError(f"Animal {animal_id!r} not in manifest")
     if combo not in entry.runs:
         raise ValueError(f"Animal {animal_id!r} has no run for combo {combo!r}")
-    run = entry.runs[combo]
 
     edf_path = Path(project_root) / entry.preprocessed_edf
     if not edf_path.exists():
@@ -101,12 +103,27 @@ def resolve_paths(
         )
     state_path = matches[0]
 
-    drink = drink_mask_path(run, project_root)
-    # Stale manifest pointer to a deleted .npy shouldn't kill the export.
-    if drink is not None and not drink.exists():
-        drink = None
+    # Drink masks: discover by file presence at the canonical path. The
+    # manifest's run.drink_mask field tracks the PSD-review "applied" state,
+    # not whether the file exists — for export we want any drink mask that's
+    # actually on disk regardless of review workflow status.
+    drink_dir = Path(project_root) / "drink_masks"
+    drink_candidate = Path(project_root) / drink_mask_rel(animal_id)
+    drink = drink_candidate if drink_candidate.is_file() else None
 
-    return ResolvedPaths(edf=edf_path, state=state_path, drink=drink)
+    # Offset CSV: optional. Aligns video-derived drink mask to EEG start.
+    # Convention (matches the Drink Mask page): first *.csv in drink_masks/.
+    offset_csvs = sorted(drink_dir.glob("*.csv")) if drink_dir.is_dir() else []
+    offset_csv = offset_csvs[0] if offset_csvs else None
+
+    swd_dir = Path(project_root) / "swd"
+    swd_matches = sorted(swd_dir.glob(f"{animal_id}_*.mat")) if swd_dir.is_dir() else []
+    swd = swd_matches[0] if swd_matches else None
+
+    return ResolvedPaths(
+        edf=edf_path, state=state_path,
+        drink=drink, swd=swd, offset_csv=offset_csv,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -260,12 +277,33 @@ def _build_masks(
             mask_pro=comm_pro,
         )[0]
 
-        if paths.drink is not None:
+        use_drink = bool(_coerce_param(params, "use_drink_mask", True))
+        use_swd = bool(_coerce_param(params, "use_swd_mask", True))
+
+        if paths.drink is not None and use_drink:
+            offset = None
+            if paths.offset_csv is not None:
+                try:
+                    offset = masking.get_offset(paths.drink, paths.offset_csv)
+                except Exception as exc:  # missing animal row, malformed CSV, etc.
+                    print(
+                        f"  warning: could not read drink offset for "
+                        f"{paths.drink.stem!r} from {paths.offset_csv.name}: {exc}"
+                    )
+                    offset = None
             drink_mask = masking.drinking_mask(
-                paths.drink, None, fs=fs, pad_sec=drink_pad,
+                paths.drink, offset, fs=fs, pad_sec=drink_pad,
             )
         else:
             drink_mask = np.ones(n_samples, dtype=bool)
+
+        if paths.swd is not None and use_swd:
+            swd_pad = int(_coerce_param(params, "swd_pad", 0))
+            swd_mask = masking.swd(
+                path=paths.swd, n_samples=n_samples, fs=fs, pad_sec=swd_pad,
+            )
+        else:
+            swd_mask = None
 
         hour_windows = params.get("hour_windows")
         if hour_windows:
@@ -281,8 +319,10 @@ def _build_masks(
         "spindle_noise": spindle_mask,
         "sd_threshold": sd_threshold_mask,
     }
-    if paths.drink is not None:
+    if paths.drink is not None and use_drink:
         artifact_masks["drink"] = drink_mask
+    if swd_mask is not None:
+        artifact_masks["swd"] = swd_mask
     if hour_windows:
         artifact_masks["outside_hour_window"] = tod_mask
 
@@ -365,6 +405,8 @@ def export_animal(
             "edf_path": str(paths.edf),
             "state_csv_path": str(paths.state),
             "drink_mask_path": str(paths.drink) if paths.drink else None,
+            "offset_csv_path": str(paths.offset_csv) if paths.offset_csv else None,
+            "swd_path": str(paths.swd) if paths.swd else None,
             "params": dict(params),
             "used_hour_windows": [
                 (s.isoformat(), e.isoformat()) for s, e in used_windows
