@@ -16,8 +16,9 @@ Consistent with the Rerun page pattern. After preprocessing: `"✓ Done. → Go 
 
 ## P3 — Larger or Needs More Context
 
-### psd: Revisit SD-threshold rule for lumped state groups
-With state-selection presets, a user can pick a lumped group like `all` (wake+nrem+rem) or `sleep` (nrem+rem). Today SD thresholding is applied only when the group is literally named `wake` (see `if 'wake' in combo_state` in `estimate_psd`). For `all`, which contains wake samples, SD probably should apply to the wake portion. For `sleep`, it should stay off. Decide the rule (likely: apply SD when the group's code list includes `"w"`), update `estimate_psd` and tests accordingly.
+### ~~psd: Revisit SD-threshold rule for lumped state groups~~
+~~With state-selection presets, a user can pick a lumped group like `all` (wake+nrem+rem) or `sleep` (nrem+rem). Today SD thresholding is applied only when the group is literally named `wake` (see `if 'wake' in combo_state` in `estimate_psd`). For `all`, which contains wake samples, SD probably should apply to the wake portion. For `sleep`, it should stay off. Decide the rule (likely: apply SD when the group's code list includes `"w"`), update `estimate_psd` and tests accordingly.~~
+**DONE** — `estimate_psd` builds a `wake_sub_mask` whenever any selected group lumps `'w'` with other states, and restricts SD thresholding to wake samples within those groups (`psd_compute.py:150-258`). Pure `sleep` (no `'w'`) skips SD entirely.
 
 ### psd: Clarify REM-in-multiple-groups semantics
 ~~If a user checks both `rem` and `sleep`, REM epochs feed into two PSDs (a REM-only PSD and a NREM+REM PSD). That's intentional — same epochs, different averages. Decide whether to (a) surface this in the UI with a small hint when overlapping groups are selected, or (b) leave silent.~~
