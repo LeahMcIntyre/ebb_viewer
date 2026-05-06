@@ -63,10 +63,10 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [x] `process/state_presets.py` — doc/typing; stale ref fix
 - [x] `process/sleep_compute.py` — fixed `datetime.today()` race + DST note; parameterized magic 4; raise on short-recording rotation; deduped CSV reading; module docstring
 - [~] `process/mask_export.py` — reviewed clean (recently written, well-structured)
-- [ ] `process/psd_compute.py` (782) **— next session**
+- [x] `process/psd_compute.py` — fixed mutable defaults bug + tracemalloc leak; extracted scientific constants + helper for kwarg prep; full docstring rewrites; verified producer re-iteration empirically
 
 ### Phase 1 closeout
-- [ ] All `ebb/` tests pass
+- [x] All `ebb/` tests pass — **319 passing**
 - [ ] Merge `cleanup/phase1-ebb` → `dev`
 
 ---
