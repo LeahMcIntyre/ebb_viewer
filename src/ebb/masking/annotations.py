@@ -1,3 +1,11 @@
+"""Boolean masks built from Pinnacle annotation files.
+
+Two entry points:
+- `artifact`: mask labeled events between optional start/stop annotations.
+- `keyword_mask`: mask point-in-time annotations matched by keyword, with
+  optional padding before and after each match.
+"""
+
 from pathlib import Path
 
 import numpy as np
@@ -11,7 +19,7 @@ def artifact(
     labels: list[str],
     fs: float,
     between: tuple[str | None, str | None] = (None, None),
-    include=False,
+    include: bool = False,
     **kwargs,
 ) -> npt.NDArray[np.bool_]:
     """Returns a boolean mask from a Pinnacle annotations file.
@@ -57,7 +65,9 @@ def artifact(
     # get first and last annote to return that are in between
     a, b = between
     first = next(ann for ann in annotes if ann.label == a) if a else annotes[0]
-    last = next(ann for ann in annotes if ann.label == b) if a else annotes[-1]
+    # Bug fix: previously checked `if a` for both bounds, so passing only
+    # `b` silently fell back to annotes[-1]. Each bound is independent.
+    last = next(ann for ann in annotes if ann.label == b) if b else annotes[-1]
 
     # filter the annotes for requested labels and filter between
     labels_clean = {lbl.strip().lower() for lbl in labels}
@@ -83,7 +93,7 @@ def keyword_mask(
     fs: float,
     pad_after_sec: float = 0.0,
     pad_before_sec: float = 0.0,
-    match_mode: str = "contains",
+    match_mode: str = "contains",  # "contains" | "exact"
     **kwargs,
 ) -> npt.NDArray[np.bool_]:
     """Returns a boolean mask by matching annotation labels.

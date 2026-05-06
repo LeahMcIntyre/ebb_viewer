@@ -1,3 +1,15 @@
+"""Amplitude-threshold masks for EEG producers.
+
+Two functions:
+- `sd_threshold`: per-window z-score threshold, one mask per sigma in
+  `nstds`. Optional commutator mask excludes commutator artifacts from
+  the SD calculation so they don't inflate the threshold.
+- `commutator_threshold`: hard amplitude threshold with event aggregation
+  and post-event padding for sustained artifacts.
+
+Returned masks follow the project convention: True = keep, False = mask.
+"""
+
 import numpy as np
 import numpy.typing as npt
 from openseize.core.producer import Producer
@@ -35,7 +47,8 @@ def sd_threshold(
         A list of 1-D boolean arrays one per standard dev. in nstds.
     """
 
-    # Set chunksize of the producer
+    # NOTE: this mutates pro.chunksize (and mask_pro.chunksize) in place.
+    # Callers reusing the same producer afterwards inherit the new value.
     pro.chunksize = winsize
     if mask_pro:
         mask_pro.chunksize = winsize
@@ -62,7 +75,7 @@ def sd_threshold(
 
         arr -= mu
         arr /= std
-        for sigma, mask in zip(nstds, masks):
+        for sigma, mask in zip(nstds, masks, strict=True):
             _, cols = np.where(np.abs(arr) > sigma)
             cols = np.unique(cols + idx * pro.chunksize)
             mask[cols] = False
@@ -77,8 +90,13 @@ def sd_threshold(
 
 
 def commutator_threshold(
-    pro: Producer, value: int, radius: int, pad: int, min_to_pad: int, two_sided=True
-):
+    pro: Producer,
+    value: int,
+    radius: int,
+    pad: int,
+    min_to_pad: int,
+    two_sided: bool = True,
+) -> tuple[npt.NDArray[np.bool_], list[npt.NDArray[np.intp]]]:
     """Creates a mask that thresholds samples produced from pro at a
     constant value.
 
