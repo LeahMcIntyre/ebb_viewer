@@ -5,6 +5,7 @@ Glues the EDF reader and ``ebb.masking`` primitives to the pure helpers in
 the result rather than aborting the whole run — the UI surfaces them in a
 status table.
 """
+
 from __future__ import annotations
 
 import datetime as _dt
@@ -36,6 +37,7 @@ from ebb_viewer.pipeline.naming import drink_mask_rel
 # Result types
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class AnimalExportResult:
     animal_id: str
@@ -62,6 +64,7 @@ class ExportResult:
 # ---------------------------------------------------------------------------
 # Path resolution
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class ResolvedPaths:
@@ -94,13 +97,9 @@ def resolve_paths(
     if not edf_path.exists():
         raise ValueError(f"Preprocessed EDF not found: {edf_path}")
 
-    matches = sorted(
-        spindle_output_dir(combo, project_root).glob(f"{animal_id}_*.csv")
-    )
+    matches = sorted(spindle_output_dir(combo, project_root).glob(f"{animal_id}_*.csv"))
     if not matches:
-        raise ValueError(
-            f"No state CSV found for {animal_id!r} in spindle_outputs/{combo}/"
-        )
+        raise ValueError(f"No state CSV found for {animal_id!r} in spindle_outputs/{combo}/")
     state_path = matches[0]
 
     # Drink masks: discover by file presence at the canonical path. The
@@ -121,14 +120,18 @@ def resolve_paths(
     swd = swd_matches[0] if swd_matches else None
 
     return ResolvedPaths(
-        edf=edf_path, state=state_path,
-        drink=drink, swd=swd, offset_csv=offset_csv,
+        edf=edf_path,
+        state=state_path,
+        drink=drink,
+        swd=swd,
+        offset_csv=offset_csv,
     )
 
 
 # ---------------------------------------------------------------------------
 # Pure helpers (unit-testable without EDF I/O)
 # ---------------------------------------------------------------------------
+
 
 def clean_mask_for_state(
     codes: list[str],
@@ -160,9 +163,7 @@ def clean_mask_for_state(
     if len(codes) == 1:
         return base_clean & sd_threshold_mask
     if wake_sub_mask is None:
-        raise ValueError(
-            "wake_sub_mask is required when 'w' is lumped with other state codes"
-        )
+        raise ValueError("wake_sub_mask is required when 'w' is lumped with other state codes")
     return base_clean & (~wake_sub_mask | sd_threshold_mask)
 
 
@@ -175,9 +176,10 @@ def _coerce_param(params: dict[str, Any], key: str, default: Any) -> Any:
 # Per-animal export (does EDF I/O)
 # ---------------------------------------------------------------------------
 
+
 def _read_recording_start(reader: edf.Reader) -> _dt.datetime:
-    start_str = reader.header.start_time   # "HH.MM.SS"
-    date_str = reader.header.start_date    # "DD.MM.YY"
+    start_str = reader.header.start_time  # "HH.MM.SS"
+    date_str = reader.header.start_date  # "DD.MM.YY"
     return _dt.datetime.strptime(f"{date_str} {start_str}", "%d.%m.%y %H.%M.%S")
 
 
@@ -185,14 +187,14 @@ def _build_masks(
     paths: ResolvedPaths,
     params: dict[str, Any],
 ) -> tuple[
-    dict[str, np.ndarray],   # state_masks_raw (rawstate, no sprob)
-    dict[str, np.ndarray],   # state_masks_filtered (sprob applied if set)
-    dict[str, np.ndarray],   # artifact_masks (True=OK)
-    np.ndarray | None,    # wake_sub_mask (only if mixed-wake group present)
-    np.ndarray,              # sd_threshold_mask (separate; always built)
+    dict[str, np.ndarray],  # state_masks_raw (rawstate, no sprob)
+    dict[str, np.ndarray],  # state_masks_filtered (sprob applied if set)
+    dict[str, np.ndarray],  # artifact_masks (True=OK)
+    np.ndarray | None,  # wake_sub_mask (only if mixed-wake group present)
+    np.ndarray,  # sd_threshold_mask (separate; always built)
     list[tuple[_dt.datetime, _dt.datetime]],  # used hour windows
-    _dt.datetime,            # recording start
-    int,                     # n_samples
+    _dt.datetime,  # recording start
+    int,  # n_samples
 ]:
     """Open the EDF and build every mask we need to write the three CSVs.
 
@@ -224,9 +226,7 @@ def _build_masks(
         state_masks_raw: dict[str, np.ndarray] = {}
         state_masks_filtered: dict[str, np.ndarray] = {}
         for label, codes in labels.items():
-            state_masks_raw[label] = masking.state(
-                paths.state, codes, fs, winsize=epoch_winsize
-            )
+            state_masks_raw[label] = masking.state(paths.state, codes, fs, winsize=epoch_winsize)
             if s_prob is not None and len(codes) == 1:
                 state_masks_filtered[label] = masking.state_prob(
                     paths.state, codes[0], fs, winsize=epoch_winsize, sprob=s_prob
@@ -236,9 +236,7 @@ def _build_masks(
                 # just OR the per-code filtered masks together.
                 if s_prob is not None:
                     parts = [
-                        masking.state_prob(
-                            paths.state, c, fs, winsize=epoch_winsize, sprob=s_prob
-                        )
+                        masking.state_prob(paths.state, c, fs, winsize=epoch_winsize, sprob=s_prob)
                         for c in codes
                     ]
                     state_masks_filtered[label] = np.any(parts, axis=0)
@@ -253,19 +251,24 @@ def _build_masks(
                     paths.state, "w", fs, winsize=epoch_winsize, sprob=s_prob
                 )
             else:
-                wake_sub_mask = masking.state(
-                    paths.state, ["w"], fs, winsize=epoch_winsize
-                )
+                wake_sub_mask = masking.state(paths.state, ["w"], fs, winsize=epoch_winsize)
         else:
             wake_sub_mask = None
 
         # --- artifact masks (True = OK convention) ---
         comm_mask = masking.commutator_threshold(
-            pro, value=2000, radius=250, pad=250, min_to_pad=10,
+            pro,
+            value=2000,
+            radius=250,
+            pad=250,
+            min_to_pad=10,
         )[0]
         spindle_mask = masking.spindle_noise(
-            paths.state, noise_thresh=noise_thresh, fs=fs,
-            winsize=epoch_winsize, include=False,
+            paths.state,
+            noise_thresh=noise_thresh,
+            fs=fs,
+            winsize=epoch_winsize,
+            include=False,
         )
 
         comm_pro = producer(comm_mask, chunksize=int(4.5e4), axis=-1)
@@ -292,7 +295,10 @@ def _build_masks(
                     )
                     offset = None
             drink_mask = masking.drinking_mask(
-                paths.drink, offset, fs=fs, pad_sec=drink_pad,
+                paths.drink,
+                offset,
+                fs=fs,
+                pad_sec=drink_pad,
             )
         else:
             drink_mask = np.ones(n_samples, dtype=bool)
@@ -300,7 +306,10 @@ def _build_masks(
         if paths.swd is not None and use_swd:
             swd_pad = int(_coerce_param(params, "swd_pad", 0))
             swd_mask = masking.swd(
-                path=paths.swd, n_samples=n_samples, fs=fs, pad_sec=swd_pad,
+                path=paths.swd,
+                n_samples=n_samples,
+                fs=fs,
+                pad_sec=swd_pad,
             )
         else:
             swd_mask = None
@@ -308,7 +317,11 @@ def _build_masks(
         hour_windows = params.get("hour_windows")
         if hour_windows:
             tod_mask, used_windows = masking.hour_window_mask(
-                rec_start, n_samples, fs, hour_windows, params.get("selected_days"),
+                rec_start,
+                n_samples,
+                fs,
+                hour_windows,
+                params.get("selected_days"),
             )
         else:
             tod_mask = np.ones(n_samples, dtype=bool)
@@ -380,17 +393,24 @@ def export_animal(
         clean_intervals = []
         for label, codes in labels.items():
             clean_for_state = clean_mask_for_state(
-                codes, base_clean, sd_threshold_mask, wake_sub_mask,
+                codes,
+                base_clean,
+                sd_threshold_mask,
+                wake_sub_mask,
             )
             clean_intervals.extend(
                 clean_per_state_intervals(
-                    {label: state_masks_filtered[label]}, clean_for_state, fs,
+                    {label: state_masks_filtered[label]},
+                    clean_for_state,
+                    fs,
                 )
             )
         clean_intervals.sort(key=lambda r: (r.start_sample, r.label))
 
         state_intervals = build_state_intervals(
-            paths.state, fs=fs, winsize=epoch_winsize,
+            paths.state,
+            fs=fs,
+            winsize=epoch_winsize,
         )
         artifact_intervals = artifact_masks_to_intervals(artifact_masks, fs)
 
@@ -408,9 +428,7 @@ def export_animal(
             "offset_csv_path": str(paths.offset_csv) if paths.offset_csv else None,
             "swd_path": str(paths.swd) if paths.swd else None,
             "params": dict(params),
-            "used_hour_windows": [
-                (s.isoformat(), e.isoformat()) for s, e in used_windows
-            ],
+            "used_hour_windows": [(s.isoformat(), e.isoformat()) for s, e in used_windows],
             "exported_at": _dt.datetime.now().isoformat(timespec="seconds"),
         }
 
@@ -424,7 +442,10 @@ def export_animal(
             meta=meta,
         )
         return AnimalExportResult(
-            animal_id=animal_id, combo=combo, status="ok", paths=written,
+            animal_id=animal_id,
+            combo=combo,
+            status="ok",
+            paths=written,
         )
     except Exception as exc:  # noqa: BLE001 — we want to capture every failure mode
         return AnimalExportResult(

@@ -26,17 +26,22 @@ from ebb_viewer.widgets.worker_helpers import launch_worker
 
 # Keys stored in psd_params.json that are UI/config only and must not be
 # forwarded to computation functions (rerun_with_drink_masks, estimate_psd).
-_UI_ONLY_PARAM_KEYS = frozenset({
-    "swd_mode",
-    "ann_enabled", "ann_dir", "ann_keywords", "ann_match_mode",
-    "ann_pad_before", "ann_pad_after",
-})
+_UI_ONLY_PARAM_KEYS = frozenset(
+    {
+        "swd_mode",
+        "ann_enabled",
+        "ann_dir",
+        "ann_keywords",
+        "ann_match_mode",
+        "ann_pad_before",
+        "ann_pad_after",
+    }
+)
 
 CH_LABELS = ["LFC", "RSC", "LSC"]
 
 
 class DrinkMaskPage(QWidget):
-
     manifest_changed = pyqtSignal()
     navigate_to = pyqtSignal(str)
 
@@ -223,6 +228,7 @@ class DrinkMaskPage(QWidget):
 
     def _refresh_run_selector(self):
         from ebb_viewer.pipeline import psd_params
+
         current = self.cmb_run.currentText()
         runs = psd_params.list_runs(self.project_root)
         self.cmb_run.blockSignals(True)
@@ -280,6 +286,7 @@ class DrinkMaskPage(QWidget):
             self.lbl_offset_csv.setText(csv.name)
             try:
                 import csv as _csv
+
                 with csv.open(newline="") as fh:
                     header = next(_csv.reader(fh))
                 cols = {c.strip() for c in header}
@@ -302,11 +309,14 @@ class DrinkMaskPage(QWidget):
                     )
             except Exception:
                 self._lbl_offset_hint.setText("Could not read CSV headers.")
-                self._lbl_offset_hint.setStyleSheet("color: #c0392b; font-size: 11px; padding-left: 2px;")
+                self._lbl_offset_hint.setStyleSheet(
+                    "color: #c0392b; font-size: 11px; padding-left: 2px;"
+                )
 
     def _refresh_params(self):
         from ebb.process.state_presets import PRESET_DISPLAY
         from ebb_viewer.pipeline import psd_params
+
         run_name = self._current_run_name()
         params = psd_params.load(self.project_root, run_name)
         if params is None:
@@ -343,6 +353,7 @@ class DrinkMaskPage(QWidget):
 
     def _refresh_animals(self):
         from ebb_viewer.pipeline.manifest import Manifest
+
         run_name = self._current_run_name()
         try:
             manifest = Manifest.load(self.project_root)
@@ -371,9 +382,7 @@ class DrinkMaskPage(QWidget):
         if n_missing:
             parts.append(f"{n_missing} missing mask file")
         self._lbl_status.setText(f"{len(flagged)} animal(s) flagged — {', '.join(parts)}")
-        self._lbl_status.setStyleSheet(
-            "color: #8a4400;" if n_missing else "color: #1a5c1a;"
-        )
+        self._lbl_status.setStyleSheet("color: #8a4400;" if n_missing else "color: #1a5c1a;")
 
         _AMBER = QColor("#fff3cd")
         self._table.setRowCount(0)
@@ -395,6 +404,7 @@ class DrinkMaskPage(QWidget):
         self._table.setVisible(True)
 
         from ebb_viewer.pipeline import psd_params
+
         has_params = psd_params.load(self.project_root, run_name) is not None
         self.btn_apply.setEnabled(n_ready > 0 and has_params and not self._computing)
         if not has_params:
@@ -413,14 +423,16 @@ class DrinkMaskPage(QWidget):
         run_name = self._current_run_name()
         params = psd_params.load(self.project_root, run_name)
         if params is None:
-            QMessageBox.critical(self, "No PSD Params",
-                                 f"psd_params.json not found for run '{run_name}'. Run Compute PSDs first.")
+            QMessageBox.critical(
+                self,
+                "No PSD Params",
+                f"psd_params.json not found for run '{run_name}'. Run Compute PSDs first.",
+            )
             return
 
         standard_folder = self.project_root / "standard"
         if not standard_folder.is_dir():
-            QMessageBox.critical(self, "No Standard Folder",
-                                 f"Expected: {standard_folder}")
+            QMessageBox.critical(self, "No Standard Folder", f"Expected: {standard_folder}")
             return
 
         manifest = Manifest.load(self.project_root)
@@ -438,7 +450,9 @@ class DrinkMaskPage(QWidget):
         self._computing = True
         self._hint_frame.setVisible(False)
         self.btn_apply.setEnabled(False)
-        self._log(f"Starting drink mask rerun for {len(animal_combos)} animal(s) in run '{run_name}'…")
+        self._log(
+            f"Starting drink mask rerun for {len(animal_combos)} animal(s) in run '{run_name}'…"
+        )
         if swd_dir:
             self._log(f"  SWD mask: {swd_dir}")
 
@@ -467,13 +481,14 @@ class DrinkMaskPage(QWidget):
             ann_params=ann_params,
         )
         self.drink_worker.progress.connect(self._log)
-        launch_worker(self.drink_thread, self.drink_worker,
-                      on_finished=self._on_done,
-                      on_error=self._on_error)
+        launch_worker(
+            self.drink_thread, self.drink_worker, on_finished=self._on_done, on_error=self._on_error
+        )
 
     def _on_done(self):
         self._computing = False
         from ebb_viewer.pipeline.manifest import Manifest
+
         manifest = Manifest.load(self.project_root)
         run_name = self._pending_run_name
         failed = []
@@ -488,10 +503,13 @@ class DrinkMaskPage(QWidget):
             msg = "\n".join(failed)
             self._log(f"WARNING: {len(failed)} flag(s) failed:\n{msg}")
             QMessageBox.warning(
-                self, "Partial Failure",
+                self,
+                "Partial Failure",
                 f"{len(failed)} animal(s) could not be flagged:\n\n{msg}",
             )
-        self._log("Drink mask rerun complete. psds_drink.pkl and psds_channel_merged_drink.pkl updated.")
+        self._log(
+            "Drink mask rerun complete. psds_drink.pkl and psds_channel_merged_drink.pkl updated."
+        )
         self.manifest_changed.emit()
         self._hint_frame.setVisible(True)
         self._refresh()
@@ -541,6 +559,7 @@ class DrinkMaskRerunWorker(QObject):
 
     def run(self):
         from ebb.process.psd_compute import rerun_with_drink_masks
+
         try:
             rerun_with_drink_masks(
                 psd_dir=self.psd_dir,

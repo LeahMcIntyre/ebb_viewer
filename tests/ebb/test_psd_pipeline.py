@@ -7,7 +7,7 @@ import pytest
 from ebb.process.psd_compute import _animal_id, build_final_pkl, match_paths, out_fraction
 
 
-#TO BE CHANGED LATER WHEN MORE FLEXIBILITY IS ADDED
+# TO BE CHANGED LATER WHEN MORE FLEXIBILITY IS ADDED
 def test_animal_id():
     assert _animal_id(Path("AM0185_6wk_whatever.edf")) == "AM0185"
     assert _animal_id(Path("CW0DA2_P096_KO_foo.csv")) == "CW0DA2"
@@ -17,9 +17,10 @@ def test_animal_id():
 
 
 def test_out_fraction_basic():
-    mask = np.array([True, True, False, True])      # kept fraction = 0.75
+    mask = np.array([True, True, False, True])  # kept fraction = 0.75
     state = np.array([True, True, True, True])
     assert out_fraction(mask, state) == 0.25
+
 
 def test_out_fraction_state():
     mask = np.array([True, True, False, True, False, True, True, False])
@@ -27,14 +28,16 @@ def test_out_fraction_state():
     # kept fraction in state = 3/5 = 0.6; out fraction = 0.4
     assert out_fraction(mask, state) == 0.4
 
+
 def test_out_fraction_empty_state_is_nan():
     mask = np.array([True, False, True])
     state = np.array([False, False, False])
     assert np.isnan(out_fraction(mask, state))
 
+
 def test_match_paths_drink_sparse():
     eeg = [Path("AM0001_x_PROCESSED.edf"), Path("AM0002_x_PROCESSED.edf")]
-    st  = [Path("AM0001_states.csv"),      Path("AM0002_states.csv")]
+    st = [Path("AM0001_states.csv"), Path("AM0002_states.csv")]
 
     drink = [Path("AM0002_6wk_combined_predictions.npy")]  # only one exists
 
@@ -44,18 +47,20 @@ def test_match_paths_drink_sparse():
     assert paired[0][1].name.startswith("AM0001")
     assert paired[1][0].name.startswith("AM0002")
     assert paired[1][1].name.startswith("AM0002")
-    assert paired[0][3] is None                      # drink missing for AM0001
-    assert paired[1][3] == drink[0]                  # drink present for AM0002
+    assert paired[0][3] is None  # drink missing for AM0001
+    assert paired[1][3] == drink[0]  # drink present for AM0002
     assert paired[0][2] is None and paired[1][2] is None  # swd disabled
+
 
 def test_match_paths_swd_required():
     eeg = [Path("AM0001_x_PROCESSED.edf"), Path("AM0002_x_PROCESSED.edf")]
-    st  = [Path("AM0001_states.csv"),      Path("AM0002_states.csv")]
-    swd = [Path("ts_AM0001.mat"),          Path("ts_AM0002.mat")]
+    st = [Path("AM0001_states.csv"), Path("AM0002_states.csv")]
+    swd = [Path("ts_AM0001.mat"), Path("ts_AM0002.mat")]
 
     paired = match_paths(eeg, st, swd_paths=swd, drink_paths=None)
     assert paired[0][2] == swd[0]
     assert paired[1][2] == swd[1]
+
 
 def test_match_paths_extra_eeg_raises():
     """match_paths raises when there are more EEG files than state CSVs.
@@ -64,9 +69,12 @@ def test_match_paths_extra_eeg_raises():
     prevent: if you pass all EDFs from standard/ but only a subset of state
     CSVs (e.g. a rerun combo), re_match raises ValueError.
     """
-    eeg = [Path("AM0001_x_PROCESSED.edf"), Path("AM0002_x_PROCESSED.edf"),
-           Path("AM0003_x_PROCESSED.edf")]
-    st  = [Path("AM0001_states.csv"), Path("AM0002_states.csv")]  # AM0003 missing
+    eeg = [
+        Path("AM0001_x_PROCESSED.edf"),
+        Path("AM0002_x_PROCESSED.edf"),
+        Path("AM0003_x_PROCESSED.edf"),
+    ]
+    st = [Path("AM0001_states.csv"), Path("AM0002_states.csv")]  # AM0003 missing
 
     try:
         match_paths(eeg, st, swd_paths=None, drink_paths=None)
@@ -103,9 +111,12 @@ def test_batch_estimate_filters_eeg_by_state_csv(tmp_path):
         # Return empty list so batch_estimate has nothing to process
         return []
 
-    with patch("ebb.process.psd_compute.match_paths", side_effect=fake_match_paths), \
-         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1):
+    with (
+        patch("ebb.process.psd_compute.match_paths", side_effect=fake_match_paths),
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+    ):
         from ebb.process.psd_compute import batch_estimate
+
         batch_estimate(eeg_dir=standard, state_dir=spindle_out)
 
     eeg_animal_ids = {_animal_id(p) for p in captured["eeg_paths"]}
@@ -115,7 +126,7 @@ def test_batch_estimate_filters_eeg_by_state_csv(tmp_path):
 
 def test_match_paths_swd_missing_raises():
     eeg = [Path("AM0001_x_PROCESSED.edf"), Path("AM0002_x_PROCESSED.edf")]
-    st  = [Path("AM0001_states.csv"),      Path("AM0002_states.csv")]
+    st = [Path("AM0001_states.csv"), Path("AM0002_states.csv")]
     swd = [Path("ts_AM0001.mat")]  # AM0002 missing
 
     try:
@@ -127,6 +138,7 @@ def test_match_paths_swd_missing_raises():
 # ---------------------------------------------------------------------------
 # build_final_pkl
 # ---------------------------------------------------------------------------
+
 
 def _make_psd_record(animal_id: str, combo: str) -> dict:
     """Minimal PSD record as produced by batch_estimate."""
@@ -176,15 +188,21 @@ class _FakeManifest:
 def test_build_final_pkl_basic(tmp_path):
     psd_run_dir = tmp_path / "psd" / "default"
 
-    _write_combo_pkl(psd_run_dir, "LFC_RSC", [
-        _make_psd_record("AM001", "LFC_RSC"),
-        _make_psd_record("AM002", "LFC_RSC"),
-    ])
+    _write_combo_pkl(
+        psd_run_dir,
+        "LFC_RSC",
+        [
+            _make_psd_record("AM001", "LFC_RSC"),
+            _make_psd_record("AM002", "LFC_RSC"),
+        ],
+    )
 
-    manifest = _FakeManifest([
-        _FakeEntry("AM001", "LFC_RSC"),
-        _FakeEntry("AM002", "LFC_RSC"),
-    ])
+    manifest = _FakeManifest(
+        [
+            _FakeEntry("AM001", "LFC_RSC"),
+            _FakeEntry("AM002", "LFC_RSC"),
+        ]
+    )
 
     out = build_final_pkl(tmp_path, manifest)
     assert out == psd_run_dir / "psds_channel_merged.pkl"
@@ -204,16 +222,22 @@ def test_build_final_pkl_filters_to_ok_combo(tmp_path):
     """Only animals with ok sleep_qc are included."""
     psd_run_dir = tmp_path / "psd" / "default"
 
-    _write_combo_pkl(psd_run_dir, "LFC_RSC", [
-        _make_psd_record("AM001", "LFC_RSC"),
-        _make_psd_record("AM002", "LFC_RSC"),
-    ])
+    _write_combo_pkl(
+        psd_run_dir,
+        "LFC_RSC",
+        [
+            _make_psd_record("AM001", "LFC_RSC"),
+            _make_psd_record("AM002", "LFC_RSC"),
+        ],
+    )
 
     # AM002 has no ok combo
-    manifest = _FakeManifest([
-        _FakeEntry("AM001", "LFC_RSC"),
-        _FakeEntry("AM002", None),
-    ])
+    manifest = _FakeManifest(
+        [
+            _FakeEntry("AM001", "LFC_RSC"),
+            _FakeEntry("AM002", None),
+        ]
+    )
 
     out = build_final_pkl(tmp_path, manifest)
     with open(out, "rb") as f:
@@ -230,10 +254,12 @@ def test_build_final_pkl_multiple_combos(tmp_path):
     _write_combo_pkl(psd_run_dir, "LFC_RSC", [_make_psd_record("AM001", "LFC_RSC")])
     _write_combo_pkl(psd_run_dir, "LSC_RSC", [_make_psd_record("AM002", "LSC_RSC")])
 
-    manifest = _FakeManifest([
-        _FakeEntry("AM001", "LFC_RSC"),
-        _FakeEntry("AM002", "LSC_RSC"),
-    ])
+    manifest = _FakeManifest(
+        [
+            _FakeEntry("AM001", "LFC_RSC"),
+            _FakeEntry("AM002", "LSC_RSC"),
+        ]
+    )
 
     out = build_final_pkl(tmp_path, manifest)
     with open(out, "rb") as f:
@@ -248,6 +274,7 @@ def test_build_final_pkl_multiple_combos(tmp_path):
 # ---------------------------------------------------------------------------
 # batch_estimate: annotation mask params
 # ---------------------------------------------------------------------------
+
 
 def test_batch_estimate_injects_ann_kwargs(tmp_path):
     """ann_params keywords, match mode, and padding are injected into the estimator partial."""
@@ -266,10 +293,13 @@ def test_batch_estimate_injects_ann_kwargs(tmp_path):
         captured_kwargs.update(kwargs)
         return lambda *a: []
 
-    with patch("ebb.process.psd_compute.match_paths", return_value=[]), \
-         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.partial", side_effect=fake_partial):
+    with (
+        patch("ebb.process.psd_compute.match_paths", return_value=[]),
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+        patch("ebb.process.psd_compute.partial", side_effect=fake_partial),
+    ):
         from ebb.process.psd_compute import batch_estimate
+
         batch_estimate(
             eeg_dir=standard,
             state_dir=spindle_out,
@@ -303,10 +333,13 @@ def test_batch_estimate_no_ann_kwargs_when_ann_params_none(tmp_path):
         captured_kwargs.update(kwargs)
         return lambda *a: []
 
-    with patch("ebb.process.psd_compute.match_paths", return_value=[]), \
-         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.partial", side_effect=fake_partial):
+    with (
+        patch("ebb.process.psd_compute.match_paths", return_value=[]),
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+        patch("ebb.process.psd_compute.partial", side_effect=fake_partial),
+    ):
         from ebb.process.psd_compute import batch_estimate
+
         batch_estimate(eeg_dir=standard, state_dir=spindle_out)
 
     assert "ann_keywords" not in captured_kwargs
@@ -347,10 +380,13 @@ def test_batch_estimate_extends_pairs_with_annotation_paths(tmp_path):
         (edf_b, spindle_out / "AM002_states.csv", None, None),
     ]
 
-    with patch("ebb.process.psd_compute.match_paths", return_value=base_pairs), \
-         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.estimate_psd", side_effect=fake_estimate_psd):
+    with (
+        patch("ebb.process.psd_compute.match_paths", return_value=base_pairs),
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+        patch("ebb.process.psd_compute.estimate_psd", side_effect=fake_estimate_psd),
+    ):
         from ebb.process.psd_compute import batch_estimate
+
         batch_estimate(
             eeg_dir=standard,
             state_dir=spindle_out,
@@ -379,4 +415,3 @@ def test_build_final_pkl_missing_combo_pkl_warns(tmp_path):
     with open(out, "rb") as f:
         records = pickle.load(f)
     assert records == []
-

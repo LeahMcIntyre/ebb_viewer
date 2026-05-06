@@ -11,10 +11,11 @@ Span = tuple[int, int]  # [start_sample, end_sample)
 @dataclass
 class ParamSpec:
     """UI constraints for a single metadata parameter."""
+
     min: float | None = None
     max: float | None = None
     step: float | None = None
-    decimals: int = 4        # for float widgets only
+    decimals: int = 4  # for float widgets only
     units: str | None = None  # displayed as spinbox suffix, e.g. " s", " Hz"
     desc: str | None = None
 
@@ -22,6 +23,7 @@ class ParamSpec:
 @dataclass
 class Mask:
     """A single 1D mask aligned to samples (no channels, just time)."""
+
     name: str
     color: tuple[int, int, int, int]  # RGBA
     spans: list[Span] = field(default_factory=list)
@@ -43,7 +45,7 @@ class Mask:
         x = arr.astype(int)
         diff = np.diff(x)
         starts = np.where(diff == 1)[0] + 1
-        stops  = np.where(diff == -1)[0] + 1
+        stops = np.where(diff == -1)[0] + 1
 
         if arr[0]:
             starts = np.r_[0, starts]
@@ -86,7 +88,7 @@ class Mask:
         total = 0
         i, j = 0, 0
         while i < len(self.spans) and j < len(other.spans):
-            #Get the next span that starts latest (lo) and then the span that ends first (hi)
+            # Get the next span that starts latest (lo) and then the span that ends first (hi)
             lo = max(self.spans[i][0], other.spans[j][0])
             hi = min(self.spans[i][1], other.spans[j][1])
             # If lo > hi then one span ends before the other starts
@@ -100,10 +102,10 @@ class Mask:
         return total
 
 
-
 @dataclass
 class MaskSet:
     """Simple collection of masks keyed by name."""
+
     masks: dict[str, Mask] = field(default_factory=dict)
 
     def add(self, mask: Mask) -> None:

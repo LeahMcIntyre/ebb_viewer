@@ -109,9 +109,7 @@ class SpindleUploadPage(QWidget):
         # --- Upload combo (spindle_edfs subfolders) ---
         upload_row = QHBoxLayout()
         self.upload_combo = QComboBox()
-        self.upload_combo.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
-        )
+        self.upload_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.btn_refresh_upload = QPushButton("Rescan")
         upload_row.addWidget(self.upload_combo, 1)
         upload_row.addWidget(self.btn_refresh_upload)
@@ -122,9 +120,7 @@ class SpindleUploadPage(QWidget):
         form_layout.addRow("Spindle EDF set (subfolder of 'spindle_edfs'):", upload_row)
         form_layout.addRow("Selected upload folder:", self.upload_dir_edit)
 
-        self.upload_hint = QLabel(
-            "Looking for subfolders under project_root / 'spindle_edfs'."
-        )
+        self.upload_hint = QLabel("Looking for subfolders under project_root / 'spindle_edfs'.")
         self.upload_hint.setStyleSheet("color:#777; font-size:10px;")
         self.upload_hint.setWordWrap(True)
         form_layout.addRow("", self.upload_hint)
@@ -133,9 +129,7 @@ class SpindleUploadPage(QWidget):
         self.output_dir_edit = QLineEdit()
         self.output_dir_edit.setReadOnly(True)
 
-        out_hint = QLabel(
-            "Outputs will be written to project_root / 'spindle_outputs' / <combo>."
-        )
+        out_hint = QLabel("Outputs will be written to project_root / 'spindle_outputs' / <combo>.")
         out_hint.setStyleSheet("color:#777; font-size:10px;")
         out_hint.setWordWrap(True)
 
@@ -160,9 +154,7 @@ class SpindleUploadPage(QWidget):
         proj_v.addWidget(self.project_list)
         form_layout.addRow(proj_box)
 
-        proj_hint = QLabel(
-            "Select the SleepyRat project where this run should be stored."
-        )
+        proj_hint = QLabel("Select the SleepyRat project where this run should be stored.")
         proj_hint.setStyleSheet("color:#777; font-size:10px;")
         proj_hint.setWordWrap(True)
         form_layout.addRow("", proj_hint)
@@ -193,7 +185,6 @@ class SpindleUploadPage(QWidget):
         btn_row.addWidget(self.btn_upload_and_download)
 
         form_layout.addRow(btn_row)
-
 
         root.addWidget(gb)
 
@@ -236,9 +227,7 @@ class SpindleUploadPage(QWidget):
         # SleepyRat project list
         self.btn_refresh_projects.clicked.connect(self._refresh_projects_clicked)
         self.btn_new_project.clicked.connect(self._new_project_clicked)
-        self.project_list.currentItemChanged.connect(
-            lambda *_: self._on_project_selected()
-        )
+        self.project_list.currentItemChanged.connect(lambda *_: self._on_project_selected())
 
         # Remote folder text
         self.remote_folder_edit.currentTextChanged.connect(
@@ -279,7 +268,7 @@ class SpindleUploadPage(QWidget):
                 "Spindle EDFs need to be created before using this page."
             )
             self.output_dir_edit.clear()
-            #self.btn_run.setEnabled(False)
+            # self.btn_run.setEnabled(False)
             return
 
         subdirs = sorted(p for p in root.iterdir() if p.is_dir())
@@ -290,12 +279,11 @@ class SpindleUploadPage(QWidget):
                 "Spindle EDFs need to be created before using this page."
             )
             self.output_dir_edit.clear()
-            #self.btn_run.setEnabled(False)
+            # self.btn_run.setEnabled(False)
             return
 
         self.upload_hint.setText(
-            f"Found {len(subdirs)} folder(s) under 'spindle_edfs'. "
-            "Select one to upload its EDFs."
+            f"Found {len(subdirs)} folder(s) under 'spindle_edfs'. Select one to upload its EDFs."
         )
 
         self.upload_combo.blockSignals(True)
@@ -402,7 +390,6 @@ class SpindleUploadPage(QWidget):
 
         self.btn_upload_and_download.setEnabled(can_upload_and_download)
 
-
     # ------------- SleepyRat – project list -------------
     def _refresh_projects_clicked(self):
         api = self._ensure_api()
@@ -473,19 +460,11 @@ class SpindleUploadPage(QWidget):
         project = item.text().strip() if item else ""
 
         if not project:
-            QMessageBox.critical(
-                self,
-                "No SleepyRat Project",
-                "Please select a SleepyRat project."
-            )
+            QMessageBox.critical(self, "No SleepyRat Project", "Please select a SleepyRat project.")
             return None
 
         if not remote_folder:
-            QMessageBox.critical(
-                self,
-                "No Remote Folder",
-                "Please enter a remote folder name."
-            )
+            QMessageBox.critical(self, "No Remote Folder", "Please enter a remote folder name.")
             return None
 
         out_dir = self._current_output_dir()
@@ -493,18 +472,18 @@ class SpindleUploadPage(QWidget):
             QMessageBox.critical(
                 self,
                 "Output Folder Error",
-                "Could not determine output folder (combo name missing)."
+                "Could not determine output folder (combo name missing).",
             )
             return None
 
         return project, remote_folder, upload_dir, out_dir
 
-
     def _check_output_dir(self, out_dir: Path) -> bool:
         """Return True if safe to proceed (user confirmed or dir is empty)."""
         if out_dir.exists() and any(out_dir.iterdir()):
             btn = QMessageBox.question(
-                self, "Output Folder Not Empty",
+                self,
+                "Output Folder Not Empty",
                 f"Output folder is not empty:\n\n{out_dir}\n\n"
                 "New CSVs will be mixed with existing files. Continue?",
                 QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Ok,
@@ -513,16 +492,21 @@ class SpindleUploadPage(QWidget):
             return btn == QMessageBox.StandardButton.Ok
         return True
 
-    def _launch_worker(self, project, remote_folder, out_dir, *, upload_dir=None, save_combo: str | None = None):
+    def _launch_worker(
+        self, project, remote_folder, out_dir, *, upload_dir=None, save_combo: str | None = None
+    ):
         self.btn_upload_and_download.setEnabled(False)
         self._pending_save = (save_combo, project, remote_folder) if save_combo else None
 
         self._sr_thread = QThread(self)
         self._sr_worker = SleepyRatWorker(project, remote_folder, out_dir, upload_dir=upload_dir)
         self._sr_worker.log.connect(self._log)
-        launch_worker(self._sr_thread, self._sr_worker,
-                      on_finished=self._on_sr_done,
-                      on_error=self._on_sr_error)
+        launch_worker(
+            self._sr_thread,
+            self._sr_worker,
+            on_finished=self._on_sr_done,
+            on_error=self._on_sr_error,
+        )
 
     def _on_sr_done(self):
         if self._pending_save:
@@ -549,13 +533,16 @@ class SpindleUploadPage(QWidget):
             return
         edfs = sorted(upload_dir.glob("*.edf"))
         if not edfs:
-            QMessageBox.critical(self, "No EDF Files Found",
-                                 f"No .edf files were found in:\n{upload_dir}")
+            QMessageBox.critical(
+                self, "No EDF Files Found", f"No .edf files were found in:\n{upload_dir}"
+            )
             return
         if not self._check_output_dir(out_dir):
             return
         combo = self._current_combo_name()
-        self._launch_worker(project, remote_folder, out_dir, upload_dir=upload_dir, save_combo=combo)
+        self._launch_worker(
+            project, remote_folder, out_dir, upload_dir=upload_dir, save_combo=combo
+        )
 
     def _download_only_clicked(self):
         ctx = self._get_common_run_context()
@@ -568,18 +555,17 @@ class SpindleUploadPage(QWidget):
 
 
 class SleepyRatWorker(QObject):
-    log      = pyqtSignal(str)
+    log = pyqtSignal(str)
     finished = pyqtSignal()
-    error    = pyqtSignal(str)
+    error = pyqtSignal(str)
 
-    def __init__(self, project, remote_folder, out_dir,
-                 upload_dir=None, files=None, parent=None):
+    def __init__(self, project, remote_folder, out_dir, upload_dir=None, files=None, parent=None):
         super().__init__(parent)
-        self.project       = project
+        self.project = project
         self.remote_folder = remote_folder
-        self.out_dir       = Path(out_dir)
-        self.upload_dir    = Path(upload_dir) if upload_dir else None
-        self.files         = list(files) if files else None
+        self.out_dir = Path(out_dir)
+        self.upload_dir = Path(upload_dir) if upload_dir else None
+        self.files = list(files) if files else None
 
     @staticmethod
     def _existing_stems(api, project: str, remote_folder: str) -> set[str]:
@@ -595,6 +581,7 @@ class SleepyRatWorker(QObject):
 
     def run(self):
         from ebb.io.sleepyrat import SleepyRatAPI
+
         try:
             api = SleepyRatAPI()
 
@@ -646,8 +633,7 @@ class SleepyRatWorker(QObject):
             submissions = info.get("submissions", [])
             if not submissions:
                 raise RuntimeError(
-                    f"No files found in project='{self.project}', "
-                    f"folder='{self.remote_folder}'"
+                    f"No files found in project='{self.project}', folder='{self.remote_folder}'"
                 )
 
             self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -659,11 +645,14 @@ class SleepyRatWorker(QObject):
                 names = [n for n in all_names if _norm_stem(n) in target_stems]
                 skipped_remote = len(all_names) - len(names)
                 if skipped_remote:
-                    self.log.emit(f"Limiting download to {len(names)} file(s) (skipping {skipped_remote} unrelated submission(s) in folder).")
+                    self.log.emit(
+                        f"Limiting download to {len(names)} file(s) (skipping {skipped_remote} unrelated submission(s) in folder)."
+                    )
             else:
                 names = all_names
             to_download = [
-                name for name in names
+                name
+                for name in names
                 if not (self.out_dir / (Path(name).stem + "_labels.csv")).exists()
             ]
             skipped = len(names) - len(to_download)

@@ -1,4 +1,3 @@
-
 import numpy as np
 import numpy.typing as npt
 from openseize.core.producer import Producer
@@ -6,11 +5,12 @@ from openseize.core.producer import Producer
 from ebb.core import arraytools
 
 
-def sd_threshold(pro: Producer,
-              nstds: list[float],
-              winsize: int,
-              mask_pro: Producer | None = None,
-              radius: int | None = None,
+def sd_threshold(
+    pro: Producer,
+    nstds: list[float],
+    winsize: int,
+    mask_pro: Producer | None = None,
+    radius: int | None = None,
 ) -> list[npt.NDArray[np.bool_]]:
     """Thresholds the z-score of produced values using each standard deviation
     in nstds.
@@ -26,7 +26,7 @@ def sd_threshold(pro: Producer,
             deviation to normalize the produced values by.
         mask_pro:
             Optional: A producer of a commutator artifact mask to apply when calculating
-            the standard deviation (so commutator artifacts will not inflate standard deviation). 
+            the standard deviation (so commutator artifacts will not inflate standard deviation).
         radius:
             Optional: The max distance below which all intermediate samples between two
             samples are interpolated to be False.
@@ -75,12 +75,10 @@ def sd_threshold(pro: Producer,
 
     return masks
 
-def commutator_threshold(pro: Producer,
-                    value: int,
-                    radius: int,
-                    pad: int,
-                    min_to_pad:int,
-                    two_sided=True):
+
+def commutator_threshold(
+    pro: Producer, value: int, radius: int, pad: int, min_to_pad: int, two_sided=True
+):
     """Creates a mask that thresholds samples produced from pro at a
     constant value.
 
@@ -112,7 +110,6 @@ def commutator_threshold(pro: Producer,
     mask = np.ones(pro.shape[axis], dtype=bool)
 
     for idx, arr in enumerate(pro):
-
         x = np.abs(arr) if two_sided else arr
         _, cols = np.where(x > value)
         cols = np.unique(cols + idx * pro.chunksize)
@@ -123,7 +120,6 @@ def commutator_threshold(pro: Producer,
         return mask, epochs
 
     for epoch in arraytools.aggregate1d(~mask, radius):
-
         # min_to_pad ensures we don't pad artifacts which can exceed value
         if epoch[1] - epoch[0] > min_to_pad:
             epoch += np.array([0, pad])

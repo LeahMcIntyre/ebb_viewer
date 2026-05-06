@@ -32,7 +32,7 @@ def test_state_expands_per_window(tmp_path: Path):
     # Second window is nrem -> False
     assert (~mask[fs * winsize : 2 * fs * winsize]).all()
     # Third window is wake -> True
-    assert mask[2 * fs * winsize :3 * fs * winsize].all()
+    assert mask[2 * fs * winsize : 3 * fs * winsize].all()
     # Third window is rem -> False
     assert (~mask[3 * fs * winsize :]).all()
 

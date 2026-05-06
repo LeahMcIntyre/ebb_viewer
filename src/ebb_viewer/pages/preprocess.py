@@ -43,9 +43,9 @@ _SAME_DURATION_THRESHOLD = 1 / 60  # 1 minute — treat as identical
 class PreprocessPage(QWidget):
     navigate_to = pyqtSignal(str)
 
-    _STYLE_NORMAL  = "color: #666; font-size: 10px;"
+    _STYLE_NORMAL = "color: #666; font-size: 10px;"
     _STYLE_WARNING = "color: #e67e22; font-size: 10px;"
-    _STYLE_ERROR   = "color: #c0392b; font-size: 10px;"
+    _STYLE_ERROR = "color: #c0392b; font-size: 10px;"
 
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
@@ -95,8 +95,7 @@ class PreprocessPage(QWidget):
         top_form.addRow("Target Directory:", self.target_name_edit)
 
         fmt_lbl = QLabel(
-            "ℹ EDF files must be named: "
-            "<code>AnimalID_anything_YYYY_MM_DD_HH_MM_SS.edf</code>"
+            "ℹ EDF files must be named: <code>AnimalID_anything_YYYY_MM_DD_HH_MM_SS.edf</code>"
         )
         fmt_lbl.setTextFormat(Qt.TextFormat.RichText)
         fmt_lbl.setStyleSheet("color: #666; font-size: 10px; padding-top: 2px;")
@@ -157,9 +156,9 @@ class PreprocessPage(QWidget):
         self._trim_hint_label.setStyleSheet("color: #666; font-size: 10px;")
 
         form.addRow(fs_lbl, self.fs_original)
-        form.addRow(ds_lbl,           ds_row)
-        form.addRow(trim_lbl,                      self.trim_to)
-        form.addRow("",                            self._trim_hint_label)
+        form.addRow(ds_lbl, ds_row)
+        form.addRow(trim_lbl, self.trim_to)
+        form.addRow("", self._trim_hint_label)
 
         root.addWidget(settings_gb)
 
@@ -246,7 +245,9 @@ class PreprocessPage(QWidget):
 
         n = len(paths)
         if not durations:
-            self._scan_label.setText(f"Found {n} file{'s' if n != 1 else ''} · could not read durations")
+            self._scan_label.setText(
+                f"Found {n} file{'s' if n != 1 else ''} · could not read durations"
+            )
             self._scan_label.setStyleSheet(self._STYLE_NORMAL)
             return
 
@@ -291,8 +292,8 @@ class PreprocessPage(QWidget):
 
         if n_error:
             self._trim_hint_label.setText(
-                (f"{', '.join(parts)} · " if parts else "") +
-                f"⚠ {n_error} recording{'s' if n_error != 1 else ''} shorter than {trim_min}h will fail"
+                (f"{', '.join(parts)} · " if parts else "")
+                + f"⚠ {n_error} recording{'s' if n_error != 1 else ''} shorter than {trim_min}h will fail"
             )
             self._trim_hint_label.setStyleSheet("color: #c0392b; font-size: 10px;")
             self._scan_label.setStyleSheet(self._STYLE_WARNING)
@@ -313,7 +314,6 @@ class PreprocessPage(QWidget):
     # Run Preprocessing
     def _run_clicked(self):
 
-
         # Read the current target directory text (Not Relevant Now Because I force default)
         target_text = self.target_name_edit.text().strip()
         if target_text:
@@ -323,15 +323,8 @@ class PreprocessPage(QWidget):
 
         # Validate: if the parent of target_dir doesn't exist, warn & fall back
         if not target_dir.parent.is_dir():
-            msg = (
-                f"Target folder will default to '{self.default_target_dir}'.\n"
-                "Continue?"
-            )
-            btn = QMessageBox.question(
-                self,
-                "No Target Folder Selected",
-                msg
-            )
+            msg = f"Target folder will default to '{self.default_target_dir}'.\nContinue?"
+            btn = QMessageBox.question(self, "No Target Folder Selected", msg)
             if btn != QMessageBox.StandardButton.Yes:
                 return
 
@@ -341,9 +334,9 @@ class PreprocessPage(QWidget):
 
         # Pull a snapshot from the UI
         params = {
-            "fs":         int(self.fs_original.value()),
+            "fs": int(self.fs_original.value()),
             "downsample": int(self.downsample.value()),
-            "trim_to":    list(self.trim_to.value()),
+            "trim_to": list(self.trim_to.value()),
         }
 
         existing = list(target_dir.glob("*_PREPROCESSED.edf")) if target_dir.is_dir() else []
@@ -368,7 +361,8 @@ class PreprocessPage(QWidget):
         )
         self._preprocess_worker.log.connect(self._log)
         launch_worker(
-            self._preprocess_thread, self._preprocess_worker,
+            self._preprocess_thread,
+            self._preprocess_worker,
             on_finished=self._on_preprocess_done,
             on_error=lambda msg: (
                 self.btn_run.setEnabled(True),
@@ -398,7 +392,8 @@ class _PreprocessWorker(QObject):
             self.log.emit(f"Starting preprocessing on {n} file(s)…")
             t0 = time.perf_counter()
             outs = batch_preprocess(
-                standard, self.project_root,
+                standard,
+                self.project_root,
                 target=self.target_dir,
                 verbose=True,
                 **self.params,

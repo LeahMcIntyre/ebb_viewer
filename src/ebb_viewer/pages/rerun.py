@@ -37,15 +37,15 @@ _COMBO_CHANNELS: dict[str, list[int]] = {
     "LFC_RSC": [0, 1, 3],
     "LFC_LSC": [0, 2, 3],
     "RSC_LSC": [1, 2, 3],
-    "LFC":     [0, 3],
-    "RSC":     [1, 3],
-    "LSC":     [2, 3],
+    "LFC": [0, 3],
+    "RSC": [1, 3],
+    "LSC": [2, 3],
 }
 
 _ORANGE = QColor("#fde8ce")
-_BLUE   = QColor("#dce8f7")
-_GREEN  = QColor("#d4edda")
-_RED    = QColor("#f8d7da")
+_BLUE = QColor("#dce8f7")
+_GREEN = QColor("#d4edda")
+_RED = QColor("#f8d7da")
 
 
 def _combo_to_channels(combo: str) -> list[int]:
@@ -57,7 +57,6 @@ def _combo_to_channels(combo: str) -> list[int]:
     indices = sorted({mapping[p] for p in parts if p in mapping})
     indices.append(3)  # EMG always
     return indices
-
 
 
 class RerunPage(QWidget):
@@ -178,8 +177,7 @@ class RerunPage(QWidget):
             if rerun_run.sleep_qc is not None:
                 continue  # already reviewed
             csv_present = any(
-                spindle_output_dir(rerun_combo, self.project_root)
-                .glob(f"{entry.animal_id}_*.csv")
+                spindle_output_dir(rerun_combo, self.project_root).glob(f"{entry.animal_id}_*.csv")
             )
             if not csv_present:
                 pairs.append((entry, combo))
@@ -254,7 +252,9 @@ class RerunPage(QWidget):
             try:
                 channels = _combo_to_channels(rerun_combo)
                 target_dir = spindle_edf_dir(rerun_combo, self.project_root)
-                already_written = target_dir.is_dir() and any(target_dir.glob(f"{entry.animal_id}*.edf"))
+                already_written = target_dir.is_dir() and any(
+                    target_dir.glob(f"{entry.animal_id}*.edf")
+                )
                 if already_written:
                     self._log("  EDF already written — skipping to upload.")
                 else:
@@ -274,7 +274,8 @@ class RerunPage(QWidget):
 
         if errors:
             QMessageBox.warning(
-                self, "Some files failed",
+                self,
+                "Some files failed",
                 "The following errors occurred:\n\n" + "\n".join(errors),
             )
 
@@ -283,8 +284,9 @@ class RerunPage(QWidget):
             self.manifest_changed.emit()
             self._offer_upload(written_combos, written_files)
 
-    def _offer_upload(self, written_combos: set[tuple[str, str]],
-                      written_files: dict[str, list[Path]]) -> None:
+    def _offer_upload(
+        self, written_combos: set[tuple[str, str]], written_files: dict[str, list[Path]]
+    ) -> None:
         """For each unique rerun combo written, offer SleepyRat upload using saved config."""
         seen_rerun_combos: set[str] = set()
 
@@ -312,16 +314,20 @@ class RerunPage(QWidget):
 
             self._sr_thread = QThread(self)
             self._sr_worker = SleepyRatWorker(
-                project_name, remote_folder, out_dir,
+                project_name,
+                remote_folder,
+                out_dir,
                 files=written_files.get(rerun_combo),
             )
             self._sr_worker.log.connect(self._log)
             self._sr_worker.finished.connect(
-                lambda p=project_name, f=remote_folder, rc=rerun_combo:
-                    sleepyrat_config.save_combo(self.project_root, rc, p, f)
+                lambda p=project_name, f=remote_folder, rc=rerun_combo: sleepyrat_config.save_combo(
+                    self.project_root, rc, p, f
+                )
             )
             launch_worker(
-                self._sr_thread, self._sr_worker,
+                self._sr_thread,
+                self._sr_worker,
                 on_finished=lambda: self._hint_frame.setVisible(True),
                 on_error=lambda msg: (
                     self._log(f"ERROR: {msg}"),
@@ -347,8 +353,7 @@ class _UploadDialog(QDialog):
         layout = QVBoxLayout(self)
 
         lbl = QLabel(
-            f"Spindle EDFs for <b>{rerun_combo}</b> have been written.<br>"
-            "Upload to SleepyRat now?"
+            f"Spindle EDFs for <b>{rerun_combo}</b> have been written.<br>Upload to SleepyRat now?"
         )
         lbl.setTextFormat(Qt.TextFormat.RichText)
         lbl.setWordWrap(True)

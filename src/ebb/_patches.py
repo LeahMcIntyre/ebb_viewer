@@ -4,6 +4,7 @@ Applied at ``ebb`` import time. Patches are written to be safe no-ops on
 platforms / versions that don't have the underlying bug, so they can stay on
 unconditionally.
 """
+
 from __future__ import annotations
 
 import numpy as np

@@ -3,12 +3,20 @@ from PyQt6 import QtWidgets
 
 class FreqBoundsDialog(QtWidgets.QDialog):
     """Modal dialog to set xRange [fmin, fmax] with validation."""
-    def __init__(self, *, fmin: float, fmax: float, fres: float = 0.5, xrange=(0.5, 110),
-                  parent=None ,title="Set Frequency Range Plotting Bounds"):
+
+    def __init__(
+        self,
+        *,
+        fmin: float,
+        fmax: float,
+        fres: float = 0.5,
+        xrange=(0.5, 110),
+        parent=None,
+        title="Set Frequency Range Plotting Bounds",
+    ):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setModal(True)
-
 
         self.err = QtWidgets.QLabel("")
         self.err.setStyleSheet("color:#b00020;")
@@ -20,7 +28,7 @@ class FreqBoundsDialog(QtWidgets.QDialog):
         self.spin_min.setValue(xrange[0])
 
         self.spin_max = QtWidgets.QDoubleSpinBox()
-        self.spin_max.setRange(fmin+fres, fmax)
+        self.spin_max.setRange(fmin + fres, fmax)
         self.spin_max.setSingleStep(fres)
         self.spin_max.setValue(xrange[1])
 
@@ -29,7 +37,8 @@ class FreqBoundsDialog(QtWidgets.QDialog):
         form.addRow("fmax (Hz):", self.spin_max)
 
         self.buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
         )
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
@@ -54,4 +63,3 @@ class FreqBoundsDialog(QtWidgets.QDialog):
 
     def values(self) -> tuple[float, float]:
         return self.spin_min.value(), self.spin_max.value()
-

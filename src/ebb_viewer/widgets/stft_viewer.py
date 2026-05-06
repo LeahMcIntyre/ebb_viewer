@@ -39,7 +39,9 @@ class STFTPopup(QtWidgets.QDialog):
         # First pass: compute magnitudes to pick global color scale
         mags_band = []
         for ch in range(nch):
-            f, t, Z = stft(data[ch, s0:s1], fs=fs, nperseg=nperseg, noverlap=noverlap, boundary=None)
+            f, t, Z = stft(
+                data[ch, s0:s1], fs=fs, nperseg=nperseg, noverlap=noverlap, boundary=None
+            )
             freq_mask = (f >= fmin) & (f <= fmax)
             line_mask = (f >= 56.0) & (f <= 64.0)
             scale_mask = freq_mask & (~line_mask)
@@ -56,11 +58,15 @@ class STFTPopup(QtWidgets.QDialog):
 
         # Draw
         self.fig.clear()
-        axes = [self.fig.add_subplot(nch, 1, i + 1, sharex=(self.fig.axes[0] if i else None))
-                for i in range(nch)]
+        axes = [
+            self.fig.add_subplot(nch, 1, i + 1, sharex=(self.fig.axes[0] if i else None))
+            for i in range(nch)
+        ]
         pcm_ref = None
         for ch, ax in enumerate(axes):
-            f, t, Z = stft(data[ch, s0:s1], fs=fs, nperseg=nperseg, noverlap=noverlap, boundary=None)
+            f, t, Z = stft(
+                data[ch, s0:s1], fs=fs, nperseg=nperseg, noverlap=noverlap, boundary=None
+            )
             t = t + (s0 / fs)
             mag = np.abs(Z) ** 2
             pcm = ax.pcolormesh(t, f, mag, shading="gouraud", vmin=vmin, vmax=vmax)
@@ -72,9 +78,20 @@ class STFTPopup(QtWidgets.QDialog):
         self.fig.colorbar(pcm_ref, ax=axes, label="|STFT|²", fraction=0.03, pad=0.02)
         self.canvas.draw_idle()
 
-    def plot_window_psd(self, data, fs, ch_names, start_idx, win_len, nperseg,
-                        fmin=0.0, fmax=120.0, detrend="constant", scaling="density",
-                        average="mean"):
+    def plot_window_psd(
+        self,
+        data,
+        fs,
+        ch_names,
+        start_idx,
+        win_len,
+        nperseg,
+        fmin=0.0,
+        fmax=120.0,
+        detrend="constant",
+        scaling="density",
+        average="mean",
+    ):
         """Plot Welch PSD for data[:, start_idx:start_idx+win_len]."""
         nch, n = data.shape
         s0 = int(start_idx)
@@ -85,12 +102,22 @@ class STFTPopup(QtWidgets.QDialog):
             return
 
         self.fig.clear()
-        axes = [self.fig.add_subplot(nch, 1, i + 1, sharex=(self.fig.axes[0] if i else None))
-                for i in range(nch)]
+        axes = [
+            self.fig.add_subplot(nch, 1, i + 1, sharex=(self.fig.axes[0] if i else None))
+            for i in range(nch)
+        ]
 
         for ch, ax in enumerate(axes):
-            f, Pxx = welch(data[ch, s0:s1], fs=fs, nperseg=nperseg, noverlap=nperseg // 2,
-                           detrend=detrend, scaling=scaling, average=average, axis=0)
+            f, Pxx = welch(
+                data[ch, s0:s1],
+                fs=fs,
+                nperseg=nperseg,
+                noverlap=nperseg // 2,
+                detrend=detrend,
+                scaling=scaling,
+                average=average,
+                axis=0,
+            )
             mask = (f >= fmin) & (f <= fmax)
             ax.plot(f[mask], Pxx[mask], linewidth=1.2)
             ax.set_xlim(fmin, fmax)
@@ -98,13 +125,13 @@ class STFTPopup(QtWidgets.QDialog):
             ax.set_ylabel(str(ch_names[ch]) if ch < len(ch_names) else f"ch {ch}")
 
         axes[-1].set_xlabel("Frequency (Hz)")
-        self.fig.suptitle(f"PSD (Welch) — [{s0/fs:.2f}s, {s1/fs:.2f}s]", fontsize=12)
+        self.fig.suptitle(f"PSD (Welch) — [{s0 / fs:.2f}s, {s1 / fs:.2f}s]", fontsize=12)
         self.canvas.draw_idle()
-
 
 
 class STFTBoundsDialog(QtWidgets.QDialog):
     """Modal dialog to set STFT [fmin, fmax] with live validation."""
+
     def __init__(self, *, fs: int, nperseg: int, fmin: int, fmax: int, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Set STFT Frequency Bounds")
@@ -132,7 +159,8 @@ class STFTBoundsDialog(QtWidgets.QDialog):
         form.addRow("fmax (Hz):", self.spin_max)
 
         self.buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Ok | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
         )
         self.buttons.accepted.connect(self.accept)
         self.buttons.rejected.connect(self.reject)
@@ -153,4 +181,3 @@ class STFTBoundsDialog(QtWidgets.QDialog):
 
     def values(self) -> tuple[int, int]:
         return self.spin_min.value(), self.spin_max.value()
-

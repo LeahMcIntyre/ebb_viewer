@@ -59,8 +59,9 @@ CH_LABELS = ["LFC", "RSC", "LSC"]
 class MaskingSettingsDialog(QDialog):
     """Modal dialog for configuring optional masking/filtering for PSD computation."""
 
-    def __init__(self, parent=None, *, swd_available: bool, swd_status_text: str,
-                 project_root: Path):
+    def __init__(
+        self, parent=None, *, swd_available: bool, swd_status_text: str, project_root: Path
+    ):
         super().__init__(parent)
         self.setWindowTitle("Masking & Filtering Settings")
         self.setMinimumWidth(500)
@@ -135,7 +136,9 @@ class MaskingSettingsDialog(QDialog):
         ann_kw_form.addRow("Keywords:", self._ann_keyword_edit)
         ann_body_v.addLayout(ann_kw_form)
 
-        kw_hint = QLabel("Comma-separated, case-insensitive. Annotations whose labels match will be masked.")
+        kw_hint = QLabel(
+            "Comma-separated, case-insensitive. Annotations whose labels match will be masked."
+        )
         kw_hint.setWordWrap(True)
         kw_hint.setStyleSheet("font-size: 10px; color: #777; padding-left: 4px;")
         ann_body_v.addWidget(kw_hint)
@@ -254,7 +257,9 @@ class MaskingSettingsDialog(QDialog):
         self.btn_ann_dir.clicked.connect(self._choose_ann_dir)
         self._ann_keyword_edit.textChanged.connect(self._refresh_ann_status)
         self.chk_hour_window.toggled.connect(self._on_hw_toggled)
-        self._radio_hw_all.toggled.connect(lambda checked: self._hw_days_edit.setEnabled(not checked))
+        self._radio_hw_all.toggled.connect(
+            lambda checked: self._hw_days_edit.setEnabled(not checked)
+        )
         self.btn_add_window.clicked.connect(self._on_add_window_clicked)
         self._hw_days_edit.textChanged.connect(self._refresh_hour_window_preview)
 
@@ -275,7 +280,7 @@ class MaskingSettingsDialog(QDialog):
     def _add_window_row(self, hour_start: float, hour_end: float) -> None:
         row = QWidget()
         row.setProperty("hw_start", hour_start)
-        row.setProperty("hw_end",   hour_end)
+        row.setProperty("hw_end", hour_end)
         hl = QHBoxLayout(row)
         hl.setContentsMargins(0, 0, 0, 0)
         hl.addWidget(QLabel(f"{int(hour_start)} h – {int(hour_end)} h"))
@@ -306,8 +311,9 @@ class MaskingSettingsDialog(QDialog):
         for ws, we in existing:
             if self._windows_overlap(s, e, ws, we):
                 QMessageBox.warning(
-                    self, "Overlapping Window",
-                    f"This window overlaps the existing window {int(ws)}–{int(we)} h."
+                    self,
+                    "Overlapping Window",
+                    f"This window overlaps the existing window {int(ws)}–{int(we)} h.",
                 )
                 return
         self._add_window_row(s, e)
@@ -315,9 +321,11 @@ class MaskingSettingsDialog(QDialog):
     @staticmethod
     def _windows_overlap(s1: float, e1: float, s2: float, e2: float) -> bool:
         """Return True if two hour windows share any covered hour-of-day."""
+
         def covered(s, e):
             s, e = int(s), int(e)
             return set(range(s, 24)) | set(range(0, e)) if e < s else set(range(s, e))
+
         return bool(covered(s1, e1) & covered(s2, e2))
 
     def _refresh_hour_window_preview(self) -> None:
@@ -352,13 +360,14 @@ class MaskingSettingsDialog(QDialog):
                 return
 
         from ebb.masking import hour_window_mask
+
         n_animals = len(self._hw_recordings)
 
         # Per-window stats: full_count, partial_count, total_seconds
         # Computed by calling hour_window_mask once per window so chunks are unambiguous.
-        win_full    = [0] * len(hour_windows)
+        win_full = [0] * len(hour_windows)
         win_partial = [0] * len(hour_windows)
-        win_secs    = [0.0] * len(hour_windows)
+        win_secs = [0.0] * len(hour_windows)
 
         days_with_windows: set = set()
         total_secs = 0.0
@@ -366,8 +375,9 @@ class MaskingSettingsDialog(QDialog):
         for idx, (hs, he) in enumerate(hour_windows):
             full_s = ((he - hs) % 24 or 24) * 3600
             for rec_start, n_samples in self._hw_recordings:
-                _, used = hour_window_mask(rec_start, n_samples, DEFAULT_FS,
-                                           [(hs, he)], selected_days)
+                _, used = hour_window_mask(
+                    rec_start, n_samples, DEFAULT_FS, [(hs, he)], selected_days
+                )
                 if not used:
                     continue
                 animal_clipped = False
@@ -384,16 +394,18 @@ class MaskingSettingsDialog(QDialog):
                     win_full[idx] += 1
 
         # Update per-row badges
-        rows = [self._hw_windows_layout.itemAt(i).widget()
-                for i in range(self._hw_windows_layout.count())]
+        rows = [
+            self._hw_windows_layout.itemAt(i).widget()
+            for i in range(self._hw_windows_layout.count())
+        ]
         rows = [r for r in rows if r is not None]
         for idx, row in enumerate(rows):
             lbl = row.property("status_label")
             if lbl is None:
                 continue
-            full    = win_full[idx]
+            full = win_full[idx]
             partial = win_partial[idx]
-            total   = full + partial
+            total = full + partial
             if total == 0:
                 lbl.setText("✗ no data")
                 lbl.setStyleSheet("font-size: 10px; color: #c0392b;")
@@ -413,7 +425,9 @@ class MaskingSettingsDialog(QDialog):
             missing = sorted(d for d in selected_days if d not in days_with_windows)
             if missing:
                 days_str = ", ".join(str(d) for d in missing)
-                msgs.append(f"⚠ Day{'s' if len(missing) != 1 else ''} {days_str} not found in recording")
+                msgs.append(
+                    f"⚠ Day{'s' if len(missing) != 1 else ''} {days_str} not found in recording"
+                )
 
         if not any_windows:
             self._hw_partial_label.setText("No windows overlap any recording.")
@@ -445,6 +459,7 @@ class MaskingSettingsDialog(QDialog):
         from datetime import datetime as _datetime
 
         from openseize.file_io import edf as edf_io
+
         recordings = []
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ResourceWarning)
@@ -491,27 +506,42 @@ class MaskingSettingsDialog(QDialog):
             return
         if not self._ann_dir.is_dir():
             self._lbl_ann_status.setText("Directory not found")
-            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #c0392b;")
+            self._lbl_ann_status.setStyleSheet(
+                "font-size: 11px; padding-left: 4px; color: #c0392b;"
+            )
             return
         manifest = Manifest.load(self._project_root)
         animal_ids = [e.animal_id for e in manifest]
         n_animals = len(animal_ids)
         n_found = sum(
-            1 for aid in animal_ids
+            1
+            for aid in animal_ids
             if any(self._ann_dir.glob(f"{aid}*.txt")) or any(self._ann_dir.glob(f"{aid}*.csv"))
         )
         if n_animals == 0:
             self._lbl_ann_status.setText("No animals in manifest")
             self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #888;")
         elif n_found == n_animals:
-            self._lbl_ann_status.setText(f"✓ {n_found} of {n_animals} animals have annotation files")
-            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #2a7a2a;")
+            self._lbl_ann_status.setText(
+                f"✓ {n_found} of {n_animals} animals have annotation files"
+            )
+            self._lbl_ann_status.setStyleSheet(
+                "font-size: 11px; padding-left: 4px; color: #2a7a2a;"
+            )
         elif n_found == 0:
-            self._lbl_ann_status.setText(f"No annotation files found for any of the {n_animals} animals")
-            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #c0392b;")
+            self._lbl_ann_status.setText(
+                f"No annotation files found for any of the {n_animals} animals"
+            )
+            self._lbl_ann_status.setStyleSheet(
+                "font-size: 11px; padding-left: 4px; color: #c0392b;"
+            )
         else:
-            self._lbl_ann_status.setText(f"⚠ {n_found} of {n_animals} animals have annotation files")
-            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #c77800;")
+            self._lbl_ann_status.setText(
+                f"⚠ {n_found} of {n_animals} animals have annotation files"
+            )
+            self._lbl_ann_status.setStyleSheet(
+                "font-size: 11px; padding-left: 4px; color: #c77800;"
+            )
 
     def load_params(self, params: dict) -> None:
         if params.get("swd_mode") == "mask_out" and self._swd_available:
@@ -566,7 +596,6 @@ class MaskingSettingsDialog(QDialog):
 
 
 class PSDPage(QWidget):
-
     manifest_changed = pyqtSignal()
     navigate_to = pyqtSignal(str)
 
@@ -670,29 +699,18 @@ class PSDPage(QWidget):
 
         self.combo_table = QTableWidget(0, 4)
         self.combo_table.setHorizontalHeaderLabels(["Combo", "CSVs", "Ok Runs", "PKL Status"])
-        self.combo_table.horizontalHeader().setSectionResizeMode(
-            0, QHeaderView.ResizeMode.Stretch
-        )
-        self.combo_table.horizontalHeader().setSectionResizeMode(
-            1, QHeaderView.ResizeMode.Fixed
-        )
+        self.combo_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.combo_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self.combo_table.setColumnWidth(1, 60)
-        self.combo_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.Fixed
-        )
+        self.combo_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
         self.combo_table.setColumnWidth(2, 70)
-        self.combo_table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Stretch
-        )
+        self.combo_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         self.combo_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.combo_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.combo_table.verticalHeader().setVisible(False)
 
         self.combo_table.setMaximumHeight(150)
-        self.combo_table.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Maximum
-        )
+        self.combo_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
 
         combo_v.addWidget(self.combo_table)
 
@@ -946,9 +964,7 @@ class PSDPage(QWidget):
 
     def _toggle_advanced(self, checked: bool):
         self._adv_container.setVisible(checked)
-        self._btn_adv.setArrowType(
-            Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
-        )
+        self._btn_adv.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
 
     # ------------- Path / table refresh -------------
 
@@ -993,7 +1009,6 @@ class PSDPage(QWidget):
                 "Run preprocessing first or browse manually."
             )
         self.target_name_edit.setText(str(self.project_root / "psd" / self._run_name()))
-
 
     def _refresh_swd_status(self):
         swd_dir = self.project_root / "swd"
@@ -1067,10 +1082,7 @@ class PSDPage(QWidget):
         run_name = "default"
         if runs:
             psd_dir = self.project_root / "psd"
-            run_name = max(
-                runs,
-                key=lambda r: (psd_dir / r / "psd_params.json").stat().st_mtime
-            )
+            run_name = max(runs, key=lambda r: (psd_dir / r / "psd_params.json").stat().st_mtime)
         params = psd_params.load(self.project_root, run_name)
         if params is None:
             return
@@ -1110,9 +1122,8 @@ class PSDPage(QWidget):
             "ann_pad_before": params.get("ann_pad_before", 0.0),
             "ann_pad_after": params.get("ann_pad_after", 10.0),
             "hw_enabled": bool(params.get("hw_enabled", False)),
-            "hour_windows": params.get("hour_windows") or (
-                [params["hour_window"]] if params.get("hour_window") else None
-            ),
+            "hour_windows": params.get("hour_windows")
+            or ([params["hour_window"]] if params.get("hour_window") else None),
             "selected_days": params.get("selected_days"),
         }
         self._update_masking_summary()
@@ -1163,7 +1174,9 @@ class PSDPage(QWidget):
         merged = merged_psd_path(self.project_root, run_name)
         if merged.exists():
             self._merged_pkl_label.setText("Channel merged PKL: ✓ exists")
-            self._merged_pkl_label.setStyleSheet("font-size: 10px; color: #2a7a2a; padding-top: 2px;")
+            self._merged_pkl_label.setStyleSheet(
+                "font-size: 10px; color: #2a7a2a; padding-top: 2px;"
+            )
         else:
             self._merged_pkl_label.setText("Channel merged PKL: not yet built")
             self._merged_pkl_label.setStyleSheet("font-size: 10px; color: #555; padding-top: 2px;")
@@ -1183,25 +1196,25 @@ class PSDPage(QWidget):
             return
 
         spindle_root = self.project_root / "spindle_outputs"
-        combos = sorted(
-            sd.name for sd in spindle_root.iterdir()
-            if sd.is_dir() and any(sd.glob("*.csv"))
-        ) if spindle_root.is_dir() else []
+        combos = (
+            sorted(
+                sd.name for sd in spindle_root.iterdir() if sd.is_dir() and any(sd.glob("*.csv"))
+            )
+            if spindle_root.is_dir()
+            else []
+        )
 
         if not combos:
-            QMessageBox.warning(self, "No Combos Found",
-                                "No spindle output combos with CSVs found.")
+            QMessageBox.warning(
+                self, "No Combos Found", "No spindle output combos with CSVs found."
+            )
             return
-
 
         manifest = Manifest.load(self.project_root)
 
         # Pre-flight: warn about ok animals with no state CSV (they'll be silently skipped)
         for combo in combos:
-            csv_animal_ids = {
-                p.stem.split("_")[0]
-                for p in (spindle_root / combo).glob("*.csv")
-            }
+            csv_animal_ids = {p.stem.split("_")[0] for p in (spindle_root / combo).glob("*.csv")}
             ok_animals = [
                 entry.animal_id
                 for entry in manifest
@@ -1238,14 +1251,18 @@ class PSDPage(QWidget):
 
         run_name = self._run_name()
         if not psd_params.valid_run_name(run_name):
-            QMessageBox.warning(self, "Invalid Run Name",
-                                "Run name must contain only letters, numbers, hyphens, "
-                                "or underscores (max 64 characters).")
+            QMessageBox.warning(
+                self,
+                "Invalid Run Name",
+                "Run name must contain only letters, numbers, hyphens, "
+                "or underscores (max 64 characters).",
+            )
             return
 
         if run_name in psd_params.list_runs(self.project_root):
             reply = QMessageBox.question(
-                self, "Overwrite Existing Run?",
+                self,
+                "Overwrite Existing Run?",
                 f"Run '{run_name}' already exists.\n\n"
                 "Re-running will overwrite its PKL files and clear all PSD review "
                 "flags for this run in the manifest. This cannot be undone.\n\n"
@@ -1260,8 +1277,7 @@ class PSDPage(QWidget):
         psd_run_dir.mkdir(parents=True, exist_ok=True)
 
         pairs: list[tuple[Path, Path]] = [
-            (spindle_root / combo, psd_run_dir / f"psds_{combo}.pkl")
-            for combo in combos
+            (spindle_root / combo, psd_run_dir / f"psds_{combo}.pkl") for combo in combos
         ]
 
         params = {
@@ -1287,7 +1303,7 @@ class PSDPage(QWidget):
             }
 
         if mp.get("hw_enabled"):
-            params["hour_windows"]  = mp.get("hour_windows")
+            params["hour_windows"] = mp.get("hour_windows")
             params["selected_days"] = mp.get("selected_days")
             params["hw_enabled"] = True
         else:
@@ -1320,9 +1336,12 @@ class PSDPage(QWidget):
             ann_params=ann_params,
         )
         self.psd_worker.progress.connect(self._log)
-        launch_worker(self.psd_thread, self.psd_worker,
-                      on_finished=self._on_psd_done,
-                      on_error=self._on_psd_error)
+        launch_worker(
+            self.psd_thread,
+            self.psd_worker,
+            on_finished=self._on_psd_done,
+            on_error=self._on_psd_error,
+        )
 
     def _build_final_pkl(self):
         try:
@@ -1369,7 +1388,8 @@ class PSDPage(QWidget):
             group_names = " + ".join(PRESET_DISPLAY[g] for g in groups)
             parts.append(f"{name} epochs feed into {group_names}")
         self._state_overlap_lbl.setText(
-            "Overlap: " + "; ".join(parts)
+            "Overlap: "
+            + "; ".join(parts)
             + ". Same epochs, different averages — intentional if that's what you want."
         )
         self._state_overlap_lbl.setVisible(True)
@@ -1397,7 +1417,6 @@ class PSDPage(QWidget):
             return
         has_standard = self.standard_folder is not None and self.standard_folder.exists()
 
-
         manifest = Manifest.load(self.project_root)
         n_animals = sum(1 for _ in manifest)
         n_ready = len(manifest.ready_for_psd())
@@ -1405,15 +1424,18 @@ class PSDPage(QWidget):
 
         spindle_root = self.project_root / "spindle_outputs"
         has_combos = spindle_root.is_dir() and any(
-            sd.is_dir() and any(sd.glob("*.csv"))
-            for sd in spindle_root.iterdir()
+            sd.is_dir() and any(sd.glob("*.csv")) for sd in spindle_root.iterdir()
         )
 
         # Annotation mask gate
         ann_ok = True
         if self._masking_params.get("ann_enabled"):
             ann_dir = self._masking_params.get("ann_dir")
-            if ann_dir is None or not Path(ann_dir).is_dir() or not self._masking_params.get("ann_keywords", "").strip():
+            if (
+                ann_dir is None
+                or not Path(ann_dir).is_dir()
+                or not self._masking_params.get("ann_keywords", "").strip()
+            ):
                 ann_ok = False
 
         states_ok = bool(self._selected_states())
@@ -1436,12 +1458,16 @@ class PSDPage(QWidget):
                 )
             self._summary_label.setText("")
         elif not has_combos:
-            self._gate_label.setText("No spindle output combos found — complete upload/download first")
+            self._gate_label.setText(
+                "No spindle output combos found — complete upload/download first"
+            )
             self._summary_label.setText("")
         elif not ann_ok:
             ann_dir = self._masking_params.get("ann_dir")
             if ann_dir is None or not Path(ann_dir).is_dir():
-                self._gate_label.setText("Annotation mask enabled — select a valid annotation directory")
+                self._gate_label.setText(
+                    "Annotation mask enabled — select a valid annotation directory"
+                )
             else:
                 self._gate_label.setText("Annotation mask enabled — enter at least one keyword")
             self._summary_label.setText("")
@@ -1456,10 +1482,10 @@ class PSDPage(QWidget):
                 for combo, run in entry.runs.items():
                     if run.sleep_qc == "ok":
                         ok_per_combo[combo] = ok_per_combo.get(combo, 0) + 1
-            parts = [f"{c} ({n} animal{'s' if n != 1 else ''})" for c, n in sorted(ok_per_combo.items())]
-            self._summary_label.setText(
-                ", ".join(parts) + " → psds_channel_merged.pkl"
-            )
+            parts = [
+                f"{c} ({n} animal{'s' if n != 1 else ''})" for c, n in sorted(ok_per_combo.items())
+            ]
+            self._summary_label.setText(", ".join(parts) + " → psds_channel_merged.pkl")
 
     def _on_psd_done(self):
         self._computing = False
@@ -1508,7 +1534,6 @@ class BatchEstimateWorker(QObject):
 
     def run(self):
 
-
         try:
             for spindle_dir, savepath in self.combo_pairs:
                 self.progress.emit(f"Computing PSDs for combo: {spindle_dir.name}…")
@@ -1533,17 +1558,19 @@ class BatchEstimateWorker(QObject):
             saved = {**self.params, "swd_mode": swd_mode}
             saved["hw_enabled"] = self.params.get("hw_enabled", False)
             if self.params.get("hw_enabled"):
-                saved["hour_windows"]  = self.params.get("hour_windows")
+                saved["hour_windows"] = self.params.get("hour_windows")
                 saved["selected_days"] = self.params.get("selected_days")
             if self.ann_params is not None:
-                saved.update({
-                    "ann_enabled": True,
-                    "ann_dir": str(self.ann_params["ann_dir"]),
-                    "ann_keywords": ", ".join(self.ann_params["keywords"]),
-                    "ann_match_mode": self.ann_params["match_mode"],
-                    "ann_pad_before": self.ann_params["pad_before_sec"],
-                    "ann_pad_after": self.ann_params["pad_after_sec"],
-                })
+                saved.update(
+                    {
+                        "ann_enabled": True,
+                        "ann_dir": str(self.ann_params["ann_dir"]),
+                        "ann_keywords": ", ".join(self.ann_params["keywords"]),
+                        "ann_match_mode": self.ann_params["match_mode"],
+                        "ann_pad_before": self.ann_params["pad_before_sec"],
+                        "ann_pad_after": self.ann_params["pad_after_sec"],
+                    }
+                )
             else:
                 saved["ann_enabled"] = False
             psd_params.save(self.project_root, self.run_name, saved)

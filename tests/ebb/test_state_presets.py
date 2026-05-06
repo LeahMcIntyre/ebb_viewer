@@ -35,6 +35,7 @@ class _FakeStore:
 # STATE_PRESETS shape
 # ---------------------------------------------------------------------------
 
+
 def test_state_presets_has_all_five_keys():
     assert set(STATE_PRESETS) == {"wake", "nrem", "rem", "sleep", "all"}
 
@@ -69,6 +70,7 @@ def test_every_preset_has_display_and_description():
 # ---------------------------------------------------------------------------
 # labels_from_presets
 # ---------------------------------------------------------------------------
+
 
 def test_labels_from_presets_default():
     labels = labels_from_presets(DEFAULT_STATES)
@@ -125,6 +127,7 @@ def test_labels_from_presets_duplicates_collapse_to_last():
 # canonical_sort_states
 # ---------------------------------------------------------------------------
 
+
 def test_canonical_sort_default_three():
     assert canonical_sort_states(["rem", "nrem", "wake"]) == ["wake", "nrem", "rem"]
 
@@ -157,6 +160,7 @@ def test_canonical_sort_mixes_presets_and_custom_names():
 # ---------------------------------------------------------------------------
 # overlap_groups
 # ---------------------------------------------------------------------------
+
 
 def test_overlap_groups_none_when_disjoint():
     assert overlap_groups(["wake", "nrem", "rem"]) == {}
@@ -198,6 +202,7 @@ def test_raw_code_display_covers_all_preset_codes():
 # gather_states_from_store — locks PSDGridPage panel ordering
 # ---------------------------------------------------------------------------
 
+
 def test_gather_states_from_store_canonical_presets():
     store = _FakeStore({"m1": ["rem", "wake"], "m2": ["nrem", "wake"]})
     assert gather_states_from_store(store) == ["wake", "nrem", "rem"]
@@ -209,12 +214,17 @@ def test_gather_states_from_store_empty_store_falls_back_to_defaults():
 
 def test_gather_states_from_store_mixed_presets_and_custom_names():
     """Custom group names trail canonical presets in alphabetical order."""
-    store = _FakeStore({
-        "m1": ["sleep", "zebra_group"],
-        "m2": ["wake", "alpha_group"],
-    })
+    store = _FakeStore(
+        {
+            "m1": ["sleep", "zebra_group"],
+            "m2": ["wake", "alpha_group"],
+        }
+    )
     assert gather_states_from_store(store) == [
-        "wake", "sleep", "alpha_group", "zebra_group",
+        "wake",
+        "sleep",
+        "alpha_group",
+        "zebra_group",
     ]
 
 

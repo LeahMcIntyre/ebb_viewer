@@ -7,7 +7,7 @@ from pathlib import Path
 
 from ebb.process.state_presets import DEFAULT_STATES, STATE_PRESETS
 
-RUN_NAME_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
+RUN_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 def states_from_params(params: dict | None) -> list[str]:
@@ -67,8 +67,7 @@ def list_runs(project_root: Path) -> list[str]:
     if not psd_dir.is_dir():
         return []
     runs = sorted(
-        d.name for d in psd_dir.iterdir()
-        if d.is_dir() and (d / "psd_params.json").exists()
+        d.name for d in psd_dir.iterdir() if d.is_dir() and (d / "psd_params.json").exists()
     )
     return runs
 

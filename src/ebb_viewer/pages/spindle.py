@@ -57,7 +57,6 @@ class SpindleWritePage(QWidget):
     def _build_ui(self):
         root = QVBoxLayout(self)
 
-
         lbl = QLabel("Create Spindle EDFs")
         lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
         desc = QLabel(
@@ -69,7 +68,6 @@ class SpindleWritePage(QWidget):
 
         root.addWidget(lbl)
         root.addWidget(desc)
-
 
         # ----- Folder selection group -----
         folder_gb = QGroupBox("Folder Selection")
@@ -90,9 +88,7 @@ class SpindleWritePage(QWidget):
 
         # Target spindle EDF folder (editable but prefilled from project_root)
         self.target_name_edit = QLineEdit()
-        self.target_name_edit.setStyleSheet(
-            "QLineEdit { padding-top: 0px; padding-bottom: 0px; }"
-        )
+        self.target_name_edit.setStyleSheet("QLineEdit { padding-top: 0px; padding-bottom: 0px; }")
         self.target_name_edit.setReadOnly(True)
         top_form.addRow("Target Directory:", self.target_name_edit)
 
@@ -130,8 +126,7 @@ class SpindleWritePage(QWidget):
         grid.addWidget(self.cb_ch2, 1, 2)
 
         grid.addItem(
-            QSpacerItem(0, 6, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum),
-            2, 0, 1, 3
+            QSpacerItem(0, 6, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum), 2, 0, 1, 3
         )
 
         self.cb_ch3 = QCheckBox(f"Ch3 — {self.CH_LABELS['Ch3']}")
@@ -166,7 +161,6 @@ class SpindleWritePage(QWidget):
         root.addWidget(gb)
         root.addLayout(actions)
 
-
         self.log_box = QPlainTextEdit()
         self.log_box.setReadOnly(True)
         self.log_box.setMaximumBlockCount(300)
@@ -190,7 +184,6 @@ class SpindleWritePage(QWidget):
         root.addWidget(self._hint_frame)
 
         root.addStretch()
-
 
     # ------------ Wiring / Signals ------------
     def _wire(self):
@@ -238,7 +231,7 @@ class SpindleWritePage(QWidget):
                 "No Standard EDF Folder",
                 "Standard folder is not set.\n\n"
                 "Make sure preprocessing has been run and a 'standard' folder "
-                "exists in your project root."
+                "exists in your project root.",
             )
             return
 
@@ -246,7 +239,7 @@ class SpindleWritePage(QWidget):
             QMessageBox.critical(
                 self,
                 "Standard Folder Missing",
-                f"Standard folder does not exist:\n{self.standard_folder}"
+                f"Standard folder does not exist:\n{self.standard_folder}",
             )
             return
 
@@ -254,9 +247,7 @@ class SpindleWritePage(QWidget):
         eeg_labels = self._current_eeg_labels()
         if not eeg_labels:
             QMessageBox.critical(
-                self,
-                "No Channels Selected",
-                "Please select at least one EEG channel."
+                self, "No Channels Selected", "Please select at least one EEG channel."
             )
             return
 
@@ -277,11 +268,7 @@ class SpindleWritePage(QWidget):
                 "No target folder specified.\n\n"
                 f"Use default spindle folder for this combo?\n\n{default_target}"
             )
-            btn = QMessageBox.question(
-                self,
-                "No Target Folder Selected",
-                msg
-            )
+            btn = QMessageBox.question(self, "No Target Folder Selected", msg)
             if btn != QMessageBox.StandardButton.Yes:
                 return
             self.target_name_edit.setText(str(default_target))
@@ -320,7 +307,8 @@ class SpindleWritePage(QWidget):
         )
         self._spindle_worker.log.connect(self._log)
         launch_worker(
-            self._spindle_thread, self._spindle_worker,
+            self._spindle_thread,
+            self._spindle_worker,
             on_finished=self._on_spindle_done,
             on_error=lambda msg: (
                 self._validate(),
@@ -442,7 +430,8 @@ class _SpindleWriteWorker(QObject):
             self.log.emit(f"Starting spindle preprocessing on {n} file(s)…")
             t0 = time.perf_counter()
             outs = batch_preprocess(
-                spindle, self.standard_folder,
+                spindle,
+                self.standard_folder,
                 target=self.target_dir,
                 channels=self.channels,
                 verbose=True,

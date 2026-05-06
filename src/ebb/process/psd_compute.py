@@ -25,9 +25,10 @@ from ebb.process.state_presets import labels_from_presets
 @dataclasses.dataclass
 class PSDResult:
     """PSD + minimal metadata needed for downstream exports."""
+
     path: Path
     channels: tuple[int, ...]
-    behavior: tuple[str, ...]          # e.g. ("threshold", "wake")
+    behavior: tuple[str, ...]  # e.g. ("threshold", "wake")
     n_estimates: int
     spindle_out_frac: float
     comm_out_frac: float
@@ -42,12 +43,14 @@ class PSDResult:
     used_windows: list[tuple[str, str]] = dataclasses.field(default_factory=list)
     # Each tuple: (window_start_isoformat, window_end_isoformat)
 
+
 def out_fraction(mask: npt.NDArray[np.bool_], state_mask: npt.NDArray[np.bool_]) -> float:
     """Fraction of samples excluded by mask within a given state_mask."""
     kept = mask[state_mask]
     if kept.size == 0:
         return float("nan")
     return 1.0 - float(kept.mean())
+
 
 def estimate_psd(
     path: str | Path,
@@ -62,7 +65,7 @@ def estimate_psd(
     nstd: int = 5,
     fs: float = 250,
     chunksize: int = int(30e5),
-    labels: dict = {'wake': ['w'], 'nrem': ['n'], 'rem': ['r']},
+    labels: dict = {"wake": ["w"], "nrem": ["n"], "rem": ["r"]},
     verbose: bool = True,
     noise_thresh: float = 0.5,
     drink_pad: int = 2,
@@ -83,14 +86,14 @@ def estimate_psd(
         path:
             Path to an EDF file whose PSD will be estimated.
         state_path:
-            Path to a Spindle generated CSV file of states.For the updated SleepyRat web service, artifact slider can be set as desired: 
-            'rawstate' column is used. 
+            Path to a Spindle generated CSV file of states.For the updated SleepyRat web service, artifact slider can be set as desired:
+            'rawstate' column is used.
         drink_path:
             Path to a .npy file containing 1Hz 1D-Boolean array as a drink mask (drinking events
             are true).
         offset_path:
-            Path to a .csv file containing the animal ID and the offset between the eeg start 
-            and vidoe (drink mask) start. 
+            Path to a .csv file containing the animal ID and the offset between the eeg start
+            and vidoe (drink mask) start.
         channels:
             The channels for which PSDs will be estimated.
         fs:
@@ -119,13 +122,11 @@ def estimate_psd(
         labels.
     """
 
-
     path, state_path = Path(path), Path(state_path)
     # get the mouse id from path
-    animal = path.stem.split('_')[0]
+    animal = path.stem.split("_")[0]
     print(animal)
     with edf.Reader(path) as reader:
-
         # build a producer
         reader.channels = list(channels)
         pro = producer(reader, chunksize=chunksize, axis=-1)
@@ -135,32 +136,37 @@ def estimate_psd(
 
         if s_prob is not None:
             for label, code in labels.items():
-                state_masks[label] = (masking.state_prob(state_path, code[0], fs, winsize=4, sprob=s_prob))
+                state_masks[label] = masking.state_prob(
+                    state_path, code[0], fs, winsize=4, sprob=s_prob
+                )
         else:
             for label, code in labels.items():
-                state_masks[label] = (masking.state(state_path, code, fs, winsize=4))
+                state_masks[label] = masking.state(state_path, code, fs, winsize=4)
 
         # Wake sub-mask for mixed groups that lump wake with sleep states.
         # SD thresholding should only gate the wake portion of such groups,
         # since SD calibrates to wake amplitudes and would over-mask quieter
         # NREM/REM samples if applied uniformly.
-        needs_wake_sub = any('w' in codes and len(codes) > 1 for codes in labels.values())
+        needs_wake_sub = any("w" in codes and len(codes) > 1 for codes in labels.values())
         if needs_wake_sub:
             if s_prob is not None:
-                wake_sub_mask = masking.state_prob(state_path, 'w', fs, winsize=4, sprob=s_prob)
+                wake_sub_mask = masking.state_prob(state_path, "w", fs, winsize=4, sprob=s_prob)
             else:
-                wake_sub_mask = masking.state(state_path, ['w'], fs, winsize=4)
+                wake_sub_mask = masking.state(state_path, ["w"], fs, winsize=4)
         else:
             wake_sub_mask = None
 
-        #print(f"{animal}: {reader.shape}")
-        #Compute commutator artifact threshold mask
-        comm_mask = masking.commutator_threshold(pro, value=2000,
-                radius=250,pad=250, min_to_pad=10)[0]
+        # print(f"{animal}: {reader.shape}")
+        # Compute commutator artifact threshold mask
+        comm_mask = masking.commutator_threshold(
+            pro, value=2000, radius=250, pad=250, min_to_pad=10
+        )[0]
 
-        spindle_mask = masking.spindle_noise(state_path, noise_thresh=noise_thresh, fs=fs, winsize=4, include=False)
+        spindle_mask = masking.spindle_noise(
+            state_path, noise_thresh=noise_thresh, fs=fs, winsize=4, include=False
+        )
 
-        wsize, rad = (winsize*fs), (radius*fs)
+        wsize, rad = (winsize * fs), (radius * fs)
 
         comm_pro = producer(comm_mask, chunksize=4.5e4, axis=-1)
         sd_threshold_mask = masking.sd_threshold(
@@ -172,18 +178,19 @@ def estimate_psd(
         )[0]
         print(f"{animal} SD threshold mask computed")
 
-        #Compute SWD mask if path provided
+        # Compute SWD mask if path provided
         if swd_path is not None:
             swd_mask = masking.swd(path=swd_path, n_samples=pro.shape[-1], fs=fs, pad_sec=0)
         else:
             swd_mask = np.ones(pro.shape[-1], dtype=bool)
 
-
-        #Get offset and drink mask
-        #TODO: FIX THIS MESS LEAH
+        # Get offset and drink mask
+        # TODO: FIX THIS MESS LEAH
         if drink_path:
             print(f"Drink Mask For Animal {animal}")
-            offset = masking.get_offset(drink_path, offset_path) if offset_path is not None else None
+            offset = (
+                masking.get_offset(drink_path, offset_path) if offset_path is not None else None
+            )
             drink_mask = masking.drinking_mask(drink_path, offset, fs=fs, pad_sec=drink_pad)
         else:
             drink_mask = np.ones(pro.shape[-1], dtype=bool)
@@ -207,11 +214,16 @@ def estimate_psd(
         # Build hour-window mask if requested
         if hour_windows is not None:
             from datetime import datetime as _datetime
-            start_str = reader.header.start_time   # "HH.MM.SS"
-            date_str  = reader.header.start_date   # "DD.MM.YY"
+
+            start_str = reader.header.start_time  # "HH.MM.SS"
+            date_str = reader.header.start_date  # "DD.MM.YY"
             rec_start = _datetime.strptime(f"{date_str} {start_str}", "%d.%m.%y %H.%M.%S")
             tod_mask, used_windows = masking.hour_window_mask(
-                rec_start, n_samples, fs, hour_windows, selected_days,
+                rec_start,
+                n_samples,
+                fs,
+                hour_windows,
+                selected_days,
             )
             for ws, we in used_windows:
                 print(f"  {animal}: {ws.strftime('%Y-%m-%d %H:%M')}–{we.strftime('%H:%M')}")
@@ -219,40 +231,36 @@ def estimate_psd(
             tod_mask = np.ones(n_samples, dtype=bool)
             used_windows = []
 
-        #Combine all artifact masks
+        # Combine all artifact masks
         artifact_mask = comm_mask & spindle_mask & swd_mask & drink_mask & ann_mask & tod_mask
-
 
         metamask = metastores.MetaMask(threshold=artifact_mask, **state_masks)
         # compute psd estimates for each mask combination
         result = []
         for combo_state, mask in metamask.combinations():
-
             state_name = combo_state[1]
             st_mask = state_masks[state_name]
 
-
-            if 'threshold' not in combo_state:
+            if "threshold" not in combo_state:
                 # only compute psds for mask that include the threshold
                 continue
 
             if not np.any(mask):
                 # some mice may not exhibit all behavior states
-                print(f'mask {combo_state} has no data ... skipping')
+                print(f"mask {combo_state} has no data ... skipping")
                 continue
 
             codes = labels[state_name]
-            if 'w' in codes:
+            if "w" in codes:
                 if len(codes) == 1:
                     mask &= sd_threshold_mask
                     sd_out = out_fraction(sd_threshold_mask, st_mask)
                 else:
                     # Mixed group: restrict SD to the wake samples only.
-                    mask &= (~wake_sub_mask | sd_threshold_mask)
+                    mask &= ~wake_sub_mask | sd_threshold_mask
                     sd_out = out_fraction(sd_threshold_mask, st_mask & wake_sub_mask)
             else:
                 sd_out = 0.0
-
 
             spindle_out = out_fraction(spindle_mask, st_mask)
             comm_out = out_fraction(comm_mask, st_mask)
@@ -260,32 +268,32 @@ def estimate_psd(
             ann_out = out_fraction(ann_mask, st_mask)
 
             if verbose:
-                print(f'Computing PSD for producer with mask: {combo_state}',
-                      end='\n')
+                print(f"Computing PSD for producer with mask: {combo_state}", end="\n")
 
             masked_pro = producer(pro, chunksize, axis=-1, mask=mask)
             cnt, freqs, psds = estimators.psd(masked_pro, fs=fs, **kwargs)
 
             r = PSDResult(
-                    path=path,
-                    channels=channels,
-                    behavior=combo_state,
-                    n_estimates=int(cnt),
-                    spindle_out_frac=float(spindle_out),
-                    comm_out_frac=float(comm_out),
-                    sd_out_frac=float(sd_out),
-                    swd_out_frac=float(swd_out),
-                    ann_out_frac=float(ann_out),
-                    used_swd=bool(swd_path is not None),
-                    used_drink=bool(drink_path is not None),
-                    used_ann=bool(annotation_path is not None and _ann_keywords),
-                    freqs=freqs,
-                    psd=psds,
-                    used_windows=[(ws.isoformat(), we.isoformat()) for ws, we in used_windows],
-                )
+                path=path,
+                channels=channels,
+                behavior=combo_state,
+                n_estimates=int(cnt),
+                spindle_out_frac=float(spindle_out),
+                comm_out_frac=float(comm_out),
+                sd_out_frac=float(sd_out),
+                swd_out_frac=float(swd_out),
+                ann_out_frac=float(ann_out),
+                used_swd=bool(swd_path is not None),
+                used_drink=bool(drink_path is not None),
+                used_ann=bool(annotation_path is not None and _ann_keywords),
+                freqs=freqs,
+                psd=psds,
+                used_windows=[(ws.isoformat(), we.isoformat()) for ws, we in used_windows],
+            )
 
             result.append(r)
     return result
+
 
 import pickle
 from pathlib import Path
@@ -295,7 +303,6 @@ def _animal_id(p: Path, pattern: str = r"[^_]+") -> str:
     """Join key used across EDF/CSV/MAT/NPY: everything before first underscore."""
     m = re.match(pattern, p.stem)
     return m.group(0) if m else p.stem
-
 
 
 def _star_call(fn_args):
@@ -345,14 +352,17 @@ def match_paths(
     paired: list[tuple[Path, Path, Path | None, Path | None]] = []
     for ep in eeg_paths:
         animal = _animal_id(ep)
-        paired.append((
-            ep,
-            state_by_eeg[ep],
-            swd_by_eeg[ep],
-            drink_by_animal.get(animal),
-        ))
+        paired.append(
+            (
+                ep,
+                state_by_eeg[ep],
+                swd_by_eeg[ep],
+                drink_by_animal.get(animal),
+            )
+        )
 
     return paired
+
 
 def batch_estimate(
     eeg_dir: str | Path,
@@ -367,7 +377,6 @@ def batch_estimate(
     ann_params: dict | None = None,
     **kwargs,
 ) -> list[PSDResult]:
-
     """Concurrently estimates PSDResults from a directories of EEG files and
     Spindle state files.
 
@@ -380,7 +389,7 @@ def batch_estimate(
         swd_dir:
             Optional directory of SWD .mat files one per EEG file in eeg_dir.
         mask_dir:
-            Optional directory of .npy mask files one per EEG file in eeg_dir. Need to add more flexibility. 
+            Optional directory of .npy mask files one per EEG file in eeg_dir. Need to add more flexibility.
         pattern:
             A regex string for pairing EEG files with Spindle state files.
         ncores:
@@ -400,22 +409,31 @@ def batch_estimate(
     warnings.filterwarnings("ignore", category=ResourceWarning)
 
     # remove path arguments and UI-only keys that must not reach estimate_psd
-    [kwargs.pop(x, None) for x in (
-        'path', 'state_path', 'swd_mode', 'ann_enabled',
-        'time_filter_enabled', 'tod_start', 'tod_end', 'time_filter_days',  # legacy keys
-        'hw_enabled',
-    )]
-    hour_windows  = kwargs.pop('hour_windows',  None)
-    _legacy_hw    = kwargs.pop('hour_window',   None)  # migrate old single-window saves
+    [
+        kwargs.pop(x, None)
+        for x in (
+            "path",
+            "state_path",
+            "swd_mode",
+            "ann_enabled",
+            "time_filter_enabled",
+            "tod_start",
+            "tod_end",
+            "time_filter_days",  # legacy keys
+            "hw_enabled",
+        )
+    ]
+    hour_windows = kwargs.pop("hour_windows", None)
+    _legacy_hw = kwargs.pop("hour_window", None)  # migrate old single-window saves
     if hour_windows is None and _legacy_hw is not None:
         hour_windows = [tuple(_legacy_hw)]
-    selected_days = kwargs.pop('selected_days', None)
+    selected_days = kwargs.pop("selected_days", None)
 
     # Translate preset-key list (as saved in psd_params.json) → labels dict.
     # Explicit labels= wins; absent both → estimate_psd's default applies.
-    states = kwargs.pop('states', None)
-    if states is not None and 'labels' not in kwargs:
-        kwargs['labels'] = labels_from_presets(states)
+    states = kwargs.pop("states", None)
+    if states is not None and "labels" not in kwargs:
+        kwargs["labels"] = labels_from_presets(states)
 
     # unpack annotation params
     ann_keywords = ann_match_mode = ann_pad_before = ann_pad_after = None
@@ -431,51 +449,52 @@ def batch_estimate(
                 ann_by_animal[_animal_id(f)] = f
 
     # pair the eeg paths with the state paths
-    state_paths = sorted(Path(state_dir).glob('*.csv'))
+    state_paths = sorted(Path(state_dir).glob("*.csv"))
     # Only process EDFs that have a matching spindle CSV — the state CSV is
     # authoritative for which animals to include in this batch.
     state_animal_ids = {_animal_id(p) for p in state_paths}
     eeg_paths = sorted(
-        p for p in Path(eeg_dir).glob('*PROCESSED.edf')
-        if _animal_id(p) in state_animal_ids
+        p for p in Path(eeg_dir).glob("*PROCESSED.edf") if _animal_id(p) in state_animal_ids
     )
-    swd_paths = sorted(
-        p for p in Path(swd_dir).glob("*.mat")
-        if _animal_id(p) in state_animal_ids
-    ) if swd_dir else None
+    swd_paths = (
+        sorted(p for p in Path(swd_dir).glob("*.mat") if _animal_id(p) in state_animal_ids)
+        if swd_dir
+        else None
+    )
     drink_paths = sorted(Path(drink_dir).glob("*.npy")) if drink_dir else None
 
     paired_base = match_paths(eeg_paths, state_paths, swd_paths, drink_paths)
 
     # Extend to 5-tuples: (eeg, state, swd, drink, annotation_path_or_None)
-    paired = [
-        (*base, ann_by_animal.get(_animal_id(base[0])))
-        for base in paired_base
-    ]
+    paired = [(*base, ann_by_animal.get(_animal_id(base[0]))) for base in paired_base]
 
     # set number of cpu workers and print to stdout
     workers = concurrency.set_cores(ncores, len(paired))
-    msg = f'Executing Batch on {len(paired)} files using' f' {workers} cores.'
+    msg = f"Executing Batch on {len(paired)} files using {workers} cores."
     print(msg)
 
     # construct a partial to pass to Multiprocess pool
     if offset_path is not None:
-        kwargs['offset_path'] = offset_path
+        kwargs["offset_path"] = offset_path
     if ann_params:
-        kwargs.update({
-            'ann_keywords': ann_keywords,
-            'ann_match_mode': ann_match_mode,
-            'ann_pad_before_sec': ann_pad_before,
-            'ann_pad_after_sec': ann_pad_after,
-        })
-    estimator = partial(estimate_psd, hour_windows=hour_windows, selected_days=selected_days, **kwargs)
+        kwargs.update(
+            {
+                "ann_keywords": ann_keywords,
+                "ann_match_mode": ann_match_mode,
+                "ann_pad_before_sec": ann_pad_before,
+                "ann_pad_after_sec": ann_pad_after,
+            }
+        )
+    estimator = partial(
+        estimate_psd, hour_windows=hour_windows, selected_days=selected_days, **kwargs
+    )
     n = len(paired)
     t0 = time.perf_counter()
     if workers == 1:
         results_nested = []
         for i, args in enumerate(paired):
             if progress_fn:
-                progress_fn(f"  [{i+1}/{n}] {args[0].name}…")
+                progress_fn(f"  [{i + 1}/{n}] {args[0].name}…")
             results_nested.append(estimator(*args))
     else:
         results_nested = []
@@ -483,11 +502,11 @@ def batch_estimate(
         with ctx.Pool(workers) as pool:
             for i, result in enumerate(pool.imap(_star_call, [(estimator, a) for a in paired])):
                 if progress_fn:
-                    progress_fn(f"  [{i+1}/{n}] done")
+                    progress_fn(f"  [{i + 1}/{n}] done")
                 results_nested.append(result)
 
     elapsed = time.perf_counter() - t0
-    print(f'Batch processed {len(paired)} files in {elapsed} secs')
+    print(f"Batch processed {len(paired)} files in {elapsed} secs")
 
     results = [obj for sublist in results_nested for obj in sublist]
 
@@ -509,12 +528,10 @@ def build_run_final_pkl(project_root, run_name: str = "default") -> Path:
     """
     psd_dir = Path(project_root) / "psd" / run_name
     drink = psd_dir / "psds_channel_merged_drink.pkl"
-    base  = psd_dir / "psds_channel_merged.pkl"
+    base = psd_dir / "psds_channel_merged.pkl"
     source = drink if drink.exists() else base
     if not source.exists():
-        raise FileNotFoundError(
-            f"No merged PKL found in {psd_dir}. Run 'Compute PSDs' first."
-        )
+        raise FileNotFoundError(f"No merged PKL found in {psd_dir}. Run 'Compute PSDs' first.")
     with open(source, "rb") as f:
         data = pickle.load(f)
     out = psd_dir / "psds_final.pkl"
@@ -655,14 +672,22 @@ def rerun_with_drink_masks(
 
     tracemalloc.start()
     warnings.filterwarnings("ignore", category=ResourceWarning)
-    [kwargs.pop(x, None) for x in (
-        "path", "state_path", "time_filter_enabled",
-        "swd_mode", "ann_enabled",
-        "tod_start", "tod_end", "time_filter_days",  # legacy keys
-        "hw_enabled",
-    )]
-    hour_windows  = kwargs.pop("hour_windows",  None)
-    _legacy_hw    = kwargs.pop("hour_window",   None)  # migrate old single-window saves
+    [
+        kwargs.pop(x, None)
+        for x in (
+            "path",
+            "state_path",
+            "time_filter_enabled",
+            "swd_mode",
+            "ann_enabled",
+            "tod_start",
+            "tod_end",
+            "time_filter_days",  # legacy keys
+            "hw_enabled",
+        )
+    ]
+    hour_windows = kwargs.pop("hour_windows", None)
+    _legacy_hw = kwargs.pop("hour_window", None)  # migrate old single-window saves
     if hour_windows is None and _legacy_hw is not None:
         hour_windows = [tuple(_legacy_hw)]
     selected_days = kwargs.pop("selected_days", None)
@@ -685,42 +710,41 @@ def rerun_with_drink_masks(
         if ann_dir and Path(ann_dir).is_dir():
             for f in list(Path(ann_dir).glob("*.txt")) + list(Path(ann_dir).glob("*.csv")):
                 ann_by_animal[_animal_id(f)] = f
-        kwargs.update({
-            "ann_keywords": ann_keywords,
-            "ann_match_mode": ann_match_mode,
-            "ann_pad_before_sec": ann_pad_before,
-            "ann_pad_after_sec": ann_pad_after,
-        })
+        kwargs.update(
+            {
+                "ann_keywords": ann_keywords,
+                "ann_match_mode": ann_match_mode,
+                "ann_pad_before_sec": ann_pad_before,
+                "ann_pad_after_sec": ann_pad_after,
+            }
+        )
 
-    estimator = partial(estimate_psd, hour_windows=hour_windows, selected_days=selected_days, **kwargs)
+    estimator = partial(
+        estimate_psd, hour_windows=hour_windows, selected_days=selected_days, **kwargs
+    )
     all_new_dicts: list[dict] = []
 
     for combo, animals in combo_to_animals.items():
         animals_set = set(animals)
         state_dir = spindle_root / combo
         eeg_paths = [
-            p for p in sorted(Path(eeg_dir).glob("*PROCESSED.edf"))
+            p
+            for p in sorted(Path(eeg_dir).glob("*PROCESSED.edf"))
             if p.stem.split("_")[0] in animals_set
         ]
         if not eeg_paths:
             raise ValueError(f"No EDF files found for animals {animals_set} in {eeg_dir}")
-        state_paths = [
-            p for p in sorted(state_dir.glob("*.csv"))
-            if _animal_id(p) in animals_set
-        ]
-        drink_paths = [
-            p for p in sorted(drink_dir.glob("*.npy"))
-            if _animal_id(p) in animals_set
-        ]
-        swd_paths = [
-            p for p in sorted(Path(swd_dir).glob("*.mat"))
-            if _animal_id(p) in animals_set
-        ] if swd_dir else None
-        base_paired = match_paths(eeg_paths, state_paths, swd_paths=swd_paths, drink_paths=drink_paths)
-        paired = [
-            (*base, ann_by_animal.get(_animal_id(base[0])))
-            for base in base_paired
-        ]
+        state_paths = [p for p in sorted(state_dir.glob("*.csv")) if _animal_id(p) in animals_set]
+        drink_paths = [p for p in sorted(drink_dir.glob("*.npy")) if _animal_id(p) in animals_set]
+        swd_paths = (
+            [p for p in sorted(Path(swd_dir).glob("*.mat")) if _animal_id(p) in animals_set]
+            if swd_dir
+            else None
+        )
+        base_paired = match_paths(
+            eeg_paths, state_paths, swd_paths=swd_paths, drink_paths=drink_paths
+        )
+        paired = [(*base, ann_by_animal.get(_animal_id(base[0]))) for base in base_paired]
 
         workers = concurrency.set_cores(ncores, len(paired))
         t0 = time.perf_counter()
@@ -749,8 +773,7 @@ def rerun_with_drink_masks(
         existing_drink = []
 
     kept_drink = [
-        e for e in existing_drink
-        if Path(e["path"]).stem.split("_")[0] not in animal_ids_set
+        e for e in existing_drink if Path(e["path"]).stem.split("_")[0] not in animal_ids_set
     ]
     tmp = drink_pkl.with_suffix(".pkl.tmp")
     with open(tmp, "wb") as f:
@@ -763,8 +786,7 @@ def rerun_with_drink_masks(
         all_drink: list[dict] = pickle.load(f)
     drink_animals = {Path(r["path"]).stem.split("_")[0] for r in all_drink}
     merged_base_kept = [
-        r for r in merged_data
-        if Path(r["path"]).stem.split("_")[0] not in drink_animals
+        r for r in merged_data if Path(r["path"]).stem.split("_")[0] not in drink_animals
     ]
     merged_drink_path = psd_dir / "psds_channel_merged_drink.pkl"
     tmp2 = merged_drink_path.with_suffix(".pkl.tmp")
@@ -773,5 +795,3 @@ def rerun_with_drink_masks(
     tmp2.replace(merged_drink_path)
 
     return drink_pkl, merged_drink_path
-
-

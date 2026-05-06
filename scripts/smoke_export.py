@@ -10,6 +10,7 @@ Phase 1 + Phase 2 before wiring up the UI.
 
 Output goes to ``<project_root>/exports/smoke_test/`` by default.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -33,19 +34,24 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("project_root", type=Path, help="Path to ebb project root")
     p.add_argument(
-        "--run-name", default="default",
+        "--run-name",
+        default="default",
         help="PSD run whose psd_params.json to load (default: 'default')",
     )
     p.add_argument(
-        "--animal", default=None,
+        "--animal",
+        default=None,
         help="Animal ID to export (default: first OK run in manifest)",
     )
     p.add_argument(
-        "--combo", default=None,
+        "--combo",
+        default=None,
         help="Channel combo (default: first OK combo for the chosen animal)",
     )
     p.add_argument(
-        "--out-dir", type=Path, default=None,
+        "--out-dir",
+        type=Path,
+        default=None,
         help="Output dir (default: <project_root>/exports/smoke_test)",
     )
     args = p.parse_args()
@@ -67,7 +73,9 @@ def main() -> int:
         print(f"       available runs: {psd_params.list_runs(args.project_root)}")
         return 1
     print(f"Loaded PSD run params: '{args.run_name}'")
-    print(f"  states={params.get('states')}  hour_windows={params.get('hour_windows')}  s_prob={params.get('s_prob')}")
+    print(
+        f"  states={params.get('states')}  hour_windows={params.get('hour_windows')}  s_prob={params.get('s_prob')}"
+    )
 
     # --- pick (animal, combo) ---
     manifest = Manifest.load(args.project_root)

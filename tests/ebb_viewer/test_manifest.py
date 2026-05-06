@@ -32,6 +32,7 @@ from ebb_viewer.pipeline.manifest import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_manifest(tmp_path: Path, animals: dict[str, dict]) -> Manifest:
     """Build and save a manifest from a dict of {animal_id: {combo: RunEntry}}."""
     m = Manifest(tmp_path)
@@ -53,16 +54,22 @@ def _reload(m: Manifest) -> Manifest:
 # Save / load round-trip
 # ---------------------------------------------------------------------------
 
+
 def test_load_missing_file_returns_empty(tmp_path):
     m = Manifest.load(tmp_path)
     assert len(m) == 0
 
 
 def test_save_load_roundtrip(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
-        "AM002": {"LFC_RSC": RunEntry(sleep_qc="needs_review")},
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})
+            },
+            "AM002": {"LFC_RSC": RunEntry(sleep_qc="needs_review")},
+        },
+    )
     m2 = _reload(m)
 
     assert m2.get_run("AM001", "LFC_RSC").sleep_qc == "ok"
@@ -81,21 +88,25 @@ def test_save_is_atomic(tmp_path):
 # Old-format migration
 # ---------------------------------------------------------------------------
 
+
 def _write_old_format(tmp_path: Path, data: dict) -> None:
     (tmp_path / "manifest.json").write_text(json.dumps(data))
 
 
 def test_migration_basic(tmp_path):
-    _write_old_format(tmp_path, {
-        "AM001": {
-            "preprocessed_edf": "standard/AM001_PREPROCESSED.edf",
-            "spindle_channels": "LFC_RSC",
-            "sleep_qc": "ok",
-            "psd_status": "needs_drink_mask",
-            "drink_mask": None,
-            "rerun_channels": None,
-        }
-    })
+    _write_old_format(
+        tmp_path,
+        {
+            "AM001": {
+                "preprocessed_edf": "standard/AM001_PREPROCESSED.edf",
+                "spindle_channels": "LFC_RSC",
+                "sleep_qc": "ok",
+                "psd_status": "needs_drink_mask",
+                "drink_mask": None,
+                "rerun_channels": None,
+            }
+        },
+    )
     m = Manifest.load(tmp_path)
     run = m.get_run("AM001", "LFC_RSC")
     assert run is not None
@@ -105,16 +116,19 @@ def test_migration_basic(tmp_path):
 
 def test_migration_rerun_channels_status(tmp_path):
     """Old 'rerun_channels' sleep_qc value maps to 'needs_rerun'."""
-    _write_old_format(tmp_path, {
-        "AM001": {
-            "preprocessed_edf": "standard/AM001_PREPROCESSED.edf",
-            "spindle_channels": "LFC_RSC",
-            "sleep_qc": "rerun_channels",
-            "rerun_channels": "LSC_RSC",
-            "psd_status": None,
-            "drink_mask": None,
-        }
-    })
+    _write_old_format(
+        tmp_path,
+        {
+            "AM001": {
+                "preprocessed_edf": "standard/AM001_PREPROCESSED.edf",
+                "spindle_channels": "LFC_RSC",
+                "sleep_qc": "rerun_channels",
+                "rerun_channels": "LSC_RSC",
+                "psd_status": None,
+                "drink_mask": None,
+            }
+        },
+    )
     m = Manifest.load(tmp_path)
     run = m.get_run("AM001", "LFC_RSC")
     assert run.sleep_qc == "needs_rerun"
@@ -122,17 +136,20 @@ def test_migration_rerun_channels_status(tmp_path):
 
 
 def test_migration_preserves_notes(tmp_path):
-    _write_old_format(tmp_path, {
-        "AM001": {
-            "preprocessed_edf": "standard/AM001_PREPROCESSED.edf",
-            "spindle_channels": "LFC_RSC",
-            "sleep_qc": None,
-            "psd_status": None,
-            "drink_mask": None,
-            "rerun_channels": None,
-            "notes": "check this animal",
-        }
-    })
+    _write_old_format(
+        tmp_path,
+        {
+            "AM001": {
+                "preprocessed_edf": "standard/AM001_PREPROCESSED.edf",
+                "spindle_channels": "LFC_RSC",
+                "sleep_qc": None,
+                "psd_status": None,
+                "drink_mask": None,
+                "rerun_channels": None,
+                "notes": "check this animal",
+            }
+        },
+    )
     m = Manifest.load(tmp_path)
     assert m.get("AM001").notes == "check this animal"
 
@@ -141,14 +158,18 @@ def test_migration_preserves_notes(tmp_path):
 # flag_sleep_qc — one-ok invariant
 # ---------------------------------------------------------------------------
 
+
 def test_flag_ok_cascade_rejects_siblings(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc=None),
-            "LSC_RSC": RunEntry(sleep_qc="needs_review"),
-            "RSC_LSC": RunEntry(sleep_qc=None),
-        }
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc=None),
+                "LSC_RSC": RunEntry(sleep_qc="needs_review"),
+                "RSC_LSC": RunEntry(sleep_qc=None),
+            }
+        },
+    )
     m.flag_sleep_qc("AM001", "LFC_RSC", "ok")
 
     assert m.get_run("AM001", "LFC_RSC").sleep_qc == "ok"
@@ -157,12 +178,15 @@ def test_flag_ok_cascade_rejects_siblings(tmp_path):
 
 
 def test_flag_ok_cascade_stores_prev_status(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc=None),
-            "LSC_RSC": RunEntry(sleep_qc="needs_review"),
-        }
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc=None),
+                "LSC_RSC": RunEntry(sleep_qc="needs_review"),
+            }
+        },
+    )
     m.flag_sleep_qc("AM001", "LFC_RSC", "ok")
 
     sibling = m.get_run("AM001", "LSC_RSC")
@@ -172,12 +196,15 @@ def test_flag_ok_cascade_stores_prev_status(tmp_path):
 
 def test_flag_ok_does_not_touch_already_rejected_siblings(tmp_path):
     """A sibling that was already explicitly rejected keeps its existing metadata."""
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc=None),
-            "LSC_RSC": RunEntry(sleep_qc="rejected", rejected_by=None),
-        }
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc=None),
+                "LSC_RSC": RunEntry(sleep_qc="rejected", rejected_by=None),
+            }
+        },
+    )
     m.flag_sleep_qc("AM001", "LFC_RSC", "ok")
 
     sibling = m.get_run("AM001", "LSC_RSC")
@@ -187,11 +214,16 @@ def test_flag_ok_does_not_touch_already_rejected_siblings(tmp_path):
 
 def test_flag_ok_clears_own_cascade_metadata(tmp_path):
     """The run being set to ok should have no cascade metadata itself."""
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc="rejected", rejected_by="LSC_RSC", prev_sleep_qc="needs_review"),
-        }
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(
+                    sleep_qc="rejected", rejected_by="LSC_RSC", prev_sleep_qc="needs_review"
+                ),
+            }
+        },
+    )
     m.flag_sleep_qc("AM001", "LFC_RSC", "ok")
 
     run = m.get_run("AM001", "LFC_RSC")
@@ -200,12 +232,15 @@ def test_flag_ok_clears_own_cascade_metadata(tmp_path):
 
 
 def test_unok_restores_cascade_siblings(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc=None),
-            "LSC_RSC": RunEntry(sleep_qc="needs_review"),
-        }
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc=None),
+                "LSC_RSC": RunEntry(sleep_qc="needs_review"),
+            }
+        },
+    )
     m.flag_sleep_qc("AM001", "LFC_RSC", "ok")
     m.flag_sleep_qc("AM001", "LFC_RSC", "needs_review")
 
@@ -217,12 +252,15 @@ def test_unok_restores_cascade_siblings(tmp_path):
 
 def test_unok_does_not_restore_independently_rejected_siblings(tmp_path):
     """Siblings rejected before the cascade (rejected_by=None) stay rejected."""
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc=None),
-            "LSC_RSC": RunEntry(sleep_qc="rejected", rejected_by=None),
-        }
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc=None),
+                "LSC_RSC": RunEntry(sleep_qc="rejected", rejected_by=None),
+            }
+        },
+    )
     m.flag_sleep_qc("AM001", "LFC_RSC", "ok")
     m.flag_sleep_qc("AM001", "LFC_RSC", "needs_review")
 
@@ -230,9 +268,10 @@ def test_unok_does_not_restore_independently_rejected_siblings(tmp_path):
 
 
 def test_unok_clears_psd_status(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})}
-    })
+    m = _make_manifest(
+        tmp_path,
+        {"AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})}},
+    )
     m.flag_sleep_qc("AM001", "LFC_RSC", "needs_review")
 
     run = m.get_run("AM001", "LFC_RSC")
@@ -241,15 +280,18 @@ def test_unok_clears_psd_status(tmp_path):
 
 
 def test_leaving_rejected_clears_cascade_metadata(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(
-                sleep_qc="rejected",
-                rejected_by="LSC_RSC",
-                prev_sleep_qc="needs_review",
-            )
-        }
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(
+                    sleep_qc="rejected",
+                    rejected_by="LSC_RSC",
+                    prev_sleep_qc="needs_review",
+                )
+            }
+        },
+    )
     m.flag_sleep_qc("AM001", "LFC_RSC", "needs_review")
 
     run = m.get_run("AM001", "LFC_RSC")
@@ -277,13 +319,17 @@ def test_flag_needs_rerun_stores_combo(tmp_path):
 # reset_sleep_qc
 # ---------------------------------------------------------------------------
 
+
 def test_reset_restores_cascade_siblings(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc=None),
-            "LSC_RSC": RunEntry(sleep_qc="needs_review"),
-        }
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc=None),
+                "LSC_RSC": RunEntry(sleep_qc="needs_review"),
+            }
+        },
+    )
     m.flag_sleep_qc("AM001", "LFC_RSC", "ok")
     m.reset_sleep_qc("AM001", "LFC_RSC")
 
@@ -294,9 +340,9 @@ def test_reset_restores_cascade_siblings(tmp_path):
 
 
 def test_reset_clears_psd_status(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"})}
-    })
+    m = _make_manifest(
+        tmp_path, {"AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"})}}
+    )
     m.reset_sleep_qc("AM001", "LFC_RSC")
 
     run = m.get_run("AM001", "LFC_RSC")
@@ -306,9 +352,7 @@ def test_reset_clears_psd_status(tmp_path):
 
 def test_reset_non_ok_run_is_safe(tmp_path):
     """reset_sleep_qc on a non-ok run should not raise or corrupt state."""
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="needs_review")}
-    })
+    m = _make_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry(sleep_qc="needs_review")}})
     m.reset_sleep_qc("AM001", "LFC_RSC")
     assert m.get_run("AM001", "LFC_RSC").sleep_qc is None
 
@@ -317,26 +361,21 @@ def test_reset_non_ok_run_is_safe(tmp_path):
 # flag_psd
 # ---------------------------------------------------------------------------
 
+
 def test_flag_psd_requires_ok_sleep_qc(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="needs_review")}
-    })
+    m = _make_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry(sleep_qc="needs_review")}})
     with pytest.raises(ValueError, match="sleep_qc"):
         m.flag_psd("AM001", "LFC_RSC", "ok")
 
 
 def test_flag_psd_sets_status(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")}
-    })
+    m = _make_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")}})
     m.flag_psd("AM001", "LFC_RSC", "needs_drink_mask")
     assert m.get_run("AM001", "LFC_RSC").psd_status == {"default": "needs_drink_mask"}
 
 
 def test_flag_psd_drink_mask_applied_sets_path(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")}
-    })
+    m = _make_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")}})
     m.flag_psd("AM001", "LFC_RSC", "drink_mask_applied")
     run = m.get_run("AM001", "LFC_RSC")
     assert run.psd_status == {"default": "drink_mask_applied"}
@@ -344,10 +383,18 @@ def test_flag_psd_drink_mask_applied_sets_path(tmp_path):
 
 
 def test_flag_psd_ok_clears_drink_mask(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "drink_mask_applied"},
-                                      drink_mask="drink_masks/AM001.npy")}
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(
+                    sleep_qc="ok",
+                    psd_status={"default": "drink_mask_applied"},
+                    drink_mask="drink_masks/AM001.npy",
+                )
+            }
+        },
+    )
     m.flag_psd("AM001", "LFC_RSC", "ok")
     assert m.get_run("AM001", "LFC_RSC").drink_mask is None
 
@@ -362,6 +409,7 @@ def test_flag_psd_invalid_status(tmp_path):
 # add_run
 # ---------------------------------------------------------------------------
 
+
 def test_add_run_creates_bare_run_when_no_ok(tmp_path):
     m = _make_manifest(tmp_path, {"AM001": {}})
     run = m.add_run("AM001", "LFC_RSC")
@@ -370,9 +418,7 @@ def test_add_run_creates_bare_run_when_no_ok(tmp_path):
 
 
 def test_add_run_auto_rejects_when_ok_exists(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")}
-    })
+    m = _make_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")}})
     run = m.add_run("AM001", "LSC_RSC")
     assert run.sleep_qc == "rejected"
     assert run.rejected_by == "LFC_RSC"
@@ -380,18 +426,14 @@ def test_add_run_auto_rejects_when_ok_exists(tmp_path):
 
 def test_add_run_with_source_combo_never_auto_rejects(tmp_path):
     """Deliberate reruns always start unreviewed regardless of existing ok run."""
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")}
-    })
+    m = _make_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")}})
     run = m.add_run("AM001", "LSC_RSC", source_combo="LFC_RSC")
     assert run.sleep_qc is None
     assert run.rejected_by is None
 
 
 def test_add_run_returns_existing_without_overwriting(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="needs_review")}
-    })
+    m = _make_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry(sleep_qc="needs_review")}})
     run = m.add_run("AM001", "LFC_RSC")
     assert run.sleep_qc == "needs_review"
 
@@ -400,6 +442,7 @@ def test_add_run_returns_existing_without_overwriting(tmp_path):
 # load() integrity checks
 # ---------------------------------------------------------------------------
 
+
 def test_load_fixes_multiple_ok_runs(tmp_path):
     """If the JSON has two ok runs, load() keeps the first and cascade-rejects the rest."""
     data = {
@@ -407,13 +450,25 @@ def test_load_fixes_multiple_ok_runs(tmp_path):
             "preprocessed_edf": "standard/AM001_PREPROCESSED.edf",
             "notes": "",
             "runs": {
-                "LFC_RSC": {"sleep_qc": "ok", "rerun_combo": None, "source_combo": None,
-                            "psd_status": None, "drink_mask": None,
-                            "prev_sleep_qc": None, "rejected_by": None},
-                "LSC_RSC": {"sleep_qc": "ok", "rerun_combo": None, "source_combo": None,
-                            "psd_status": None, "drink_mask": None,
-                            "prev_sleep_qc": None, "rejected_by": None},
-            }
+                "LFC_RSC": {
+                    "sleep_qc": "ok",
+                    "rerun_combo": None,
+                    "source_combo": None,
+                    "psd_status": None,
+                    "drink_mask": None,
+                    "prev_sleep_qc": None,
+                    "rejected_by": None,
+                },
+                "LSC_RSC": {
+                    "sleep_qc": "ok",
+                    "rerun_combo": None,
+                    "source_combo": None,
+                    "psd_status": None,
+                    "drink_mask": None,
+                    "prev_sleep_qc": None,
+                    "rejected_by": None,
+                },
+            },
         }
     }
     (tmp_path / "manifest.json").write_text(json.dumps(data))
@@ -435,11 +490,16 @@ def test_load_clears_orphaned_rejected_by(tmp_path):
             "preprocessed_edf": "standard/AM001_PREPROCESSED.edf",
             "notes": "",
             "runs": {
-                "LFC_RSC": {"sleep_qc": "rejected", "rerun_combo": None, "source_combo": None,
-                            "psd_status": None, "drink_mask": None,
-                            "prev_sleep_qc": "needs_review",
-                            "rejected_by": "LSC_RSC"},  # LSC_RSC not present
-            }
+                "LFC_RSC": {
+                    "sleep_qc": "rejected",
+                    "rerun_combo": None,
+                    "source_combo": None,
+                    "psd_status": None,
+                    "drink_mask": None,
+                    "prev_sleep_qc": "needs_review",
+                    "rejected_by": "LSC_RSC",
+                },  # LSC_RSC not present
+            },
         }
     }
     (tmp_path / "manifest.json").write_text(json.dumps(data))
@@ -453,6 +513,7 @@ def test_load_clears_orphaned_rejected_by(tmp_path):
 # ---------------------------------------------------------------------------
 # build_from_standard
 # ---------------------------------------------------------------------------
+
 
 def _touch(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -540,7 +601,7 @@ def test_build_edf_only_does_not_stamp_source_combo(tmp_path):
 
     rsc_run = m2.get_run("AM001", "RSC")
     assert rsc_run is not None
-    assert rsc_run.source_combo is None   # NOT stamped — Rerun page must still act
+    assert rsc_run.source_combo is None  # NOT stamped — Rerun page must still act
     # LFC_RSC must still appear in needs_rerun_pending so the orange card stays up
     pending = m2.needs_rerun_pending()
     assert any(e.animal_id == "AM001" for e, _ in pending)
@@ -562,11 +623,15 @@ def test_build_no_source_combo_when_no_rerun_pointer(tmp_path):
 # Filtered views
 # ---------------------------------------------------------------------------
 
+
 def test_pending_sleep_qc(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc=None)},
-        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok")},
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {"LFC_RSC": RunEntry(sleep_qc=None)},
+            "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok")},
+        },
+    )
     pending = m.pending_sleep_qc()
     animal_ids = [e.animal_id for e, _ in pending]
     assert "AM001" in animal_ids
@@ -574,19 +639,25 @@ def test_pending_sleep_qc(tmp_path):
 
 
 def test_needs_review(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="needs_review")},
-        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok")},
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {"LFC_RSC": RunEntry(sleep_qc="needs_review")},
+            "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok")},
+        },
+    )
     assert len(m.needs_review()) == 1
     assert m.needs_review()[0][0].animal_id == "AM001"
 
 
 def test_needs_rerun(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC_RSC")},
-        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok")},
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {"LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC_RSC")},
+            "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok")},
+        },
+    )
     assert len(m.needs_rerun()) == 1
 
 
@@ -597,31 +668,46 @@ def test_pending_psd_review(tmp_path):
     (run_dir / "psd_params.json").write_text("{}")
     (run_dir / "psds_channel_merged.pkl").touch()
 
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
-        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"})},
-        "AM003": {"LFC_RSC": RunEntry(sleep_qc="needs_review")},
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
+            "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"})},
+            "AM003": {"LFC_RSC": RunEntry(sleep_qc="needs_review")},
+        },
+    )
     pending = m.pending_psd_review("default")
     animal_ids = [e.animal_id for e, _ in pending]
     assert "AM001" in animal_ids
-    assert "AM002" not in animal_ids   # already reviewed
-    assert "AM003" not in animal_ids   # sleep_qc not ok
+    assert "AM002" not in animal_ids  # already reviewed
+    assert "AM003" not in animal_ids  # sleep_qc not ok
 
 
 def test_pending_psd_review_empty_without_final_pkl(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
+        },
+    )
     # No psds_channel_merged.pkl → empty
     assert m.pending_psd_review("default") == []
 
 
 def test_needs_drink_mask_requires_ok_sleep_qc(tmp_path):
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
-        "AM002": {"LFC_RSC": RunEntry(sleep_qc="needs_review", psd_status={"default": "needs_drink_mask"})},
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})
+            },
+            "AM002": {
+                "LFC_RSC": RunEntry(
+                    sleep_qc="needs_review", psd_status={"default": "needs_drink_mask"}
+                )
+            },
+        },
+    )
     result = m.needs_drink_mask("default")
     animal_ids = [e.animal_id for e, _ in result]
     assert "AM001" in animal_ids
@@ -633,10 +719,17 @@ def test_needs_drink_mask_rerun_requires_mask_file(tmp_path):
     mask_file.parent.mkdir(parents=True)
     mask_file.touch()
 
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
-        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})
+            },
+            "AM002": {
+                "LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})
+            },
+        },
+    )
     result = m.needs_drink_mask_rerun("default")
     animal_ids = [e.animal_id for e, _ in result]
     assert "AM001" in animal_ids
@@ -648,14 +741,17 @@ def test_pending_rerun_review(tmp_path):
     output_dir.mkdir(parents=True)
     (output_dir / "AM001_states.csv").touch()
 
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LSC_RSC": RunEntry(sleep_qc=None, source_combo="LFC_RSC")},
-        "AM002": {"LSC_RSC": RunEntry(sleep_qc="ok",  source_combo="LFC_RSC")},
-        "AM003": {"LSC_RSC": RunEntry(sleep_qc=None,  source_combo=None)},
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {"LSC_RSC": RunEntry(sleep_qc=None, source_combo="LFC_RSC")},
+            "AM002": {"LSC_RSC": RunEntry(sleep_qc="ok", source_combo="LFC_RSC")},
+            "AM003": {"LSC_RSC": RunEntry(sleep_qc=None, source_combo=None)},
+        },
+    )
     result = m.pending_rerun_review()
     animal_ids = [e.animal_id for e, _ in result]
-    assert "AM001" in animal_ids   # unreviewed rerun with outputs on disk
+    assert "AM001" in animal_ids  # unreviewed rerun with outputs on disk
     assert "AM002" not in animal_ids  # already reviewed
     assert "AM003" not in animal_ids  # no source_combo (not a rerun)
 
@@ -666,12 +762,15 @@ def test_needs_rerun_pending_excludes_when_csv_present(tmp_path):
     If source_combo is stamped but no CSV exists (e.g. upload was cancelled),
     the item must still appear so the user can re-trigger from the Rerun page.
     """
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
-            "LSC":     RunEntry(sleep_qc=None, source_combo=None),
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
+                "LSC": RunEntry(sleep_qc=None, source_combo=None),
+            },
         },
-    })
+    )
     # No CSV yet: appears
     assert len(m.needs_rerun_pending()) == 1
 
@@ -690,19 +789,23 @@ def test_needs_rerun_pending_excludes_when_csv_present(tmp_path):
 
 def test_needs_rerun_pending_still_shows_before_source_combo_stamped(tmp_path):
     """Before the Rerun page processes it, the item must appear in the queue."""
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
-            # LSC present but not yet registered as a rerun
-            "LSC":     RunEntry(sleep_qc=None, source_combo=None),
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
+                # LSC present but not yet registered as a rerun
+                "LSC": RunEntry(sleep_qc=None, source_combo=None),
+            },
         },
-    })
+    )
     assert len(m.needs_rerun_pending()) == 1
 
 
 # ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------
+
 
 def test_flag_sleep_qc_invalid_status(tmp_path):
     m = _make_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry()}})
@@ -729,12 +832,15 @@ def test_flag_needs_rerun_resets_existing_rerun_run_from_ok(tmp_path):
     output_dir.mkdir(parents=True)
     (output_dir / "AM001_states.csv").touch()
 
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc="needs_review"),
-            "LFC":     RunEntry(sleep_qc="ok", source_combo="LFC_RSC"),
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="needs_review"),
+                "LFC": RunEntry(sleep_qc="ok", source_combo="LFC_RSC"),
+            },
         },
-    })
+    )
     m.flag_sleep_qc("AM001", "LFC_RSC", "needs_rerun", rerun_combo="LFC")
 
     rerun_run = m._entries["AM001"].runs["LFC"]
@@ -746,12 +852,15 @@ def test_flag_needs_rerun_resets_existing_rerun_run_from_ok(tmp_path):
 
 def test_flag_needs_rerun_resets_existing_rerun_run_from_rejected(tmp_path):
     """Re-flagging needs_rerun when rerun run was cascade-rejected also resets it."""
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc="needs_review"),
-            "LFC":     RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="needs_review"),
+                "LFC": RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
+            },
         },
-    })
+    )
     m.flag_sleep_qc("AM001", "LFC_RSC", "needs_rerun", rerun_combo="LFC")
 
     rerun_run = m._entries["AM001"].runs["LFC"]
@@ -766,6 +875,7 @@ def test_flag_needs_rerun_resets_existing_rerun_run_from_rejected(tmp_path):
 # Testing gaps (PIPELINE_AUDIT.md)
 # ---------------------------------------------------------------------------
 
+
 def test_add_run_does_not_reset_ok_when_stamping_source_combo(tmp_path):
     """Gap 2: add_run stamping source_combo on an existing ok run must NOT reset sleep_qc.
 
@@ -773,12 +883,15 @@ def test_add_run_does_not_reset_ok_when_stamping_source_combo(tmp_path):
     would silently violate the one-ok invariant if the run happened to be the
     ok combo.
     """
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"}),
-            "RSC_LSC": RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"}),
+                "RSC_LSC": RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
+            },
         },
-    })
+    )
     # Stamp source_combo on the ok run (e.g., retroactive provenance)
     m.add_run("AM001", "LFC_RSC", source_combo="RSC_LSC")
 
@@ -800,12 +913,15 @@ def test_dead_zone_needs_rerun_with_csv_and_no_source_combo(tmp_path):
     csv.parent.mkdir(parents=True, exist_ok=True)
     csv.touch()
 
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="RSC"),
-            "RSC":     RunEntry(sleep_qc=None, source_combo=None),
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="RSC"),
+                "RSC": RunEntry(sleep_qc=None, source_combo=None),
+            },
         },
-    })
+    )
 
     # CSV present → excluded from needs_rerun_pending
     assert len(m.needs_rerun_pending()) == 0
@@ -822,12 +938,15 @@ def test_needs_rerun_pending_excludes_when_rerun_run_reviewed(tmp_path):
     rather than explicitly accepted — the original stays needs_rerun in the manifest
     for history, but should no longer appear in the Rerun queue.
     """
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="RSC"),
-            "RSC":     RunEntry(sleep_qc="rejected", source_combo="LFC_RSC"),
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="RSC"),
+                "RSC": RunEntry(sleep_qc="rejected", source_combo="LFC_RSC"),
+            },
         },
-    })
+    )
     # Rerun run has sleep_qc="rejected" (non-None) → must not appear in queue
     assert len(m.needs_rerun_pending()) == 0
     # Original still shows in needs_rerun() (historical record)
@@ -843,13 +962,20 @@ def test_sibling_psd_status_cleared_when_restored_to_non_ok(tmp_path):
     if the sibling is later made ok again.
     """
     # Set up: RSC has stale psd_status (injected directly to simulate edge case)
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc="ok"),
-            "RSC":     RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC",
-                                prev_sleep_qc=None, psd_status={"default": "ok"}),
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="ok"),
+                "RSC": RunEntry(
+                    sleep_qc="rejected",
+                    rejected_by="LFC_RSC",
+                    prev_sleep_qc=None,
+                    psd_status={"default": "ok"},
+                ),
+            },
         },
-    })
+    )
     # Un-ok LFC_RSC → RSC restored to sleep_qc=None (prev_sleep_qc was None)
     m.flag_sleep_qc("AM001", "LFC_RSC", "needs_review")
 
@@ -865,13 +991,20 @@ def test_sibling_psd_status_preserved_when_restored_to_ok(tmp_path):
     so the user doesn't lose already-completed PSD review work.
     """
     # RSC was previously ok with reviewed PSD, then LFC_RSC was made ok (cascade-rejecting RSC)
-    m = _make_manifest(tmp_path, {
-        "AM001": {
-            "LFC_RSC": RunEntry(sleep_qc="ok"),
-            "RSC":     RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC",
-                                prev_sleep_qc="ok", psd_status={"default": "ok"}),
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="ok"),
+                "RSC": RunEntry(
+                    sleep_qc="rejected",
+                    rejected_by="LFC_RSC",
+                    prev_sleep_qc="ok",
+                    psd_status={"default": "ok"},
+                ),
+            },
         },
-    })
+    )
     # Un-ok LFC_RSC → RSC restored to its prev_sleep_qc="ok"
     m.flag_sleep_qc("AM001", "LFC_RSC", "needs_review")
 
@@ -883,6 +1016,7 @@ def test_sibling_psd_status_preserved_when_restored_to_ok(tmp_path):
 # ---------------------------------------------------------------------------
 # Gap 12: orphan-cleared run is re-actionable after load()
 # ---------------------------------------------------------------------------
+
 
 def test_load_orphan_cleared_run_is_actionable(tmp_path):
     """After load() clears orphaned rejected_by, the run can be flagged without error.
@@ -897,12 +1031,14 @@ def test_load_orphan_cleared_run_is_actionable(tmp_path):
             "runs": {
                 "LFC_RSC": {
                     "sleep_qc": "rejected",
-                    "rerun_combo": None, "source_combo": None,
-                    "psd_status": None, "drink_mask": None,
+                    "rerun_combo": None,
+                    "source_combo": None,
+                    "psd_status": None,
+                    "drink_mask": None,
                     "prev_sleep_qc": "needs_review",
                     "rejected_by": "LSC_RSC",  # orphan — LSC_RSC not present
                 },
-            }
+            },
         }
     }
     (tmp_path / "manifest.json").write_text(json.dumps(data))
@@ -917,6 +1053,7 @@ def test_load_orphan_cleared_run_is_actionable(tmp_path):
 # Gap 13: PSD status queues are pairwise disjoint (no double-counting in Finalize)
 # ---------------------------------------------------------------------------
 
+
 def test_psd_queues_are_pairwise_disjoint(tmp_path):
     """pending_psd_review, needs_drink_mask, and pending_drink_verification
     are mutually exclusive — each psd_status value belongs to exactly one queue.
@@ -926,20 +1063,27 @@ def test_psd_queues_are_pairwise_disjoint(tmp_path):
     (run_dir / "psd_params.json").write_text("{}")
     (run_dir / "psds_channel_merged.pkl").touch()  # required for pending_psd_review
 
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
-        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
-        "AM003": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "drink_mask_applied"})},
-        "AM004": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"})},
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
+            "AM002": {
+                "LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})
+            },
+            "AM003": {
+                "LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "drink_mask_applied"})
+            },
+            "AM004": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "ok"})},
+        },
+    )
 
-    pending_review   = {(e.animal_id, c) for e, c in m.pending_psd_review("default")}
-    needs_drink      = {(e.animal_id, c) for e, c in m.needs_drink_mask("default")}
-    drink_verif      = {(e.animal_id, c) for e, c in m.pending_drink_verification("default")}
+    pending_review = {(e.animal_id, c) for e, c in m.pending_psd_review("default")}
+    needs_drink = {(e.animal_id, c) for e, c in m.needs_drink_mask("default")}
+    drink_verif = {(e.animal_id, c) for e, c in m.pending_drink_verification("default")}
 
-    assert not (pending_review & needs_drink),   "overlap: pending_review ∩ needs_drink"
-    assert not (pending_review & drink_verif),   "overlap: pending_review ∩ drink_verif"
-    assert not (needs_drink    & drink_verif),   "overlap: needs_drink ∩ drink_verif"
+    assert not (pending_review & needs_drink), "overlap: pending_review ∩ needs_drink"
+    assert not (pending_review & drink_verif), "overlap: pending_review ∩ drink_verif"
+    assert not (needs_drink & drink_verif), "overlap: needs_drink ∩ drink_verif"
 
     # Each animal lands in exactly the right queue
     assert ("AM001", "LFC_RSC") in pending_review
@@ -955,11 +1099,18 @@ def test_pending_count_no_double_count(tmp_path):
     (run_dir / "psd_params.json").write_text("{}")
     (run_dir / "psds_channel_merged.pkl").touch()
 
-    m = _make_manifest(tmp_path, {
-        "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
-        "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})},
-        "AM003": {"LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "drink_mask_applied"})},
-    })
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
+            "AM002": {
+                "LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "needs_drink_mask"})
+            },
+            "AM003": {
+                "LFC_RSC": RunEntry(sleep_qc="ok", psd_status={"default": "drink_mask_applied"})
+            },
+        },
+    )
 
     total = (
         len(m.pending_psd_review("default"))

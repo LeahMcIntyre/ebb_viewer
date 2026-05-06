@@ -10,12 +10,14 @@ from ebb_viewer.pipeline.naming import parse_animal_id
 def parse_animal_from_path(path: str | Path) -> str:
     return parse_animal_id(path)
 
+
 def parse_animal_from_path_masks(rec: dict) -> str:
-    stem = Path(rec['path']).stem
-    animal = stem.split('_')[0] if "_" in stem else stem
-    a_mask = "_artifact" if rec.get('used_artifact', False) else ""
-    d_mask = "_drink" if rec.get('used_drink', False) else ""
+    stem = Path(rec["path"]).stem
+    animal = stem.split("_")[0] if "_" in stem else stem
+    a_mask = "_artifact" if rec.get("used_artifact", False) else ""
+    d_mask = "_drink" if rec.get("used_drink", False) else ""
     return f"{animal}{a_mask}{d_mask}"
+
 
 class PSDStore:
     # by_animal[animal][state][channel_name] -> (freqs, psd)
@@ -24,7 +26,7 @@ class PSDStore:
         pkl_path: str | Path,
         *,
         channel_names: Sequence[str] | None = None,
-        parse_animal = parse_animal_from_path_masks,
+        parse_animal=parse_animal_from_path_masks,
     ):
         self.pkl_path = Path(pkl_path)
         self.channel_names = list(channel_names) if channel_names else None
@@ -57,7 +59,7 @@ class PSDStore:
             state = bhv[1] if isinstance(bhv, (list, tuple)) and len(bhv) >= 2 else "unknown"
 
             freqs = np.asarray(rec["freqs"], float)
-            psd   = np.asarray(rec["psd"],   float)  # shape (C, F)
+            psd = np.asarray(rec["psd"], float)  # shape (C, F)
             chidx = list(rec["channels"])
 
             # channel map
@@ -74,7 +76,9 @@ class PSDStore:
 
             # Raise an error if the freqs are not all the same
             if not np.allclose(self.first_freqs, freqs):
-                raise ValueError(f"PSDs in {self.pkl_path} do not have PSDs with the same frequency values.")
+                raise ValueError(
+                    f"PSDs in {self.pkl_path} do not have PSDs with the same frequency values."
+                )
 
     def animals(self) -> list[str]:
         return sorted(self.by_animal.keys())
@@ -89,7 +93,7 @@ class PSDStore:
         return self.first_freqs
 
     def freq_res(self):
-        return (self.first_freqs[1]-self.first_freqs[0])
+        return self.first_freqs[1] - self.first_freqs[0]
 
     def freq_range(self):
         return [self.first_freqs[0], self.first_freqs[-1]]

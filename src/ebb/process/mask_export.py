@@ -8,6 +8,7 @@ This module provides the pure-library primitives that turn masks into
 interval rows. Higher-level orchestration (which masks to build for a given
 animal, where to write the CSVs) lives in ``ebb_viewer.pipeline.mask_export``.
 """
+
 from __future__ import annotations
 
 import csv
@@ -28,6 +29,7 @@ RAWSTATE_TO_NAME: dict[str, str] = {"w": "wake", "n": "nrem", "r": "rem"}
 @dataclass(frozen=True, slots=True)
 class IntervalRow:
     """A single time-stamped interval. ``end_sample`` is exclusive (Python slice convention)."""
+
     start_s: float
     end_s: float
     start_sample: int
@@ -75,9 +77,7 @@ def _read_rawstate_column(state_path: Path) -> list[str]:
         reader = csv.reader(f)
         header = next(reader, None)
         if header is None or "rawstate" not in header:
-            raise ValueError(
-                f"Expected a 'rawstate' column in {state_path}; got header={header!r}"
-            )
+            raise ValueError(f"Expected a 'rawstate' column in {state_path}; got header={header!r}")
         idx = header.index("rawstate")
         return [row[idx] for row in reader if row]
 

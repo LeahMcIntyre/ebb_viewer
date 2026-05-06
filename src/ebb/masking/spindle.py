@@ -5,15 +5,12 @@ import numpy as np
 import numpy.typing as npt
 
 
-def state(path: str | Path,
-          labels: list[str],
-          fs: int = 250,
-          winsize: int = 4,
-          include=True
+def state(
+    path: str | Path, labels: list[str], fs: int = 250, winsize: int = 4, include=True
 ) -> npt.NDArray[np.bool_]:
     """Returns a boolean mask from a spindle sleep score csv file. Uses values from 'rawstate' column
-    as to include values listed as spindle artifacts (separate artifact mask). Default returns True for samples where 
-    rawstate matches label. 
+    as to include values listed as spindle artifacts (separate artifact mask). Default returns True for samples where
+    rawstate matches label.
 
     Args:
         path:
@@ -29,11 +26,10 @@ def state(path: str | Path,
             A boolean indicating if labels should be included (i.e. True) and
             all else False or labels should be excluded (i.e. False) from the
             returned mask.
-            
-    Returns:
-        A 1-D boolean array state mask 
-    """
 
+    Returns:
+        A 1-D boolean array state mask
+    """
 
     def is_in_labels(s):
         return s in labels
@@ -47,15 +43,17 @@ def state(path: str | Path,
         include=include,
     )
 
-def state_prob(path: str | Path,
-          label: str,
-          fs: int = 250,
-          winsize: int = 4,
-          sprob=0.9,
+
+def state_prob(
+    path: str | Path,
+    label: str,
+    fs: int = 250,
+    winsize: int = 4,
+    sprob=0.9,
 ) -> npt.NDArray[np.bool_]:
     """Returns a boolean mask from a spindle sleep score csv file. Uses values from 'rawstate' column
-    as to include values listed as spindle artifacts (separate artifact mask). Default returns True for samples where 
-    rawstate matches label. 
+    as to include values listed as spindle artifacts (separate artifact mask). Default returns True for samples where
+    rawstate matches label.
 
     Args:
         path:
@@ -66,18 +64,18 @@ def state_prob(path: str | Path,
             The sampling rate of the data this mask will be applied.
         winsize:
             The window length in seconds that spindle used to estimate states.
-        state_prob: 
+        state_prob:
             The class probability the an epoch must be to be considered as being the label
-            
+
     Returns:
-        A 1-D boolean array state mask 
+        A 1-D boolean array state mask
     """
     state_mask = state(path, labels=[label], fs=fs, winsize=winsize, include=True)
 
-    p_column = {'w': 'class_prob_0', 'n': 'class_prob_1', 'r': 'class_prob_2'}
+    p_column = {"w": "class_prob_0", "n": "class_prob_1", "r": "class_prob_2"}
+
     def above_thresh(val):
         return float(val) >= sprob
-
 
     prob_mask = _expand_spindle_column(
         path=path,
@@ -85,26 +83,24 @@ def state_prob(path: str | Path,
         fs=fs,
         winsize=winsize,
         value_fn=above_thresh,
-        include=True
+        include=True,
     )
 
     return state_mask & prob_mask
 
-def spindle_noise(path: str | Path,
-                  noise_thresh: float = 0.5,
-                  fs: int = 250,
-                  winsize: int = 4,
-                  include=False
+
+def spindle_noise(
+    path: str | Path, noise_thresh: float = 0.5, fs: int = 250, winsize: int = 4, include=False
 ) -> npt.NDArray[np.bool_]:
-    """Returns a boolean mask from a spindle sleep score csv file. Default returns False for 
-    samples with a noise probability >= noise_thresh. 
+    """Returns a boolean mask from a spindle sleep score csv file. Default returns False for
+    samples with a noise probability >= noise_thresh.
 
     Args:
         path:
             A path to a spindle file.
         noise_thresh:
             A noise probability threshold between 0-1. Samples with value >= noise_thresh will be False
-            in mask (when include=False). 
+            in mask (when include=False).
         fs:
             The sampling rate of the data this mask will be applied.
         winsize:
@@ -113,9 +109,9 @@ def spindle_noise(path: str | Path,
             A boolean indicating if labels should be included (i.e. True) and
             all else False or labels should be excluded (i.e. False) from the
             returned mask.
-            
+
     Returns:
-        A 1-D boolean array state mask         
+        A 1-D boolean array state mask
     """
 
     def above_thresh(val):

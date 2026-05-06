@@ -5,6 +5,7 @@ output-dir picker, params form (with "Load from PSD run" + a "modified —
 no longer matches" indicator), animal multi-select, inline status table,
 and a worker thread that emits per-animal progress.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -50,6 +51,7 @@ _STATE_PRESET_ORDER = ("wake", "nrem", "rem", "all", "sleep")
 # Worker thread
 # ---------------------------------------------------------------------------
 
+
 class MaskExportWorker(QThread):
     """Runs ``export_run`` off the GUI thread; emits per-animal progress."""
 
@@ -87,6 +89,7 @@ class MaskExportWorker(QThread):
 # ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
+
 
 class ExportMasksPage(QWidget):
     """Sidebar page #10 — write per-animal interval CSVs to ``exports/<name>/``."""
@@ -216,7 +219,9 @@ class ExportMasksPage(QWidget):
         v.addLayout(form)
 
         for w in (
-            self.spin_nstd, self.spin_sd_winsize, self.spin_sd_radius,
+            self.spin_nstd,
+            self.spin_sd_winsize,
+            self.spin_sd_radius,
             self.spin_noise,
         ):
             w.valueChanged.connect(self._check_modified)
@@ -367,13 +372,19 @@ class ExportMasksPage(QWidget):
         runs = psd_params.list_runs(self.project_root)
         if not runs:
             QMessageBox.information(
-                self, "No PSD runs",
+                self,
+                "No PSD runs",
                 "No saved PSD runs found at psd/<name>/. Compute a PSD run "
                 "first, or fill in the params manually.",
             )
             return
         run, ok = QInputDialog.getItem(
-            self, "Load from PSD run", "Run:", runs, 0, False,
+            self,
+            "Load from PSD run",
+            "Run:",
+            runs,
+            0,
+            False,
         )
         if not ok or not run:
             return
@@ -387,8 +398,11 @@ class ExportMasksPage(QWidget):
         # Block signals while bulk-setting widget values, then snapshot.
         widgets = [
             *self.cb_states.values(),
-            self.spin_nstd, self.spin_sd_winsize, self.spin_sd_radius,
-            self.spin_noise, self.cb_hw_enabled,
+            self.spin_nstd,
+            self.spin_sd_winsize,
+            self.spin_sd_radius,
+            self.spin_noise,
+            self.cb_hw_enabled,
         ]
         for w in widgets:
             w.blockSignals(True)
@@ -445,9 +459,7 @@ class ExportMasksPage(QWidget):
         if self._loaded_snapshot is None:
             return
         if self._snapshot_widget_values() != self._loaded_snapshot:
-            self.lbl_modified.setText(
-                f"Modified — no longer matches '{self._loaded_run_name}'"
-            )
+            self.lbl_modified.setText(f"Modified — no longer matches '{self._loaded_run_name}'")
         else:
             self.lbl_modified.setText("")
 
@@ -551,9 +563,15 @@ class ExportMasksPage(QWidget):
 
     def _set_inputs_enabled(self, enabled: bool) -> None:
         for w in (
-            self.le_dirname, self.btn_load_run, self.list_animals,
-            self.cb_hw_enabled, self.cb_use_drink, self.cb_use_swd,
-            self.spin_nstd, self.spin_sd_winsize, self.spin_sd_radius,
+            self.le_dirname,
+            self.btn_load_run,
+            self.list_animals,
+            self.cb_hw_enabled,
+            self.cb_use_drink,
+            self.cb_use_swd,
+            self.spin_nstd,
+            self.spin_sd_winsize,
+            self.spin_sd_radius,
             self.spin_noise,
             *self.cb_states.values(),
         ):
@@ -577,7 +595,12 @@ class ExportMasksPage(QWidget):
         self.lbl_summary.setText(f"0 / {len(pairs)} complete")
 
     def _set_row_status(
-        self, animal_id: str, combo: str, status: str, color: str, message: str = "",
+        self,
+        animal_id: str,
+        combo: str,
+        status: str,
+        color: str,
+        message: str = "",
     ) -> None:
         i = self._row_for_pair.get((animal_id, combo))
         if i is None:

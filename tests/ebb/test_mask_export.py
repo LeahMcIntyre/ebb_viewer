@@ -1,4 +1,5 @@
 """Tests for ebb.process.mask_export."""
+
 from __future__ import annotations
 
 import csv
@@ -132,7 +133,9 @@ def test_state_intervals_single_epoch(tmp_path):
     csv_path = tmp_path / "states.csv"
     _write_state_csv(csv_path, ["w"])
     rows = build_state_intervals(csv_path, fs=FS, winsize=WINSIZE)
-    assert rows == [IntervalRow(start_s=0.0, end_s=4.0, start_sample=0, end_sample=1000, label="wake")]
+    assert rows == [
+        IntervalRow(start_s=0.0, end_s=4.0, start_sample=0, end_sample=1000, label="wake")
+    ]
 
 
 def test_state_intervals_runs_are_merged(tmp_path):
@@ -315,9 +318,7 @@ def test_clean_per_state_sorted_by_start_sample():
     wake[800:900] = True
     nrem = np.zeros(1000, dtype=bool)
     nrem[400:500] = True
-    rows = clean_per_state_intervals(
-        {"wake": wake, "nrem": nrem}, np.ones(1000, dtype=bool), fs=FS
-    )
+    rows = clean_per_state_intervals({"wake": wake, "nrem": nrem}, np.ones(1000, dtype=bool), fs=FS)
     starts = [r.start_sample for r in rows]
     assert starts == sorted(starts)
 

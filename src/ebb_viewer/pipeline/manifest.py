@@ -46,29 +46,32 @@ from ebb_viewer.pipeline.naming import drink_mask_rel, parse_animal_id
 # ---------------------------------------------------------------------------
 
 SLEEP_QC_STATUSES = frozenset({"ok", "needs_review", "needs_rerun", "rejected"})
-PSD_STATUSES      = frozenset({"ok", "needs_drink_mask", "drink_mask_applied"})
+PSD_STATUSES = frozenset({"ok", "needs_drink_mask", "drink_mask_applied"})
 
 
 # ---------------------------------------------------------------------------
 # Data model
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class RunEntry:
     """State for one (animal × channel combo) spindle run."""
 
     # Sleep QC
-    sleep_qc:     str | None = None   # None | "ok" | "needs_review" | "needs_rerun" | "rejected"
-    rerun_combo:  str | None = None   # target combo when sleep_qc == "needs_rerun"
-    source_combo: str | None = None   # combo that triggered this run as a rerun
+    sleep_qc: str | None = None  # None | "ok" | "needs_review" | "needs_rerun" | "rejected"
+    rerun_combo: str | None = None  # target combo when sleep_qc == "needs_rerun"
+    source_combo: str | None = None  # combo that triggered this run as a rerun
 
     # PSD review — keyed by psd run name (e.g. "default", "light_phase")
-    psd_status:   dict = field(default_factory=dict)  # {run_name: "ok"|"needs_drink_mask"|"drink_mask_applied"}
-    drink_mask:   str | None = None   # relative path to .npy (shared across psd runs)
+    psd_status: dict = field(
+        default_factory=dict
+    )  # {run_name: "ok"|"needs_drink_mask"|"drink_mask_applied"}
+    drink_mask: str | None = None  # relative path to .npy (shared across psd runs)
 
     # Cascade-rejection bookkeeping (see one-ok invariant in module docstring)
     prev_sleep_qc: str | None = None  # sleep_qc value before this run was cascade-rejected
-    rejected_by:   str | None = None  # combo that caused the cascade-rejection
+    rejected_by: str | None = None  # combo that caused the cascade-rejection
 
 
 @dataclass
@@ -78,7 +81,7 @@ class ManifestEntry:
     animal_id: str
 
     # Stage 1 — Preprocess
-    preprocessed_edf: str           # relative path from project_root
+    preprocessed_edf: str  # relative path from project_root
 
     # Stage 2+ — one RunEntry per channel combo tried
     runs: dict[str, RunEntry] = field(default_factory=dict)
@@ -90,6 +93,7 @@ class ManifestEntry:
 # ---------------------------------------------------------------------------
 # Derived path helpers (not stored; computed on demand)
 # ---------------------------------------------------------------------------
+
 
 def spindle_edf_dir(channels: str, project_root: Path) -> Path:
     return project_root / "spindle_edfs" / channels
@@ -121,6 +125,7 @@ def drink_mask_path(run: RunEntry, project_root: Path) -> Path | None:
 # Serialisation helpers
 # ---------------------------------------------------------------------------
 
+
 def _run_to_dict(run: RunEntry) -> dict:
     return asdict(run)
 
@@ -145,6 +150,7 @@ def _ok_combo(entry: ManifestEntry) -> str | None:
 # ---------------------------------------------------------------------------
 # Manifest
 # ---------------------------------------------------------------------------
+
 
 class Manifest:
     """Ordered collection of ManifestEntry objects, backed by manifest.json."""
@@ -179,11 +185,11 @@ class Manifest:
         for animal_id, d in raw.items():
             # --- migration from old flat format ---
             if "spindle_channels" in d:
-                old_ch      = d.pop("spindle_channels")
-                old_qc      = d.pop("sleep_qc", None)
-                old_rerun   = d.pop("rerun_channels", None)
-                old_psd     = d.pop("psd_status", None)
-                old_drink   = d.pop("drink_mask", None)
+                old_ch = d.pop("spindle_channels")
+                old_qc = d.pop("sleep_qc", None)
+                old_rerun = d.pop("rerun_channels", None)
+                old_psd = d.pop("psd_status", None)
+                old_drink = d.pop("drink_mask", None)
                 old_notes = d.pop("notes", "")
                 runs: dict[str, RunEntry] = {}
                 if old_ch:
@@ -299,7 +305,8 @@ class Manifest:
                         ok = _ok_combo(entry)
                         new_run = (
                             RunEntry(sleep_qc="rejected", rejected_by=ok)
-                            if ok is not None else RunEntry()
+                            if ok is not None
+                            else RunEntry()
                         )
                         # Stamp source_combo only when the output CSV is present
                         # (spindle_outputs/).  A file in spindle_edfs/ means the EDF
@@ -329,10 +336,7 @@ class Manifest:
             data[animal_id] = {
                 "preprocessed_edf": entry.preprocessed_edf,
                 "notes": entry.notes,
-                "runs": {
-                    combo: _run_to_dict(run)
-                    for combo, run in entry.runs.items()
-                },
+                "runs": {combo: _run_to_dict(run) for combo, run in entry.runs.items()},
             }
         with tmp.open("w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
@@ -430,9 +434,7 @@ class Manifest:
             for combo, run in entry.runs.items()
             if run.source_combo is not None
             and run.sleep_qc is None
-            and any(spindle_output_dir(combo, self.project_root).glob(
-                f"{entry.animal_id}_*.csv"
-            ))
+            and any(spindle_output_dir(combo, self.project_root).glob(f"{entry.animal_id}_*.csv"))
         ]
 
     def needs_rerun(self) -> list[tuple[ManifestEntry, str]]:
@@ -458,8 +460,9 @@ class Manifest:
                 if rerun_run is not None and rerun_run.sleep_qc is not None:
                     continue  # already reviewed
                 csv_present = any(
-                    spindle_output_dir(run.rerun_combo, self.project_root)
-                    .glob(f"{entry.animal_id}_*.csv")
+                    spindle_output_dir(run.rerun_combo, self.project_root).glob(
+                        f"{entry.animal_id}_*.csv"
+                    )
                 )
                 if csv_present:
                     continue  # CSV downloaded; pending_rerun_review handles it
@@ -473,7 +476,8 @@ class Manifest:
         Animals with 0 ok runs (pending, needs_rerun, etc.) or 2+ ok runs are excluded.
         """
         return [
-            entry for entry in self
+            entry
+            for entry in self
             if sum(1 for r in entry.runs.values() if r.sleep_qc == "ok") == 1
         ]
 
@@ -484,36 +488,35 @@ class Manifest:
         """
         if not merged_psd_path(self.project_root, run_name).exists():
             return []
-        return self._filter_runs(
-            lambda e, r: r.sleep_qc == "ok" and run_name not in r.psd_status
-        )
+        return self._filter_runs(lambda e, r: r.sleep_qc == "ok" and run_name not in r.psd_status)
 
     def needs_drink_mask(self, run_name: str) -> list[tuple[ManifestEntry, str]]:
         """Runs flagged as having drinking sidebands in the PSD for run_name."""
         return self._filter_runs(
-            lambda e, r: r.sleep_qc == "ok"
-            and r.psd_status.get(run_name) == "needs_drink_mask"
+            lambda e, r: r.sleep_qc == "ok" and r.psd_status.get(run_name) == "needs_drink_mask"
         )
 
     def needs_drink_mask_rerun(self, run_name: str) -> list[tuple[ManifestEntry, str]]:
         """Runs flagged needs_drink_mask where the drink mask file is present on disk."""
         root = self.project_root
         return self._filter_runs(
-            lambda e, r: r.sleep_qc == "ok"
-            and r.psd_status.get(run_name) == "needs_drink_mask"
-            and (root / drink_mask_rel(e.animal_id)).is_file()
+            lambda e, r: (
+                r.sleep_qc == "ok"
+                and r.psd_status.get(run_name) == "needs_drink_mask"
+                and (root / drink_mask_rel(e.animal_id)).is_file()
+            )
         )
 
     def pending_drink_verification(self, run_name: str) -> list[tuple[ManifestEntry, str]]:
         """Runs with drink_mask_applied — ready for Pass 2 PSD verification."""
         return self._filter_runs(
-            lambda e, r: r.sleep_qc == "ok"
-            and r.psd_status.get(run_name) == "drink_mask_applied"
+            lambda e, r: r.sleep_qc == "ok" and r.psd_status.get(run_name) == "drink_mask_applied"
         )
 
     def all_pending_psd_review(self) -> list[tuple[ManifestEntry, str]]:
         """Pending PSD review across ALL runs — for sidebar badge counts."""
         from ebb_viewer.pipeline import psd_params as _pp
+
         runs = _pp.list_runs(self.project_root)
         seen: set = set()
         result = []
@@ -528,6 +531,7 @@ class Manifest:
     def all_needs_drink_mask(self) -> list[tuple[ManifestEntry, str]]:
         """Needs-drink-mask across ALL runs — for sidebar badge counts."""
         from ebb_viewer.pipeline import psd_params as _pp
+
         runs = _pp.list_runs(self.project_root)
         seen: set = set()
         result = []
@@ -542,6 +546,7 @@ class Manifest:
     def all_pending_drink_verification(self) -> list[tuple[ManifestEntry, str]]:
         """Pending drink verification across ALL runs — for sidebar badge counts."""
         from ebb_viewer.pipeline import psd_params as _pp
+
         runs = _pp.list_runs(self.project_root)
         seen: set = set()
         result = []
@@ -657,7 +662,9 @@ class Manifest:
 
         self.save()
 
-    def flag_psd(self, animal_id: str, channels: str, status: str, run_name: str = "default") -> None:
+    def flag_psd(
+        self, animal_id: str, channels: str, status: str, run_name: str = "default"
+    ) -> None:
         """Set the PSD review flag for a specific (animal, channels, run_name).
 
         Args:
@@ -670,9 +677,7 @@ class Manifest:
             ValueError: if the run's sleep_qc is not "ok".
         """
         if status not in PSD_STATUSES:
-            raise ValueError(
-                f"Invalid psd_status {status!r}; must be one of {PSD_STATUSES}"
-            )
+            raise ValueError(f"Invalid psd_status {status!r}; must be one of {PSD_STATUSES}")
         run = self._entries[animal_id].runs[channels]
         if run.sleep_qc != "ok":
             raise ValueError(
@@ -685,9 +690,7 @@ class Manifest:
         elif status == "ok":
             # Clear drink_mask only if no other psd run still has drink_mask_applied
             if not any(
-                v == "drink_mask_applied"
-                for k, v in run.psd_status.items()
-                if k != run_name
+                v == "drink_mask_applied" for k, v in run.psd_status.items() if k != run_name
             ):
                 run.drink_mask = None
         # "needs_drink_mask": leave drink_mask as-is
@@ -722,4 +725,3 @@ class Manifest:
         run.prev_sleep_qc = None
         run.rejected_by = None
         self.save()
-

@@ -35,17 +35,23 @@ from ebb_viewer.widgets.tree_view import ProjectTree
 
 # Pipeline stage columns
 _COLUMNS = [
-    "Animal", "Runs", "Preprocessed", "Channels",
-    "Spindle EDF", "Spindle Output",
-    "Sleep QC", "PSD File", "PSD Status",
+    "Animal",
+    "Runs",
+    "Preprocessed",
+    "Channels",
+    "Spindle EDF",
+    "Spindle Output",
+    "Sleep QC",
+    "PSD File",
+    "PSD Status",
 ]
 
-_MULTIRUN_COLOR = QColor("#dce8f7")   # light blue = animal has multiple runs
+_MULTIRUN_COLOR = QColor("#dce8f7")  # light blue = animal has multiple runs
 
 _STATUS_COLOR = {k: QColor(v) for k, v in STATUS_COLOR_HEX.items()}
-_RERUN_DONE_COLOR = QColor("#c8c8c8")   # gray = rerun resolved
-_PENDING_COLOR    = QColor("#f0f0f0")   # light gray = reached but not yet flagged
-_EXISTS_COLOR     = QColor("#d4edda")   # green
+_RERUN_DONE_COLOR = QColor("#c8c8c8")  # gray = rerun resolved
+_PENDING_COLOR = QColor("#f0f0f0")  # light gray = reached but not yet flagged
+_EXISTS_COLOR = QColor("#d4edda")  # green
 
 # Combo badge colours for the Channels column
 _COMBO_BG: dict[str, QColor] = {k: QColor(v) for k, v in COMBO_BADGE_HEX.items()}
@@ -53,7 +59,7 @@ _COMBO_FG = QColor("#ffffff")
 
 _SLEEP_QC_LABEL: dict[str, str] = {
     "needs_review": "Review EDF",
-    "needs_rerun":  "Rerun Queued",
+    "needs_rerun": "Rerun Queued",
 }
 
 
@@ -80,21 +86,27 @@ _STEP_LABELS = [
 ]
 
 _STEP_PAGE_NAMES = [
-    "preprocess", "spindle_write", "spindle_upload",
-    "sleep_qc", "rerun", "psd_compute", "psd_review",
+    "preprocess",
+    "spindle_write",
+    "spindle_upload",
+    "sleep_qc",
+    "rerun",
+    "psd_compute",
+    "psd_review",
     "drink_mask",
 ]
 
-_GUIDE_ICON       = {"done": "✓", "attention": "⚠", "active": "→", "blocked": "○"}
+_GUIDE_ICON = {"done": "✓", "attention": "⚠", "active": "→", "blocked": "○"}
 _GUIDE_ICON_COLOR = {
-    "done":      "#3a7d44",
+    "done": "#3a7d44",
     "attention": "#b06000",
-    "active":    "#1a5fa8",
-    "blocked":   "#999999",
+    "active": "#1a5fa8",
+    "blocked": "#999999",
 }
 _GUIDE_ROW_HIGHLIGHT = "#eef4fc"
 
-#TODO: Should this be centrilized somewhere else?
+
+# TODO: Should this be centrilized somewhere else?
 def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[StepStatus]:
     root = Path(project_root)
 
@@ -107,25 +119,23 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     # Step 2 done: spindle edfs dir exist and contains at least 1 dir with at least 1 edf
     spindle_edfs_dir = root / "spindle_edfs"
     step2_done = spindle_edfs_dir.is_dir() and any(
-        True for sd in spindle_edfs_dir.iterdir()
-        if sd.is_dir() and any(sd.glob("*.edf"))
+        True for sd in spindle_edfs_dir.iterdir() if sd.is_dir() and any(sd.glob("*.edf"))
     )
 
     # Step 3 done: spindle outputs dir exists and contains at least 1 dir with at least 1 csv
     spindle_outputs_dir = root / "spindle_outputs"
     step3_done = spindle_outputs_dir.is_dir() and any(
-        True for sd in spindle_outputs_dir.iterdir()
-        if sd.is_dir() and any(sd.glob("*.csv"))
+        True for sd in spindle_outputs_dir.iterdir() if sd.is_dir() and any(sd.glob("*.csv"))
     )
 
     # --- manifest facts ---
-    n_review      = len(manifest.needs_review())
-    n_pending_qc  = len(manifest.pending_sleep_qc())
-    n_ok          = sum(1 for e in manifest if any(r.sleep_qc == "ok" for r in e.runs.values()))
-    n_rerun       = len(manifest.needs_rerun())
-    n_animals     = sum(1 for _ in manifest)
-    n_ready_psd   = len(manifest.ready_for_psd())
-    n_rerun_pend  = len(manifest.needs_rerun_pending())
+    n_review = len(manifest.needs_review())
+    n_pending_qc = len(manifest.pending_sleep_qc())
+    n_ok = sum(1 for e in manifest if any(r.sleep_qc == "ok" for r in e.runs.values()))
+    n_rerun = len(manifest.needs_rerun())
+    n_animals = sum(1 for _ in manifest)
+    n_ready_psd = len(manifest.ready_for_psd())
+    n_rerun_pend = len(manifest.needs_rerun_pending())
     n_rerun_ready = len(manifest.pending_rerun_review())
     n_psd_pending = len(manifest.all_pending_psd_review())
 
@@ -157,8 +167,10 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
         s4 = StepStatus("done", f"{n_ok} animal{'s' if n_ok != 1 else ''} marked ok")
     elif step3_done and (n_review > 0 or n_pending_qc > 0):
         parts = []
-        if n_review:     parts.append(f"{n_review} flagged for EDF review")
-        if n_pending_qc: parts.append(f"{n_pending_qc} not yet assessed")
+        if n_review:
+            parts.append(f"{n_review} flagged for EDF review")
+        if n_pending_qc:
+            parts.append(f"{n_pending_qc} not yet assessed")
         s4 = StepStatus("attention", ", ".join(parts))
     elif step3_done:
         s4 = StepStatus("active", "Ready — review sleep QC for each animal")
@@ -170,8 +182,10 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     qc_complete = step3_done and n_pending_qc == 0 and n_ok > 0
     if n_rerun_pend > 0 or n_rerun_ready > 0:
         parts = []
-        if n_rerun_pend:  parts.append(f"{n_rerun_pend} upload pending")
-        if n_rerun_ready: parts.append(f"{n_rerun_ready} ready to review")
+        if n_rerun_pend:
+            parts.append(f"{n_rerun_pend} upload pending")
+        if n_rerun_ready:
+            parts.append(f"{n_rerun_ready} ready to review")
         s5 = StepStatus("attention", ", ".join(parts))
     elif n_rerun > 0 and n_rerun_pend == 0 and n_rerun_ready == 0:
         s5 = StepStatus("done", f"{n_rerun} rerun{'s' if n_rerun != 1 else ''} accepted")
@@ -184,26 +198,40 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
 
     # --- Step 6: PSD Computation ---
     psd_runs = _psd_params.list_runs(root)
-    any_merged_pkl = any(merged_psd_path(root, rn).exists() for rn in psd_runs) if psd_runs else False
+    any_merged_pkl = (
+        any(merged_psd_path(root, rn).exists() for rn in psd_runs) if psd_runs else False
+    )
     all_ready_for_psd = n_animals > 0 and n_ready_psd == n_animals
 
     if psd_runs and any_merged_pkl:
         n_runs = len(psd_runs)
-        s6 = StepStatus("done", f"{n_runs} run{'s' if n_runs != 1 else ''} computed — channel merged PKL ready")
+        s6 = StepStatus(
+            "done", f"{n_runs} run{'s' if n_runs != 1 else ''} computed — channel merged PKL ready"
+        )
     elif all_ready_for_psd:
-        s6 = StepStatus("active", f"Ready — {n_animals} animal{'s' if n_animals != 1 else ''} each have exactly 1 ok run")
+        s6 = StepStatus(
+            "active",
+            f"Ready — {n_animals} animal{'s' if n_animals != 1 else ''} each have exactly 1 ok run",
+        )
     elif n_ok > 0:
         n_not_ready = n_animals - n_ready_psd
-        s6 = StepStatus("blocked", f"{n_not_ready} animal{'s' if n_not_ready != 1 else ''} not yet ready")
+        s6 = StepStatus(
+            "blocked", f"{n_not_ready} animal{'s' if n_not_ready != 1 else ''} not yet ready"
+        )
     else:
         s6 = StepStatus("blocked", "Requires all animals to have exactly 1 ok run (step 4)")
 
     # --- Step 7: PSD Review ---
     n_needs_drink = len(manifest.all_needs_drink_mask())
     if n_psd_pending > 0:
-        s7 = StepStatus("attention", f"{n_psd_pending} PSD{'s' if n_psd_pending != 1 else ''} to review")
+        s7 = StepStatus(
+            "attention", f"{n_psd_pending} PSD{'s' if n_psd_pending != 1 else ''} to review"
+        )
     elif n_needs_drink > 0 and any_merged_pkl:
-        s7 = StepStatus("attention", f"{n_needs_drink} animal{'s' if n_needs_drink != 1 else ''} need drink mask")
+        s7 = StepStatus(
+            "attention",
+            f"{n_needs_drink} animal{'s' if n_needs_drink != 1 else ''} need drink mask",
+        )
     elif any_merged_pkl and n_psd_pending == 0:
         s7 = StepStatus("done", "All PSDs reviewed")
     elif any_merged_pkl:
@@ -214,7 +242,9 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     # --- Step 8: Drink Mask ---
     # n_needs_drink already computed above
     n_drink_applied = sum(
-        1 for e in manifest for r in e.runs.values()
+        1
+        for e in manifest
+        for r in e.runs.values()
         if "drink_mask_applied" in r.psd_status.values()
     )
     if not any_merged_pkl:
@@ -358,7 +388,7 @@ class HomePage(QWidget):
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Animal
         hh.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Runs
-        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)           # Preprocessed EDF
+        hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)  # Preprocessed EDF
         for col in range(3, len(_COLUMNS)):
             hh.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
 
@@ -416,9 +446,7 @@ class HomePage(QWidget):
             self._guide_row_refs.append((icon_lbl, name_lbl, desc_lbl, btn))
 
     def _toggle_guide(self, checked: bool) -> None:
-        self.btn_guide_toggle.setText(
-            "▼  Pipeline Steps" if checked else "►  Pipeline Steps"
-        )
+        self.btn_guide_toggle.setText("▼  Pipeline Steps" if checked else "►  Pipeline Steps")
         self._guide_container.setVisible(checked)
 
     def _refresh_pipeline_guide(self, manifest: Manifest) -> None:
@@ -436,12 +464,11 @@ class HomePage(QWidget):
             desc_lbl.setText(st.description)
             desc_lbl.setStyleSheet(f"color: {color};")
 
-            is_next = (i == next_idx)
+            is_next = i == next_idx
             name_lbl.setStyleSheet("font-weight: bold;" if is_next else "")
             row_w = icon_lbl.parent()
             row_w.setStyleSheet(
-                f"background-color: {_GUIDE_ROW_HIGHLIGHT}; border-radius: 3px;"
-                if is_next else ""
+                f"background-color: {_GUIDE_ROW_HIGHLIGHT}; border-radius: 3px;" if is_next else ""
             )
             if st.kind == "blocked":
                 btn.setStyleSheet("QPushButton { padding: 2px 8px; color: #aaaaaa; }")
@@ -471,9 +498,7 @@ class HomePage(QWidget):
             self._attn_scroll.setMaximumHeight(clamped)
 
     def _toggle_table(self, checked: bool) -> None:
-        self.btn_table_toggle.setText(
-            "▼  Pipeline Summary" if checked else "►  Pipeline Summary"
-        )
+        self.btn_table_toggle.setText("▼  Pipeline Summary" if checked else "►  Pipeline Summary")
         self.table.setVisible(checked)
 
     def _toggle_file_tree(self, checked: bool) -> None:
@@ -509,14 +534,16 @@ class HomePage(QWidget):
         edf_dir = spindle_edf_dir(run.rerun_combo, self.project_root)
         if edf_dir.is_dir() and any(edf_dir.glob(f"{entry.animal_id}*.edf")):
             QMessageBox.information(
-                self, "EDF already written",
+                self,
+                "EDF already written",
                 f"Spindle EDF for {run.rerun_combo} has already been written and cannot be changed.",
             )
             return
 
         choices = [c for c in CHANNEL_COMBOS if c != combo]
         new_combo, ok = QInputDialog.getItem(
-            self, "Change Rerun Combo",
+            self,
+            "Change Rerun Combo",
             f"New rerun combo for {entry.animal_id}:",
             choices,
             choices.index(run.rerun_combo) if run.rerun_combo in choices else 0,
@@ -540,9 +567,7 @@ class HomePage(QWidget):
         n_new = after - before
         self._refresh()
         if n_new > 0:
-            self._import_lbl.setText(
-                f"✓ {n_new} new animal{'s' if n_new != 1 else ''} imported"
-            )
+            self._import_lbl.setText(f"✓ {n_new} new animal{'s' if n_new != 1 else ''} imported")
             self._import_lbl.setVisible(True)
         elif show_zero:
             self._import_lbl.setText("No new animals found")
@@ -572,15 +597,17 @@ class HomePage(QWidget):
         psd_runs = _psd_params.list_runs(self.project_root)
         self.table.setRowCount(len(rows))
         for row_idx, (entry, combo, run) in enumerate(rows):
-            spindle_edf_ok  = bool(combo) and _any_file_for_animal(
-                self.project_root, "spindle_edfs", combo, entry.animal_id)
-            spindle_out_ok  = bool(combo) and _any_file_for_animal(
-                self.project_root, "spindle_outputs", combo, entry.animal_id)
-            psd_file_ok     = bool(combo) and any(
+            spindle_edf_ok = bool(combo) and _any_file_for_animal(
+                self.project_root, "spindle_edfs", combo, entry.animal_id
+            )
+            spindle_out_ok = bool(combo) and _any_file_for_animal(
+                self.project_root, "spindle_outputs", combo, entry.animal_id
+            )
+            psd_file_ok = bool(combo) and any(
                 psd_path(combo, self.project_root, rn).is_file() for rn in psd_runs
             )
 
-            sleep_qc       = run.sleep_qc if run else None
+            sleep_qc = run.sleep_qc if run else None
             psd_status_dict = run.psd_status if run else {}
             # Derive a single display status across all runs
             if any(v == "needs_drink_mask" for v in psd_status_dict.values()):
@@ -597,10 +624,14 @@ class HomePage(QWidget):
 
             # 1: Runs
             n_runs = len(entry.runs)
-            self.table.setItem(row_idx, 1, make_cell(
-                str(n_runs),
-                _MULTIRUN_COLOR if n_runs > 1 else None,
-            ))
+            self.table.setItem(
+                row_idx,
+                1,
+                make_cell(
+                    str(n_runs),
+                    _MULTIRUN_COLOR if n_runs > 1 else None,
+                ),
+            )
 
             # 2: Preprocessed EDF (filename only)
             pre = Path(entry.preprocessed_edf).name if entry.preprocessed_edf else "—"
@@ -608,53 +639,70 @@ class HomePage(QWidget):
 
             # 3: Channels
             combo_bg = _COMBO_BG.get(combo)
-            self.table.setItem(row_idx, 3, make_cell(
-                combo or "—",
-                bg=combo_bg,
-                fg=_COMBO_FG if combo_bg else None,
-            ))
+            self.table.setItem(
+                row_idx,
+                3,
+                make_cell(
+                    combo or "—",
+                    bg=combo_bg,
+                    fg=_COMBO_FG if combo_bg else None,
+                ),
+            )
 
             # 4: Spindle EDF
-            self.table.setItem(row_idx, 4, make_cell(
-                "✓" if spindle_edf_ok else "—",
-                _EXISTS_COLOR if spindle_edf_ok else None,
-            ))
+            self.table.setItem(
+                row_idx,
+                4,
+                make_cell(
+                    "✓" if spindle_edf_ok else "—",
+                    _EXISTS_COLOR if spindle_edf_ok else None,
+                ),
+            )
 
             # 5: Spindle Output
-            self.table.setItem(row_idx, 5, make_cell(
-                "✓" if spindle_out_ok else "—",
-                _EXISTS_COLOR if spindle_out_ok else None,
-            ))
+            self.table.setItem(
+                row_idx,
+                5,
+                make_cell(
+                    "✓" if spindle_out_ok else "—",
+                    _EXISTS_COLOR if spindle_out_ok else None,
+                ),
+            )
 
             # 6: Sleep QC
             edit_hint = False
             if sleep_qc is None:
                 txt = "pending" if spindle_out_ok else "—"
-                bg  = _PENDING_COLOR if spindle_out_ok else None
+                bg = _PENDING_COLOR if spindle_out_ok else None
             elif sleep_qc == "needs_rerun" and run.rerun_combo:
                 rerun_run = entry.runs.get(run.rerun_combo)
                 if rerun_run and rerun_run.sleep_qc == "ok":
                     txt = "rerun done ✓"
-                    bg  = _RERUN_DONE_COLOR
+                    bg = _RERUN_DONE_COLOR
                 else:
                     edf_written = _any_file_for_animal(
-                        self.project_root, "spindle_edfs", run.rerun_combo, entry.animal_id)
+                        self.project_root, "spindle_edfs", run.rerun_combo, entry.animal_id
+                    )
                     txt = f"rerun → {run.rerun_combo}" + ("" if edf_written else "  ✎")
-                    bg  = _STATUS_COLOR.get("needs_rerun")
+                    bg = _STATUS_COLOR.get("needs_rerun")
                     edit_hint = not edf_written
             else:
                 txt = _SLEEP_QC_LABEL.get(sleep_qc, sleep_qc)
-                bg  = _STATUS_COLOR.get(sleep_qc)
+                bg = _STATUS_COLOR.get(sleep_qc)
             cell_6 = make_cell(txt, bg)
             if edit_hint:
                 cell_6.setToolTip("Double-click to change rerun combo")
             self.table.setItem(row_idx, 6, cell_6)
 
             # 7: PSD File
-            self.table.setItem(row_idx, 7, make_cell(
-                "✓" if psd_file_ok else "—",
-                _EXISTS_COLOR if psd_file_ok else None,
-            ))
+            self.table.setItem(
+                row_idx,
+                7,
+                make_cell(
+                    "✓" if psd_file_ok else "—",
+                    _EXISTS_COLOR if psd_file_ok else None,
+                ),
+            )
 
             # 8: PSD Status
             has_drink_mask = (
@@ -697,14 +745,12 @@ class HomePage(QWidget):
             if w:
                 w.setParent(None)
 
-        reviewing   = manifest.needs_review()
-        rerunning   = manifest.needs_rerun_pending()
+        reviewing = manifest.needs_review()
+        rerunning = manifest.needs_rerun_pending()
         rerun_ready = manifest.pending_rerun_review()
-        drink_mask  = manifest.all_needs_drink_mask()
+        drink_mask = manifest.all_needs_drink_mask()
 
-        self._attn_card_count = (
-            len(reviewing) + len(rerunning) + len(rerun_ready) + len(drink_mask)
-        )
+        self._attn_card_count = len(reviewing) + len(rerunning) + len(rerun_ready) + len(drink_mask)
         self._update_attn_max_height()
 
         if not reviewing and not rerunning and not rerun_ready and not drink_mask:
@@ -727,7 +773,9 @@ class HomePage(QWidget):
         row_w = QWidget()
         row_w.setObjectName("attnRow")
         row_w.setMaximumHeight(42)
-        row_w.setStyleSheet(f"QWidget#attnRow {{ background-color: {bg_color}; border-radius: 3px; }}")
+        row_w.setStyleSheet(
+            f"QWidget#attnRow {{ background-color: {bg_color}; border-radius: 3px; }}"
+        )
         h = QHBoxLayout(row_w)
         h.setContentsMargins(6, 3, 6, 3)
         h.setSpacing(8)
@@ -781,8 +829,9 @@ class HomePage(QWidget):
             btn_rerun.setToolTip("Mark file to be rerun with the selected channel combo")
             btn_rerun.setFixedHeight(24)
             btn_rerun.clicked.connect(
-                lambda _, mid=entry.animal_id, ch=channels, c=rerun_combo:
-                    self._queue_flag_rerun(mid, ch, c.currentData())
+                lambda _, mid=entry.animal_id, ch=channels, c=rerun_combo: self._queue_flag_rerun(
+                    mid, ch, c.currentData()
+                )
             )
             h.addWidget(btn_rerun)
 
@@ -802,7 +851,9 @@ class HomePage(QWidget):
         h.addWidget(lbl_type)
         h.addStretch(1)
         btn_hint = QPushButton("→ Spindle Rerun page")
-        btn_hint.setStyleSheet("color: #7a4400; border: none; padding: 0; text-decoration: underline;")
+        btn_hint.setStyleSheet(
+            "color: #7a4400; border: none; padding: 0; text-decoration: underline;"
+        )
         btn_hint.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_hint.setFlat(True)
         btn_hint.clicked.connect(lambda: self.navigate_to.emit("rerun"))
@@ -821,7 +872,9 @@ class HomePage(QWidget):
         h.addWidget(lbl_type)
         h.addStretch(1)
         btn_hint = QPushButton("→ Sleep QC page")
-        btn_hint.setStyleSheet("color: #005a7a; border: none; padding: 0; text-decoration: underline;")
+        btn_hint.setStyleSheet(
+            "color: #005a7a; border: none; padding: 0; text-decoration: underline;"
+        )
         btn_hint.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_hint.setFlat(True)
         btn_hint.clicked.connect(lambda: self.navigate_to.emit("sleep_qc"))
@@ -874,6 +927,7 @@ class HomePage(QWidget):
         manifest = Manifest.load(self.project_root)
 
         from ebb_viewer.edf_viewer.eeg_viewer import launch_edf_window
+
         try:
             win = launch_edf_window(
                 edf_path=edf_path,

@@ -108,8 +108,8 @@ class AnnotationMaskDialog(QtWidgets.QDialog):
 
         # --- buttons ---
         buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Ok |
-            QtWidgets.QDialogButtonBox.StandardButton.Cancel
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -127,13 +127,11 @@ class AnnotationMaskDialog(QtWidgets.QDialog):
         exact = self._radio_exact.isChecked()
         if exact:
             kw_set = set(keywords)
-            n_match = sum(
-                1 for _, label in self._annotations
-                if label.strip().lower() in kw_set
-            )
+            n_match = sum(1 for _, label in self._annotations if label.strip().lower() in kw_set)
         else:
             n_match = sum(
-                1 for _, label in self._annotations
+                1
+                for _, label in self._annotations
                 if any(kw in label.strip().lower() for kw in keywords)
             )
         self._count_lbl.setText(f"{n_match} of {len(self._annotations)} annotations match")
@@ -145,7 +143,15 @@ class AnnotationMaskDialog(QtWidgets.QDialog):
 
 
 class EegMainWindow(QtWidgets.QMainWindow):
-    def __init__(self, recording: Recording, initial_dir: str = "", manifest=None, animal_id: str | None = None, run_channels: str | None = None, parent=None):
+    def __init__(
+        self,
+        recording: Recording,
+        initial_dir: str = "",
+        manifest=None,
+        animal_id: str | None = None,
+        run_channels: str | None = None,
+        parent=None,
+    ):
         super().__init__(parent)
         self.rec = recording
         self.initial_dir = initial_dir
@@ -165,7 +171,6 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.nperseg = 125  # 0.5 s at 250 Hz
         self._stft_popup = STFTPopup(self, title="EEG STFT")
         self._stft_popup.resize(1200, 800)
-
 
         self.setWindowTitle("EEG Viewer")
         self.resize(1200, 800)
@@ -193,7 +198,11 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self._build_actions()
         self._build_menus()
         self._build_toolbars()
-        if self.manifest is not None and self.animal_id is not None and self.run_channels is not None:
+        if (
+            self.manifest is not None
+            and self.animal_id is not None
+            and self.run_channels is not None
+        ):
             self._build_qc_toolbar()
         self._build_docks()
 
@@ -263,7 +272,6 @@ class EegMainWindow(QtWidgets.QMainWindow):
         m_file.addAction(self.act_quit)
         m_file.addAction(self.act_info)
 
-
         m_view = mb.addMenu("&View")
         m_view.addAction(self.act_plot_sleep)
         m_view.addSeparator()
@@ -286,7 +294,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         tools_tb = self.addToolBar("Tools")
         tools_tb.setObjectName("ToolsToolbar")
         tools_tb.addAction(self.act_stft)
-        #tools_tb.addAction(self.act_psd)
+        # tools_tb.addAction(self.act_psd)
 
     def on_show_stft(self):
         self._stft_popup.plot_window(
@@ -324,10 +332,12 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self._sleep_popup.show()
         self._sleep_popup.raise_()
 
-
-
     def _navigate_mask(self, mask, forward: bool) -> None:
-        span = mask.next_span_after(self.trace_view.center_sample) if forward else mask.prev_span_before(self.trace_view.center_sample)
+        span = (
+            mask.next_span_after(self.trace_view.center_sample)
+            if forward
+            else mask.prev_span_before(self.trace_view.center_sample)
+        )
         if span is not None:
             self.trace_view.jump_to_sample(span[0])
 
@@ -400,9 +410,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
         run = self.manifest.get_run(self.animal_id, self.run_channels)
         status = run.sleep_qc if run else None
         _STYLE = {
-            "ok":           "color: green; font-weight: bold;",
+            "ok": "color: green; font-weight: bold;",
             "needs_review": "color: #b8860b; font-weight: bold;",
-            "needs_rerun":  "color: darkorange; font-weight: bold;",
+            "needs_rerun": "color: darkorange; font-weight: bold;",
         }
         txt = (status or "unflagged").replace("_", " ")
         self._qc_status_label.setText(f"QC [{self.run_channels}]: {txt}")
@@ -427,8 +437,10 @@ class EegMainWindow(QtWidgets.QMainWindow):
         elif name == "annotation" and self._annotation_path:
             _, n_samples = self.rec.data.shape
             new_ann = rebuild_annotation_mask(
-                self._annotation_path, n_samples=n_samples,
-                fs=self.rec.fs, meta=mask.metadata,
+                self._annotation_path,
+                n_samples=n_samples,
+                fs=self.rec.fs,
+                meta=mask.metadata,
             )
             self.mask_set.add(new_ann)
 
@@ -450,7 +462,6 @@ class EegMainWindow(QtWidgets.QMainWindow):
             self.rec.swd_path = mat_path
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
-
 
     def on_load_drink(self):
         drink_path, offset_path = pick_npy_csv(self, self.initial_dir)
@@ -474,7 +485,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
         if dlg.exec():
             pad_sec, offset = dlg.values()
             try:
-                self.mask_set.add(load_drink_mask(drink_path, fs=self.rec.fs, offset_sec=offset, pad_sec=pad_sec))
+                self.mask_set.add(
+                    load_drink_mask(drink_path, fs=self.rec.fs, offset_sec=offset, pad_sec=pad_sec)
+                )
                 self.trace_view.refresh_overlays()
                 self.masks_dock.rebuild(self.mask_set, self.state_set)
                 self.rec.drink_path = drink_path
@@ -507,12 +520,14 @@ class EegMainWindow(QtWidgets.QMainWindow):
         if not dir_path:
             return
         animal_id = self.rec.edf_path.stem.split("_")[0]
-        matches = sorted(Path(dir_path).glob(f"{animal_id}*.txt")) + \
-                  sorted(Path(dir_path).glob(f"{animal_id}*.csv"))
+        matches = sorted(Path(dir_path).glob(f"{animal_id}*.txt")) + sorted(
+            Path(dir_path).glob(f"{animal_id}*.csv")
+        )
         if not matches:
             QtWidgets.QMessageBox.warning(
-                self, "No Annotation File Found",
-                f"No annotation file starting with '{animal_id}' found in:\n{dir_path}"
+                self,
+                "No Annotation File Found",
+                f"No annotation file starting with '{animal_id}' found in:\n{dir_path}",
             )
             return
         try:
@@ -531,9 +546,13 @@ class EegMainWindow(QtWidgets.QMainWindow):
         try:
             _, n_samples = self.rec.data.shape
             mask = build_annotation_mask(
-                self._annotation_path, keywords=keywords,
-                pad_before_sec=pad_before_sec, pad_after_sec=pad_after_sec,
-                match_mode=match_mode, n_samples=n_samples, fs=self.rec.fs,
+                self._annotation_path,
+                keywords=keywords,
+                pad_before_sec=pad_before_sec,
+                pad_after_sec=pad_after_sec,
+                match_mode=match_mode,
+                n_samples=n_samples,
+                fs=self.rec.fs,
             )
             self.mask_set.add(mask)
             self.trace_view.refresh_overlays()
@@ -595,6 +614,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         lay.addWidget(text)
         dlg.exec()
 
+
 def launch_edf_window(
     edf_path: Path,
     csv_path: Path | None = None,
@@ -608,7 +628,9 @@ def launch_edf_window(
         data = reader.read(start=0)
         fs = int(reader.header.samples_per_record[0])
         if fs != 250:
-            print(f"Sampling frequency of selected file is {fs}. Please pick a file with a frequency of 250.")
+            print(
+                f"Sampling frequency of selected file is {fs}. Please pick a file with a frequency of 250."
+            )
             return
         start_str = reader.header.start_time
         date_str = reader.header.start_date
@@ -643,8 +665,8 @@ def main():
 
     initial_dir = "/media/matt/Data_A/leah/Stxbp1 characterization"
 
-    #edf_path = '/media/matt/Data_A/leah/Stxbp1 characterization/standard/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED.edf'
-    #csv_path = '/media/matt/Data_A/leah/Stxbp1 characterization/spindle_outputs/LFC_RSC/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED_SPINDLE_labels.csv'
+    # edf_path = '/media/matt/Data_A/leah/Stxbp1 characterization/standard/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED.edf'
+    # csv_path = '/media/matt/Data_A/leah/Stxbp1 characterization/spindle_outputs/LFC_RSC/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED_SPINDLE_labels.csv'
     edf_path, csv_path = pick_edf_csv(None, initial_dir)
     if not edf_path:
         return
@@ -653,7 +675,9 @@ def main():
         data = reader.read(start=0)
         fs = int(reader.header.samples_per_record[0])
         if fs != 250:
-            print(f"Sampling frequency of selected file is {fs}. Please pick a file with a frequency of 250.")
+            print(
+                f"Sampling frequency of selected file is {fs}. Please pick a file with a frequency of 250."
+            )
             return
 
         start_str = reader.header.start_time

@@ -23,8 +23,8 @@ class MaskParamsDialog(QtWidgets.QDialog):
             form.addRow(k + ":", w)
 
         buttons = QtWidgets.QDialogButtonBox(
-            QtWidgets.QDialogButtonBox.StandardButton.Ok |
-            QtWidgets.QDialogButtonBox.StandardButton.Cancel
+            QtWidgets.QDialogButtonBox.StandardButton.Ok
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -34,14 +34,14 @@ class MaskParamsDialog(QtWidgets.QDialog):
         lay.addWidget(buttons)
 
     def _make_widget(self, v, spec: ParamSpec | None = None) -> QtWidgets.QWidget:
-        if isinstance(v, bool):          # must come before int (bool subclasses int)
+        if isinstance(v, bool):  # must come before int (bool subclasses int)
             w = QtWidgets.QCheckBox()
             w.setChecked(v)
             return w
         if isinstance(v, int):
             w = QtWidgets.QSpinBox()
-            lo = int(spec.min) if spec and spec.min is not None else -(10 ** 9)
-            hi = int(spec.max) if spec and spec.max is not None else 10 ** 9
+            lo = int(spec.min) if spec and spec.min is not None else -(10**9)
+            hi = int(spec.max) if spec and spec.max is not None else 10**9
             w.setRange(lo, hi)
             if spec and spec.step is not None:
                 w.setSingleStep(int(spec.step))
@@ -51,8 +51,8 @@ class MaskParamsDialog(QtWidgets.QDialog):
             return w
         if isinstance(v, float):
             w = QtWidgets.QDoubleSpinBox()
-            lo = spec.min if spec and spec.min is not None else -(10 ** 9)
-            hi = spec.max if spec and spec.max is not None else 10 ** 9
+            lo = spec.min if spec and spec.min is not None else -(10**9)
+            hi = spec.max if spec and spec.max is not None else 10**9
             w.setRange(lo, hi)
             if spec and spec.step is not None:
                 w.setSingleStep(spec.step)
@@ -99,10 +99,13 @@ class MasksDock(QtWidgets.QDockWidget):
             Parent widget.
     """
 
-    def __init__(self, refresh_overlays: Callable[[], None],
-                 navigate_mask: Callable[[Mask, bool], None],
-                 on_mask_rebuild: Callable[[Mask], None] | None = None,
-                 parent=None):
+    def __init__(
+        self,
+        refresh_overlays: Callable[[], None],
+        navigate_mask: Callable[[Mask, bool], None],
+        on_mask_rebuild: Callable[[Mask], None] | None = None,
+        parent=None,
+    ):
         super().__init__("Masks", parent)
         self.setObjectName("MasksDock")
         self.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea)
@@ -127,7 +130,7 @@ class MasksDock(QtWidgets.QDockWidget):
 
     # ------------------------------------------------------------------
 
-    def rebuild(self, mask_set: MaskSet, state_set: MaskSet=None) -> None:
+    def rebuild(self, mask_set: MaskSet, state_set: MaskSet = None) -> None:
         """Clear and repopulate the row list from mask_set."""
         # Remove all existing rows
         while self._layout.count():
@@ -141,7 +144,9 @@ class MasksDock(QtWidgets.QDockWidget):
 
     # ------------------------------------------------------------------
 
-    def _make_row(self, mask_set: MaskSet, name: str, state_set: MaskSet=None) -> QtWidgets.QWidget:
+    def _make_row(
+        self, mask_set: MaskSet, name: str, state_set: MaskSet = None
+    ) -> QtWidgets.QWidget:
         mask = mask_set.get(name)
 
         row = QtWidgets.QWidget()
@@ -154,9 +159,7 @@ class MasksDock(QtWidgets.QDockWidget):
         cb.setChecked(mask.enabled)
         cb.setIcon(self._swatch_icon(mask.color))
 
-        cb.stateChanged.connect(
-            lambda state, m=mask: self._on_toggle(m, state)
-        )
+        cb.stateChanged.connect(lambda state, m=mask: self._on_toggle(m, state))
         if state_set is not None:
             cb.setToolTip(self._state_overlap(mask, state_set))
 
@@ -215,4 +218,4 @@ class MasksDock(QtWidgets.QDockWidget):
         for state_mask in state_set:
             overlap = state_mask.overlap_samples(mask) / state_mask.total_samples
             msg.append(f"{state_mask.name[0].upper()}: {100 * overlap:.2f}%")
-        return '\n'.join(msg)
+        return "\n".join(msg)

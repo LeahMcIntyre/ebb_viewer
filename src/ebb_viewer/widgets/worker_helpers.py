@@ -1,4 +1,5 @@
 """Helper for launching background QThread workers."""
+
 from PyQt6.QtCore import QObject, QThread
 
 

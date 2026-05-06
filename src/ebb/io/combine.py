@@ -42,7 +42,8 @@ def locate(dirpath: str | Path, fs: float, expected_hours: float) -> list[Path]:
                 result.append(reader.path)
     return result
 
-#TODO: make this more flexible to handle different patterns
+
+# TODO: make this more flexible to handle different patterns
 def pair(paths: Sequence[Path], pattern: str | Pattern[str] = r"[^_]+") -> list[tuple[Path, ...]]:
     """Group files whose stems share the same token (matched by regex)."""
     pat = re.compile(pattern) if isinstance(pattern, str) else pattern
@@ -147,8 +148,8 @@ def combine_edf(
 # -------------------------
 # SWD combine
 # -------------------------
-#TODO: make this more flexible to handle different patterns
-#TODO: figure out how to best incorporate this into pipeline (e.g., SWD files may not always be present)
+# TODO: make this more flexible to handle different patterns
+# TODO: figure out how to best incorporate this into pipeline (e.g., SWD files may not always be present)
 def combine_swd(
     swd_dir: str | Path,
     *,

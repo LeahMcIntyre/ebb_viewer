@@ -24,12 +24,21 @@ def write_state_csv(path: Path, epochs: list[tuple[str, float]]) -> None:
 # Basic correctness
 # ---------------------------------------------------------------------------
 
+
 def test_single_animal_fractions(tmp_path: Path):
     # 2 clean wake, 1 spindle-wake, 3 clean NREM, 1 spindle-NREM, 0 REM
-    write_state_csv(tmp_path / "Animal1_foo.csv", [
-        ("w", 0.1), ("w", 0.1), ("w", 0.9),
-        ("n", 0.1), ("n", 0.1), ("n", 0.1), ("n", 0.9),
-    ])
+    write_state_csv(
+        tmp_path / "Animal1_foo.csv",
+        [
+            ("w", 0.1),
+            ("w", 0.1),
+            ("w", 0.9),
+            ("n", 0.1),
+            ("n", 0.1),
+            ("n", 0.1),
+            ("n", 0.9),
+        ],
+    )
     df = compute_spindle_fractions(tmp_path)
 
     wake = df[(df["mouse_id"] == "Animal1") & (df["state"] == "Wake")].iloc[0]
@@ -50,10 +59,17 @@ def test_single_animal_fractions(tmp_path: Path):
 
 def test_total_row(tmp_path: Path):
     # 4 clean (2w, 1n, 1r), 2 spindle (1w, 1r)
-    write_state_csv(tmp_path / "Animal1_foo.csv", [
-        ("w", 0.1), ("n", 0.1), ("r", 0.1), ("w", 0.1),
-        ("w", 0.9), ("r", 0.9),
-    ])
+    write_state_csv(
+        tmp_path / "Animal1_foo.csv",
+        [
+            ("w", 0.1),
+            ("n", 0.1),
+            ("r", 0.1),
+            ("w", 0.1),
+            ("w", 0.9),
+            ("r", 0.9),
+        ],
+    )
     df = compute_spindle_fractions(tmp_path)
 
     total = df[(df["mouse_id"] == "Animal1") & (df["state"] == "Total")].iloc[0]
@@ -63,9 +79,14 @@ def test_total_row(tmp_path: Path):
 
 
 def test_all_spindle_masked(tmp_path: Path):
-    write_state_csv(tmp_path / "Animal1_foo.csv", [
-        ("w", 1.0), ("n", 1.0), ("r", 1.0),
-    ])
+    write_state_csv(
+        tmp_path / "Animal1_foo.csv",
+        [
+            ("w", 1.0),
+            ("n", 1.0),
+            ("r", 1.0),
+        ],
+    )
     df = compute_spindle_fractions(tmp_path)
 
     total = df[(df["mouse_id"] == "Animal1") & (df["state"] == "Total")].iloc[0]
@@ -73,9 +94,15 @@ def test_all_spindle_masked(tmp_path: Path):
 
 
 def test_no_spindle_masked(tmp_path: Path):
-    write_state_csv(tmp_path / "Animal1_foo.csv", [
-        ("w", 0.0), ("n", 0.0), ("r", 0.0), ("w", 0.0),
-    ])
+    write_state_csv(
+        tmp_path / "Animal1_foo.csv",
+        [
+            ("w", 0.0),
+            ("n", 0.0),
+            ("r", 0.0),
+            ("w", 0.0),
+        ],
+    )
     df = compute_spindle_fractions(tmp_path)
 
     total = df[(df["mouse_id"] == "Animal1") & (df["state"] == "Total")].iloc[0]
@@ -85,6 +112,7 @@ def test_no_spindle_masked(tmp_path: Path):
 # ---------------------------------------------------------------------------
 # Multiple animals
 # ---------------------------------------------------------------------------
+
 
 def test_multiple_animals(tmp_path: Path):
     write_state_csv(tmp_path / "Animal1_foo.csv", [("w", 0.1), ("w", 0.9)])
@@ -104,11 +132,17 @@ def test_multiple_animals(tmp_path: Path):
 # Threshold parameter
 # ---------------------------------------------------------------------------
 
+
 def test_threshold_parameter(tmp_path: Path):
     """Epochs at exactly the threshold are masked; just below are clean."""
-    write_state_csv(tmp_path / "Animal1_foo.csv", [
-        ("w", 0.3), ("w", 0.5), ("w", 0.7),
-    ])
+    write_state_csv(
+        tmp_path / "Animal1_foo.csv",
+        [
+            ("w", 0.3),
+            ("w", 0.5),
+            ("w", 0.7),
+        ],
+    )
     # default threshold 0.5: noise_prob 0.5 and 0.7 → spindle, 0.3 → clean
     df = compute_spindle_fractions(tmp_path)
     wake = df[(df["mouse_id"] == "Animal1") & (df["state"] == "Wake")].iloc[0]
@@ -126,11 +160,17 @@ def test_threshold_parameter(tmp_path: Path):
 # Edge cases
 # ---------------------------------------------------------------------------
 
+
 def test_empty_directory(tmp_path: Path):
     df = compute_spindle_fractions(tmp_path)
     assert df.empty
     assert list(df.columns) == [
-        "mouse_id", "state", "clean_count", "spindle_count", "total_count", "fraction"
+        "mouse_id",
+        "state",
+        "clean_count",
+        "spindle_count",
+        "total_count",
+        "fraction",
     ]
 
 
@@ -151,9 +191,14 @@ def test_missing_noise_probs_column_raises(tmp_path: Path):
 
 
 def test_state_column_is_ordered_categorical(tmp_path: Path):
-    write_state_csv(tmp_path / "Animal1_foo.csv", [
-        ("w", 0.0), ("n", 0.0), ("r", 0.0),
-    ])
+    write_state_csv(
+        tmp_path / "Animal1_foo.csv",
+        [
+            ("w", 0.0),
+            ("n", 0.0),
+            ("r", 0.0),
+        ],
+    )
     df = compute_spindle_fractions(tmp_path)
 
     assert hasattr(df["state"].dtype, "ordered") and df["state"].dtype.ordered
@@ -185,9 +230,15 @@ def test_header_only_csv_gives_zero_counts(tmp_path: Path):
 
 def test_unknown_rawstate_values_ignored(tmp_path: Path):
     """Unrecognised rawstate tokens are silently skipped."""
-    write_state_csv(tmp_path / "Animal1_foo.csv", [
-        ("w", 0.1), ("x", 0.1), ("?", 0.1), ("w", 0.9),
-    ])
+    write_state_csv(
+        tmp_path / "Animal1_foo.csv",
+        [
+            ("w", 0.1),
+            ("x", 0.1),
+            ("?", 0.1),
+            ("w", 0.9),
+        ],
+    )
     df = compute_spindle_fractions(tmp_path)
 
     total = df[(df["mouse_id"] == "Animal1") & (df["state"] == "Total")].iloc[0]

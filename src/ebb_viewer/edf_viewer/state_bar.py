@@ -32,7 +32,6 @@ class StateBar(QtWidgets.QWidget):
         self.setFixedHeight(self.HEIGHT)
         self.setVisible(False)
 
-
     def link_x(self, *_) -> None:
         """No-op — kept for API compatibility with TraceView._build_ui."""
 
@@ -81,7 +80,7 @@ class StateBar(QtWidgets.QWidget):
                     continue
                 # Clamp to visible window before converting to pixels
                 t_a = max(span_start / self._fs, self._t_start)
-                t_b = min(span_end   / self._fs, self._t_stop)
+                t_b = min(span_end / self._fs, self._t_stop)
                 x1 = self._vb_left + int((t_a - self._t_start) / t_range * px_range)
                 x2 = self._vb_left + int((t_b - self._t_start) / t_range * px_range)
                 if x2 > x1:

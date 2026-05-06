@@ -22,6 +22,7 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_psd_record(animal_id: str, combo: str = "LFC_RSC") -> dict:
     return {
         "path": str(Path(f"{animal_id}_foo_PREPROCESSED.edf")),
@@ -51,6 +52,7 @@ def _write_pkl(path: Path, records: list) -> None:
 # batch_estimate: offset_path flows through kwargs
 # ---------------------------------------------------------------------------
 
+
 def test_batch_estimate_passes_offset_path(tmp_path):
     """offset_path is injected into kwargs and reaches the estimator partial."""
     standard = tmp_path / "standard"
@@ -72,10 +74,13 @@ def test_batch_estimate_passes_offset_path(tmp_path):
         captured_kwargs.update(kwargs)
         return lambda *a: []
 
-    with patch("ebb.process.psd_compute.match_paths", return_value=[]), \
-         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.partial", side_effect=fake_partial):
+    with (
+        patch("ebb.process.psd_compute.match_paths", return_value=[]),
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+        patch("ebb.process.psd_compute.partial", side_effect=fake_partial),
+    ):
         from ebb.process.psd_compute import batch_estimate
+
         batch_estimate(
             eeg_dir=standard,
             state_dir=spindle_out,
@@ -99,10 +104,13 @@ def test_batch_estimate_no_offset_path_not_in_kwargs(tmp_path):
         captured_kwargs.update(kwargs)
         return lambda *a: []
 
-    with patch("ebb.process.psd_compute.match_paths", return_value=[]), \
-         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.partial", side_effect=fake_partial):
+    with (
+        patch("ebb.process.psd_compute.match_paths", return_value=[]),
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+        patch("ebb.process.psd_compute.partial", side_effect=fake_partial),
+    ):
         from ebb.process.psd_compute import batch_estimate
+
         batch_estimate(eeg_dir=standard, state_dir=spindle_out)
 
     assert "offset_path" not in captured_kwargs
@@ -124,9 +132,12 @@ def test_batch_estimate_passes_drink_dir(tmp_path):
         captured["drink_paths"] = drink_paths
         return []
 
-    with patch("ebb.process.psd_compute.match_paths", side_effect=fake_match_paths), \
-         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1):
+    with (
+        patch("ebb.process.psd_compute.match_paths", side_effect=fake_match_paths),
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+    ):
         from ebb.process.psd_compute import batch_estimate
+
         batch_estimate(eeg_dir=standard, state_dir=spindle_out, drink_dir=drink_dir)
 
     assert captured["drink_paths"] is not None
@@ -136,6 +147,7 @@ def test_batch_estimate_passes_drink_dir(tmp_path):
 # ---------------------------------------------------------------------------
 # _star_call
 # ---------------------------------------------------------------------------
+
 
 def test_star_call_unpacks_and_calls():
     """_star_call((fn, args)) calls fn(*args) and returns the result."""
@@ -165,6 +177,7 @@ def test_star_call_passes_all_positional_args():
 # batch_estimate: spawn context
 # ---------------------------------------------------------------------------
 
+
 def _make_spawn_fake_ctx(imap_results):
     """Return a fake multiprocessing context whose Pool.imap yields imap_results."""
     fake_pool = MagicMock()
@@ -189,9 +202,14 @@ def test_batch_estimate_parallel_uses_spawn_context(tmp_path):
     ]
     fake_ctx, _ = _make_spawn_fake_ctx([[], []])
 
-    with _make_batch_estimate_patches(paired, workers=2), \
-         patch("ebb.process.psd_compute.multiprocessing.get_context", return_value=fake_ctx) as mock_get_ctx:
+    with (
+        _make_batch_estimate_patches(paired, workers=2),
+        patch(
+            "ebb.process.psd_compute.multiprocessing.get_context", return_value=fake_ctx
+        ) as mock_get_ctx,
+    ):
         from ebb.process.psd_compute import batch_estimate
+
         batch_estimate(eeg_dir=standard, state_dir=spindle_out)
 
     mock_get_ctx.assert_called_once_with("spawn")
@@ -204,9 +222,12 @@ def test_batch_estimate_sequential_does_not_use_spawn_context(tmp_path):
     spindle_out = tmp_path / "spindle_outputs" / "LFC_RSC"
     spindle_out.mkdir(parents=True)
 
-    with _make_batch_estimate_patches([], workers=1), \
-         patch("ebb.process.psd_compute.multiprocessing.get_context") as mock_get_ctx:
+    with (
+        _make_batch_estimate_patches([], workers=1),
+        patch("ebb.process.psd_compute.multiprocessing.get_context") as mock_get_ctx,
+    ):
         from ebb.process.psd_compute import batch_estimate
+
         batch_estimate(eeg_dir=standard, state_dir=spindle_out)
 
     mock_get_ctx.assert_not_called()
@@ -216,6 +237,7 @@ def test_batch_estimate_sequential_does_not_use_spawn_context(tmp_path):
 # batch_estimate: progress_fn
 # ---------------------------------------------------------------------------
 
+
 def _make_batch_estimate_patches(paired, workers=1):
     """Return a context-manager stack that patches the three collaborators."""
     from contextlib import ExitStack
@@ -223,7 +245,9 @@ def _make_batch_estimate_patches(paired, workers=1):
 
     stack = ExitStack()
     stack.enter_context(patch("ebb.process.psd_compute.match_paths", return_value=paired))
-    stack.enter_context(patch("ebb.process.psd_compute.concurrency.set_cores", return_value=workers))
+    stack.enter_context(
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=workers)
+    )
     return stack
 
 
@@ -249,9 +273,12 @@ def test_progress_fn_called_once_per_file_sequential(tmp_path):
 
     messages = []
 
-    with _make_batch_estimate_patches(paired, workers=1), \
-         patch("ebb.process.psd_compute.estimate_psd", return_value=[]):
+    with (
+        _make_batch_estimate_patches(paired, workers=1),
+        patch("ebb.process.psd_compute.estimate_psd", return_value=[]),
+    ):
         from ebb.process.psd_compute import batch_estimate
+
         batch_estimate(
             eeg_dir=standard,
             state_dir=spindle_out,
@@ -288,16 +315,24 @@ def test_progress_fn_called_once_per_file_parallel(tmp_path):
 
     # Fake pool whose imap returns results in order, one per file
     class FakePool:
-        def __enter__(self): return self
-        def __exit__(self, *_): pass
-        def imap(self, fn, items): return ([] for _ in items)
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            pass
+
+        def imap(self, fn, items):
+            return ([] for _ in items)
 
     fake_ctx = MagicMock()
     fake_ctx.Pool.return_value = FakePool()
 
-    with _make_batch_estimate_patches(paired, workers=2), \
-         patch("ebb.process.psd_compute.multiprocessing.get_context", return_value=fake_ctx):
+    with (
+        _make_batch_estimate_patches(paired, workers=2),
+        patch("ebb.process.psd_compute.multiprocessing.get_context", return_value=fake_ctx),
+    ):
         from ebb.process.psd_compute import batch_estimate
+
         batch_estimate(
             eeg_dir=standard,
             state_dir=spindle_out,
@@ -320,12 +355,14 @@ def test_progress_fn_none_does_not_raise(tmp_path):
 
     with _make_batch_estimate_patches(paired, workers=1):
         from ebb.process.psd_compute import batch_estimate
+
         batch_estimate(eeg_dir=standard, state_dir=spindle_out)  # no progress_fn
 
 
 # ---------------------------------------------------------------------------
 # rerun_with_drink_masks
 # ---------------------------------------------------------------------------
+
 
 def _setup_rerun_dirs(tmp_path, animals=("AM001", "AM002"), combo="LFC_RSC"):
     """Create standard/, spindle_outputs/<combo>/, drink_masks/, and psd/default/ dirs."""
@@ -358,15 +395,24 @@ def test_rerun_writes_drink_pkl_and_final_drink_pkl(tmp_path):
 
     new_record = _make_psd_record("AM002")
 
-    with patch("ebb.process.psd_compute.match_paths",
-               return_value=[(standard / "AM002_foo_PREPROCESSED.edf",
-                              spindle_out / "AM002_states.csv",
-                              None,
-                              drink_dir / "AM002.npy")]), \
-         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.estimate_psd", return_value=[MagicMock(**new_record)]), \
-         patch("ebb.process.psd_compute.dataclasses.asdict", return_value=new_record):
+    with (
+        patch(
+            "ebb.process.psd_compute.match_paths",
+            return_value=[
+                (
+                    standard / "AM002_foo_PREPROCESSED.edf",
+                    spindle_out / "AM002_states.csv",
+                    None,
+                    drink_dir / "AM002.npy",
+                )
+            ],
+        ),
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+        patch("ebb.process.psd_compute.estimate_psd", return_value=[MagicMock(**new_record)]),
+        patch("ebb.process.psd_compute.dataclasses.asdict", return_value=new_record),
+    ):
         from ebb.process.psd_compute import rerun_with_drink_masks
+
         drink_pkl, final_drink_pkl = rerun_with_drink_masks(
             psd_dir=psd_dir,
             eeg_dir=standard,
@@ -407,14 +453,24 @@ def test_rerun_accumulates_drink_pkl_across_sessions(tmp_path):
 
     def run_rerun(animal_id):
         rec = _make_psd_record(animal_id)
-        with patch("ebb.process.psd_compute.match_paths",
-                   return_value=[(standard / f"{animal_id}_foo_PREPROCESSED.edf",
-                                  spindle_out / f"{animal_id}_states.csv",
-                                  None, drink_dir / f"{animal_id}.npy")]), \
-             patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-             patch("ebb.process.psd_compute.estimate_psd", return_value=[MagicMock(**rec)]), \
-             patch("ebb.process.psd_compute.dataclasses.asdict", return_value=rec):
+        with (
+            patch(
+                "ebb.process.psd_compute.match_paths",
+                return_value=[
+                    (
+                        standard / f"{animal_id}_foo_PREPROCESSED.edf",
+                        spindle_out / f"{animal_id}_states.csv",
+                        None,
+                        drink_dir / f"{animal_id}.npy",
+                    )
+                ],
+            ),
+            patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+            patch("ebb.process.psd_compute.estimate_psd", return_value=[MagicMock(**rec)]),
+            patch("ebb.process.psd_compute.dataclasses.asdict", return_value=rec),
+        ):
             from ebb.process.psd_compute import rerun_with_drink_masks
+
             rerun_with_drink_masks(
                 psd_dir=psd_dir,
                 eeg_dir=standard,
@@ -438,6 +494,7 @@ def test_rerun_raises_when_final_pkl_missing(tmp_path):
     standard, _, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path)
 
     from ebb.process.psd_compute import rerun_with_drink_masks
+
     with pytest.raises(FileNotFoundError, match="psds_channel_merged.pkl"):
         rerun_with_drink_masks(
             psd_dir=psd_dir,
@@ -452,16 +509,20 @@ def test_rerun_raises_on_combo_mismatch(tmp_path):
     """ValueError raised when source_combo in psds_channel_merged.pkl differs from manifest combo."""
     standard, _, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path)
     # AM001 is stored under LFC_RSC in psds_channel_merged.pkl
-    _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", [_make_psd_record("AM001", combo="LFC_RSC")])
+    _write_pkl(
+        psd_dir / "default" / "psds_channel_merged.pkl",
+        [_make_psd_record("AM001", combo="LFC_RSC")],
+    )
 
     from ebb.process.psd_compute import rerun_with_drink_masks
+
     with pytest.raises(ValueError, match="Combo mismatch"):
         rerun_with_drink_masks(
             psd_dir=psd_dir,
             eeg_dir=standard,
             spindle_root=tmp_path / "spindle_outputs",
             drink_dir=drink_dir,
-            animal_combos={"AM001": "RSC_LSC"},   # wrong combo
+            animal_combos={"AM001": "RSC_LSC"},  # wrong combo
         )
 
 
@@ -479,13 +540,23 @@ def test_rerun_injects_ann_kwargs_when_ann_params_provided(tmp_path):
         captured_kwargs.update(kwargs)
         return MagicMock(return_value=[])
 
-    with patch("ebb.process.psd_compute.match_paths",
-               return_value=[(standard / "AM001_foo_PREPROCESSED.edf",
-                              spindle_out / "AM001_states.csv", None,
-                              drink_dir / "AM001.npy")]), \
-         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.partial", side_effect=fake_partial):
+    with (
+        patch(
+            "ebb.process.psd_compute.match_paths",
+            return_value=[
+                (
+                    standard / "AM001_foo_PREPROCESSED.edf",
+                    spindle_out / "AM001_states.csv",
+                    None,
+                    drink_dir / "AM001.npy",
+                )
+            ],
+        ),
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+        patch("ebb.process.psd_compute.partial", side_effect=fake_partial),
+    ):
         from ebb.process.psd_compute import rerun_with_drink_masks
+
         rerun_with_drink_masks(
             psd_dir=psd_dir,
             eeg_dir=standard,
@@ -518,10 +589,13 @@ def test_rerun_no_ann_kwargs_when_ann_params_none(tmp_path):
         captured_kwargs.update(kwargs)
         return MagicMock(return_value=[])
 
-    with patch("ebb.process.psd_compute.match_paths", return_value=[]), \
-         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.partial", side_effect=fake_partial):
+    with (
+        patch("ebb.process.psd_compute.match_paths", return_value=[]),
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+        patch("ebb.process.psd_compute.partial", side_effect=fake_partial),
+    ):
         from ebb.process.psd_compute import rerun_with_drink_masks
+
         rerun_with_drink_masks(
             psd_dir=psd_dir,
             eeg_dir=standard,
@@ -547,9 +621,13 @@ def test_rerun_extends_pairs_with_annotation_paths(tmp_path):
     ann_file = ann_dir / "AM001_events.txt"
     ann_file.touch()
 
-    _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", [
-        _make_psd_record("AM001"), _make_psd_record("AM002"),
-    ])
+    _write_pkl(
+        psd_dir / "default" / "psds_channel_merged.pkl",
+        [
+            _make_psd_record("AM001"),
+            _make_psd_record("AM002"),
+        ],
+    )
 
     called_with = []
 
@@ -558,14 +636,27 @@ def test_rerun_extends_pairs_with_annotation_paths(tmp_path):
         return []
 
     base_pairs = [
-        (standard / "AM001_foo_PREPROCESSED.edf", spindle_out / "AM001_states.csv", None, drink_dir / "AM001.npy"),
-        (standard / "AM002_foo_PREPROCESSED.edf", spindle_out / "AM002_states.csv", None, drink_dir / "AM002.npy"),
+        (
+            standard / "AM001_foo_PREPROCESSED.edf",
+            spindle_out / "AM001_states.csv",
+            None,
+            drink_dir / "AM001.npy",
+        ),
+        (
+            standard / "AM002_foo_PREPROCESSED.edf",
+            spindle_out / "AM002_states.csv",
+            None,
+            drink_dir / "AM002.npy",
+        ),
     ]
 
-    with patch("ebb.process.psd_compute.match_paths", return_value=base_pairs), \
-         patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.estimate_psd", side_effect=fake_estimate_psd):
+    with (
+        patch("ebb.process.psd_compute.match_paths", return_value=base_pairs),
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+        patch("ebb.process.psd_compute.estimate_psd", side_effect=fake_estimate_psd),
+    ):
         from ebb.process.psd_compute import rerun_with_drink_masks
+
         rerun_with_drink_masks(
             psd_dir=psd_dir,
             eeg_dir=standard,
@@ -595,6 +686,7 @@ def test_rerun_with_drink_masks_raises_when_no_edfs(tmp_path):
     _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", [_make_psd_record("AM001")])
 
     from ebb.process.psd_compute import rerun_with_drink_masks
+
     with pytest.raises(ValueError, match="No EDF files found"):
         rerun_with_drink_masks(
             psd_dir=psd_dir,
@@ -608,6 +700,7 @@ def test_rerun_with_drink_masks_raises_when_no_edfs(tmp_path):
 # ---------------------------------------------------------------------------
 # BatchEstimateWorker
 # ---------------------------------------------------------------------------
+
 
 def _run_batch_worker(tmp_path, params=None, offset_path=None):
     """Run BatchEstimateWorker with a recording batch_estimate stub; return calls."""
@@ -623,6 +716,7 @@ def _run_batch_worker(tmp_path, params=None, offset_path=None):
     calls = []
 
     import ebb_viewer.pages.psds as psds_mod
+
     orig = psds_mod.batch_estimate
 
     def recording_be(**kw):
@@ -632,6 +726,7 @@ def _run_batch_worker(tmp_path, params=None, offset_path=None):
     psds_mod.batch_estimate = recording_be
     try:
         from ebb_viewer.pages.psds import BatchEstimateWorker
+
         worker = BatchEstimateWorker(
             eeg_dir=tmp_path / "standard",
             combo_pairs=pairs,
@@ -686,6 +781,7 @@ def test_batch_worker_saves_pkl_with_params(tmp_path):
     fake_result_dict = {"path": "AM001_PREPROCESSED.edf", "psd": [1.0]}
 
     import ebb_viewer.pages.psds as psds_mod
+
     orig_be = psds_mod.batch_estimate
     orig_asdict = psds_mod.dataclasses.asdict
 
@@ -696,6 +792,7 @@ def test_batch_worker_saves_pkl_with_params(tmp_path):
     psds_mod.dataclasses.asdict = fake_asdict
     try:
         from ebb_viewer.pages.psds import BatchEstimateWorker
+
         worker = BatchEstimateWorker(
             eeg_dir=tmp_path / "standard",
             combo_pairs=[(spindle_dir, savepath)],
@@ -717,6 +814,7 @@ def test_batch_worker_saves_pkl_with_params(tmp_path):
 def test_batch_worker_saves_psd_params_json(tmp_path):
     """BatchEstimateWorker saves psd_params.json after computing."""
     import json
+
     params = {"fs": 250, "channels": [0, 1], "winsize": 180, "radius": 0.5}
 
     psd_dir = tmp_path / "psd"
@@ -726,10 +824,12 @@ def test_batch_worker_saves_psd_params_json(tmp_path):
     savepath = psd_dir / "psds_LFC_RSC.pkl"
 
     import ebb_viewer.pages.psds as psds_mod
+
     orig = psds_mod.batch_estimate
     psds_mod.batch_estimate = lambda **kw: []
     try:
         from ebb_viewer.pages.psds import BatchEstimateWorker
+
         worker = BatchEstimateWorker(
             eeg_dir=tmp_path / "standard",
             combo_pairs=[(spindle_dir, savepath)],
@@ -753,6 +853,7 @@ def test_batch_worker_saves_psd_params_json(tmp_path):
 # ---------------------------------------------------------------------------
 # Testing gaps (PIPELINE_AUDIT.md)
 # ---------------------------------------------------------------------------
+
 
 def test_build_final_pkl_warns_and_skips_when_combo_pkl_missing(tmp_path):
     """Gap 1: build_final_pkl emits a warning and silently skips animals whose
@@ -792,11 +893,13 @@ def test_build_final_pkl_warns_and_skips_when_combo_pkl_missing(tmp_path):
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         from ebb.process.psd_compute import build_final_pkl
+
         out = build_final_pkl(tmp_path, m)
 
     # Warning emitted for the missing RSC_LSC PKL
-    assert any("PKL not found" in str(warning.message) for warning in w), \
+    assert any("PKL not found" in str(warning.message) for warning in w), (
         "Expected a warning about the missing per-combo PKL"
+    )
 
     # Merged PKL written; AM001 present, AM002 absent (its combo PKL was missing)
     with open(out, "rb") as f:
@@ -823,9 +926,12 @@ def test_batch_estimate_writes_empty_pkl_when_no_matching_edfs(tmp_path):
     savepath = tmp_path / "psd" / "psds_LFC_RSC.pkl"
     savepath.parent.mkdir(parents=True)
 
-    with patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1), \
-         patch("ebb.process.psd_compute.match_paths", return_value=[]):
+    with (
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+        patch("ebb.process.psd_compute.match_paths", return_value=[]),
+    ):
         from ebb.process.psd_compute import batch_estimate
+
         batch_estimate(
             eeg_dir=eeg_dir,
             state_dir=state_dir,
@@ -842,6 +948,7 @@ def test_batch_estimate_writes_empty_pkl_when_no_matching_edfs(tmp_path):
 # DrinkMaskRerunWorker (now in drink_mask.py)
 # ---------------------------------------------------------------------------
 
+
 def test_drink_mask_rerun_worker_calls_rerun(tmp_path):
     """Worker calls rerun_with_drink_masks with the right args."""
     drink_dir = tmp_path / "drink_masks"
@@ -855,6 +962,7 @@ def test_drink_mask_rerun_worker_calls_rerun(tmp_path):
     calls = []
 
     import ebb.process.psd_compute as psd_mod
+
     orig = psd_mod.rerun_with_drink_masks
 
     def recording_rerun(**kw):
@@ -863,6 +971,7 @@ def test_drink_mask_rerun_worker_calls_rerun(tmp_path):
     psd_mod.rerun_with_drink_masks = recording_rerun
     try:
         from ebb_viewer.pages.drink_mask import DrinkMaskRerunWorker
+
         worker = DrinkMaskRerunWorker(
             psd_dir=psd_dir,
             eeg_dir=standard,
@@ -896,6 +1005,7 @@ def test_drink_mask_rerun_worker_injects_offset_path(tmp_path):
     calls = []
 
     import ebb.process.psd_compute as psd_mod
+
     orig = psd_mod.rerun_with_drink_masks
 
     def recording_rerun(**kw):
@@ -904,6 +1014,7 @@ def test_drink_mask_rerun_worker_injects_offset_path(tmp_path):
     psd_mod.rerun_with_drink_masks = recording_rerun
     try:
         from ebb_viewer.pages.drink_mask import DrinkMaskRerunWorker
+
         worker = DrinkMaskRerunWorker(
             psd_dir=tmp_path / "psd",
             eeg_dir=tmp_path / "standard",
@@ -930,11 +1041,13 @@ def test_drink_worker_passes_ann_params_to_rerun(tmp_path):
     calls = []
 
     import ebb.process.psd_compute as psd_mod
+
     orig = psd_mod.rerun_with_drink_masks
     psd_mod.rerun_with_drink_masks = lambda **kw: calls.append(kw)
 
     try:
         from ebb_viewer.pages.drink_mask import DrinkMaskRerunWorker
+
         worker = DrinkMaskRerunWorker(
             psd_dir=tmp_path / "psd",
             eeg_dir=tmp_path / "standard",
@@ -972,11 +1085,13 @@ def test_drink_worker_passes_ann_params_none_when_not_provided(tmp_path):
     calls = []
 
     import ebb.process.psd_compute as psd_mod
+
     orig = psd_mod.rerun_with_drink_masks
     psd_mod.rerun_with_drink_masks = lambda **kw: calls.append(kw)
 
     try:
         from ebb_viewer.pages.drink_mask import DrinkMaskRerunWorker
+
         worker = DrinkMaskRerunWorker(
             psd_dir=tmp_path / "psd",
             eeg_dir=tmp_path / "standard",
@@ -996,12 +1111,14 @@ def test_drink_worker_passes_ann_params_none_when_not_provided(tmp_path):
 def test_drink_mask_rerun_worker_emits_error_on_exception(tmp_path):
     """Worker emits error signal when rerun_with_drink_masks raises."""
     import ebb.process.psd_compute as psd_mod
+
     orig = psd_mod.rerun_with_drink_masks
     psd_mod.rerun_with_drink_masks = MagicMock(side_effect=RuntimeError("boom"))
 
     errors = []
     try:
         from ebb_viewer.pages.drink_mask import DrinkMaskRerunWorker
+
         worker = DrinkMaskRerunWorker(
             psd_dir=tmp_path / "psd",
             eeg_dir=tmp_path / "standard",
@@ -1023,14 +1140,17 @@ def test_drink_mask_rerun_worker_emits_error_on_exception(tmp_path):
 # QApplication fixture (no pytest-qt required)
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="session")
 def qapp():
     """Create a QApplication for the session (skips if display unavailable)."""
     import os
     import sys
+
     if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PyQt6.QtWidgets import QApplication
+
     app = QApplication.instance() or QApplication(sys.argv)
     return app
 
@@ -1039,6 +1159,7 @@ def qapp():
 def page(tmp_path, qapp):
     """Construct a DrinkMaskPage against a bare tmp_path project root."""
     from ebb_viewer.pages.drink_mask import DrinkMaskPage
+
     w = DrinkMaskPage(project_root=tmp_path)
     yield w, tmp_path
     w.close()
@@ -1047,6 +1168,7 @@ def page(tmp_path, qapp):
 # ---------------------------------------------------------------------------
 # DrinkMaskPage helpers
 # ---------------------------------------------------------------------------
+
 
 def test_detect_offset_csv_none_when_no_dir(page):
     w, _ = page

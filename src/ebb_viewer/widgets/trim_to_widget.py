@@ -6,15 +6,15 @@ from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSpinBox, QWidget
 class TrimToWidget(QWidget):
     changed = pyqtSignal(int, int)  # emits (a, b) exactly as shown
 
-    def __init__(self, parent=None, *, minimum=1, maximum=168, step=1, values=(48,72)):
+    def __init__(self, parent=None, *, minimum=1, maximum=168, step=1, values=(48, 72)):
         super().__init__(parent)
         self._min = int(minimum)
         self._max = int(maximum)
 
         self.start = QSpinBox()
-        self.end   = QSpinBox()
+        self.end = QSpinBox()
 
-        #Set up start and end box
+        # Set up start and end box
         for box in (self.start, self.end):
             box.setRange(self._min, self._max)
             box.setSingleStep(step)
@@ -29,7 +29,7 @@ class TrimToWidget(QWidget):
         lay.addWidget(or_lbl)
         lay.addWidget(self.end)
 
-        #Set values as default value and enforce order
+        # Set values as default value and enforce order
         self.start.setValue(int(values[0]))
         self.end.setValue(int(values[1]))
 

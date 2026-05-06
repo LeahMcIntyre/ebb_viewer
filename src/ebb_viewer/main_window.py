@@ -78,29 +78,38 @@ class MainWindow(QMainWindow):
         self.finalize_page = FinalizePage(parent=self, project_root=self.project_root)
         self.export_masks_page = ExportMasksPage(project_root=self.project_root, parent=self)
 
-        for w in (self.home_page, self.preprocess_page, self.spindle_write_page,
-                  self.spindle_upload_page, self.sleep_combine_page, self.rerun_page,
-                  self.psd_page, self.psd_visualizer_page, self.drink_mask_page,
-                  self.finalize_page, self.export_masks_page):
+        for w in (
+            self.home_page,
+            self.preprocess_page,
+            self.spindle_write_page,
+            self.spindle_upload_page,
+            self.sleep_combine_page,
+            self.rerun_page,
+            self.psd_page,
+            self.psd_visualizer_page,
+            self.drink_mask_page,
+            self.finalize_page,
+            self.export_masks_page,
+        ):
             self.stacklayout.addWidget(w)
 
         # Build sidebar with separators.
         # _ROW_TO_STACK maps list-row index → stack index (None = separator row).
         _NAV = [
-            ("Home",               0),
+            ("Home", 0),
             None,
-            ("1. Preprocess",      1),
-            ("2. Spindle EDFs",    2),
-            ("3. Spindle Upload",  3),
+            ("1. Preprocess", 1),
+            ("2. Spindle EDFs", 2),
+            ("3. Spindle Upload", 3),
             None,
-            ("4. Sleep QC",        4),
-            ("5. Spindle Rerun",   5),
+            ("4. Sleep QC", 4),
+            ("5. Spindle Rerun", 5),
             None,
             ("6. PSD Computation", 6),
-            ("7. PSD Visualizer",  7),
-            ("8. Drink Mask",      8),
-            ("9. Finalize",        9),
-            ("10. Export Masks",   10),
+            ("7. PSD Visualizer", 7),
+            ("8. Drink Mask", 8),
+            ("9. Finalize", 9),
+            ("10. Export Masks", 10),
         ]
         self._row_to_stack: dict[int, int] = {}
         self._row_base_label: dict[int, str] = {}
@@ -121,9 +130,9 @@ class MainWindow(QMainWindow):
         # PSD Computation=9: combos with CSVs but no PKL (computed separately)
         # PSD Review=10: pending_psd_review (gated on psds_channel_merged.pkl)
         self._badge_rows: dict[int, str] = {
-            0:  "needs_review",
-            6:  "pending_rerun_review",
-            7:  "needs_rerun_pending",
+            0: "needs_review",
+            6: "pending_rerun_review",
+            7: "needs_rerun_pending",
             10: "pending_psd_review",
             11: "needs_drink_mask",
         }
@@ -140,16 +149,16 @@ class MainWindow(QMainWindow):
 
         # Navigation hints — pages that emit navigate_to for post-action routing
         _page_rows = {
-            "home":           0,
-            "preprocess":     2,
-            "spindle_write":  3,
+            "home": 0,
+            "preprocess": 2,
+            "spindle_write": 3,
             "spindle_upload": 4,
-            "sleep_qc":       6,
-            "rerun":          7,
-            "psd_compute":    9,
-            "psd_review":     10,
-            "drink_mask":     11,
-            "finalize":       12,
+            "sleep_qc": 6,
+            "rerun": 7,
+            "psd_compute": 9,
+            "psd_review": 10,
+            "drink_mask": 11,
+            "finalize": 12,
         }
         self.home_page.navigate_to.connect(
             lambda name: self.pagelist.setCurrentRow(_page_rows[name])
@@ -195,7 +204,6 @@ class MainWindow(QMainWindow):
         wrapper.setLayout(pagelayout)
         self.setCentralWidget(wrapper)
 
-
     def display(self, i: int):
         stack_idx = self._row_to_stack.get(i)
         if stack_idx is not None:
@@ -217,11 +225,12 @@ class MainWindow(QMainWindow):
             return
 
         counts = {
-            "needs_review":         len(manifest.needs_review()),
+            "needs_review": len(manifest.needs_review()),
             "pending_rerun_review": len(manifest.pending_rerun_review()),
-            "needs_rerun_pending":  len(manifest.needs_rerun_pending()),
-            "pending_psd_review":   len(manifest.all_pending_psd_review()) + len(manifest.all_pending_drink_verification()),
-            "needs_drink_mask":     len(manifest.all_needs_drink_mask()),
+            "needs_rerun_pending": len(manifest.needs_rerun_pending()),
+            "pending_psd_review": len(manifest.all_pending_psd_review())
+            + len(manifest.all_pending_drink_verification()),
+            "needs_drink_mask": len(manifest.all_needs_drink_mask()),
         }
         for row, method in self._badge_rows.items():
             item = self.pagelist.item(row)
@@ -230,4 +239,3 @@ class MainWindow(QMainWindow):
             base = self._row_base_label[row]
             n = counts[method]
             item.setText(f"{base}  ({n})" if n > 0 else base)
-

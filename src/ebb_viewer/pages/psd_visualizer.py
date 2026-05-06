@@ -22,7 +22,6 @@ from ebb_viewer.widgets.psd_graph_widget import PSDGridPage
 
 
 class PSDVisualizer(QWidget):
-
     navigate_to = pyqtSignal(str)
 
     def __init__(self, parent=None, *, project_root: Path):
@@ -70,8 +69,8 @@ class PSDVisualizer(QWidget):
         self.cmb_file.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.cmb_file.setMinimumWidth(200)
         self.btn_refresh = QPushButton("Refresh")
-        self.btn_browse  = QPushButton("Browse…")
-        self.btn_plot    = QPushButton("Plot PSDs")
+        self.btn_browse = QPushButton("Browse…")
+        self.btn_plot = QPushButton("Plot PSDs")
         self.btn_plot.setEnabled(False)
         row.addWidget(self.cmb_file, 1)
         row.addWidget(self.btn_refresh)
@@ -181,9 +180,7 @@ class PSDVisualizer(QWidget):
             complete = pending == 0 and self.cmb_file.count() > 0
             self._done_hint.setVisible(complete)
             if complete:
-                self._done_hint_lbl.setText(
-                    f"✓ All animals in run '{run_name}' reviewed."
-                )
+                self._done_hint_lbl.setText(f"✓ All animals in run '{run_name}' reviewed.")
         except Exception:
             self._done_hint.setVisible(False)
 
@@ -197,7 +194,7 @@ class PSDVisualizer(QWidget):
             self,
             "Select PSD .pkl File",
             str(psd_dir if psd_dir.is_dir() else self.project_root),
-            "Pickle Files (*.pkl);;All Files (*)"
+            "Pickle Files (*.pkl);;All Files (*)",
         )[0]
         if not fp:
             return
@@ -222,9 +219,9 @@ class PSDVisualizer(QWidget):
         channel_names = ["LFC", "RSC", "LSC"]
         stem = Path(psd_file).stem
         is_final_view = stem in _FINAL_VIEW_STEMS
-        is_drink_review = (stem == "psds_channel_merged_drink")
-        run_channels = None if is_final_view else (
-            stem[len("psds_"):] if stem.startswith("psds_") else stem
+        is_drink_review = stem == "psds_channel_merged_drink"
+        run_channels = (
+            None if is_final_view else (stem[len("psds_") :] if stem.startswith("psds_") else stem)
         )
         run_name = self._current_run_name()
 

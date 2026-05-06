@@ -43,7 +43,7 @@ def standard(
     verbose: bool = True,
 ) -> Path:
     """Downsample and trim an EDF; write *_PREPROCESSED.edf and return its path."""
-    #TODO: Do I want exist_ok to be True? Best procedure
+    # TODO: Do I want exist_ok to be True? Best procedure
     savedir = Path(savedir)
     savedir.mkdir(parents=True, exist_ok=True)
 
@@ -52,10 +52,10 @@ def standard(
 
     # Trim data with floor chosen from trim_to
     trim_samples = np.array(trim_to) * 3600 * fs
-    idx = np.searchsorted(trim_samples, reader.shape[axis], side='right') - 1
+    idx = np.searchsorted(trim_samples, reader.shape[axis], side="right") - 1
     if idx < 0:
         hrs = reader.shape[axis] / (3600 * fs)
-        msg = f'{path.stem} is {hrs} hrs, a value below all trim_to {trim_to}'
+        msg = f"{path.stem} is {hrs} hrs, a value below all trim_to {trim_to}"
         raise ValueError(msg)
     stop = trim_samples[idx]
     # ensure stop is integer multiple of samples per record / downsample
@@ -72,12 +72,12 @@ def standard(
     # Some EDFs use non-standard record_duration (e.g. 10 s) which causes a
     # reshape mismatch when samples_per_record is divided by m but num_records
     # is still computed from fs_out assuming 1-second records.
-    header['record_duration'] = 1
-    header['samples_per_record'] = [fs_out] * len(header.samples_per_record)
-    header['num_records'] = int(processed.shape[axis] / fs_out)
-    header['reserved_0'] = ''
-    header['digital_min'] = [int(x) for x in header['digital_min']]
-    header['digital_max'] = [int(x) for x in header['digital_max']]
+    header["record_duration"] = 1
+    header["samples_per_record"] = [fs_out] * len(header.samples_per_record)
+    header["num_records"] = int(processed.shape[axis] / fs_out)
+    header["reserved_0"] = ""
+    header["digital_min"] = [int(x) for x in header["digital_min"]]
+    header["digital_max"] = [int(x) for x in header["digital_max"]]
 
     out = savedir / f"{fp.stem}_PREPROCESSED{fp.suffix}"
     with edf.Writer(out) as writer:
@@ -97,7 +97,9 @@ def spindle(
     """Write a reduced-channel EDF for SPINDLE upload; return output path."""
     fp = Path(path)
     savedir = Path(savedir)
-    savedir.mkdir(parents=True, exist_ok=True) #TODO: Do I want exist_ok to be True? Best procedure
+    savedir.mkdir(
+        parents=True, exist_ok=True
+    )  # TODO: Do I want exist_ok to be True? Best procedure
 
     reader = edf.Reader(fp)
     data = reader.read(0)
@@ -129,7 +131,7 @@ def batch(
     if target is None:
         target = dirpath / preprocessor.__name__
     target = Path(target)
-    #TODO: Do I want exist_ok to be True? Best procedure
+    # TODO: Do I want exist_ok to be True? Best procedure
     target.mkdir(parents=True, exist_ok=True)
 
     paths = list(dirpath.glob("*.edf"))
@@ -159,6 +161,7 @@ def batch(
         print(f"Saved {len(paths)} files to {target} in {elapsed:.2f}s")
 
     return outs
+
 
 # TODO: Make more flexible - check for project/folder existence, how to manage if not all EDFs process in time limit, etc.
 # Integrate with the spindle batch process for ease?
@@ -199,10 +202,7 @@ def process_sleepyrat(
     print("[SleepyRat] Waiting for processing to finish...")
     ok = api.wait_for_processing(project, folder)
     if not ok:
-        raise RuntimeError(
-            f"Processing did not finish within wait limit for {project}/{folder}"
-        )
+        raise RuntimeError(f"Processing did not finish within wait limit for {project}/{folder}")
 
     api.download_labels_all(project, folder, outdir, threshold=threshold)
     print(f"[SleepyRat] Labels downloaded to {outdir}")
-

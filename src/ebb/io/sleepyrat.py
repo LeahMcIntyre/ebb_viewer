@@ -5,38 +5,41 @@ import requests
 
 
 class SleepyRatAPI:
-    def __init__(self, username="REDACTED_1", password="REDACTED_2", base_url="https://sleepyrat.ai/api"):
+    def __init__(
+        self, username="REDACTED_1", password="REDACTED_2", base_url="https://sleepyrat.ai/api"
+    ):
         self.base_url = base_url
         self.token = self._login(username, password)
         self.headers = {"Authorization": f"Bearer {self.token}"}
 
     def _login(self, username, password):
-        response = requests.post(f"{self.base_url}/login",
-                               json={"username": username, "password": password})
+        response = requests.post(
+            f"{self.base_url}/login", json={"username": username, "password": password}
+        )
         response.raise_for_status()
         return response.json()["access_token"]
 
     # Returns a list of projects in account
     def get_projects(self):
-        response = requests.get(f"{self.base_url}/projects",
-                                headers=self.headers)
+        response = requests.get(f"{self.base_url}/projects", headers=self.headers)
         return response.json()
 
     def project_names(self) -> list[str]:
         """Return a simple list of project names from get_projects()."""
         data = self.get_projects()
-        return [p['name'] for p in data]
+        return [p["name"] for p in data]
 
     def create_project(self, name, description=""):
-        response = requests.post(f"{self.base_url}/projects",
-                               headers=self.headers,
-                               json={"name": name, "description": description})
+        response = requests.post(
+            f"{self.base_url}/projects",
+            headers=self.headers,
+            json={"name": name, "description": description},
+        )
         return response.json()
 
     # Returns a list of folders in account
     def get_folders(self, project):
-        response = requests.get(f"{self.base_url}/projects/{project}/folders",
-                                headers=self.headers)
+        response = requests.get(f"{self.base_url}/projects/{project}/folders", headers=self.headers)
         return response.json()
 
     def folder_names(self, project) -> list[str]:
@@ -44,31 +47,32 @@ class SleepyRatAPI:
         return self.get_folders(project)
 
     def create_folder(self, project, folder_name):
-        response = requests.post(f"{self.base_url}/projects/{project}/folders",
-                               headers=self.headers,
-                               json={"folder_name": folder_name})
+        response = requests.post(
+            f"{self.base_url}/projects/{project}/folders",
+            headers=self.headers,
+            json={"folder_name": folder_name},
+        )
         return response.json()
 
     def upload_edf(self, project, folder, file_path):
-        with open(file_path, 'rb') as f:
-            files = {'file': f}
+        with open(file_path, "rb") as f:
+            files = {"file": f}
             response = requests.post(
                 f"{self.base_url}/projects/{project}/folders/{folder}/submissions",
                 headers=self.headers,
-                files=files
+                files=files,
             )
         return response.json()
 
     # Upload all edfs in dir_path to sleepy rat in project/folder
     def upload_dir(self, project, folder, dir_path):
-        edf_paths = list(Path(dir_path).glob('*.edf'))
+        edf_paths = list(Path(dir_path).glob("*.edf"))
         for p in edf_paths:
             self.upload_edf(project, folder, p)
 
     def get_submissions(self, project, folder):
         response = requests.get(
-            f"{self.base_url}/projects/{project}/folders/{folder}/submissions",
-            headers=self.headers
+            f"{self.base_url}/projects/{project}/folders/{folder}/submissions", headers=self.headers
         )
         return response.json()
 
@@ -80,7 +84,7 @@ class SleepyRatAPI:
     def download_labels(self, project, folder, submission, threshold=0.5):
         response = requests.get(
             f"{self.base_url}/projects/{project}/folders/{folder}/files/{submission}/labels/{threshold}",
-            headers=self.headers
+            headers=self.headers,
         )
         return response.text
 
@@ -96,7 +100,6 @@ class SleepyRatAPI:
             with open(new_path, "w") as f:
                 f.write(labels)
 
-
     def wait_for_processing(self, project, folder, max_wait=10000):
         """Wait for all files in folder to finish processing"""
         start_time = time.time()
@@ -108,9 +111,6 @@ class SleepyRatAPI:
             print(f"Waiting for {len(pending)} files to complete processing...")
             time.sleep(30)
         return False
-
-
-
 
 
 """# Usage example

@@ -6,6 +6,7 @@ Covers the pure helpers (``resolve_paths`` and ``clean_mask_for_state``) and
 time against real project data — they are not meaningfully testable with
 mocks alone.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -19,6 +20,7 @@ from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
 # ---------------------------------------------------------------------------
 # Manifest builders
 # ---------------------------------------------------------------------------
+
 
 def _make_manifest(tmp_path: Path, animal_id: str, combo: str) -> Manifest:
     """Build a manifest with one OK run for a single animal/combo."""
@@ -54,6 +56,7 @@ def _make_state_csv(tmp_path: Path, animal_id: str, combo: str) -> Path:
 # ---------------------------------------------------------------------------
 # resolve_paths
 # ---------------------------------------------------------------------------
+
 
 def test_resolve_paths_finds_edf_state_and_drink(tmp_path):
     manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
@@ -147,6 +150,7 @@ def test_resolve_paths_no_drink_when_file_missing(tmp_path):
 # clean_mask_for_state
 # ---------------------------------------------------------------------------
 
+
 def test_clean_mask_for_pure_wake_applies_sd_uniformly():
     base = np.ones(100, dtype=bool)
     sd = np.ones(100, dtype=bool)
@@ -205,6 +209,7 @@ def test_clean_mask_respects_base_artifacts():
 # export_run continues on error
 # ---------------------------------------------------------------------------
 
+
 def test_export_run_collects_failures_and_continues(tmp_path, monkeypatch):
     """One animal blowing up shouldn't abort the rest; failure goes in the result."""
     manifest = Manifest(tmp_path)
@@ -234,7 +239,8 @@ def test_export_run_collects_failures_and_continues(tmp_path, monkeypatch):
 
 def test_export_run_creates_out_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        me, "export_animal",
+        me,
+        "export_animal",
         lambda *a, **kw: me.AnimalExportResult(animal_id="A", combo="X", status="ok"),
     )
     out_dir = tmp_path / "exports" / "fresh"
@@ -245,7 +251,8 @@ def test_export_run_creates_out_dir(tmp_path, monkeypatch):
 
 def test_export_run_invokes_progress_callback(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        me, "export_animal",
+        me,
+        "export_animal",
         lambda *a, **kw: me.AnimalExportResult(animal_id=a[3], combo=a[4], status="ok"),
     )
     progress = []
@@ -263,7 +270,8 @@ def test_export_run_invokes_progress_callback(tmp_path, monkeypatch):
 def test_export_run_progress_cb_failure_is_swallowed(tmp_path, monkeypatch):
     """A buggy UI callback shouldn't abort the export batch."""
     monkeypatch.setattr(
-        me, "export_animal",
+        me,
+        "export_animal",
         lambda *a, **kw: me.AnimalExportResult(animal_id=a[3], combo=a[4], status="ok"),
     )
 
@@ -271,8 +279,12 @@ def test_export_run_progress_cb_failure_is_swallowed(tmp_path, monkeypatch):
         raise RuntimeError("UI exploded")
 
     result = me.export_run(
-        tmp_path, tmp_path / "out", Manifest(tmp_path),
-        params={}, pairs=[("A", "X"), ("B", "Y")], progress_cb=bad_cb,
+        tmp_path,
+        tmp_path / "out",
+        Manifest(tmp_path),
+        params={},
+        pairs=[("A", "X"), ("B", "Y")],
+        progress_cb=bad_cb,
     )
     assert len(result.successes) == 2
 
@@ -281,21 +293,25 @@ def test_export_run_progress_cb_failure_is_swallowed(tmp_path, monkeypatch):
 # default_pairs
 # ---------------------------------------------------------------------------
 
+
 def test_default_pairs_returns_only_ok_runs(tmp_path):
     m = Manifest(tmp_path)
     m._entries["A"] = ManifestEntry(
-        animal_id="A", preprocessed_edf="x.edf",
+        animal_id="A",
+        preprocessed_edf="x.edf",
         runs={
             "LFC_RSC": RunEntry(sleep_qc="ok"),
             "LSC_RSC": RunEntry(sleep_qc="rejected"),
         },
     )
     m._entries["B"] = ManifestEntry(
-        animal_id="B", preprocessed_edf="y.edf",
+        animal_id="B",
+        preprocessed_edf="y.edf",
         runs={"LFC_RSC": RunEntry(sleep_qc="needs_review")},
     )
     m._entries["C"] = ManifestEntry(
-        animal_id="C", preprocessed_edf="z.edf",
+        animal_id="C",
+        preprocessed_edf="z.edf",
         runs={"LSC_RSC": RunEntry(sleep_qc="ok")},
     )
     pairs = me.default_pairs(m)

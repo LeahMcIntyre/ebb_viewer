@@ -25,14 +25,14 @@ class Recording:
 
     def __str__(self):
         fields = [
-            ("File",         self.edf_path),
-            ("Fs",           f"{self.fs} Hz"),
-            ("Start",        self.start_time),
-            ("Duration",     self.recording_length),
-            ("Channels",     ", ".join(self.ch_names)),
-            ("State CSV",    self.csv_path or "—"),
-            ("SWD",          self.swd_path or "—"),
-            ("Drink",        self.drink_path or "—"),
+            ("File", self.edf_path),
+            ("Fs", f"{self.fs} Hz"),
+            ("Start", self.start_time),
+            ("Duration", self.recording_length),
+            ("Channels", ", ".join(self.ch_names)),
+            ("State CSV", self.csv_path or "—"),
+            ("SWD", self.swd_path or "—"),
+            ("Drink", self.drink_path or "—"),
             ("Video offset", self.video_offset if self.video_offset is not None else "—"),
         ]
         width = max(len(k) for k, _ in fields)

@@ -112,7 +112,7 @@ class MetaArray(mixins.ViewInstance):
             coordinates does not match data's dims. or shape
         """
 
-        default = {f'axis{ix}': range(s) for ix, s in enumerate(self.shape)}
+        default = {f"axis{ix}": range(s) for ix, s in enumerate(self.shape)}
         result = copy.deepcopy(coords) if coords else default
 
         # convert labels for all axes to list instances
@@ -125,8 +125,7 @@ class MetaArray(mixins.ViewInstance):
         coord_shape = tuple(len(v) for v in result.values())
         if coord_shape != self.shape:
             msg = (
-                "The shape of the coordinates must match data's shape"
-                f"{coord_shape} != {self.shape}"
+                f"The shape of the coordinates must match data's shape{coord_shape} != {self.shape}"
             )
             raise ValueError(msg)
 
@@ -164,7 +163,7 @@ class MetaArray(mixins.ViewInstance):
     def select(
         self,
         **selections: Number | str | Sequence | npt.NDArray,
-    ) -> 'MetaArray':
+    ) -> "MetaArray":
         """Returns a new MetaArray by slicing this MetaArray with axis names &
         labels in selections.
 
@@ -216,11 +215,11 @@ class MetaArray(mixins.ViewInstance):
         """
 
         path = Path(path)
-        with open(path, 'wb') as outfile:
+        with open(path, "wb") as outfile:
             pickle.dump(self.to_dict(), outfile)
 
     @classmethod
-    def load(cls, path: str | Path) -> 'MetaArray':
+    def load(cls, path: str | Path) -> "MetaArray":
         """Creates a new MetaArray instance from a dict representation on disk.
 
         Args:
@@ -232,13 +231,13 @@ class MetaArray(mixins.ViewInstance):
         """
 
         path = Path(path)
-        with open(path, 'rb') as infile:
+        with open(path, "rb") as infile:
             metadict = pickle.load(infile)
 
         # construct and return a new instance
-        data = metadict['data']
-        metadata = metadict['metadata']
-        coords = metadict['coords']
+        data = metadict["data"]
+        metadata = metadict["metadata"]
+        coords = metadict["coords"]
         return cls(data, metadata, **coords)
 
 
@@ -273,7 +272,7 @@ class MetaMask(mixins.ViewInstance):
     def names(self):
         """Returns the list of named masks in this Metamask."""
 
-        return [name for name in self.__dict__ if name != 'metadata']
+        return [name for name in self.__dict__ if name != "metadata"]
 
     def combinations(
         self,
@@ -332,8 +331,8 @@ class MetaMask(mixins.ViewInstance):
         min_length = np.min(lengths)
         if any(lengths - min_length):
             msg = (
-                f'Mask lengths are inconsistent lengths = {lengths}.'
-                f'Truncating masks to minimum length = {min_length}'
+                f"Mask lengths are inconsistent lengths = {lengths}."
+                f"Truncating masks to minimum length = {min_length}"
             )
             warnings.warn(msg)
 

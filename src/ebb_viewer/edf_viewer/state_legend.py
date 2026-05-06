@@ -12,8 +12,8 @@ class StateLegend(QtWidgets.QWidget):
     ``rebuild`` is called with a non-empty MaskSet.
     """
 
-    SWATCH = 10   # square size in px
-    GAP    = 3    # gap between swatch and text, and between entries
+    SWATCH = 10  # square size in px
+    GAP = 3  # gap between swatch and text, and between entries
 
     def __init__(self, parent=None):
         super().__init__(parent)

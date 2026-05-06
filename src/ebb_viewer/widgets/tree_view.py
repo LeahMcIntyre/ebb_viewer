@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,7 +8,9 @@ from PyQt6.QtWidgets import QTreeView, QVBoxLayout, QWidget
 
 
 class ProjectTree(QWidget):
-    def __init__(self, parent=None, name_filters=None, show_sizes=True, show_types=True, show_dates=False):
+    def __init__(
+        self, parent=None, name_filters=None, show_sizes=True, show_types=True, show_dates=False
+    ):
         super().__init__(parent)
 
         self.model = QFileSystemModel(self)

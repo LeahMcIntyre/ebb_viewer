@@ -47,12 +47,12 @@ class _RunSettingsDialog(QDialog):
         ch_names = [CH_LABELS[i] for i in ch_indices if i < len(CH_LABELS)]
         state_keys = psd_params.states_from_params(params)
         state_names = ", ".join(PRESET_DISPLAY.get(k, k) for k in state_keys)
-        f.addRow("Channels:",         QLabel(", ".join(ch_names) if ch_names else "—"))
-        f.addRow("States:",           QLabel(state_names or "—"))
-        f.addRow("Sampling freq:",    QLabel(f"{params.get('fs', '—')} Hz"))
-        f.addRow("SD window:",        QLabel(f"{params.get('winsize', '—')} s"))
-        f.addRow("SD radius:",        QLabel(f"{params.get('radius', '—')} s"))
-        f.addRow("SD z-threshold:",   QLabel(str(params.get("nstd", "—"))))
+        f.addRow("Channels:", QLabel(", ".join(ch_names) if ch_names else "—"))
+        f.addRow("States:", QLabel(state_names or "—"))
+        f.addRow("Sampling freq:", QLabel(f"{params.get('fs', '—')} Hz"))
+        f.addRow("SD window:", QLabel(f"{params.get('winsize', '—')} s"))
+        f.addRow("SD radius:", QLabel(f"{params.get('radius', '—')} s"))
+        f.addRow("SD z-threshold:", QLabel(str(params.get("nstd", "—"))))
         f.addRow("Spindle noise thr:", QLabel(str(params.get("noise_thresh", "—"))))
         root.addWidget(gb_gen)
 
@@ -95,6 +95,7 @@ class _RunSettingsDialog(QDialog):
         if drink_pkl.exists():
             try:
                 import pickle
+
                 with open(drink_pkl, "rb") as f:
                     drink_records = pickle.load(f)
                 animal_ids = sorted({Path(r["path"]).stem.split("_")[0] for r in drink_records})
@@ -115,11 +116,11 @@ class _RunSettingsDialog(QDialog):
         f5 = QFormLayout(gb_ann)
         f5.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         if params.get("ann_enabled"):
-            f5.addRow("Directory:",  QLabel(str(params.get("ann_dir", "—"))))
-            f5.addRow("Keywords:",   QLabel(str(params.get("ann_keywords", "—"))))
+            f5.addRow("Directory:", QLabel(str(params.get("ann_dir", "—"))))
+            f5.addRow("Keywords:", QLabel(str(params.get("ann_keywords", "—"))))
             f5.addRow("Match mode:", QLabel(str(params.get("ann_match_mode", "—"))))
             f5.addRow("Pad before:", QLabel(f"{params.get('ann_pad_before', 0)} s"))
-            f5.addRow("Pad after:",  QLabel(f"{params.get('ann_pad_after', 0)} s"))
+            f5.addRow("Pad after:", QLabel(f"{params.get('ann_pad_after', 0)} s"))
         else:
             lbl = QLabel("Off")
             lbl.setStyleSheet("color: gray;")
@@ -132,7 +133,6 @@ class _RunSettingsDialog(QDialog):
 
 
 class FinalizePage(QWidget):
-
     navigate_to = pyqtSignal(str)
 
     def __init__(self, parent=None, *, project_root: Path):
@@ -185,7 +185,9 @@ class FinalizePage(QWidget):
 
         self._no_runs_lbl = QLabel("No PSD runs found. Run 'Compute PSDs' first.")
         self._no_runs_lbl.setStyleSheet("color: gray; font-size: 12px;")
-        self._no_runs_lbl.setAlignment(__import__("PyQt6.QtCore", fromlist=["Qt"]).Qt.AlignmentFlag.AlignCenter)
+        self._no_runs_lbl.setAlignment(
+            __import__("PyQt6.QtCore", fromlist=["Qt"]).Qt.AlignmentFlag.AlignCenter
+        )
         self._no_runs_lbl.setVisible(False)
         root.addWidget(self._no_runs_lbl)
 
@@ -247,22 +249,25 @@ class FinalizePage(QWidget):
         pending_style = "color: gray;"
         if manifest is not None:
             try:
-                n_review  = len(manifest.pending_psd_review(run_name))
-                n_drink   = len(manifest.needs_drink_mask(run_name))
-                n_verify  = len(manifest.pending_drink_verification(run_name))
-                pending   = n_review + n_drink + n_verify
+                n_review = len(manifest.pending_psd_review(run_name))
+                n_drink = len(manifest.needs_drink_mask(run_name))
+                n_verify = len(manifest.pending_drink_verification(run_name))
+                pending = n_review + n_drink + n_verify
                 if pending == 0:
-                    pending_text  = "✓ All animals reviewed"
+                    pending_text = "✓ All animals reviewed"
                     pending_style = "color: #1a5c1a;"
                 else:
                     parts = []
-                    if n_review: parts.append(f"{n_review} pending review")
-                    if n_drink:  parts.append(f"{n_drink} need drink mask")
-                    if n_verify: parts.append(f"{n_verify} pending verification")
-                    pending_text  = "⚠ " + ", ".join(parts)
+                    if n_review:
+                        parts.append(f"{n_review} pending review")
+                    if n_drink:
+                        parts.append(f"{n_drink} need drink mask")
+                    if n_verify:
+                        parts.append(f"{n_verify} pending verification")
+                    pending_text = "⚠ " + ", ".join(parts)
                     pending_style = "color: #8a4400;"
             except Exception:
-                pending_text  = "Could not read manifest"
+                pending_text = "Could not read manifest"
                 pending_style = "color: gray;"
 
         status_lbl = QLabel(pending_text)
@@ -271,15 +276,15 @@ class FinalizePage(QWidget):
 
         # Source file that will be used
         drink_src = psd_dir / "psds_channel_merged_drink.pkl"
-        base_src  = psd_dir / "psds_channel_merged.pkl"
+        base_src = psd_dir / "psds_channel_merged.pkl"
         if drink_src.exists():
-            src_text  = f"Source: {drink_src.name} (drink masks applied)"
+            src_text = f"Source: {drink_src.name} (drink masks applied)"
             src_style = "color: #1a5c8a;"
         elif base_src.exists():
-            src_text  = f"Source: {base_src.name}"
+            src_text = f"Source: {base_src.name}"
             src_style = "color: #333;"
         else:
-            src_text  = "Source: no merged PKL found yet"
+            src_text = "Source: no merged PKL found yet"
             src_style = "color: gray;"
         src_lbl = QLabel(src_text)
         src_lbl.setStyleSheet(src_style + " font-size: 11px;")
@@ -289,11 +294,11 @@ class FinalizePage(QWidget):
         final_pkl = psd_dir / "psds_final.pkl"
         if final_pkl.exists():
             ts = datetime.fromtimestamp(final_pkl.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-            final_text  = f"psds_final.pkl last written {ts}"
+            final_text = f"psds_final.pkl last written {ts}"
             final_style = "color: #333;"
             btn.setText("Re-finalize")
         else:
-            final_text  = "psds_final.pkl not yet written"
+            final_text = "psds_final.pkl not yet written"
             final_style = "color: gray;"
         final_lbl = QLabel(final_text)
         final_lbl.setStyleSheet(final_style + " font-size: 11px;")
@@ -301,19 +306,24 @@ class FinalizePage(QWidget):
 
         # Card background colour
         if pending == 0 and (drink_src.exists() or base_src.exists()):
-            card.setStyleSheet("QFrame { background: #f0f7f0; border: 1px solid #c3e6cb; border-radius: 4px; } QLabel { border: none; background: transparent; }")
+            card.setStyleSheet(
+                "QFrame { background: #f0f7f0; border: 1px solid #c3e6cb; border-radius: 4px; } QLabel { border: none; background: transparent; }"
+            )
             btn.setEnabled(True)
             btn.clicked.connect(lambda checked, rn=run_name: self._on_finalize(rn))
         else:
-            card.setStyleSheet("QFrame { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; } QLabel { border: none; background: transparent; }")
+            card.setStyleSheet(
+                "QFrame { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; } QLabel { border: none; background: transparent; }"
+            )
             btn.setEnabled(False)
 
         # Settings button — enabled whenever params exist
         params = psd_params.load(self.project_root, run_name)
         if params is not None and manifest is not None:
             btn_settings.clicked.connect(
-                lambda checked, rn=run_name, rd=psd_dir, p=params, m=manifest:
-                    _RunSettingsDialog(self, run_name=rn, run_dir=rd, params=p, manifest=m).exec()
+                lambda checked, rn=run_name, rd=psd_dir, p=params, m=manifest: _RunSettingsDialog(
+                    self, run_name=rn, run_dir=rd, params=p, manifest=m
+                ).exec()
             )
         else:
             btn_settings.setEnabled(False)
@@ -322,13 +332,15 @@ class FinalizePage(QWidget):
 
     def _on_finalize(self, run_name: str):
         from ebb.process.psd_compute import build_run_final_pkl
+
         try:
             out = build_run_final_pkl(self.project_root, run_name)
         except Exception as e:
             QMessageBox.critical(self, "Finalize Failed", str(e))
             return
         QMessageBox.information(
-            self, "Run Finalized",
+            self,
+            "Run Finalized",
             f"psds_final.pkl written for run '{run_name}'.\n\n{out}",
         )
         self._refresh()

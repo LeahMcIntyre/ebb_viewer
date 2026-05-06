@@ -5,13 +5,14 @@ import numpy.typing as npt
 from openseize.file_io import annotations
 
 
-def artifact(path: str | Path,
-             size: int,
-             labels: list[str],
-             fs: float,
-             between: tuple[str | None, str | None]=(None, None),
-             include = False,
-             **kwargs,
+def artifact(
+    path: str | Path,
+    size: int,
+    labels: list[str],
+    fs: float,
+    between: tuple[str | None, str | None] = (None, None),
+    include=False,
+    **kwargs,
 ) -> npt.NDArray[np.bool_]:
     """Returns a boolean mask from a Pinnacle annotations file.
 
@@ -49,7 +50,7 @@ def artifact(path: str | Path,
         A 1-D boolean mask in which labeled indices are marked False.
     """
 
-    start = kwargs.pop('start', 6)
+    start = kwargs.pop("start", 6)
     with annotations.Pinnacle(path, start=start, **kwargs) as reader:
         annotes = reader.read()
 
@@ -58,14 +59,13 @@ def artifact(path: str | Path,
     first = next(ann for ann in annotes if ann.label == a) if a else annotes[0]
     last = next(ann for ann in annotes if ann.label == b) if a else annotes[-1]
 
-
-    #filter the annotes for requested labels and filter between
+    # filter the annotes for requested labels and filter between
     labels_clean = {lbl.strip().lower() for lbl in labels}
 
     annotes = [
-        ann for ann in annotes
-        if ann.label is not None
-        and ann.label.strip().lower() in labels_clean
+        ann
+        for ann in annotes
+        if ann.label is not None and ann.label.strip().lower() in labels_clean
     ]
 
     annotes = [ann for ann in annotes if first.time <= ann.time <= last.time]
@@ -124,7 +124,7 @@ def keyword_mask(
         >>> mask = keyword_mask("annots.txt", keywords=["drink"],
         ...                     pad_after_sec=10, size=n_samples, fs=250)
     """
-    start = kwargs.pop('start', 6)
+    start = kwargs.pop("start", 6)
     with annotations.Pinnacle(path, start=start, **kwargs) as reader:
         annotes = reader.read()
 
@@ -137,18 +137,18 @@ def keyword_mask(
 
     if match_mode == "exact":
         keywords_set = set(keywords_lower)
+
         def _matches(label: str) -> bool:
             return label.strip().lower() in keywords_set
     else:
+
         def _matches(label: str) -> bool:
             return any(kw in label.strip().lower() for kw in keywords_lower)
 
     # Adjust times relative to first annotation, consistent with artifact()
     t0 = annotes[0].time
     matched_times = [
-        ann.time - t0
-        for ann in annotes
-        if ann.label is not None and _matches(ann.label)
+        ann.time - t0 for ann in annotes if ann.label is not None and _matches(ann.label)
     ]
 
     arr = np.ones(size, dtype=bool)

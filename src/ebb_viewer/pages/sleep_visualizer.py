@@ -29,6 +29,7 @@ def color_from_mouse_id(mouse_id):
     b = int(h[4:6], 16)
     return (r, g, b)
 
+
 class SleepMetricsPage(QWidget):
     """
     Page to visualize sleep metrics (frac_time, n_bouts, mean_bout_sec)
@@ -58,9 +59,7 @@ class SleepMetricsPage(QWidget):
         dir_row = QHBoxLayout()
         self.dir_button = QPushButton("Select spindle outputs directory…")
         self.dir_label = QLabel("No directory selected")
-        self.dir_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.dir_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
         dir_row.addWidget(self.dir_button)
         dir_row.addWidget(self.dir_label, stretch=1)
@@ -121,7 +120,7 @@ class SleepMetricsPage(QWidget):
         self.group_combo.currentIndexChanged.connect(self.update_plot)
         self.state_combo.currentIndexChanged.connect(self.update_plot)
         self.metric_combo.currentIndexChanged.connect(self.update_plot)
-        #self.view_mode_combo.currentIndexChanged.connect(self.update_plot)
+        # self.view_mode_combo.currentIndexChanged.connect(self.update_plot)
         self.refresh_button.clicked.connect(self.update_plot)
 
     # ------------------------------------------------------------------
@@ -145,7 +144,6 @@ class SleepMetricsPage(QWidget):
 
         self._current_dir = Path(dirname)
         self.dir_label.setText(str(self._current_dir))
-
 
         try:
             df = compute_sleep_bins_df(self._current_dir)
@@ -211,7 +209,7 @@ class SleepMetricsPage(QWidget):
 
         metric = self.metric_combo.currentData()
         state = self.state_combo.currentText()
-        #view_mode = self.view_mode_combo.currentData()
+        # view_mode = self.view_mode_combo.currentData()
         selected_mouse = self.mouse_combo.currentData()
         selected_group = self.group_combo.currentData()
 
@@ -258,6 +256,5 @@ class SleepMetricsPage(QWidget):
             color = color_from_mouse_id(mid)
             pen = pg.mkPen(color=color, width=2)
             self.plot.plot(x, y, pen=pen, name=str(mid))
-
 
         self.plot.enableAutoRange(axis=pg.ViewBox.XYAxes, enable=True)

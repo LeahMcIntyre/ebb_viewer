@@ -23,16 +23,17 @@ _STATE_KEYS = {
 }
 
 _SHIFT_NUM_KEYS = {
-    Qt.Key.Key_Exclam:      0,  # Shift+1
-    Qt.Key.Key_At:          1,  # Shift+2
-    Qt.Key.Key_NumberSign:  2,  # Shift+3
-    Qt.Key.Key_Dollar:      3,  # Shift+4
-    Qt.Key.Key_Percent:     4,  # Shift+5
+    Qt.Key.Key_Exclam: 0,  # Shift+1
+    Qt.Key.Key_At: 1,  # Shift+2
+    Qt.Key.Key_NumberSign: 2,  # Shift+3
+    Qt.Key.Key_Dollar: 3,  # Shift+4
+    Qt.Key.Key_Percent: 4,  # Shift+5
     Qt.Key.Key_AsciiCircum: 5,  # Shift+6
-    Qt.Key.Key_Ampersand:   6,  # Shift+7
-    Qt.Key.Key_Asterisk:    7,  # Shift+8
-    Qt.Key.Key_ParenLeft:   8,  # Shift+9
+    Qt.Key.Key_Ampersand: 6,  # Shift+7
+    Qt.Key.Key_Asterisk: 7,  # Shift+8
+    Qt.Key.Key_ParenLeft: 8,  # Shift+9
 }
+
 
 class TimeClickViewBox(pg.ViewBox):
     timeDoubleClicked = pyqtSignal(float)
@@ -49,13 +50,15 @@ class TimeClickViewBox(pg.ViewBox):
 class TraceView(QtWidgets.QWidget):
     timeDoubleClicked = pyqtSignal(float)
 
-    def __init__(self,
-                 data: np.ndarray,
-                 fs: int,
-                 start_time: datetime,
-                 ch_names: Sequence[str] = ("LFC", "RSC", "LSC", "EMG"),
-                 win_sec: float =10.0,
-                 parent=None):
+    def __init__(
+        self,
+        data: np.ndarray,
+        fs: int,
+        start_time: datetime,
+        ch_names: Sequence[str] = ("LFC", "RSC", "LSC", "EMG"),
+        win_sec: float = 10.0,
+        parent=None,
+    ):
 
         super().__init__(parent)
 
@@ -78,7 +81,6 @@ class TraceView(QtWidgets.QWidget):
         self.base_y: list[tuple[float | None, float | None]] = [(None, None)] * self.nch
         self._ch_centers: list[float | None] = [None] * self.nch
 
-
         self.plots: list[pg.PlotWidget] = []
         self.curves: list[pg.PlotDataItem] = []
         self.vlabels: list[QtWidgets.QLabel] = []
@@ -94,13 +96,12 @@ class TraceView(QtWidgets.QWidget):
         self._annotation_items: list[pg.InfiniteLine] = []
 
         # State bar + legend (both hidden until set_state_masks is called)
-        self.state_bar    = StateBar(self)
+        self.state_bar = StateBar(self)
         self.state_legend = StateLegend(self)
 
         self._build_ui()
         self._set_window(0)
         self.reset_zooms()
-
 
     def _build_ui(self):
         outer = QtWidgets.QVBoxLayout(self)
@@ -129,20 +130,16 @@ class TraceView(QtWidgets.QWidget):
             lv.setContentsMargins(0, 0, 4, 0)
 
             lbl = QtWidgets.QLabel(f"{self.ch_names[i]}")
-            #lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            # lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             lv.addWidget(lbl)
             self.vlabels.append(lbl)
-
 
             sl = QtWidgets.QSlider(Qt.Orientation.Vertical)
             sl.setRange(0, 200)
             sl.setValue(100)
-            sl.valueChanged.connect(
-                lambda v, idx=i: self._on_zoom_slider(idx, v)
-            )
+            sl.valueChanged.connect(lambda v, idx=i: self._on_zoom_slider(idx, v))
             lv.addWidget(sl, 1)
             self.vsliders.append(sl)
-
 
             grid.addWidget(col_left, i + 1, 0)
 
@@ -167,7 +164,6 @@ class TraceView(QtWidgets.QWidget):
 
             curve = pw.plot(pen=pg.mkPen((0, 0, 0, 180), width=1.2))
 
-
             self.plots.append(pw)
             self.curves.append(curve)
             grid.addWidget(pw, i + 1, 1)
@@ -180,8 +176,6 @@ class TraceView(QtWidgets.QWidget):
         # bottom controls (nav)
         controls = self._build_controls_row()
         outer.addLayout(controls)
-
-
 
     def _build_controls_row(self) -> QtWidgets.QLayout:
         layout = QtWidgets.QGridLayout()
@@ -265,7 +259,6 @@ class TraceView(QtWidgets.QWidget):
             self._ch_centers[idx] = float(np.median(seg))
         self._apply_y(idx)
 
-
     def _on_seconds_per_view(self, sec: float):
         center = self.start + self.win // 2
         self.win_sec = float(sec)
@@ -288,7 +281,6 @@ class TraceView(QtWidgets.QWidget):
     def center_sample(self):
         return int(np.clip(self.start + self.win // 2, 0, max(0, self.n - self.win // 2)))
 
-
     def showEvent(self, event: QtGui.QShowEvent) -> None:
         super().showEvent(event)
         QTimer.singleShot(0, self._sync_state_bar_viewport)
@@ -305,16 +297,15 @@ class TraceView(QtWidgets.QWidget):
         """
         if not self.plots or not self._state_row.isVisible():
             return
-        vb   = self.plots[0].getPlotItem().getViewBox()
+        vb = self.plots[0].getPlotItem().getViewBox()
         rect = vb.sceneBoundingRect()
-        pw   = self.plots[0]
-        left_g  = pw.mapToGlobal(QPoint(int(rect.left()),  0))
+        pw = self.plots[0]
+        left_g = pw.mapToGlobal(QPoint(int(rect.left()), 0))
         right_g = pw.mapToGlobal(QPoint(int(rect.right()), 0))
         self.state_bar.sync_viewport(
             self.state_bar.mapFromGlobal(left_g).x(),
             self.state_bar.mapFromGlobal(right_g).x(),
         )
-
 
     def jump_to_sample(self, sample: int) -> None:
         """Center the view on `sample`."""
@@ -355,7 +346,11 @@ class TraceView(QtWidgets.QWidget):
             mask = self.state_set.get(_STATE_KEYS[key])
             if mask is not None:
                 forward = not (ev.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-                span = mask.next_span_after(self.center_sample) if forward else mask.prev_span_before(self.center_sample)
+                span = (
+                    mask.next_span_after(self.center_sample)
+                    if forward
+                    else mask.prev_span_before(self.center_sample)
+                )
                 if span is not None:
                     self.jump_to_sample(span[0])
             ev.accept()
@@ -370,7 +365,7 @@ class TraceView(QtWidgets.QWidget):
         t = np.arange(self.start, stop) / self.fs
 
         for ch in range(self.nch):
-            y = self.data[ch, self.start:stop]
+            y = self.data[ch, self.start : stop]
             self.curves[ch].setData(t, y)
 
         if t.size:
@@ -390,7 +385,6 @@ class TraceView(QtWidgets.QWidget):
         if t.size:
             self._update_mask_overlays(t[0], t[-1])
             self.state_bar.update_window(t[0], t[-1])
-
 
     def set_masks(self, mask_set: MaskSet) -> None:
         self.mask_set = mask_set
@@ -437,7 +431,6 @@ class TraceView(QtWidgets.QWidget):
                     pw.addItem(item)
                     self._overlay_items.append((pw, item))
 
-
     def reset_zooms(self):
         for ch in range(self.nch):
             self.y_zoom[ch] = 1.0
@@ -447,11 +440,10 @@ class TraceView(QtWidgets.QWidget):
             self.vlabels[ch].setText(f"{self.ch_names[ch]}\n1.00×")
 
             self.base_y[ch] = self._fit_base_y(ch)
-            #start, stop = self.start, min(self.start + self.win, self.n)
-            #seg = self.data[ch, start:stop]
-            #self._ch_centers[ch] = float(np.median(seg)) if seg.size > 0 else None
+            # start, stop = self.start, min(self.start + self.win, self.n)
+            # seg = self.data[ch, start:stop]
+            # self._ch_centers[ch] = float(np.median(seg)) if seg.size > 0 else None
             self._apply_y(ch)
-
 
     def _fit_base_y(self, ch: int) -> tuple[float, float]:
         start, stop = self.start, min(self.start + self.win, self.n)
@@ -463,7 +455,6 @@ class TraceView(QtWidgets.QWidget):
             y0, y1 = y0 - 1.0, y1 + 1.0
         pad = 0.05 * (y1 - y0)
         return (y0 - pad, y1 + pad)
-
 
     def _apply_y(self, ch: int, zero_centered: bool = False):
         y0, y1 = self.base_y[ch]
@@ -515,7 +506,10 @@ class TraceView(QtWidgets.QWidget):
         pen = pg.mkPen(color=(200, 0, 200, 200), width=1.5, style=Qt.PenStyle.DashLine)
         for t_sec, label in annotations:
             labeled = pg.InfiniteLine(
-                pos=t_sec, angle=90, movable=False, pen=pen,
+                pos=t_sec,
+                angle=90,
+                movable=False,
+                pen=pen,
                 label=label,
                 labelOpts={"position": 0.95, "color": (180, 0, 180), "fill": (255, 255, 255, 120)},
             )
@@ -528,4 +522,3 @@ class TraceView(QtWidgets.QWidget):
                 line.setZValue(20)
                 pw.addItem(line)
                 self._annotation_items.append(line)
-

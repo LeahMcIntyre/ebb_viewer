@@ -23,10 +23,12 @@ def test_pair_groups_by_token(tmp_path: Path):
     # Convert to sorted lists of stems for stable comparisons
     grouped_stems = [sorted([p.stem for p in g]) for g in groups]
 
-    assert sorted(grouped_stems) == sorted([
-        sorted([p1.stem, p2.stem, p3.stem]),
-        sorted([q1.stem, q2.stem]),
-    ])
+    assert sorted(grouped_stems) == sorted(
+        [
+            sorted([p1.stem, p2.stem, p3.stem]),
+            sorted([q1.stem, q2.stem]),
+        ]
+    )
 
 
 def test_pair_raises_if_no_match(tmp_path: Path):
@@ -70,10 +72,12 @@ def test_combine_swd_shifts_and_stacks_intervals(tmp_path: Path):
     out = loadmat(out_path, squeeze_me=True, struct_as_record=False)
     out_swds = np.asarray(out["final_ts"])
 
-    expected = np.vstack([
-        swds1,
-        swds2 + 3600.0,  # shifted by one chunk
-    ])
+    expected = np.vstack(
+        [
+            swds1,
+            swds2 + 3600.0,  # shifted by one chunk
+        ]
+    )
 
     # combine_swd sorts by start time; expected is already sorted
     assert out_swds.shape == expected.shape

@@ -19,29 +19,29 @@ RAW_CODE_DISPLAY: dict[str, str] = {
 
 
 STATE_PRESETS: dict[str, list[str]] = {
-    "wake":  ["w"],
-    "nrem":  ["n"],
-    "rem":   ["r"],
+    "wake": ["w"],
+    "nrem": ["n"],
+    "rem": ["r"],
     "sleep": ["n", "r"],
-    "all":   ["w", "n", "r"],
+    "all": ["w", "n", "r"],
 }
 
 DEFAULT_STATES: tuple[str, ...] = ("wake", "nrem", "rem")
 
 PRESET_DESCRIPTIONS: dict[str, str] = {
-    "wake":  "Wake epochs only",
-    "nrem":  "NREM epochs only",
-    "rem":   "REM epochs only",
+    "wake": "Wake epochs only",
+    "nrem": "NREM epochs only",
+    "rem": "REM epochs only",
     "sleep": "NREM and REM epochs lumped into one PSD",
-    "all":   "Wake, NREM, and REM epochs lumped into one PSD",
+    "all": "Wake, NREM, and REM epochs lumped into one PSD",
 }
 
 PRESET_DISPLAY: dict[str, str] = {
-    "wake":  "Wake",
-    "nrem":  "NREM",
-    "rem":   "REM",
+    "wake": "Wake",
+    "nrem": "NREM",
+    "rem": "REM",
     "sleep": "Sleep (NREM+REM)",
-    "all":   "All (Wake+NREM+REM)",
+    "all": "All (Wake+NREM+REM)",
 }
 
 CANONICAL_ORDER: tuple[str, ...] = ("wake", "nrem", "rem", "sleep", "all")

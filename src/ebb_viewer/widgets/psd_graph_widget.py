@@ -23,11 +23,13 @@ from PyQt6.QtWidgets import (
 from ebb.process.state_presets import gather_states_from_store
 from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
 
-INVERSE_FILTER = np.array([2.485297985, 1.360646853, 1.145286775, 1.071699399, 1.038017048, 1.018656356, 1.007806318])
-FILTER_RANGE = [0.5, 3.5] #Filter applied in filter range (inclusive)
+INVERSE_FILTER = np.array(
+    [2.485297985, 1.360646853, 1.145286775, 1.071699399, 1.038017048, 1.018656356, 1.007806318]
+)
+FILTER_RANGE = [0.5, 3.5]  # Filter applied in filter range (inclusive)
+
 
 class PSDGridPage(QWidget):
-
     navigate_to = pyqtSignal(str)
     manifest_changed = pyqtSignal()
 
@@ -35,14 +37,14 @@ class PSDGridPage(QWidget):
         self,
         parent=None,
         *,
-        store,                    # PSDStore-like: animals() -> List[str], states(animal) -> List[str], get(animal, state) -> Dict[ch,(f,y)]
-        channel_names: list[str], # e.g., ["LFC","RSC","LSC"]
-        states: list[str] = None, # e.g., ["wake","nrem","rem"]
-        manifest=None,            # optional Manifest for per-animal flagging
+        store,  # PSDStore-like: animals() -> List[str], states(animal) -> List[str], get(animal, state) -> Dict[ch,(f,y)]
+        channel_names: list[str],  # e.g., ["LFC","RSC","LSC"]
+        states: list[str] = None,  # e.g., ["wake","nrem","rem"]
+        manifest=None,  # optional Manifest for per-animal flagging
         run_channels: str | None = None,  # channel combo identifying which run this PSD belongs to
         drink_review: bool = False,  # Pass 2 mode: pending = drink_mask_applied animals
         run_name: str = "default",  # PSD run name for manifest flag scoping
-        project_root=None,          # Path for drink-mask hint
+        project_root=None,  # Path for drink-mask hint
     ):
         super().__init__(parent)
         self.store = store
@@ -59,12 +61,11 @@ class PSDGridPage(QWidget):
 
         # View preferences
         self.xrange: tuple[float, float] = (0.5, 110)  # default window to show
-        self.interp_range = [58,62]
+        self.interp_range = [58, 62]
         self.xlog = False
         self.ylog = True
         self.invfil = False
         self.interpolate = False
-
 
         # PyQtGraph global styling
         pg.setConfigOptions(antialias=True)
@@ -81,7 +82,6 @@ class PSDGridPage(QWidget):
             self._render()
         self._update_flag_status()
         self._install_shortcuts()
-
 
     # ---------------- UI BUILDERS ----------------
 
@@ -111,14 +111,17 @@ class PSDGridPage(QWidget):
         tb.addAction(act_logy)
 
         # Inverse Filter toggle
-        act_invfil = _make_toggle(self, "Inverse Filter", checked=self.invfil, slot=self._on_inverse_toggled)
+        act_invfil = _make_toggle(
+            self, "Inverse Filter", checked=self.invfil, slot=self._on_inverse_toggled
+        )
         tb.addAction(act_invfil)
 
-        act_invfil = _make_toggle(self, "Interpolate", checked=self.interpolate, slot=self._on_interpolate)
+        act_invfil = _make_toggle(
+            self, "Interpolate", checked=self.interpolate, slot=self._on_interpolate
+        )
         tb.addAction(act_invfil)
 
         tb.addSeparator()
-
 
         act_xrange = QAction("Set X-Range", self)
         act_xrange.triggered.connect(self._on_set_xrange)
@@ -139,8 +142,12 @@ class PSDGridPage(QWidget):
         tb.addWidget(_labeled_combo(self, "Animal:", self.cmb_animal))
 
         tb.addSeparator()
-        tb.addWidget(_make_nav_button(self, "Prev", QStyle.StandardPixmap.SP_ArrowBack, self._prev_animal))
-        tb.addWidget(_make_nav_button(self, "Next", QStyle.StandardPixmap.SP_ArrowForward, self._next_animal))
+        tb.addWidget(
+            _make_nav_button(self, "Prev", QStyle.StandardPixmap.SP_ArrowBack, self._prev_animal)
+        )
+        tb.addWidget(
+            _make_nav_button(self, "Next", QStyle.StandardPixmap.SP_ArrowForward, self._next_animal)
+        )
 
         # (Optional) overflow menu
         more = QToolButton(self)
@@ -189,9 +196,7 @@ class PSDGridPage(QWidget):
         self.root.addWidget(tb)
 
         self._guidance_label = QFrame()
-        self._guidance_label.setStyleSheet(
-            "QFrame { background: #fff3cd; border-radius: 3px; }"
-        )
+        self._guidance_label.setStyleSheet("QFrame { background: #fff3cd; border-radius: 3px; }")
         hint_layout = QHBoxLayout(self._guidance_label)
         hint_layout.setContentsMargins(10, 5, 10, 5)
         hint_lbl = QLabel(
@@ -211,9 +216,7 @@ class PSDGridPage(QWidget):
 
         # Shown during Pass 1 when animal has an existing drink mask on disk
         self._mask_hint_frame = QFrame()
-        self._mask_hint_frame.setStyleSheet(
-            "QFrame { background: #e8f4fd; border-radius: 3px; }"
-        )
+        self._mask_hint_frame.setStyleSheet("QFrame { background: #e8f4fd; border-radius: 3px; }")
         mask_hint_layout = QHBoxLayout(self._mask_hint_frame)
         mask_hint_layout.setContentsMargins(10, 5, 10, 5)
         self._mask_hint_lbl = QLabel("")
@@ -251,7 +254,7 @@ class PSDGridPage(QWidget):
                 p.enableAutoRange(x=True, y=True)
                 p.showGrid(x=True, y=True, alpha=0.18)
                 p.setLabel("bottom", "Frequency (Hz)")
-                p.setLabel("left",   "Power (uV²/Hz)")
+                p.setLabel("left", "Power (uV²/Hz)")
                 p.setMouseEnabled(x=True, y=True)
                 p.setLogMode(self.xlog, self.ylog)  # start with your prefs
 
@@ -269,17 +272,15 @@ class PSDGridPage(QWidget):
                 else:
                     p.setXLink(self.first_plot)
 
-
-
     # ---------------- SHORTCUTS ----------------
 
     def _install_shortcuts(self):
         ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
         for key, slot in [
-            (Qt.Key.Key_Left,  self._prev_animal),
+            (Qt.Key.Key_Left, self._prev_animal),
             (Qt.Key.Key_Right, self._next_animal),
-            ("O",              self._flag_psd_ok),
-            ("D",              self._flag_drink_mask),
+            ("O", self._flag_psd_ok),
+            ("D", self._flag_drink_mask),
         ]:
             sc = QShortcut(QKeySequence(key), self)
             sc.setContext(ctx)
@@ -287,7 +288,7 @@ class PSDGridPage(QWidget):
 
     # ---------------- TOGGLES / NAV ----------------
 
-    def _on_interpolate(self, on:bool):
+    def _on_interpolate(self, on: bool):
         self.interpolate = bool(on)
         self._render()
 
@@ -299,7 +300,7 @@ class PSDGridPage(QWidget):
         self.ylog = bool(on)
         self._render()
 
-    def _on_inverse_toggled(self, on:bool):
+    def _on_inverse_toggled(self, on: bool):
         self.invfil = bool(on)
         self._render()
 
@@ -310,7 +311,7 @@ class PSDGridPage(QWidget):
             fmax=f_range[1],
             xrange=self.xrange,
             fres=self.store.freq_res(),
-            parent=self
+            parent=self,
         )
         if dlg.exec():  # QDialog.Accepted
             xrange = dlg.values()
@@ -326,7 +327,7 @@ class PSDGridPage(QWidget):
             xrange=self.interp_range,
             fres=self.store.freq_res(),
             title="Set Frequency Range to Interpolate Over (Line Noise)",
-            parent=self
+            parent=self,
         )
         if dlg.exec():  # QDialog.Accepted
             interp_range = dlg.values()
@@ -336,7 +337,6 @@ class PSDGridPage(QWidget):
     def _on_reset_zoom(self):
         self.xrange = (0.5, 110)
         self._render()
-
 
     def _prev_animal(self):
         i = self.cmb_animal.currentIndex()
@@ -358,7 +358,9 @@ class PSDGridPage(QWidget):
 
         # Some animals might not have all states
         available = set(self.store.states(animal))
-        data_by_state = {s: (self.store.get(animal, s) if s in available else {}) for s in self.states}
+        data_by_state = {
+            s: (self.store.get(animal, s) if s in available else {}) for s in self.states
+        }
 
         # Clamp for log-x safety
         xmin, xmax = self.xrange
@@ -379,10 +381,9 @@ class PSDGridPage(QWidget):
                 y = np.asarray(y, float)
                 y_copy = y.copy()
 
-
                 # Apply inverse filter if toggle on
                 if self.invfil:
-                    filter_mask = (f>=FILTER_RANGE[0]) & (f<=FILTER_RANGE[1])
+                    filter_mask = (f >= FILTER_RANGE[0]) & (f <= FILTER_RANGE[1])
                     y_copy[filter_mask] = y_copy[filter_mask] * INVERSE_FILTER
 
                 if self.interpolate:
@@ -398,18 +399,11 @@ class PSDGridPage(QWidget):
         # Apply same x-range to all
         for p in self.plots.values():
             p.setLogMode(self.xlog, self.ylog)
-            ylevels = [(10,0), (1,0)] if self.ylog else None
-            xlevels = [(10,0), (1,0)] if self.xlog else None
+            ylevels = [(10, 0), (1, 0)] if self.ylog else None
+            xlevels = [(10, 0), (1, 0)] if self.xlog else None
             p.getAxis("left").setTickSpacing(levels=ylevels)
             p.getAxis("bottom").setTickSpacing(levels=xlevels)
             p.getAxis("bottom").setTickDensity(density=0.8)
-
-
-
-
-
-
-
 
     # ---------------- MANIFEST FLAGGING ----------------
 
@@ -417,9 +411,14 @@ class PSDGridPage(QWidget):
         if self.manifest is None:
             return set()
         if self._drink_review:
-            return {entry.animal_id for entry, _ in self.manifest.pending_drink_verification(self._run_name)}
+            return {
+                entry.animal_id
+                for entry, _ in self.manifest.pending_drink_verification(self._run_name)
+            }
         if self.run_channels is None:
-            return {entry.animal_id for entry, _ in self.manifest.pending_psd_review(self._run_name)}
+            return {
+                entry.animal_id for entry, _ in self.manifest.pending_psd_review(self._run_name)
+            }
         return {
             entry.animal_id
             for entry, combo in self.manifest.pending_psd_review(self._run_name)
@@ -529,7 +528,6 @@ class PSDGridPage(QWidget):
         for curve in self.curves.values():
             curve.setData([], [])
 
-
     # ---------------- EXPORT ----------------
 
     def _export_png(self):
@@ -538,6 +536,7 @@ class PSDGridPage(QWidget):
 
 
 # ---------------- Toolbar helpers ----------------
+
 
 def _labeled_combo(parent, label_text: str, combo: QComboBox) -> QWidget:
     w = QWidget(parent)
@@ -551,10 +550,12 @@ def _labeled_combo(parent, label_text: str, combo: QComboBox) -> QWidget:
     h.addWidget(combo)
     return w
 
+
 def _toolbar_spacer(parent) -> QWidget:
     sp = QWidget(parent)
     sp.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
     return sp
+
 
 def _make_nav_button(parent, text: str, std_icon: QStyle.StandardPixmap, slot):
     btn = QToolButton(parent)
@@ -564,10 +565,9 @@ def _make_nav_button(parent, text: str, std_icon: QStyle.StandardPixmap, slot):
     btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
     return btn
 
+
 def _make_toggle(parent, text: str, checked: bool, slot):
     act = QAction(text, parent, checkable=True)
     act.setChecked(checked)
     act.toggled.connect(slot)
     return act
-
-
