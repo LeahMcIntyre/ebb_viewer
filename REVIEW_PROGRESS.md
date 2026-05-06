@@ -40,10 +40,10 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 ## Phase 1 — `ebb/` library (well-tested, safer)
 
 ### 1a. `ebb/core/` (243 lines)
-- [ ] `arraytools.py` (84)
-- [ ] `concurrency.py` (40)
-- [ ] `mixins.py` (79)
-- [ ] `metastores.py` (362)
+- [x] `arraytools.py` — fixed empty-input bug in `aggregate1d`; cleaned `else` on while; doc/typing
+- [x] `concurrency.py` — deleted dead `is_pickleable`; doc/typing
+- [x] `mixins.py` — deleted dead `_fetch_methods`; simplified `__str__`; doc/typing
+- [x] `metastores.py` — fixed MetaArray.select metadata bug; guarded MetaMask "metadata" name; misc
 
 ### 1b. `ebb/io/` (525 lines)
 - [ ] `combine.py` (310)
