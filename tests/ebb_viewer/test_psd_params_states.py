@@ -5,9 +5,6 @@ helper's default-and-filter behavior for legacy params.
 """
 
 import json
-from pathlib import Path
-
-import pytest
 
 from ebb_viewer.pipeline import psd_params
 

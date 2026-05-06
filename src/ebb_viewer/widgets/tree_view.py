@@ -1,11 +1,11 @@
 
 from __future__ import annotations
-from pathlib import Path
-from typing import Optional, Union
 
-from PyQt6.QtCore import Qt,  QDir
-from PyQt6.QtGui import  QFileSystemModel
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QTreeView
+from pathlib import Path
+
+from PyQt6.QtCore import QDir, Qt
+from PyQt6.QtGui import QFileSystemModel
+from PyQt6.QtWidgets import QTreeView, QVBoxLayout, QWidget
 
 
 class ProjectTree(QWidget):
@@ -38,7 +38,7 @@ class ProjectTree(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.view)
 
-    def set_root(self, root_path: Optional[Union[str, Path]]):
+    def set_root(self, root_path: str | Path | None):
         # If missing/invalid → show nothing
         if not root_path:
             self.view.setModel(None)

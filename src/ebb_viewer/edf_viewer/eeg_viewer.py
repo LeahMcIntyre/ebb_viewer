@@ -1,32 +1,38 @@
 import sys
-
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
-
-from PyQt6 import QtWidgets, QtGui
-from PyQt6.QtCore import Qt
 from openseize.file_io import edf
+from PyQt6 import QtGui, QtWidgets
+from PyQt6.QtCore import Qt
 
 from ebb.masking import get_offset
-
-from ebb_viewer.widgets.drink_mask_dialog import DrinkMaskDialogue
-from ebb_viewer.widgets.stft_viewer import STFTPopup, STFTBoundsDialog
-from ebb_viewer.widgets.sleep_viewer import SleepPopup
-
-from ebb_viewer.edf_viewer.recording import Recording
-from ebb_viewer.edf_viewer.trace_view import TraceView
-from ebb_viewer.edf_viewer.file_openers import pick_edf_csv, pick_mat, pick_npy_csv, pick_annotations_csv, load_annotations
+from ebb_viewer.edf_viewer.file_openers import (
+    load_annotations,
+    pick_annotations_csv,
+    pick_edf_csv,
+    pick_mat,
+    pick_npy_csv,
+)
 from ebb_viewer.edf_viewer.mask_builder import (
-    build_default_masks, load_state_masks, load_swd_mask, load_drink_mask,
-    rebuild_artifact_masks, rebuild_spindle_mask, rebuild_drink_mask,
-    build_annotation_mask, rebuild_annotation_mask,
+    build_annotation_mask,
+    build_default_masks,
+    load_drink_mask,
+    load_state_masks,
+    load_swd_mask,
+    rebuild_annotation_mask,
+    rebuild_artifact_masks,
+    rebuild_drink_mask,
+    rebuild_spindle_mask,
 )
 from ebb_viewer.edf_viewer.masks_dock import MasksDock
+from ebb_viewer.edf_viewer.recording import Recording
+from ebb_viewer.edf_viewer.trace_view import TraceView
 from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, parse_animal_id
-
-
+from ebb_viewer.widgets.drink_mask_dialog import DrinkMaskDialogue
+from ebb_viewer.widgets.sleep_viewer import SleepPopup
+from ebb_viewer.widgets.stft_viewer import STFTBoundsDialog, STFTPopup
 
 
 class AnnotationMaskDialog(QtWidgets.QDialog):
@@ -317,8 +323,8 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self._sleep_popup.resize(1000, 800)
         self._sleep_popup.show()
         self._sleep_popup.raise_()
-        
-        
+
+
 
     def _navigate_mask(self, mask, forward: bool) -> None:
         span = mask.next_span_after(self.trace_view.center_sample) if forward else mask.prev_span_before(self.trace_view.center_sample)
@@ -435,7 +441,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         mat_path = pick_mat(self, self.initial_dir)
         if mat_path is None:
             return
-        
+
         try:
             _, n_samples = self.rec.data.shape
             self.mask_set.add(load_swd_mask(mat_path, fs=self.rec.fs, n_samples=n_samples))
@@ -472,7 +478,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
                 self.trace_view.refresh_overlays()
                 self.masks_dock.rebuild(self.mask_set, self.state_set)
                 self.rec.drink_path = drink_path
-                self.rec.video_offset = offset 
+                self.rec.video_offset = offset
             except Exception as e:
                 QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
 
@@ -577,7 +583,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         msg.setWindowTitle("Spindle Epoch")
         msg.setText(self.state_df.iloc[row].to_string())
         msg.exec()
-    
+
     def on_view_session_info(self):
         dlg = QtWidgets.QDialog(self)
         dlg.setWindowTitle("Session Information")
@@ -634,7 +640,7 @@ def main():
     edf_path, csv_path = pick_edf_csv(None, initial_dir)
     if not edf_path:
         return"""
-    
+
     initial_dir = "/media/matt/Data_A/leah/Stxbp1 characterization"
 
     #edf_path = '/media/matt/Data_A/leah/Stxbp1 characterization/standard/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED.edf'
@@ -642,21 +648,21 @@ def main():
     edf_path, csv_path = pick_edf_csv(None, initial_dir)
     if not edf_path:
         return
-    
+
     with edf.Reader(str(edf_path)) as reader:
         data = reader.read(start=0)
         fs = int(reader.header.samples_per_record[0])
         if fs != 250:
             print(f"Sampling frequency of selected file is {fs}. Please pick a file with a frequency of 250.")
             return
-        
+
         start_str = reader.header.start_time
         date_str = reader.header.start_date
 
     fmt_eeg = "%d.%m.%y %H.%M.%S"
     start_time = datetime.strptime(f"{date_str} {start_str}", fmt_eeg)
     animal = parse_animal_id(edf_path)
-    
+
     ch_names = ("LFC", "RSC", "LSC", "EMG")
 
     rec = Recording(

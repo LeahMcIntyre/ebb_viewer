@@ -2,27 +2,36 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import matplotlib as mpl
 import numpy as np
 import pandas as pd
-
+import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QComboBox, QLabel, QPushButton, QSizePolicy,
-    QMessageBox, QSpinBox, QFrame, QScrollArea,
+    QComboBox,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
 )
+
 from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
 from ebb_viewer.pipeline.theme import COMBO_PLOT_RGB, STATUS_COLOR_HEX
-
-
-import pyqtgraph as pg
-import matplotlib as mpl
 
 _SENTINEL = object()
 
 from ebb.process.sleep_compute import (
-    compute_sleep_bins_df, compute_sleep_bins_df_offset, compute_spindle_fractions,
+    compute_sleep_bins_df,
+    compute_sleep_bins_df_offset,
+    compute_spindle_fractions,
 )
 
 
@@ -197,7 +206,7 @@ class SleepQCGridPage(QWidget):
 
         # --- top bar ---
         top = QHBoxLayout()
-        
+
         top.addWidget(QLabel("Combo:"))
         self.cmb_combo = QComboBox()
         self.cmb_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
@@ -429,7 +438,7 @@ class SleepQCGridPage(QWidget):
                 self._lbl_animal.setText("Animal:")
             self._set_mode(self._mode)
 
-    def _refresh_frac_plot(self, current_animal: "str | None" = _SENTINEL) -> None:
+    def _refresh_frac_plot(self, current_animal: str | None = _SENTINEL) -> None:
         combo   = self.cmb_combo.currentText()
         df_frac = self._get_frac_df(combo)
         if current_animal is _SENTINEL:
@@ -961,9 +970,10 @@ class SleepQCGridPage(QWidget):
 
     def _make_legend_row_frame(
         self, color: tuple, status: str | None
-    ) -> "tuple[QWidget, QHBoxLayout]":
+    ) -> tuple[QWidget, QHBoxLayout]:
         """Create a styled legend row with a color swatch. Returns (widget, layout)."""
-        from PyQt6.QtWidgets import QFrame, QHBoxLayout as _QHBoxLayout
+        from PyQt6.QtWidgets import QFrame
+        from PyQt6.QtWidgets import QHBoxLayout as _QHBoxLayout
         swatch = QFrame()
         swatch.setFixedSize(30, 4)
         swatch.setStyleSheet(f"background-color: rgb({color[0]}, {color[1]}, {color[2]});")
@@ -1382,9 +1392,9 @@ class SpindleFractionPlot(QWidget):
 
     def set_data(
         self,
-        df: "pd.DataFrame | None",
+        df: pd.DataFrame | None,
         title: str = '',
-        current_animal: "str | None" = None,
+        current_animal: str | None = None,
     ) -> None:
         pi = self._pw.getPlotItem()
         pi.clear()
@@ -1492,7 +1502,7 @@ class SpindleFractionPlot(QWidget):
         self._strip.setVisible(True)
         self.animal_clicked.emit(mid)
 
-    def update_strip_status(self, status: "str | None") -> None:
+    def update_strip_status(self, status: str | None) -> None:
         """Update the action strip button based on the animal's current sleep_qc status."""
         if status == "needs_rerun":
             self._btn_review.setEnabled(False)

@@ -9,17 +9,16 @@ in psd_params.json as a list of keys (e.g. ["wake", "nrem", "rem"]) and
 translated to a ``labels`` dict at call time via :func:`labels_from_presets`.
 """
 
-from typing import Dict, Iterable, List, Tuple
+from collections.abc import Iterable
 
-
-RAW_CODE_DISPLAY: Dict[str, str] = {
+RAW_CODE_DISPLAY: dict[str, str] = {
     "w": "Wake",
     "n": "NREM",
     "r": "REM",
 }
 
 
-STATE_PRESETS: Dict[str, List[str]] = {
+STATE_PRESETS: dict[str, list[str]] = {
     "wake":  ["w"],
     "nrem":  ["n"],
     "rem":   ["r"],
@@ -27,9 +26,9 @@ STATE_PRESETS: Dict[str, List[str]] = {
     "all":   ["w", "n", "r"],
 }
 
-DEFAULT_STATES: Tuple[str, ...] = ("wake", "nrem", "rem")
+DEFAULT_STATES: tuple[str, ...] = ("wake", "nrem", "rem")
 
-PRESET_DESCRIPTIONS: Dict[str, str] = {
+PRESET_DESCRIPTIONS: dict[str, str] = {
     "wake":  "Wake epochs only",
     "nrem":  "NREM epochs only",
     "rem":   "REM epochs only",
@@ -37,7 +36,7 @@ PRESET_DESCRIPTIONS: Dict[str, str] = {
     "all":   "Wake, NREM, and REM epochs lumped into one PSD",
 }
 
-PRESET_DISPLAY: Dict[str, str] = {
+PRESET_DISPLAY: dict[str, str] = {
     "wake":  "Wake",
     "nrem":  "NREM",
     "rem":   "REM",
@@ -45,10 +44,10 @@ PRESET_DISPLAY: Dict[str, str] = {
     "all":   "All (Wake+NREM+REM)",
 }
 
-CANONICAL_ORDER: Tuple[str, ...] = ("wake", "nrem", "rem", "sleep", "all")
+CANONICAL_ORDER: tuple[str, ...] = ("wake", "nrem", "rem", "sleep", "all")
 
 
-def labels_from_presets(preset_keys: Iterable[str]) -> Dict[str, List[str]]:
+def labels_from_presets(preset_keys: Iterable[str]) -> dict[str, list[str]]:
     """Build an ``estimate_psd`` labels dict from an iterable of preset keys.
 
     Unknown keys raise ``KeyError`` so typos in saved params don't silently
@@ -57,7 +56,7 @@ def labels_from_presets(preset_keys: Iterable[str]) -> Dict[str, List[str]]:
     keys = list(preset_keys)
     if not keys:
         raise ValueError("At least one state preset must be selected.")
-    labels: Dict[str, List[str]] = {}
+    labels: dict[str, list[str]] = {}
     for k in keys:
         if k not in STATE_PRESETS:
             raise KeyError(f"Unknown state preset: {k!r}")
@@ -65,7 +64,7 @@ def labels_from_presets(preset_keys: Iterable[str]) -> Dict[str, List[str]]:
     return labels
 
 
-def overlap_groups(preset_keys: Iterable[str]) -> Dict[str, List[str]]:
+def overlap_groups(preset_keys: Iterable[str]) -> dict[str, list[str]]:
     """Return raw epoch codes that appear in more than one selected group.
 
     Maps each shared code (e.g. ``"r"``) to the list of preset keys that
@@ -76,7 +75,7 @@ def overlap_groups(preset_keys: Iterable[str]) -> Dict[str, List[str]]:
     Unknown preset keys are ignored (consistent with
     :func:`states_from_params`'s filtering).
     """
-    code_to_groups: Dict[str, List[str]] = {}
+    code_to_groups: dict[str, list[str]] = {}
     for key in preset_keys:
         codes = STATE_PRESETS.get(key)
         if codes is None:
@@ -88,7 +87,7 @@ def overlap_groups(preset_keys: Iterable[str]) -> Dict[str, List[str]]:
     return {code: groups for code, groups in code_to_groups.items() if len(groups) > 1}
 
 
-def canonical_sort_states(names: Iterable[str]) -> List[str]:
+def canonical_sort_states(names: Iterable[str]) -> list[str]:
     """Sort state names: presets in canonical order first, then alphabetical."""
     seen = set(names)
     ordered = [n for n in CANONICAL_ORDER if n in seen]
@@ -96,7 +95,7 @@ def canonical_sort_states(names: Iterable[str]) -> List[str]:
     return ordered + extras
 
 
-def gather_states_from_store(store) -> List[str]:
+def gather_states_from_store(store) -> list[str]:
     """Union of state names across all animals in ``store``, canonically sorted.
 
     Falls back to the three single-state presets (wake/nrem/rem) when the

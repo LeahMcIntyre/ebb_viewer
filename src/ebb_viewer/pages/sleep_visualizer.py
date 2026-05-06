@@ -1,23 +1,27 @@
 from __future__ import annotations
 
-from typing import Optional, List
+import hashlib
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
-
+import pyqtgraph as pg
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QComboBox, QLabel, QPushButton, QSizePolicy,
-    QFileDialog, QMessageBox
+    QComboBox,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
-
-import pyqtgraph as pg
 
 from ebb.process.sleep_compute import compute_sleep_bins_df
 
-import hashlib
+
 def color_from_mouse_id(mouse_id):
     h = hashlib.md5(str(mouse_id).encode()).hexdigest()
     r = int(h[0:2], 16)
@@ -34,8 +38,8 @@ class SleepMetricsPage(QWidget):
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
         self.project_root = Path(project_root)
-        self._df: Optional[pd.DataFrame] = None
-        self._current_dir: Optional[Path] = None
+        self._df: pd.DataFrame | None = None
+        self._current_dir: Path | None = None
         self._building_controls = False
         self._legend = None
 
@@ -124,7 +128,7 @@ class SleepMetricsPage(QWidget):
     # Directory selection + loading
     # ------------------------------------------------------------------
     def _on_choose_directory(self) -> None:
-        spindle_root = self.project_root / "spindle_outputs" 
+        spindle_root = self.project_root / "spindle_outputs"
         if spindle_root.exists() and spindle_root.is_dir():
             start_dir = spindle_root
         else:
@@ -255,5 +259,5 @@ class SleepMetricsPage(QWidget):
             pen = pg.mkPen(color=color, width=2)
             self.plot.plot(x, y, pen=pen, name=str(mid))
 
-        
+
         self.plot.enableAutoRange(axis=pg.ViewBox.XYAxes, enable=True)

@@ -1,6 +1,8 @@
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
 from ebb.preprocess.edf import batch
+
 
 def test_batch_calls_preprocessor_once_per_edf(tmp_path: Path):
     # create fake EDF files

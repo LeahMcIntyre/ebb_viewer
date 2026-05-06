@@ -4,7 +4,6 @@ import textwrap
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from ebb.masking.annotations import keyword_mask
 

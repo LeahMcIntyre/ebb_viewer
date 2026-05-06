@@ -1,16 +1,15 @@
 from pathlib import Path
-from typing import List, Optional, Tuple, Union, Iterable
 
 import numpy as np
 import numpy.typing as npt
-
 from openseize.file_io import annotations
 
-def artifact(path: Union[str, Path],
+
+def artifact(path: str | Path,
              size: int,
-             labels: List[str],
+             labels: list[str],
              fs: float,
-             between: Tuple[Union[str, None], Union[str, None]]=(None, None),
+             between: tuple[str | None, str | None]=(None, None),
              include = False,
              **kwargs,
 ) -> npt.NDArray[np.bool_]:
@@ -68,7 +67,7 @@ def artifact(path: Union[str, Path],
         if ann.label is not None
         and ann.label.strip().lower() in labels_clean
     ]
-    
+
     annotes = [ann for ann in annotes if first.time <= ann.time <= last.time]
     # adjust the annote times relative to first annote
     for annote in annotes:
@@ -78,8 +77,8 @@ def artifact(path: Union[str, Path],
 
 
 def keyword_mask(
-    path: Union[str, Path],
-    keywords: List[str],
+    path: str | Path,
+    keywords: list[str],
     size: int,
     fs: float,
     pad_after_sec: float = 0.0,

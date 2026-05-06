@@ -1,25 +1,37 @@
 from pathlib import Path
-from typing import NamedTuple, Literal
+from typing import Literal, NamedTuple
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QWidget,
-    QPushButton, QTableWidget, QHeaderView, QSizePolicy,
-    QComboBox, QInputDialog, QMessageBox, QScrollArea,
+    QComboBox,
+    QHBoxLayout,
+    QHeaderView,
+    QInputDialog,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QTableWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
-from ebb_viewer.widgets.tree_view import ProjectTree
-from ebb_viewer.widgets.table_helpers import make_cell
-from ebb_viewer.pipeline.manifest import (
-    Manifest, ManifestEntry, RunEntry,
-    psd_path, spindle_output_dir, merged_psd_path,
-)
 from ebb_viewer.pipeline import psd_params as _psd_params
-from ebb_viewer.pipeline.manifest import spindle_edf_dir
+from ebb_viewer.pipeline.manifest import (
+    Manifest,
+    ManifestEntry,
+    RunEntry,
+    merged_psd_path,
+    psd_path,
+    spindle_edf_dir,
+    spindle_output_dir,
+)
 from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, drink_mask_rel
 from ebb_viewer.pipeline.theme import COMBO_BADGE_HEX, STATUS_COLOR_HEX
-
+from ebb_viewer.widgets.table_helpers import make_cell
+from ebb_viewer.widgets.tree_view import ProjectTree
 
 # Pipeline stage columns
 _COLUMNS = [
@@ -99,7 +111,7 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
         if sd.is_dir() and any(sd.glob("*.edf"))
     )
 
-    # Step 3 done: spindle outputs dir exists and contains at least 1 dir with at least 1 csv 
+    # Step 3 done: spindle outputs dir exists and contains at least 1 dir with at least 1 csv
     spindle_outputs_dir = root / "spindle_outputs"
     step3_done = spindle_outputs_dir.is_dir() and any(
         True for sd in spindle_outputs_dir.iterdir()
@@ -169,7 +181,7 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
         s5 = StepStatus("blocked", "Requires step 4 completion")
 
     # --- Step 6: PSD Computation ---
-    
+
     # --- Step 6: PSD Computation ---
     psd_runs = _psd_params.list_runs(root)
     any_merged_pkl = any(merged_psd_path(root, rn).exists() for rn in psd_runs) if psd_runs else False
@@ -471,7 +483,7 @@ class HomePage(QWidget):
     # ---------------------------------------------------------------
     # Actions
     # ---------------------------------------------------------------
-    # Allows rerun channel combo to be more editable. 
+    # Allows rerun channel combo to be more editable.
     def _on_cell_double_clicked(self, row: int, col: int) -> None:
         """Allow changing the rerun combo on a needs_rerun row if no EDF written yet."""
         if col != 6:

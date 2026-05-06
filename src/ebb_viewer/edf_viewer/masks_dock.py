@@ -1,6 +1,6 @@
-from typing import Callable
+from collections.abc import Callable
 
-from PyQt6 import QtWidgets, QtGui
+from PyQt6 import QtGui, QtWidgets
 from PyQt6.QtCore import Qt
 
 from ebb_viewer.edf_viewer.masks import Mask, MaskSet, ParamSpec
@@ -200,7 +200,7 @@ class MasksDock(QtWidgets.QDockWidget):
         pix.fill(Qt.GlobalColor.transparent)
         p = QtGui.QPainter(pix)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        p.setBrush(QtGui.QColor(r, g, b, a)) 
+        p.setBrush(QtGui.QColor(r, g, b, a))
         p.setPen(QtGui.QPen(QtGui.QColor(180, 180, 180)))
         p.drawRoundedRect(1, 1, size - 1, size - 1, 3, 3)
         p.end()

@@ -2,8 +2,7 @@ import functools
 from itertools import zip_longest
 
 import numpy as np
-
-from openseize.core.producer import producer, Producer
+from openseize.core.producer import producer
 
 # DEPRECATION NOTICE
 # The next release of openseize will handle producing between values along axis
@@ -70,7 +69,7 @@ def between_pro(reader, start, stop, chunksize, axis=-1):
     """
 
     # build a partial freezing all arg of _between_gen
-    gen_func = functools.partial(_between_gen, reader, start, stop, chunksize, 
+    gen_func = functools.partial(_between_gen, reader, start, stop, chunksize,
                                  axis)
     # compute the shape of the new producer
     shape = list(reader.shape)

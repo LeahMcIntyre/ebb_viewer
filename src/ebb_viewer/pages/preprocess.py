@@ -1,21 +1,30 @@
-from pathlib import Path
-from typing import Optional
-
 import time
+from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal
-from PyQt6.QtWidgets import (
-    QWidget, QFormLayout, QSpinBox, QVBoxLayout, QPushButton,
-    QMessageBox, QLabel, QLineEdit, QGroupBox, QSizePolicy, QHBoxLayout, QFrame,
-    QPlainTextEdit, QApplication
-)
-from PyQt6.QtGui import QFont
 from openseize.file_io import edf as edf_io
+from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
 
+from ebb.preprocess.edf import batch as batch_preprocess
+from ebb.preprocess.edf import standard
+from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.widgets.trim_to_widget import TrimToWidget
 from ebb_viewer.widgets.worker_helpers import launch_worker
-from ebb_viewer.pipeline.manifest import Manifest
-from ebb.preprocess.edf import standard, batch as batch_preprocess
 
 
 def _fmt_hrs(hours: float) -> str:

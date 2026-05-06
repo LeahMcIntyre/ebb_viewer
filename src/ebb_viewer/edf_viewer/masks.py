@@ -1,21 +1,22 @@
 # model.py (or top of file for now)
 import bisect
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Iterator, List, Tuple, Dict, Optional
+
 import numpy as np
 
-Span = Tuple[int, int]  # [start_sample, end_sample)
+Span = tuple[int, int]  # [start_sample, end_sample)
 
 
 @dataclass
 class ParamSpec:
     """UI constraints for a single metadata parameter."""
-    min: Optional[float] = None
-    max: Optional[float] = None
-    step: Optional[float] = None
+    min: float | None = None
+    max: float | None = None
+    step: float | None = None
     decimals: int = 4        # for float widgets only
-    units: Optional[str] = None  # displayed as spinbox suffix, e.g. " s", " Hz"
-    desc: Optional[str] = None
+    units: str | None = None  # displayed as spinbox suffix, e.g. " s", " Hz"
+    desc: str | None = None
 
 
 @dataclass
@@ -23,10 +24,10 @@ class Mask:
     """A single 1D mask aligned to samples (no channels, just time)."""
     name: str
     color: tuple[int, int, int, int]  # RGBA
-    spans: List[Span] = field(default_factory=list)
+    spans: list[Span] = field(default_factory=list)
     enabled: bool = True  # we'll use this later for toggling
-    metadata: Dict = field(default_factory=dict)
-    param_specs: Dict[str, ParamSpec] = field(default_factory=dict)
+    metadata: dict = field(default_factory=dict)
+    param_specs: dict[str, ParamSpec] = field(default_factory=dict)
 
     @classmethod
     def from_bool(cls, name: str, color, arr: np.ndarray) -> "Mask":
@@ -49,9 +50,9 @@ class Mask:
         if arr[-1]:
             stops = np.r_[stops, n]
 
-        spans: List[Span] = [(int(s), int(e)) for s, e in zip(starts, stops)]
+        spans: list[Span] = [(int(s), int(e)) for s, e in zip(starts, stops)]
         return cls(name=name, color=color, spans=spans)
-    
+
     @property
     def total_samples(self) -> int:
         """Total number of samples spanned by this mask."""
@@ -88,7 +89,7 @@ class Mask:
             #Get the next span that starts latest (lo) and then the span that ends first (hi)
             lo = max(self.spans[i][0], other.spans[j][0])
             hi = min(self.spans[i][1], other.spans[j][1])
-            # If lo > hi then one span ends before the other starts 
+            # If lo > hi then one span ends before the other starts
             if lo < hi:
                 total += hi - lo
             # Advance the span tracker of whichever span ends first
@@ -103,7 +104,7 @@ class Mask:
 @dataclass
 class MaskSet:
     """Simple collection of masks keyed by name."""
-    masks: Dict[str, Mask] = field(default_factory=dict)
+    masks: dict[str, Mask] = field(default_factory=dict)
 
     def add(self, mask: Mask) -> None:
         self.masks[mask.name] = mask

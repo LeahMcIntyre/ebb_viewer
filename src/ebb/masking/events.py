@@ -1,15 +1,17 @@
-from datetime import datetime, time as dtime, timedelta
+from collections.abc import Iterable
+from datetime import datetime, timedelta
+from datetime import time as dtime
 from pathlib import Path
-from typing import List, Optional, Tuple, Union, Iterable
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 from scipy.io import loadmat
 
-def drinking_mask(mask_path: Union[str, Path],
-                  offset_sec: Optional[float] = None,
-                  fs: int = 250, 
+
+def drinking_mask(mask_path: str | Path,
+                  offset_sec: float | None = None,
+                  fs: int = 250,
                   pad_sec: int = 2
 ) -> npt.NDArray[np.bool_]:
     """
@@ -29,7 +31,7 @@ def drinking_mask(mask_path: Union[str, Path],
         A 1-D boolean array where drinking events and padding are False.
     """
     mask_sec = np.asarray(np.load(Path(mask_path)), dtype=bool)  # per-second mask
-    
+
     # Dilate events by pad_sec on each side at 1 Hz
     pad = int(pad_sec)
     # Convolution-based dilation at 1 Hz
@@ -45,24 +47,24 @@ def drinking_mask(mask_path: Union[str, Path],
     if (offset_sec) and (offset_sec > 0):
         shift = int(round(offset_sec * fs))
         mask_samples = np.pad(mask_samples, (shift, 0), constant_values=False)[:-shift]
-    
+
     return ~mask_samples.astype(bool)
 
 #TODO: Organize this better --> best way to get offset from files?
 def get_offset(mask_path, offset_path):
-    
+
     animal = Path(mask_path).stem.split('_')[0]
     offsets = pd.read_csv(offset_path)
     #Get the offset between the mask from video and the eeg recording
     return offsets[offsets['Animal']==animal]['Offset'].values[0]
 
 
-def swd(path: Union[str, Path], 
-        n_samples: int, 
-        fs: int = 250, 
-        label: str ='DEL_ts', 
+def swd(path: str | Path,
+        n_samples: int,
+        fs: int = 250,
+        label: str ='DEL_ts',
         pad_sec: int=0):
-    
+
     """
     Builds a mask from a .mat file containing time stamps of SWDs.
 
@@ -130,7 +132,7 @@ def swd(path: Union[str, Path],
     if swds.shape[0] == 0:
         # no intervals -> all True
         return np.ones(n_samples, dtype=bool)
-    
+
     if pad_sec > 0:
         swds = swds + [(-1*pad_sec), pad_sec]
 
@@ -145,9 +147,9 @@ def hour_window_mask(
     recording_start: datetime,
     n_samples: int,
     fs: float,
-    hour_windows: List[Tuple[float, float]],
-    selected_days: Optional[List[int]] = None,
-) -> Tuple[npt.NDArray[np.bool_], List[Tuple[datetime, datetime]]]:
+    hour_windows: list[tuple[float, float]],
+    selected_days: list[int] | None = None,
+) -> tuple[npt.NDArray[np.bool_], list[tuple[datetime, datetime]]]:
     """Return (bool_mask, used_windows) for samples within any of the given hour windows.
 
     hour_windows is a list of (hour_start, hour_end) pairs in decimal hours (e.g. 10.0, 12.0).
@@ -173,8 +175,8 @@ def hour_window_mask(
     recording_end = recording_start + timedelta(seconds=n_samples / fs)
     midnight0 = recording_start.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    all_intervals_s: List[Tuple[float, float]] = []
-    all_used_windows: List[Tuple[datetime, datetime]] = []
+    all_intervals_s: list[tuple[float, float]] = []
+    all_used_windows: list[tuple[datetime, datetime]] = []
 
     for hour_start, hour_end in hour_windows:
         wraps = hour_end < hour_start
@@ -213,7 +215,7 @@ def time_of_day_mask(
     fs: float,
     tod_start: dtime,
     tod_end: dtime,
-    selected_days: Optional[List[int]] = None,
+    selected_days: list[int] | None = None,
 ) -> np.ndarray:
     """Return a boolean mask (True = keep) for samples within the given
     time-of-day window.  Wraps midnight when tod_end < tod_start.
@@ -281,7 +283,7 @@ def _normalize_intervals(iv: np.ndarray, n: int) -> np.ndarray:
 
     iv = iv[np.argsort(iv[:, 0])]  # Sort intervals by start time
     merged = [iv[0]]
-    
+
     for s, e in iv[1:]:
         ms, me = merged[-1]
         if s <= me:  # Overlap or touch -> merge
@@ -291,26 +293,26 @@ def _normalize_intervals(iv: np.ndarray, n: int) -> np.ndarray:
 
     return np.asarray(merged)
 
-def _seconds_to_intervals(spans_s: Iterable[Tuple[float, float]], fs: float, n: int) -> np.ndarray:
+def _seconds_to_intervals(spans_s: Iterable[tuple[float, float]], fs: float, n: int) -> np.ndarray:
     """Convert (start, stop) seconds to clipped, merged sample intervals."""
     arr = np.asarray(spans_s)
     if arr.size == 0: return np.empty((0, 2))
-    
+
     # Convert seconds to sample indices
     a = np.floor(arr[:, 0] * fs).astype(int)
     b = np.ceil(arr[:, 1] * fs).astype(int)
-    
+
     return _normalize_intervals(np.column_stack([a, b]), n)
 
 def _intervals_to_bool_false(intervals: np.ndarray, n: int) -> np.ndarray:
     """Create a boolean mask marking the intervals as False."""
     mask = np.ones(n, dtype=bool)
     if not intervals.size: return mask
-    
+
     diff = np.zeros(n + 1, dtype=int)
     np.add.at(diff, np.clip(intervals[:, 0], 0, n), 1)
     np.add.at(diff, np.clip(intervals[:, 1], 0, n), -1)
-    
+
     covered = np.cumsum(diff[:-1]) > 0
     mask[covered] = False
     return mask

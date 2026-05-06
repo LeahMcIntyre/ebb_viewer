@@ -16,7 +16,6 @@ import pytest
 from ebb_viewer.pipeline import mask_export as me
 from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
 
-
 # ---------------------------------------------------------------------------
 # Manifest builders
 # ---------------------------------------------------------------------------

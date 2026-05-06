@@ -18,22 +18,23 @@ import argparse
 import copy
 import re
 import reprlib
+from collections.abc import Sequence
 from operator import attrgetter
 from pathlib import Path
-from typing import Iterable, List, Optional, Pattern, Sequence, Tuple, Union
+from re import Pattern
 
 import numpy as np
+from openseize.file_io import edf
 from scipy.io import loadmat, savemat
 
-from openseize.file_io import edf
 
 # -------------------------
 # Core helpers
 # -------------------------
-def locate(dirpath: Union[str, Path], fs: float, expected_hours: float) -> List[Path]:
+def locate(dirpath: str | Path, fs: float, expected_hours: float) -> list[Path]:
     """Return EDF paths whose duration (hours) is less than expected_hours."""
     dirpath = Path(dirpath)
-    result: List[Path] = []
+    result: list[Path] = []
     for fp in dirpath.glob("*.edf"):
         with edf.Reader(fp) as reader:
             hours = reader.shape[-1] / (3600.0 * fs)
@@ -42,11 +43,11 @@ def locate(dirpath: Union[str, Path], fs: float, expected_hours: float) -> List[
     return result
 
 #TODO: make this more flexible to handle different patterns
-def pair(paths: Sequence[Path], pattern: Union[str, Pattern[str]] = r"[^_]+") -> List[Tuple[Path, ...]]:
+def pair(paths: Sequence[Path], pattern: str | Pattern[str] = r"[^_]+") -> list[tuple[Path, ...]]:
     """Group files whose stems share the same token (matched by regex)."""
     pat = re.compile(pattern) if isinstance(pattern, str) else pattern
 
-    result: List[Tuple[Path, ...]] = []
+    result: list[tuple[Path, ...]] = []
     cpaths = list(paths)
 
     while cpaths:
@@ -80,17 +81,17 @@ def move_files(new_dir: Path, paths: Sequence[Path], *, exist_ok: bool = False) 
 # EDF combine
 # -------------------------
 def combine_edf(
-    dirpath: Union[str, Path],
+    dirpath: str | Path,
     *,
     fs: float,
     amount_hours: float = 24,
     nominal_hours: float = 72,
-    pattern: Union[str, Pattern[str]] = r"[^_]+",
+    pattern: str | Pattern[str] = r"[^_]+",
     verbose: bool = True,
     move_short_files: bool = False,
     short_dirname: str = "short_files",
     overwrite: bool = False,
-) -> List[Path]:
+) -> list[Path]:
     """Combine EDF files whose duration is less than nominal_hours.
 
     Returns a list of created combined EDF paths.
@@ -105,7 +106,7 @@ def combine_edf(
 
     path_tuples = pair(short_files, pattern)
 
-    created: List[Path] = []
+    created: list[Path] = []
     aRepr = reprlib.Repr()
     samples = int(amount_hours * fs * 3600)
 
@@ -149,14 +150,14 @@ def combine_edf(
 #TODO: make this more flexible to handle different patterns
 #TODO: figure out how to best incorporate this into pipeline (e.g., SWD files may not always be present)
 def combine_swd(
-    swd_dir: Union[str, Path],
+    swd_dir: str | Path,
     *,
     amount_hours: float = 24,
-    pattern: Union[str, Pattern[str]] = r"final_ts_([^_]+)",
+    pattern: str | Pattern[str] = r"final_ts_([^_]+)",
     verbose: bool = True,
     label_preference: str = "final_ts",
     overwrite: bool = False,
-) -> List[Path]:
+) -> list[Path]:
     """Combine SWD timestamp .mat files corresponding to short EDFs.
 
     Returns a list of created combined MAT paths.
@@ -178,7 +179,7 @@ def combine_swd(
             raise ValueError(f"No _P### pattern found in: {path.name}")
         return int(m.group(1))
 
-    created: List[Path] = []
+    created: list[Path] = []
 
     for tup in path_tuples:
         swd_paths = sorted(tup, key=extract_pnum)
@@ -251,9 +252,9 @@ def combine_swd(
 # -------------------------
 # CLI
 # -------------------------
-# CREDIT --> Chatgpt 
+# CREDIT --> Chatgpt
 # DO NOT USE THIS AS-IS WITHOUT TESTING AND POSSIBLY MODIFYING IT, I DID NOT WRITE IT/VERIFY IT MYSELF - Leah
-def main(argv: Optional[Sequence[str]] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="ebb-combine")
     sub = p.add_subparsers(dest="cmd", required=True)
 

@@ -1,7 +1,5 @@
 import inspect
-import reprlib
-from copy import deepcopy
-from collections import abc
+
 
 class ViewInstance:
     """Mixin endowing inheritors with echo and print str representations.
@@ -15,14 +13,14 @@ class ViewInstance:
     def _fetch_attributes(self):
         """Returns a dict of all non-protected attrs."""
 
-        return {key: value for key, value in self.__dict__.items() 
+        return {key: value for key, value in self.__dict__.items()
                 if not key.startswith('_')}
-            
+
     def _fetch_methods(self):
         """Returns non-protected instance and class methods."""
-        
+
         methods = dict(inspect.getmembers(self, inspect.ismethod))
-        return {name: method for name, method in methods.items() 
+        return {name: method for name, method in methods.items()
                 if not name.startswith('_')}
 
     def _fetch_properties(self):
@@ -35,7 +33,7 @@ class ViewInstance:
 
         #recall properties are class level attrs
         props = inspect.getmembers(type(self), isproperty)
-        return {name: getattr(self, name) for name,_ in props 
+        return {name: getattr(self, name) for name,_ in props
                 if not name.startswith('_')}
 
     def __repr__(self):
@@ -48,7 +46,7 @@ class ViewInstance:
         signature = inspect.signature(self.__init__)
         args = str(signature)
         cls_name = type(self).__name__
-        return '{}{}'.format(cls_name, args)
+        return f'{cls_name}{args}'
 
     def __str__(self):
         """Returns this instances print representation.
@@ -64,11 +62,11 @@ class ViewInstance:
         props = self._fetch_properties()
         attrs.update(props)
         #make strings of name, value pairs for each attr
-        #attr_strs = [name + ': ' + reprlib.repr(val) for 
+        #attr_strs = [name + ': ' + reprlib.repr(val) for
         #             name, val in attrs.items()]
         attr_strs = [name + ': ' + str(val) for name, val in attrs.items()]
         #make a help msg
-        help_msg = 'Type help({}) for full documentation'.format(cls_name)
+        help_msg = f'Type help({cls_name}) for full documentation'
         #construct print string
         msg = '{}\n{}\n{}\n\n{}'
         print_str = msg.format(cls_name + ' Object',

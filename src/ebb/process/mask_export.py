@@ -12,17 +12,17 @@ from __future__ import annotations
 
 import csv
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 
 from ebb.core.arraytools import discretize_bool
 
-
-RAWSTATE_TO_NAME: Dict[str, str] = {"w": "wake", "n": "nrem", "r": "rem"}
+RAWSTATE_TO_NAME: dict[str, str] = {"w": "wake", "n": "nrem", "r": "rem"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +39,7 @@ def mask_to_intervals(
     mask: npt.NDArray[np.bool_],
     fs: float,
     label: str = "",
-) -> List[IntervalRow]:
+) -> list[IntervalRow]:
     """Return contiguous True runs in ``mask`` as ``IntervalRow`` objects.
 
     Args:
@@ -69,9 +69,9 @@ def mask_to_intervals(
     ]
 
 
-def _read_rawstate_column(state_path: Path) -> List[str]:
+def _read_rawstate_column(state_path: Path) -> list[str]:
     """Read the ``rawstate`` column from a Spindle scoring CSV (one entry per epoch)."""
-    with open(state_path, "r", newline="") as f:
+    with open(state_path, newline="") as f:
         reader = csv.reader(f)
         header = next(reader, None)
         if header is None or "rawstate" not in header:
@@ -83,11 +83,11 @@ def _read_rawstate_column(state_path: Path) -> List[str]:
 
 
 def build_state_intervals(
-    state_path: Union[str, Path],
+    state_path: str | Path,
     fs: float = 250,
     winsize: float = 4.0,
-    code_to_name: Optional[Dict[str, str]] = None,
-) -> List[IntervalRow]:
+    code_to_name: dict[str, str] | None = None,
+) -> list[IntervalRow]:
     """Read raw scorer states from a Spindle CSV; return one row per contiguous run.
 
     Uses the ``rawstate`` column directly (no probability filtering — that is a
@@ -115,7 +115,7 @@ def build_state_intervals(
     samples_per_epoch = int(round(fs * winsize))
     fs_float = float(fs)
 
-    rows: List[IntervalRow] = []
+    rows: list[IntervalRow] = []
     run_start = 0
     run_label = raws[0]
     for i in range(1, len(raws)):
@@ -149,9 +149,9 @@ def build_state_intervals(
 
 
 def artifact_masks_to_intervals(
-    artifact_masks: Dict[str, npt.NDArray[np.bool_]],
+    artifact_masks: dict[str, npt.NDArray[np.bool_]],
     fs: float,
-) -> List[IntervalRow]:
+) -> list[IntervalRow]:
     """Convert PSD-convention artifact masks (True = OK) to artifact intervals.
 
     Each input mask is inverted so emitted intervals cover the *artifact* regions
@@ -169,7 +169,7 @@ def artifact_masks_to_intervals(
     Returns:
         Combined intervals across all sources, sorted by ``(start_sample, label)``.
     """
-    rows: List[IntervalRow] = []
+    rows: list[IntervalRow] = []
     for source, mask in artifact_masks.items():
         rows.extend(mask_to_intervals(~np.asarray(mask, dtype=bool), fs, label=source))
     rows.sort(key=lambda r: (r.start_sample, r.label))
@@ -177,10 +177,10 @@ def artifact_masks_to_intervals(
 
 
 def clean_per_state_intervals(
-    state_masks: Dict[str, npt.NDArray[np.bool_]],
+    state_masks: dict[str, npt.NDArray[np.bool_]],
     artifact_combined: npt.NDArray[np.bool_],
     fs: float,
-) -> List[IntervalRow]:
+) -> list[IntervalRow]:
     """Emit clean intervals per state (state ∩ no-artifact).
 
     Args:
@@ -198,7 +198,7 @@ def clean_per_state_intervals(
         Intervals where the state is active AND the sample is clean, one row
         per contiguous run, labeled by state name. Sorted by start sample.
     """
-    rows: List[IntervalRow] = []
+    rows: list[IntervalRow] = []
     clean = np.asarray(artifact_combined, dtype=bool)
     for state, mask in state_masks.items():
         rows.extend(mask_to_intervals(np.asarray(mask, dtype=bool) & clean, fs, label=state))
@@ -210,8 +210,8 @@ def clean_per_state_intervals(
 
 
 def write_intervals_csv(
-    path: Union[str, Path],
-    rows: List[IntervalRow],
+    path: str | Path,
+    rows: list[IntervalRow],
     label_column: str = "label",
 ) -> None:
     """Write interval rows to a CSV with header.
@@ -235,7 +235,7 @@ def write_intervals_csv(
             w.writerow([r.start_s, r.end_s, r.start_sample, r.end_sample, r.label])
 
 
-def write_meta_json(path: Union[str, Path], meta: Mapping[str, Any]) -> None:
+def write_meta_json(path: str | Path, meta: Mapping[str, Any]) -> None:
     """Write export metadata to a JSON sidecar (atomic via tmp+rename)."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -246,14 +246,14 @@ def write_meta_json(path: Union[str, Path], meta: Mapping[str, Any]) -> None:
 
 
 def write_animal_export(
-    out_dir: Union[str, Path],
+    out_dir: str | Path,
     animal_id: str,
     combo: str,
-    state_intervals: List[IntervalRow],
-    artifact_intervals: List[IntervalRow],
-    clean_intervals: List[IntervalRow],
+    state_intervals: list[IntervalRow],
+    artifact_intervals: list[IntervalRow],
+    clean_intervals: list[IntervalRow],
     meta: Mapping[str, Any],
-) -> Dict[str, Path]:
+) -> dict[str, Path]:
     """Write the three CSVs + meta.json for a single animal × combo export.
 
     Layout::

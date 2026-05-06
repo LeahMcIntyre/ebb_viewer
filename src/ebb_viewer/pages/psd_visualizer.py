@@ -1,14 +1,24 @@
 from pathlib import Path
-from typing import Optional
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QGroupBox, QFormLayout, QHBoxLayout, QLabel,
-    QPushButton, QComboBox, QSizePolicy, QFileDialog, QFrame,
+    QComboBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
+
 from ebb_viewer.data_stores.psd_store import PSDStore
-from ebb_viewer.widgets.psd_graph_widget import PSDGridPage
-from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.pipeline import psd_params
+from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.widgets.psd_graph_widget import PSDGridPage
 
 
 class PSDVisualizer(QWidget):
@@ -18,7 +28,7 @@ class PSDVisualizer(QWidget):
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
         self.project_root = Path(project_root)
-        self.psd_page: Optional[PSDGridPage] = None
+        self.psd_page: PSDGridPage | None = None
         self._build_ui()
         self._wire()
         self._refresh_run_selector()

@@ -1,13 +1,13 @@
 import csv
 
-import numpy as np
-
-from PyQt6 import QtWidgets
-from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import (
     FigureCanvasQTAgg as FigureCanvas,
+)
+from matplotlib.backends.backend_qtagg import (
     NavigationToolbar2QT as NavigationToolbar,
 )
+from matplotlib.figure import Figure
+from PyQt6 import QtWidgets
 
 from ebb.process.sleep_compute import compute_sleep_metrics_per_mouse
 
@@ -42,7 +42,7 @@ class SleepPopup(QtWidgets.QDialog):
         self.fig.clear()
         axarr = [self.fig.add_subplot(3, 3, i+1) for i in range(9)]
 
-        with open(state_path, 'r') as infile:
+        with open(state_path) as infile:
             reader = csv.reader(infile)
             header = next(reader)
             if 'rawstate' not in header:

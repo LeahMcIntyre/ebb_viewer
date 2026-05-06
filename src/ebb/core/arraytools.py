@@ -3,6 +3,7 @@ from collections import deque
 import numpy as np
 import numpy.typing as npt
 
+
 def discretize_bool(mask):
     """Returns discrete start and stop indexes for True runs in arr.
 
@@ -74,7 +75,7 @@ def aggregate1d(arr: npt.NDArray[np.bool_], radius: float):
         else:
             result.append(sublist)
             sublist = [item]
- 
+
     # use else to place last sublist when deck is empty
     else: #pylint: disable=useless-else-on-loop
         result.append(sublist)

@@ -11,13 +11,12 @@ Covers:
   is lumped into a multi-state group (e.g. the "all" preset).
 """
 
+import pickle
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-import pickle
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers

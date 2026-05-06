@@ -1,17 +1,29 @@
 import time
-
-from PyQt6.QtWidgets import (
-    QVBoxLayout, QGroupBox, QGridLayout, QLabel, QCheckBox,
-    QPushButton, QHBoxLayout, QSpacerItem, QSizePolicy,
-    QMessageBox, QFormLayout, QLineEdit, QWidget, QFrame,
-    QPlainTextEdit, QApplication,
-)
-from PyQt6.QtGui import QFont
-from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal
 from pathlib import Path
-from typing import Optional
 
-from ebb.preprocess.edf import spindle, batch as batch_preprocess
+from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QFormLayout,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
+    QSpacerItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ebb.preprocess.edf import batch as batch_preprocess
+from ebb.preprocess.edf import spindle
 from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
@@ -31,7 +43,7 @@ class SpindleWritePage(QWidget):
         self.project_root = Path(project_root)
 
         # Will be updated by _refresh_standard_dir
-        self.standard_folder: Optional[Path] = None
+        self.standard_folder: Path | None = None
 
         self._build_ui()
         self._wire()

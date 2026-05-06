@@ -1,10 +1,11 @@
 from pathlib import Path
-import pytest
+
 import numpy as np
+import pytest
+from scipy.io import loadmat, savemat
 
-from scipy.io import savemat, loadmat
+from ebb.io.combine import combine_swd, pair
 
-from ebb.io.combine import pair, combine_swd
 
 def test_pair_groups_by_token(tmp_path: Path):
     # token = "CW0DA2" (everything before first underscore)

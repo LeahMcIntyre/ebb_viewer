@@ -4,15 +4,13 @@ import json
 import re
 import shutil
 from pathlib import Path
-from typing import List, Optional
 
 from ebb.process.state_presets import DEFAULT_STATES, STATE_PRESETS
-
 
 RUN_NAME_RE = re.compile(r'^[A-Za-z0-9_-]{1,64}$')
 
 
-def states_from_params(params: Optional[dict]) -> List[str]:
+def states_from_params(params: dict | None) -> list[str]:
     """Return the list of state preset keys saved in params.
 
     Falls back to the canonical default (wake/nrem/rem) for params that
@@ -48,7 +46,7 @@ def save(project_root: Path, run_name: str, params: dict) -> Path:
     return path
 
 
-def load(project_root: Path, run_name: str) -> Optional[dict]:
+def load(project_root: Path, run_name: str) -> dict | None:
     """Return saved params for run_name, or None if not found."""
     path = _run_dir(project_root, run_name) / "psd_params.json"
     if not path.exists():
@@ -59,7 +57,7 @@ def load(project_root: Path, run_name: str) -> Optional[dict]:
         return None
 
 
-def list_runs(project_root: Path) -> List[str]:
+def list_runs(project_root: Path) -> list[str]:
     """Return sorted list of run names that have a psd_params.json.
 
     Silently migrates legacy flat psd/psd_params.json to psd/default/ on first call.

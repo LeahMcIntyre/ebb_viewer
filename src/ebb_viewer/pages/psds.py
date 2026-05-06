@@ -1,7 +1,38 @@
-from pathlib import Path
-from typing import Optional, List, Tuple
 import dataclasses
 import pickle
+from pathlib import Path
+
+from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (
+    QApplication,
+    QButtonGroup,
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QRadioButton,
+    QScrollArea,
+    QSizePolicy,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from ebb.process.psd_compute import batch_estimate, build_final_pkl
 from ebb.process.state_presets import (
@@ -13,21 +44,9 @@ from ebb.process.state_presets import (
     STATE_PRESETS,
     overlap_groups,
 )
-
-from PyQt6.QtCore import Qt, QObject, QThread, QTime, pyqtSignal
-from ebb_viewer.widgets.worker_helpers import launch_worker
-from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import (
-    QWidget, QFormLayout, QSpinBox, QDoubleSpinBox, QVBoxLayout, QPushButton,
-    QMessageBox, QLabel, QHBoxLayout, QGroupBox, QCheckBox, QGridLayout,
-    QSizePolicy, QLineEdit, QApplication, QPlainTextEdit, QTableWidget,
-    QTableWidgetItem, QHeaderView, QFileDialog, QFrame, QButtonGroup, QRadioButton,
-    QScrollArea, QTimeEdit, QToolButton, QDialog, QDialogButtonBox,
-)
-
-from ebb_viewer.pipeline.manifest import Manifest, merged_psd_path
 from ebb_viewer.pipeline import psd_params
-
+from ebb_viewer.pipeline.manifest import Manifest, merged_psd_path
+from ebb_viewer.widgets.worker_helpers import launch_worker
 
 DEFAULT_FS = 250
 DEFAULT_NOISE_THRESH = 0.5
@@ -48,8 +67,8 @@ class MaskingSettingsDialog(QDialog):
         self._project_root = project_root
         self._swd_available = swd_available
         self._swd_status_text = swd_status_text
-        self._ann_dir: Optional[Path] = None
-        self._hw_recordings: Optional[List[Tuple]] = None  # cached [(rec_start, n_samples), ...]
+        self._ann_dir: Path | None = None
+        self._hw_recordings: list[tuple] | None = None  # cached [(rec_start, n_samples), ...]
         self._build_ui()
         self._wire()
 
@@ -244,7 +263,7 @@ class MaskingSettingsDialog(QDialog):
         if checked:
             self._refresh_hour_window_preview()
 
-    def _get_defined_windows(self) -> List[Tuple[float, float]]:
+    def _get_defined_windows(self) -> list[tuple[float, float]]:
         """Return (hour_start, hour_end) for every row in the windows list."""
         windows = []
         for i in range(self._hw_windows_layout.count()):
@@ -424,6 +443,7 @@ class MaskingSettingsDialog(QDialog):
             return
         import warnings
         from datetime import datetime as _datetime
+
         from openseize.file_io import edf as edf_io
         recordings = []
         with warnings.catch_warnings():
@@ -553,7 +573,7 @@ class PSDPage(QWidget):
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
         self.project_root = Path(project_root)
-        self.standard_folder: Optional[Path] = None
+        self.standard_folder: Path | None = None
         self._computing = False
         self._masking_params: dict = {}
         self._swd_available: bool = False
@@ -1195,7 +1215,7 @@ class PSDPage(QWidget):
                 )
 
         # Pre-flight: SWD mask — all ok animals must have a .mat file
-        swd_dir: Optional[Path] = None
+        swd_dir: Path | None = None
         if self._masking_params.get("swd_mode") == "mask_out":
             swd_dir = self.project_root / "swd"
             swd_animal_ids = {p.stem.split("_")[0] for p in swd_dir.glob("*.mat")}
@@ -1239,7 +1259,7 @@ class PSDPage(QWidget):
         psd_run_dir = self.project_root / "psd" / run_name
         psd_run_dir.mkdir(parents=True, exist_ok=True)
 
-        pairs: List[Tuple[Path, Path]] = [
+        pairs: list[tuple[Path, Path]] = [
             (spindle_root / combo, psd_run_dir / f"psds_{combo}.pkl")
             for combo in combos
         ]
@@ -1334,7 +1354,7 @@ class PSDPage(QWidget):
     def channel_labels(self):
         return [cb.text() for cb in self._channel_boxes]
 
-    def _selected_states(self) -> List[str]:
+    def _selected_states(self) -> list[str]:
         """Return checked state preset keys in canonical order."""
         return [k for k in CANONICAL_ORDER if self._state_boxes[k].isChecked()]
 
@@ -1393,9 +1413,7 @@ class PSDPage(QWidget):
         ann_ok = True
         if self._masking_params.get("ann_enabled"):
             ann_dir = self._masking_params.get("ann_dir")
-            if ann_dir is None or not Path(ann_dir).is_dir():
-                ann_ok = False
-            elif not self._masking_params.get("ann_keywords", "").strip():
+            if ann_dir is None or not Path(ann_dir).is_dir() or not self._masking_params.get("ann_keywords", "").strip():
                 ann_ok = False
 
         states_ok = bool(self._selected_states())
@@ -1469,13 +1487,13 @@ class BatchEstimateWorker(QObject):
     def __init__(
         self,
         eeg_dir: Path,
-        combo_pairs: List[Tuple[Path, Path]],
+        combo_pairs: list[tuple[Path, Path]],
         params: dict,
         project_root: Path,
         run_name: str = "default",
         offset_path=None,
-        swd_dir: Optional[Path] = None,
-        ann_params: Optional[dict] = None,
+        swd_dir: Path | None = None,
+        ann_params: dict | None = None,
         parent=None,
     ):
         super().__init__(parent)

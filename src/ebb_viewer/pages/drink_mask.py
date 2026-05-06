@@ -1,13 +1,25 @@
 from pathlib import Path
-from typing import Optional
 
-from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QGroupBox, QFormLayout, QTableWidget, QTableWidgetItem,
-    QHeaderView, QPlainTextEdit, QMessageBox, QApplication,
-    QLineEdit, QSizePolicy, QFrame, QComboBox,
+    QApplication,
+    QComboBox,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ebb_viewer.widgets.worker_helpers import launch_worker
@@ -237,7 +249,7 @@ class DrinkMaskPage(QWidget):
     def _drink_masks_dir(self) -> Path:
         return self.project_root / "drink_masks"
 
-    def _detect_offset_csv(self) -> Optional[Path]:
+    def _detect_offset_csv(self) -> Path | None:
         d = self._drink_masks_dir()
         csvs = sorted(d.glob("*.csv")) if d.is_dir() else []
         return csvs[0] if csvs else None
@@ -293,8 +305,8 @@ class DrinkMaskPage(QWidget):
                 self._lbl_offset_hint.setStyleSheet("color: #c0392b; font-size: 11px; padding-left: 2px;")
 
     def _refresh_params(self):
-        from ebb_viewer.pipeline import psd_params
         from ebb.process.state_presets import PRESET_DISPLAY
+        from ebb_viewer.pipeline import psd_params
         run_name = self._current_run_name()
         params = psd_params.load(self.project_root, run_name)
         if params is None:
@@ -395,8 +407,8 @@ class DrinkMaskPage(QWidget):
     # ------------- Apply action -------------
 
     def _apply_clicked(self):
-        from ebb_viewer.pipeline.manifest import Manifest
         from ebb_viewer.pipeline import psd_params
+        from ebb_viewer.pipeline.manifest import Manifest
 
         run_name = self._current_run_name()
         params = psd_params.load(self.project_root, run_name)

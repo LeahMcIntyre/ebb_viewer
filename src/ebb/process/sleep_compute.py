@@ -1,19 +1,18 @@
 # processing/sleep_metrics.py
+import csv
+import re
+from collections import Counter
+from datetime import datetime, time, timedelta
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
-import csv
-from collections import Counter
-
-import re
-from typing import Union
-from datetime import datetime, time, timedelta
 
 
-def seconds_until_target(t: time, 
+def seconds_until_target(t: time,
                          h: int = 6) -> int:
-    
-    # Just need to combine with data 
+
+    # Just need to combine with data
     now = datetime.combine(datetime.today(), t)
     target_today = datetime.combine(datetime.today(), time(h, 0))
 
@@ -23,7 +22,7 @@ def seconds_until_target(t: time,
         target = target_today + timedelta(days=1)
 
     return int((target - now).total_seconds())
-# Used for quick plotting purposes 
+# Used for quick plotting purposes
 # TODO: Implement functions for analysis purposes (ex: allows for aggregation across multiple days, offsets time)
 def compute_sleep_metrics_per_mouse(
     states,
@@ -98,18 +97,18 @@ def compute_sleep_metrics_per_mouse(
     return pd.DataFrame(rows)
 
 def compute_sleep_bins_df(
-        state_dir: Union[str,Path],
+        state_dir: str | Path,
         bin_hours: int = 2,
 
 ) -> pd.DataFrame:
     state_paths = Path(state_dir).glob('*.csv')
-    
+
     sleep_dfs = []
 
     #Iterate through state_paths and get the basic sleep metrics df
     for state_path in state_paths:
         animal = state_path.stem.split('_')[0]
-        with open(state_path, 'r') as infile:
+        with open(state_path) as infile:
             reader = csv.reader(infile)
             header = next(reader)
             if 'rawstate' not in header:
@@ -125,13 +124,13 @@ def compute_sleep_bins_df(
     return pd.concat(sleep_dfs, ignore_index=True)
 
 def compute_sleep_bins_df_offset(
-        state_dir: Union[str,Path],
+        state_dir: str | Path,
         bin_hours: int = 2,
         begin_hr:int = 6,
 
 ) -> pd.DataFrame:
     state_paths = Path(state_dir).glob('*.csv')
-    
+
     sleep_dfs = []
 
     #Iterate through state_paths and get the basic sleep metrics df
@@ -144,7 +143,7 @@ def compute_sleep_bins_df_offset(
         hh, mm, ss = map(int, match.groups())
         t = time(hh, mm, ss)
 
-        with open(state_path, 'r') as infile:
+        with open(state_path) as infile:
             reader = csv.reader(infile)
             header = next(reader)
             if 'rawstate' not in header:
@@ -153,19 +152,19 @@ def compute_sleep_bins_df_offset(
             states = [row[idx] for row in reader]
             expanded_states = [state for state in states for _ in range(4)]
 
-        # Start states at next occurance of 6 am and add the end states to the end 
+        # Start states at next occurance of 6 am and add the end states to the end
         offset = seconds_until_target(t=t, h=begin_hr)
         states_after = expanded_states[offset:]
         states_before = expanded_states[:offset]
         offset_states = states_after + states_before
 
 
-        
-        df_mouse = compute_sleep_metrics_per_mouse(offset_states, 
-                                                    mouse_id=animal, 
-                                                    bin_hours=bin_hours, 
+
+        df_mouse = compute_sleep_metrics_per_mouse(offset_states,
+                                                    mouse_id=animal,
+                                                    bin_hours=bin_hours,
                                                     sample_rate_hz=1)
-        
+
         df_mouse['bin_start_sec'] =  df_mouse['bin_start_sec'] + (3600 * begin_hr)
         df_mouse['bin_start_hr'] =  df_mouse['bin_start_hr'] + (begin_hr)
 
@@ -175,7 +174,7 @@ def compute_sleep_bins_df_offset(
 
 
 def compute_spindle_fractions(
-    state_dir: Union[str, Path],
+    state_dir: str | Path,
     noise_prob_threshold: float = 0.5,
 ) -> pd.DataFrame:
     """
@@ -199,7 +198,7 @@ def compute_spindle_fractions(
     rows: list[dict] = []
     for state_path in sorted(Path(state_dir).glob('*.csv')):
         animal = state_path.stem.split('_')[0]
-        with open(state_path, 'r') as f:
+        with open(state_path) as f:
             reader = csv.reader(f)
             header = next(reader)
             if 'rawstate' not in header:

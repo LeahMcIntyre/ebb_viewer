@@ -1,15 +1,14 @@
 import csv
-import functools
 from pathlib import Path
-from typing import List, Optional, Tuple, Union, Iterable
 
 import numpy as np
 import numpy.typing as npt
 
-def state(path: Union[str, Path], 
-          labels: List[str],
-          fs: int = 250, 
-          winsize: int = 4, 
+
+def state(path: str | Path,
+          labels: list[str],
+          fs: int = 250,
+          winsize: int = 4,
           include=True
 ) -> npt.NDArray[np.bool_]:
     """Returns a boolean mask from a spindle sleep score csv file. Uses values from 'rawstate' column
@@ -34,8 +33,8 @@ def state(path: Union[str, Path],
     Returns:
         A 1-D boolean array state mask 
     """
-    
-    
+
+
     def is_in_labels(s):
         return s in labels
 
@@ -48,10 +47,10 @@ def state(path: Union[str, Path],
         include=include,
     )
 
-def state_prob(path: Union[str, Path], 
+def state_prob(path: str | Path,
           label: str,
-          fs: int = 250, 
-          winsize: int = 4, 
+          fs: int = 250,
+          winsize: int = 4,
           sprob=0.9,
 ) -> npt.NDArray[np.bool_]:
     """Returns a boolean mask from a spindle sleep score csv file. Uses values from 'rawstate' column
@@ -78,7 +77,7 @@ def state_prob(path: Union[str, Path],
     p_column = {'w': 'class_prob_0', 'n': 'class_prob_1', 'r': 'class_prob_2'}
     def above_thresh(val):
         return float(val) >= sprob
-    
+
 
     prob_mask = _expand_spindle_column(
         path=path,
@@ -91,10 +90,10 @@ def state_prob(path: Union[str, Path],
 
     return state_mask & prob_mask
 
-def spindle_noise(path: Union[str, Path], 
+def spindle_noise(path: str | Path,
                   noise_thresh: float = 0.5,
-                  fs: int = 250, 
-                  winsize: int = 4, 
+                  fs: int = 250,
+                  winsize: int = 4,
                   include=False
 ) -> npt.NDArray[np.bool_]:
     """Returns a boolean mask from a spindle sleep score csv file. Default returns False for 
@@ -118,7 +117,7 @@ def spindle_noise(path: Union[str, Path],
     Returns:
         A 1-D boolean array state mask         
     """
-    
+
     def above_thresh(val):
         return float(val) >= noise_thresh
 
@@ -152,7 +151,7 @@ def _expand_spindle_column(path, column_name, fs, winsize, value_fn, include=Tru
     Returns:
         1-D boolean array mask
     """
-    with open(path, "r", newline="") as infile:
+    with open(path, newline="") as infile:
         reader = csv.reader(infile)
         header = next(reader)
 

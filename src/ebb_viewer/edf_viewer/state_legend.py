@@ -1,5 +1,5 @@
-from PyQt6 import QtWidgets, QtGui
-from PyQt6.QtCore import Qt, QSize
+from PyQt6 import QtGui, QtWidgets
+from PyQt6.QtCore import QSize, Qt
 
 from ebb_viewer.edf_viewer.masks import MaskSet
 

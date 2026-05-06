@@ -1,12 +1,13 @@
 import numpy as np
-from scipy.signal import stft, welch
-
-from PyQt6 import QtWidgets
-from matplotlib.figure import Figure
 from matplotlib.backends.backend_qtagg import (
     FigureCanvasQTAgg as FigureCanvas,
+)
+from matplotlib.backends.backend_qtagg import (
     NavigationToolbar2QT as NavigationToolbar,
 )
+from matplotlib.figure import Figure
+from PyQt6 import QtWidgets
+from scipy.signal import stft, welch
 
 
 class STFTPopup(QtWidgets.QDialog):

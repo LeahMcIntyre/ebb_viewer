@@ -1,11 +1,10 @@
+from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Sequence
 
 import numpy as np
-
-from PyQt6 import QtWidgets, QtGui
-from PyQt6.QtCore import Qt, QPoint, QTimer, pyqtSignal
 import pyqtgraph as pg
+from PyQt6 import QtGui, QtWidgets
+from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
 
 from ebb_viewer.edf_viewer.masks import MaskSet
 from ebb_viewer.edf_viewer.state_bar import StateBar
@@ -51,13 +50,13 @@ class TraceView(QtWidgets.QWidget):
     timeDoubleClicked = pyqtSignal(float)
 
     def __init__(self,
-                 data: np.ndarray, 
-                 fs: int, 
-                 start_time: datetime, 
-                 ch_names: Sequence[str] = ("LFC", "RSC", "LSC", "EMG"), 
-                 win_sec: float =10.0, 
+                 data: np.ndarray,
+                 fs: int,
+                 start_time: datetime,
+                 ch_names: Sequence[str] = ("LFC", "RSC", "LSC", "EMG"),
+                 win_sec: float =10.0,
                  parent=None):
-        
+
         super().__init__(parent)
 
         # Save data and assert shape
@@ -101,7 +100,7 @@ class TraceView(QtWidgets.QWidget):
         self._build_ui()
         self._set_window(0)
         self.reset_zooms()
-        
+
 
     def _build_ui(self):
         outer = QtWidgets.QVBoxLayout(self)
@@ -274,7 +273,7 @@ class TraceView(QtWidgets.QWidget):
         self.start = int(np.clip(center - self.win // 2, 0, self.n - self.win))
         self.slider.setRange(0, max(0, self.n - self.win))
         self.slider.setValue(self.start)
-        self._set_window(self.start)  
+        self._set_window(self.start)
 
     def _on_jump(self, sec: float):
         self.start = int(np.clip(float(sec) * self.fs, 0, max(0, self.n - self.win)))
@@ -362,7 +361,7 @@ class TraceView(QtWidgets.QWidget):
             ev.accept()
             return
         super().keyPressEvent(ev)
-    
+
     # Rendering
 
     def _set_window(self, start: int):
@@ -464,8 +463,8 @@ class TraceView(QtWidgets.QWidget):
             y0, y1 = y0 - 1.0, y1 + 1.0
         pad = 0.05 * (y1 - y0)
         return (y0 - pad, y1 + pad)
-        
-    
+
+
     def _apply_y(self, ch: int, zero_centered: bool = False):
         y0, y1 = self.base_y[ch]
         if y0 is None:
@@ -530,4 +529,3 @@ class TraceView(QtWidgets.QWidget):
                 pw.addItem(line)
                 self._annotation_items.append(line)
 
-    

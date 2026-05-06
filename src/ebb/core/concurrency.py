@@ -1,11 +1,13 @@
 import pickle
-from psutil import cpu_count, Process
+
+from psutil import Process, cpu_count
+
 
 def hyperthreaded():
     """Returns True if system is using hyperthreading."""
-    
+
     return cpu_count(logical=True) > cpu_count(logical=False)
-        
+
 def set_cores(requested, num_ops):
     """Returns the minimun of the requested cores, the system available cores
     and the number of operations to be performed.

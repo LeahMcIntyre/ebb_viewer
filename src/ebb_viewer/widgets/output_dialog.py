@@ -1,8 +1,9 @@
 from pathlib import Path
-from typing import Optional
+
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
 
-def pick_output_folder(parent, *, suggested: Path) -> Optional[Path]:
+
+def pick_output_folder(parent, *, suggested: Path) -> Path | None:
     """
     Open a single dialog where the user can navigate anywhere and type a *new* folder name.
     Returns the chosen path (not created yet) or None if cancelled.

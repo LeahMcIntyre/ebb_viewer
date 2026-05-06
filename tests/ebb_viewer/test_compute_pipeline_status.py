@@ -4,12 +4,10 @@ Focuses on the PSD step gate: step 6 should be "attention" when some animals
 still have sleep_qc == "needs_review", not "active", even if n_ok > 0.
 """
 
-import pytest
 from pathlib import Path
 
-from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
 from ebb_viewer.pages.home import compute_pipeline_status
-
+from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
 
 # ---------------------------------------------------------------------------
 # Helpers

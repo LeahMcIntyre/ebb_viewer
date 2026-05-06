@@ -1,11 +1,11 @@
-from datetime import datetime, time as dtime
+from datetime import datetime
+from datetime import time as dtime
 from pathlib import Path
 
 import numpy as np
-import pytest
 from scipy.io import savemat
 
-from ebb.masking import swd, time_of_day_mask, hour_window_mask
+from ebb.masking import hour_window_mask, swd, time_of_day_mask
 
 
 def test_swd_empty_mat_returns_all_true(tmp_path: Path):

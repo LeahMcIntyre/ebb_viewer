@@ -2,6 +2,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QFileDialog
 
+
 def pick_edf_csv(parent=None, dir=""):
     """
     Prompts the user to select an EDF file (required) and a CSV file (optional).

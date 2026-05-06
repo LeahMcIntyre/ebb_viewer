@@ -7,16 +7,13 @@ and a worker thread that emits per-animal progress.
 """
 from __future__ import annotations
 
-from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from PyQt6.QtCore import QThread, Qt, QUrl, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QDialog,
-    QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
     QFrame,
@@ -37,16 +34,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ebb.process.state_presets import DEFAULT_STATES, PRESET_DISPLAY, STATE_PRESETS
+from ebb.process.state_presets import DEFAULT_STATES, PRESET_DISPLAY
 from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.pipeline.mask_export import (
-    AnimalExportResult,
     ExportResult,
     default_pairs,
     export_run,
 )
-
 
 _STATE_PRESET_ORDER = ("wake", "nrem", "rem", "all", "sleep")
 
@@ -66,9 +61,9 @@ class MaskExportWorker(QThread):
         project_root: Path,
         out_dir: Path,
         manifest: Manifest,
-        params: Dict[str, Any],
-        pairs: List[Tuple[str, str]],
-        parent: Optional[QWidget] = None,
+        params: dict[str, Any],
+        pairs: list[tuple[str, str]],
+        parent: QWidget | None = None,
     ):
         super().__init__(parent)
         self._project_root = project_root
@@ -98,15 +93,15 @@ class ExportMasksPage(QWidget):
 
     navigate_to = pyqtSignal(str)
 
-    def __init__(self, project_root: Path, parent: Optional[QWidget] = None):
+    def __init__(self, project_root: Path, parent: QWidget | None = None):
         super().__init__(parent)
         self.project_root = Path(project_root)
 
-        self._loaded_run_name: Optional[str] = None
-        self._loaded_snapshot: Optional[Dict[str, Any]] = None
-        self._worker: Optional[MaskExportWorker] = None
-        self._last_out_dir: Optional[Path] = None
-        self._row_for_pair: Dict[Tuple[str, str], int] = {}
+        self._loaded_run_name: str | None = None
+        self._loaded_snapshot: dict[str, Any] | None = None
+        self._worker: MaskExportWorker | None = None
+        self._last_out_dir: Path | None = None
+        self._row_for_pair: dict[tuple[str, str], int] = {}
 
         self._build_ui()
         self._refresh_animals()
@@ -182,7 +177,7 @@ class ExportMasksPage(QWidget):
         # State preset checkboxes
         states_row = QHBoxLayout()
         states_row.addWidget(QLabel("States:"))
-        self.cb_states: Dict[str, QCheckBox] = {}
+        self.cb_states: dict[str, QCheckBox] = {}
         for key in _STATE_PRESET_ORDER:
             cb = QCheckBox(PRESET_DISPLAY.get(key, key))
             cb.setChecked(key in DEFAULT_STATES)
@@ -351,8 +346,8 @@ class ExportMasksPage(QWidget):
         self._update_animal_count()
         self._update_export_button()
 
-    def _selected_pairs(self) -> List[Tuple[str, str]]:
-        out: List[Tuple[str, str]] = []
+    def _selected_pairs(self) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
         for i in range(self.list_animals.count()):
             item = self.list_animals.item(i)
             if item.checkState() == Qt.CheckState.Checked:
@@ -388,7 +383,7 @@ class ExportMasksPage(QWidget):
             return
         self._apply_loaded_params(params, run)
 
-    def _apply_loaded_params(self, params: Dict[str, Any], run_name: str) -> None:
+    def _apply_loaded_params(self, params: dict[str, Any], run_name: str) -> None:
         # Block signals while bulk-setting widget values, then snapshot.
         widgets = [
             *self.cb_states.values(),
@@ -426,7 +421,7 @@ class ExportMasksPage(QWidget):
         self.lbl_loaded.setStyleSheet("color: #1a5c8a; font-size: 11px;")
         self.lbl_modified.setText("")
 
-    def _update_hw_summary(self, params: Dict[str, Any]) -> None:
+    def _update_hw_summary(self, params: dict[str, Any]) -> None:
         windows = params.get("hour_windows") or []
         if not windows:
             self.lbl_hw_summary.setText("(no hour windows in loaded run)")
@@ -436,7 +431,7 @@ class ExportMasksPage(QWidget):
         day_str = "all days" if not days else f"days {','.join(str(d) for d in days)}"
         self.lbl_hw_summary.setText(f"Windows: {wins}   ({day_str})")
 
-    def _snapshot_widget_values(self) -> Dict[str, Any]:
+    def _snapshot_widget_values(self) -> dict[str, Any]:
         return {
             "states": [k for k, cb in self.cb_states.items() if cb.isChecked()],
             "nstd": self.spin_nstd.value(),
@@ -463,7 +458,7 @@ class ExportMasksPage(QWidget):
     def _on_dirname_changed(self, _text: str) -> None:
         self._update_export_button()
 
-    def _validate_dirname(self) -> Tuple[bool, str]:
+    def _validate_dirname(self) -> tuple[bool, str]:
         name = self.le_dirname.text().strip()
         if not name:
             return False, "Pick an output folder name."
@@ -481,8 +476,8 @@ class ExportMasksPage(QWidget):
     # Export action
     # ------------------------------------------------------------------
 
-    def _current_params(self) -> Dict[str, Any]:
-        params: Dict[str, Any] = {
+    def _current_params(self) -> dict[str, Any]:
+        params: dict[str, Any] = {
             "states": [k for k, cb in self.cb_states.items() if cb.isChecked()],
             "nstd": self.spin_nstd.value(),
             "winsize": self.spin_sd_winsize.value(),
@@ -567,7 +562,7 @@ class ExportMasksPage(QWidget):
 
     # ----- Status table ------------------------------------------------
 
-    def _populate_status_table(self, pairs: List[Tuple[str, str]]) -> None:
+    def _populate_status_table(self, pairs: list[tuple[str, str]]) -> None:
         self.tbl_status.setRowCount(0)
         self._row_for_pair = {}
         for i, (animal_id, combo) in enumerate(pairs):

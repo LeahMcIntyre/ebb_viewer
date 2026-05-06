@@ -1,20 +1,27 @@
 # psd_matrix_page.py
-from typing import Dict, List, Tuple
-import numpy as np
 
-from PyQt6.QtCore import Qt, QSize, pyqtSignal
-from PyQt6.QtGui import QAction, QKeySequence, QShortcut
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-    QToolBar, QToolButton, QSizePolicy, QStyle, QMenu, QPushButton, QMessageBox,
-    QFrame,
-)
+import numpy as np
 import pyqtgraph as pg
 from fooof.utils import interpolate_spectrum
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QAction, QKeySequence, QShortcut
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QPushButton,
+    QSizePolicy,
+    QStyle,
+    QToolBar,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
-from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
 from ebb.process.state_presets import gather_states_from_store
-
+from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
 
 INVERSE_FILTER = np.array([2.485297985, 1.360646853, 1.145286775, 1.071699399, 1.038017048, 1.018656356, 1.007806318])
 FILTER_RANGE = [0.5, 3.5] #Filter applied in filter range (inclusive)
@@ -29,8 +36,8 @@ class PSDGridPage(QWidget):
         parent=None,
         *,
         store,                    # PSDStore-like: animals() -> List[str], states(animal) -> List[str], get(animal, state) -> Dict[ch,(f,y)]
-        channel_names: List[str], # e.g., ["LFC","RSC","LSC"]
-        states: List[str] = None, # e.g., ["wake","nrem","rem"]
+        channel_names: list[str], # e.g., ["LFC","RSC","LSC"]
+        states: list[str] = None, # e.g., ["wake","nrem","rem"]
         manifest=None,            # optional Manifest for per-animal flagging
         run_channels: str | None = None,  # channel combo identifying which run this PSD belongs to
         drink_review: bool = False,  # Pass 2 mode: pending = drink_mask_applied animals
@@ -51,7 +58,7 @@ class PSDGridPage(QWidget):
         self._project_root = project_root
 
         # View preferences
-        self.xrange: Tuple[float, float] = (0.5, 110)  # default window to show
+        self.xrange: tuple[float, float] = (0.5, 110)  # default window to show
         self.interp_range = [58,62]
         self.xlog = False
         self.ylog = True
@@ -226,8 +233,8 @@ class PSDGridPage(QWidget):
         self.root.addWidget(self.glw, 1)
 
         # Subplot registry
-        self.plots: Dict[Tuple[str, str], pg.PlotItem] = {}
-        self.curves: Dict[Tuple[str, str], pg.PlotDataItem] = {}
+        self.plots: dict[tuple[str, str], pg.PlotItem] = {}
+        self.curves: dict[tuple[str, str], pg.PlotDataItem] = {}
 
         # Column header row (states)
         self.glw.addLabel("", row=0, col=0)  # corner cell
@@ -330,7 +337,7 @@ class PSDGridPage(QWidget):
         self.xrange = (0.5, 110)
         self._render()
 
-        
+
     def _prev_animal(self):
         i = self.cmb_animal.currentIndex()
         if i > 0:
@@ -398,7 +405,7 @@ class PSDGridPage(QWidget):
             p.getAxis("bottom").setTickDensity(density=0.8)
 
 
-            
+
 
 
 
@@ -487,7 +494,7 @@ class PSDGridPage(QWidget):
         )
         if show_mask_hint:
             self._mask_hint_lbl.setText(
-                f"⚠ drink mask on disk from a previous run — flag for drink mask?"
+                "⚠ drink mask on disk from a previous run — flag for drink mask?"
             )
             self._mask_hint_frame.setVisible(True)
         else:

@@ -1,17 +1,17 @@
-from typing import List, Optional
 
 import numpy as np
 import numpy.typing as npt
+from openseize.core.producer import Producer
 
-from openseize.core.producer import producer, Producer
 from ebb.core import arraytools
 
+
 def sd_threshold(pro: Producer,
-              nstds: List[float],
+              nstds: list[float],
               winsize: int,
-              mask_pro: Optional[Producer] = None,
-              radius: Optional[int] = None,
-) -> List[npt.NDArray[np.bool_]]:
+              mask_pro: Producer | None = None,
+              radius: int | None = None,
+) -> list[npt.NDArray[np.bool_]]:
     """Thresholds the z-score of produced values using each standard deviation
     in nstds.
 
@@ -49,7 +49,7 @@ def sd_threshold(pro: Producer,
         arr = arr.copy()
         if mask_pro_iter:
             commute_mask = next(mask_pro_iter)
-            # Create array that masks out commutator artifacts and calculate sd 
+            # Create array that masks out commutator artifacts and calculate sd
             masked_arr = arr[:, commute_mask]
         else:
             masked_arr = arr
@@ -110,7 +110,7 @@ def commutator_threshold(pro: Producer,
     axis = pro.axis
 
     mask = np.ones(pro.shape[axis], dtype=bool)
-    
+
     for idx, arr in enumerate(pro):
 
         x = np.abs(arr) if two_sided else arr

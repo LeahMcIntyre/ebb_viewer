@@ -13,11 +13,10 @@ Covers:
 """
 
 import pickle
-import numpy as np
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -676,7 +675,6 @@ def test_batch_worker_offset_path_none_when_not_given(tmp_path):
 
 def test_batch_worker_saves_pkl_with_params(tmp_path):
     """BatchEstimateWorker saves PKL manually with params embedded in each record."""
-    import dataclasses
 
     params = {"fs": 250, "channels": [0, 1]}
     spindle_dir = tmp_path / "spindle_outputs" / "LFC_RSC"
@@ -764,8 +762,9 @@ def test_build_final_pkl_warns_and_skips_when_combo_pkl_missing(tmp_path):
     build_final_pkl groups animals by combo, then loads each combo's PKL.
     The warning fires when the PKL for a combo is entirely absent on disk.
     """
-    import warnings
     import pickle
+    import warnings
+
     from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
 
     psd_dir = tmp_path / "psd"

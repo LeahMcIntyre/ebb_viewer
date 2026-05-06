@@ -1,8 +1,7 @@
-import requests
-import json
 import time
 from pathlib import Path
-from typing import Optional, List
+
+import requests
 
 
 class SleepyRatAPI:
@@ -10,9 +9,9 @@ class SleepyRatAPI:
         self.base_url = base_url
         self.token = self._login(username, password)
         self.headers = {"Authorization": f"Bearer {self.token}"}
-    
+
     def _login(self, username, password):
-        response = requests.post(f"{self.base_url}/login", 
+        response = requests.post(f"{self.base_url}/login",
                                json={"username": username, "password": password})
         response.raise_for_status()
         return response.json()["access_token"]
@@ -33,12 +32,12 @@ class SleepyRatAPI:
                                headers=self.headers,
                                json={"name": name, "description": description})
         return response.json()
-    
-    # Returns a list of folders in account 
+
+    # Returns a list of folders in account
     def get_folders(self, project):
         response = requests.get(f"{self.base_url}/projects/{project}/folders",
                                 headers=self.headers)
-        return response.json() 
+        return response.json()
 
     def folder_names(self, project) -> list[str]:
         """Return a simple list of folder names for a project."""
@@ -49,42 +48,42 @@ class SleepyRatAPI:
                                headers=self.headers,
                                json={"folder_name": folder_name})
         return response.json()
-    
+
     def upload_edf(self, project, folder, file_path):
         with open(file_path, 'rb') as f:
             files = {'file': f}
             response = requests.post(
                 f"{self.base_url}/projects/{project}/folders/{folder}/submissions",
-                headers=self.headers, 
+                headers=self.headers,
                 files=files
             )
         return response.json()
-    
+
     # Upload all edfs in dir_path to sleepy rat in project/folder
     def upload_dir(self, project, folder, dir_path):
         edf_paths = list(Path(dir_path).glob('*.edf'))
         for p in edf_paths:
             self.upload_edf(project, folder, p)
-    
+
     def get_submissions(self, project, folder):
         response = requests.get(
             f"{self.base_url}/projects/{project}/folders/{folder}/submissions",
             headers=self.headers
         )
         return response.json()
-    
+
     # Returns a list of submission names in project/folder
     def get_submission_names(self, project, folder):
         submissions = self.get_submissions(project, folder)["submissions"]
         return [s["name"] for s in submissions]
-    
+
     def download_labels(self, project, folder, submission, threshold=0.5):
         response = requests.get(
             f"{self.base_url}/projects/{project}/folders/{folder}/files/{submission}/labels/{threshold}",
             headers=self.headers
         )
         return response.text
-    
+
     def download_labels_all(self, project, folder, outdir, threshold=0.5):
         outdir = Path(outdir)
         outdir.mkdir(exist_ok=True)
@@ -96,7 +95,7 @@ class SleepyRatAPI:
             labels = self.download_labels(project, folder, name, threshold=threshold)
             with open(new_path, "w") as f:
                 f.write(labels)
-            
+
 
     def wait_for_processing(self, project, folder, max_wait=10000):
         """Wait for all files in folder to finish processing"""

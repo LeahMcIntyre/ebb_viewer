@@ -3,19 +3,34 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QWidget,
-    QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
-    QMessageBox, QApplication, QDialog, QFrame,
-    QFormLayout, QLineEdit, QDialogButtonBox, QPlainTextEdit,
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QFrame,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QTableWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ebb.preprocess.edf import spindle as spindle_preprocess
-from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, spindle_edf_dir, spindle_output_dir
-from ebb_viewer.pipeline import sleepyrat_config
 from ebb_viewer.pages.spindle_upload import SleepyRatWorker
+from ebb_viewer.pipeline import sleepyrat_config
+from ebb_viewer.pipeline.manifest import (
+    Manifest,
+    ManifestEntry,
+    spindle_edf_dir,
+    spindle_output_dir,
+)
 from ebb_viewer.widgets.table_helpers import make_cell
 from ebb_viewer.widgets.worker_helpers import launch_worker
-
 
 # Maps channel combo name → channel indices (EMG index 3 always included)
 _COMBO_CHANNELS: dict[str, list[int]] = {

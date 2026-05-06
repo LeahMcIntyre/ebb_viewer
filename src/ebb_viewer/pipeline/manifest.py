@@ -35,12 +35,11 @@ this automatically:
 
 import json
 import warnings
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterator
 
 from ebb_viewer.pipeline.naming import drink_mask_rel, parse_animal_id
-
 
 # ---------------------------------------------------------------------------
 # Valid status values

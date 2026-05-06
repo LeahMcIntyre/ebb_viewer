@@ -1,26 +1,31 @@
 from pathlib import Path
-from typing import Optional
 
-from PyQt6.QtWidgets import (
-    QMainWindow, QPushButton, QStackedLayout, QVBoxLayout, QWidget, QLabel,
-    QListWidget, QListWidgetItem, QFileDialog, QHBoxLayout
-)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QStackedLayout,
+    QVBoxLayout,
+    QWidget,
+)
 
+from ebb_viewer.pages.drink_mask import DrinkMaskPage
+from ebb_viewer.pages.export_masks import ExportMasksPage
+from ebb_viewer.pages.finalize import FinalizePage
 from ebb_viewer.pages.home import HomePage
 from ebb_viewer.pages.preprocess import PreprocessPage
+from ebb_viewer.pages.psd_visualizer import PSDVisualizer
+from ebb_viewer.pages.psds import PSDPage
+from ebb_viewer.pages.rerun import RerunPage
+from ebb_viewer.pages.sleep_qc_visualizer import SleepQCGridPage
 from ebb_viewer.pages.spindle import SpindleWritePage
 from ebb_viewer.pages.spindle_upload import SpindleUploadPage
-from ebb_viewer.pages.rerun import RerunPage
-from ebb_viewer.pages.psds import PSDPage
-from ebb_viewer.pages.psd_visualizer import PSDVisualizer
-from ebb_viewer.pages.drink_mask import DrinkMaskPage
-from ebb_viewer.pages.sleep_visualizer import SleepMetricsPage
-from ebb_viewer.pages.sleep_qc_visualizer import SleepQCGridPage
-from ebb_viewer.pages.finalize import FinalizePage
-from ebb_viewer.pages.export_masks import ExportMasksPage
 from ebb_viewer.pipeline.manifest import Manifest
+
 
 class MainWindow(QMainWindow):
     def __init__(self, project_root: Path, parent=None):

@@ -1,14 +1,16 @@
+import pickle
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, Union
-import numpy as np, pickle
+
+import numpy as np
 
 from ebb_viewer.pipeline.naming import parse_animal_id
 
 
-def parse_animal_from_path(path: Union[str, Path]) -> str:
+def parse_animal_from_path(path: str | Path) -> str:
     return parse_animal_id(path)
 
-def parse_animal_from_path_masks(rec: Dict) -> str:
+def parse_animal_from_path_masks(rec: dict) -> str:
     stem = Path(rec['path']).stem
     animal = stem.split('_')[0] if "_" in stem else stem
     a_mask = "_artifact" if rec.get('used_artifact', False) else ""
@@ -19,9 +21,9 @@ class PSDStore:
     # by_animal[animal][state][channel_name] -> (freqs, psd)
     def __init__(
         self,
-        pkl_path: Union[str, Path],
+        pkl_path: str | Path,
         *,
-        channel_names: Optional[Sequence[str]] = None,
+        channel_names: Sequence[str] | None = None,
         parse_animal = parse_animal_from_path_masks,
     ):
         self.pkl_path = Path(pkl_path)
@@ -29,7 +31,7 @@ class PSDStore:
         self.parse_animal = parse_animal
         self.first_freqs = []
 
-        self.by_animal: Dict[str, Dict[str, Dict[str, Tuple[np.ndarray, np.ndarray]]]] = {}
+        self.by_animal: dict[str, dict[str, dict[str, tuple[np.ndarray, np.ndarray]]]] = {}
         self._load()
 
     def _load(self):
@@ -40,7 +42,7 @@ class PSDStore:
 
         # TODO: Better way to implement this?
 
-        self._source_combos: Dict[str, str] = {}  # raw_animal_id -> source_combo
+        self._source_combos: dict[str, str] = {}  # raw_animal_id -> source_combo
 
         self.first_freqs = np.asarray(items[0]["freqs"], float)
         for rec in items:
@@ -59,7 +61,7 @@ class PSDStore:
             chidx = list(rec["channels"])
 
             # channel map
-            ch_map: Dict[str, Tuple[np.ndarray, np.ndarray]] = {}
+            ch_map: dict[str, tuple[np.ndarray, np.ndarray]] = {}
             for i, ci in enumerate(chidx):
                 name = (
                     self.channel_names[ci]
@@ -69,26 +71,26 @@ class PSDStore:
                 ch_map[name] = (freqs, psd[i])
 
             self.by_animal.setdefault(animal, {})[state] = ch_map
-            
+
             # Raise an error if the freqs are not all the same
             if not np.allclose(self.first_freqs, freqs):
                 raise ValueError(f"PSDs in {self.pkl_path} do not have PSDs with the same frequency values.")
 
-    def animals(self) -> List[str]:
+    def animals(self) -> list[str]:
         return sorted(self.by_animal.keys())
 
-    def states(self, animal: str) -> List[str]:
+    def states(self, animal: str) -> list[str]:
         return sorted(self.by_animal.get(animal, {}).keys())
 
-    def get(self, animal: str, state: str) -> Dict[str, Tuple[np.ndarray, np.ndarray]]:
+    def get(self, animal: str, state: str) -> dict[str, tuple[np.ndarray, np.ndarray]]:
         return self.by_animal[animal][state]
 
     def freqs(self):
         return self.first_freqs
-    
+
     def freq_res(self):
         return (self.first_freqs[1]-self.first_freqs[0])
-    
+
     def freq_range(self):
         return [self.first_freqs[0], self.first_freqs[-1]]
 

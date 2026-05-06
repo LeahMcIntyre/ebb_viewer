@@ -6,8 +6,8 @@ from openseize import producer as make_producer
 
 from ebb import masking
 from ebb.masking.annotations import keyword_mask
-from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.masks import Mask, MaskSet, ParamSpec
+from ebb_viewer.edf_viewer.recording import Recording
 
 
 # TODO: Is this the best way to implement? Better to hard code?
@@ -179,7 +179,6 @@ def rebuild_drink_mask(drink_path, fs: int, meta: dict) -> Mask:
 
 def load_state_masks(csv_path, fs: int) -> MaskSet:
     """Build a MaskSet of Wake / NREM / REM spans from a SleepyRat CSV."""
-    import numpy as np
     mask_set = MaskSet()
     for name, labels in _STATE_LABELS.items():
         arr = masking.state(csv_path, labels, fs=fs, winsize=4, include=True)

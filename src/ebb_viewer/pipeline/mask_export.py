@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import datetime as _dt
 import traceback
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 from openseize import producer
@@ -31,7 +32,6 @@ from ebb_viewer.pipeline.manifest import (
 )
 from ebb_viewer.pipeline.naming import drink_mask_rel
 
-
 # ---------------------------------------------------------------------------
 # Result types
 # ---------------------------------------------------------------------------
@@ -42,20 +42,20 @@ class AnimalExportResult:
     combo: str
     status: str  # "ok" | "error"
     message: str = ""
-    paths: Dict[str, Path] = field(default_factory=dict)
+    paths: dict[str, Path] = field(default_factory=dict)
 
 
 @dataclass
 class ExportResult:
     out_dir: Path
-    results: List[AnimalExportResult] = field(default_factory=list)
+    results: list[AnimalExportResult] = field(default_factory=list)
 
     @property
-    def successes(self) -> List[AnimalExportResult]:
+    def successes(self) -> list[AnimalExportResult]:
         return [r for r in self.results if r.status == "ok"]
 
     @property
-    def failures(self) -> List[AnimalExportResult]:
+    def failures(self) -> list[AnimalExportResult]:
         return [r for r in self.results if r.status == "error"]
 
 
@@ -67,9 +67,9 @@ class ExportResult:
 class ResolvedPaths:
     edf: Path
     state: Path
-    drink: Optional[Path]
-    swd: Optional[Path]
-    offset_csv: Optional[Path]
+    drink: Path | None
+    swd: Path | None
+    offset_csv: Path | None
 
 
 def resolve_paths(
@@ -131,10 +131,10 @@ def resolve_paths(
 # ---------------------------------------------------------------------------
 
 def clean_mask_for_state(
-    codes: List[str],
+    codes: list[str],
     base_clean: np.ndarray,
     sd_threshold_mask: np.ndarray,
-    wake_sub_mask: Optional[np.ndarray],
+    wake_sub_mask: np.ndarray | None,
 ) -> np.ndarray:
     """Return a True=clean mask for a state with the given letter codes.
 
@@ -166,7 +166,7 @@ def clean_mask_for_state(
     return base_clean & (~wake_sub_mask | sd_threshold_mask)
 
 
-def _coerce_param(params: Dict[str, Any], key: str, default: Any) -> Any:
+def _coerce_param(params: dict[str, Any], key: str, default: Any) -> Any:
     val = params.get(key)
     return default if val is None else val
 
@@ -183,14 +183,14 @@ def _read_recording_start(reader: edf.Reader) -> _dt.datetime:
 
 def _build_masks(
     paths: ResolvedPaths,
-    params: Dict[str, Any],
-) -> Tuple[
-    Dict[str, np.ndarray],   # state_masks_raw (rawstate, no sprob)
-    Dict[str, np.ndarray],   # state_masks_filtered (sprob applied if set)
-    Dict[str, np.ndarray],   # artifact_masks (True=OK)
-    Optional[np.ndarray],    # wake_sub_mask (only if mixed-wake group present)
+    params: dict[str, Any],
+) -> tuple[
+    dict[str, np.ndarray],   # state_masks_raw (rawstate, no sprob)
+    dict[str, np.ndarray],   # state_masks_filtered (sprob applied if set)
+    dict[str, np.ndarray],   # artifact_masks (True=OK)
+    np.ndarray | None,    # wake_sub_mask (only if mixed-wake group present)
     np.ndarray,              # sd_threshold_mask (separate; always built)
-    List[Tuple[_dt.datetime, _dt.datetime]],  # used hour windows
+    list[tuple[_dt.datetime, _dt.datetime]],  # used hour windows
     _dt.datetime,            # recording start
     int,                     # n_samples
 ]:
@@ -221,8 +221,8 @@ def _build_masks(
         rec_start = _read_recording_start(reader)
 
         # --- state masks ---
-        state_masks_raw: Dict[str, np.ndarray] = {}
-        state_masks_filtered: Dict[str, np.ndarray] = {}
+        state_masks_raw: dict[str, np.ndarray] = {}
+        state_masks_filtered: dict[str, np.ndarray] = {}
         for label, codes in labels.items():
             state_masks_raw[label] = masking.state(
                 paths.state, codes, fs, winsize=epoch_winsize
@@ -314,7 +314,7 @@ def _build_masks(
             tod_mask = np.ones(n_samples, dtype=bool)
             used_windows = []
 
-    artifact_masks: Dict[str, np.ndarray] = {
+    artifact_masks: dict[str, np.ndarray] = {
         "commutator": comm_mask,
         "spindle_noise": spindle_mask,
         "sd_threshold": sd_threshold_mask,
@@ -344,7 +344,7 @@ def export_animal(
     manifest: Manifest,
     animal_id: str,
     combo: str,
-    params: Dict[str, Any],
+    params: dict[str, Any],
 ) -> AnimalExportResult:
     """Build masks and write the four files for one (animal, combo).
 
@@ -447,9 +447,9 @@ def export_run(
     project_root: Path,
     out_dir: Path,
     manifest: Manifest,
-    params: Dict[str, Any],
-    pairs: List[Tuple[str, str]],
-    progress_cb: Optional[ProgressCb] = None,
+    params: dict[str, Any],
+    pairs: list[tuple[str, str]],
+    progress_cb: ProgressCb | None = None,
 ) -> ExportResult:
     """Export masks for every ``(animal_id, combo)`` pair.
 
@@ -484,7 +484,7 @@ def export_run(
     return result
 
 
-def default_pairs(manifest: Manifest) -> List[Tuple[str, str]]:
+def default_pairs(manifest: Manifest) -> list[tuple[str, str]]:
     """Return all (animal_id, combo) pairs whose run is sleep_qc='ok'.
 
     Matches the convention used by the PSD compute page: only OK runs are

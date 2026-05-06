@@ -1,20 +1,19 @@
 from __future__ import annotations
 
 import copy
-import time
-from functools import partial
 import multiprocessing
-from multiprocessing import Pool
+import time
+from collections.abc import Callable, Sequence
+from functools import partial
 from pathlib import Path
-from typing import Callable, Iterable, Sequence, Union, Optional
 
 import numpy as np
 from openseize.file_io import edf
 from openseize.resampling import resampling
 
-from ebb.core.concurrency import set_cores 
+from ebb.core.concurrency import set_cores
+from ebb.io.sleepyrat import SleepyRatAPI
 from ebb.io.utils import between_pro
-from ebb.io.sleepyrat import SleepyRatAPI         
 
 
 def compute_trim_stop_samples(
@@ -33,9 +32,9 @@ def compute_trim_stop_samples(
 
 
 def standard(
-    path: Union[str, Path],
+    path: str | Path,
     *,
-    savedir: Union[str, Path],
+    savedir: str | Path,
     fs: float,
     downsample: int,
     trim_to: Sequence[float] = (48, 72),
@@ -89,9 +88,9 @@ def standard(
 
 
 def spindle(
-    path: Union[str, Path],
+    path: str | Path,
     *,
-    savedir: Union[str, Path],
+    savedir: str | Path,
     channels: Sequence[int],
     verbose: bool = True,
 ) -> Path:
@@ -117,9 +116,9 @@ def spindle(
 
 def batch(
     preprocessor: Callable[..., Path],
-    dirpath: Union[str, Path],
+    dirpath: str | Path,
     *,
-    target: Union[str, Path, None] = None,
+    target: str | Path | None = None,
     ncores: int | None = None,
     verbose: bool = True,
     use_multiprocessing: bool = True,
@@ -162,14 +161,14 @@ def batch(
     return outs
 
 # TODO: Make more flexible - check for project/folder existence, how to manage if not all EDFs process in time limit, etc.
-# Integrate with the spindle batch process for ease? 
+# Integrate with the spindle batch process for ease?
 def process_sleepyrat(
     edf_dir: Path,
     project: str,
     folder: str,
     *,
     threshold: float = 0.5,
-    outdir: Optional[Path] = None,
+    outdir: Path | None = None,
     username: str = "REDACTED_1",
     password: str = "REDACTED_2",
     base_url: str = "https://sleepyrat.ai/api",
@@ -197,7 +196,7 @@ def process_sleepyrat(
     api.upload_dir(project, folder, edf_dir)
 
     # 2. Wait for processing
-    print(f"[SleepyRat] Waiting for processing to finish...")
+    print("[SleepyRat] Waiting for processing to finish...")
     ok = api.wait_for_processing(project, folder)
     if not ok:
         raise RuntimeError(

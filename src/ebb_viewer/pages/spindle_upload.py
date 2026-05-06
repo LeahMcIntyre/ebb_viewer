@@ -1,13 +1,24 @@
 import unicodedata
 from pathlib import Path
-from typing import Optional
 
-from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
-    QLineEdit, QPushButton, QGroupBox, QMessageBox,
-    QListWidget, QPlainTextEdit, QApplication, QInputDialog,
-    QLabel, QComboBox, QSizePolicy, QFrame
+    QApplication,
+    QComboBox,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
 
 from ebb.io.sleepyrat import SleepyRatAPI
@@ -36,10 +47,10 @@ class SpindleUploadPage(QWidget):
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
         self.project_root = Path(project_root)
-        self._api: Optional[SleepyRatAPI] = None
-        self._pending_save: Optional[tuple[str, str, str]] = None  # (combo, project, remote_folder)
+        self._api: SleepyRatAPI | None = None
+        self._pending_save: tuple[str, str, str] | None = None  # (combo, project, remote_folder)
         self._projects_fetched = False
-        self._known_folders: Optional[set[str]] = None
+        self._known_folders: set[str] | None = None
 
         self._build_ui()
         self._wire()
@@ -64,11 +75,11 @@ class SpindleUploadPage(QWidget):
             return ""
         return self.upload_combo.itemText(idx).strip()
 
-    def _current_upload_dir(self) -> Optional[Path]:
+    def _current_upload_dir(self) -> Path | None:
         path_str = self.upload_dir_edit.text().strip()
         return Path(path_str) if path_str else None
 
-    def _current_output_dir(self) -> Optional[Path]:
+    def _current_output_dir(self) -> Path | None:
         combo = self._current_combo_name()
         if not combo:
             return None

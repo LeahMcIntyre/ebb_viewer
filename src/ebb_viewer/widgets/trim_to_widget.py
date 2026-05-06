@@ -1,6 +1,7 @@
 # trim_pair_widget.py
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, QSignalBlocker
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QSpinBox, QLabel
+from PyQt6.QtCore import QSignalBlocker, pyqtSignal, pyqtSlot
+from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSpinBox, QWidget
+
 
 class TrimToWidget(QWidget):
     changed = pyqtSignal(int, int)  # emits (a, b) exactly as shown
@@ -36,7 +37,7 @@ class TrimToWidget(QWidget):
         self.start.valueChanged.connect(self._on_changed)
         self.end.valueChanged.connect(self._on_changed)
 
-    @pyqtSlot(int)  
+    @pyqtSlot(int)
     def _on_changed(self, _):
         self.changed.emit(self.start.value(), self.end.value())
 

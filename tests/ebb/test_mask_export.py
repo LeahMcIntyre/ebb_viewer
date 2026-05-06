@@ -19,7 +19,6 @@ from ebb.process.mask_export import (
     write_meta_json,
 )
 
-
 FS = 250.0
 WINSIZE = 4.0
 SAMPLES_PER_EPOCH = int(FS * WINSIZE)  # 1000

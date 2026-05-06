@@ -1,8 +1,10 @@
 import pickle
+from pathlib import Path
+
 import numpy as np
 import pytest
-from pathlib import Path
-from ebb.process.psd_compute import _animal_id, out_fraction, match_paths, build_final_pkl
+
+from ebb.process.psd_compute import _animal_id, build_final_pkl, match_paths, out_fraction
 
 
 #TO BE CHANGED LATER WHEN MORE FLEXIBILITY IS ADDED
@@ -79,7 +81,7 @@ def test_batch_estimate_filters_eeg_by_state_csv(tmp_path):
     Standard/ has 3 animals but the spindle output folder only has CSVs for 2.
     The missing animal should be silently skipped — no ValueError.
     """
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch
 
     standard = tmp_path / "standard"
     standard.mkdir()

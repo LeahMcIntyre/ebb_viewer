@@ -1,7 +1,7 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Optional, Sequence
 
 import numpy as np
 
@@ -13,16 +13,16 @@ class Recording:
     start_time: datetime
     ch_names: Sequence[str]
     edf_path: Path
-    csv_path: Optional[Path] = None
-    swd_path: Optional[Path] = None
-    drink_path: Optional[Path] = None
-    video_offset: Optional[float] = None
+    csv_path: Path | None = None
+    swd_path: Path | None = None
+    drink_path: Path | None = None
+    video_offset: float | None = None
 
     @property
     def recording_length(self):
         _, n_samples = self.data.shape
         return timedelta(seconds=n_samples / self.fs)
-    
+
     def __str__(self):
         fields = [
             ("File",         self.edf_path),

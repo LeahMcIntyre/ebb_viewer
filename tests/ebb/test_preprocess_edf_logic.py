@@ -1,5 +1,7 @@
 import pytest
+
 from ebb.preprocess.edf import compute_trim_stop_samples
+
 
 def test_compute_trim_stop_picks_lower_bin():
     fs = 100

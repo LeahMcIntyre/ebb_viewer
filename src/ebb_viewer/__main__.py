@@ -2,9 +2,11 @@
 
 import sys
 from pathlib import Path
+
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
 from ebb_viewer.main_window import MainWindow  # whatever your path is
+
 
 def main():
     app = QApplication(sys.argv)

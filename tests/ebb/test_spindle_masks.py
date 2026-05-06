@@ -2,16 +2,15 @@ import csv
 from pathlib import Path
 
 import numpy as np
-import pytest
 
-from ebb.masking import state, spindle_noise
+from ebb.masking import spindle_noise, state
 
 
-# Write test spindle csv with minimal headers 
+# Write test spindle csv with minimal headers
 def write_spindle_csv(path: Path, rawstates):
     with path.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["rawstate", "noise_probs"]) 
+        w.writerow(["rawstate", "noise_probs"])
         for rs in rawstates:
             w.writerow([rs, "0.0"])
 
