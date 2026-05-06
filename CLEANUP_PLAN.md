@@ -107,12 +107,31 @@ Every session follows the same six steps. Don't deviate.
 
 1. **Open `REVIEW_PROGRESS.md`. Pick the next batch.** Smallest unstarted batch in the active phase.
 2. **Read each file in the batch fully.** Not skim. The point is to understand.
-3. **Run the `code-improvement-advisor` agent on the batch.** Get an external second pass. Bring its findings back into the conversation.
+3. **Run the `code-improvement-advisor` agent — but only when the batch warrants it** (see "When to run the advisor" below). Bring its findings back into the conversation.
 4. **Discuss findings with the user. Decide what to apply.** User has veto on every change.
 5. **Apply edits → run pytest → commit per batch (not per file).** Commit message: `Cleanup: <batch name> — <one-line summary>`.
 6. **Update `REVIEW_PROGRESS.md`.** Mark items `[x]` (done) / `[~]` (reviewed clean) / `[!]` (changes deferred). Commit the tracker update.
 
 Tests must still pass after every batch. If they don't: fix or revert before the commit.
+
+### When to run the advisor
+
+Run the `code-improvement-advisor` agent when **any** of the following holds:
+- A single file in the batch is **>250 lines**.
+- The batch total is **>500 lines**.
+- The file involves non-trivial domain logic (PSD math, mask semantics, pipeline state machines).
+- Initial read leaves uncertainty about correctness or design.
+
+Skip the agent when the batch is small mechanical/utility code (e.g., `ebb/core/`, most of `widgets/`, simple config files). Manual review + call-site grep is sufficient there. Document the skip in the commit message.
+
+### When the user should read along
+
+Not constantly — selectively. The user should engage with:
+- Any finding flagged as "possible bug, confirm?" — domain knowledge resolves these faster than call-site analysis.
+- Files with scientific intent: `ebb/process/`, `ebb/masking/`, anything dealing with PSD math or mask semantics.
+- `pages/` in Phase 3 — UX intent matters; only the user knows what each page is supposed to feel like.
+
+The user does **not** need to track utility/mechanical files (`ebb/core/`, `widgets/`, simple `pipeline/` dataclasses, ruff leftovers) line-by-line. The contract is: Claude presents findings before editing, user reviews diff before commit, user vetoes freely.
 
 ---
 
