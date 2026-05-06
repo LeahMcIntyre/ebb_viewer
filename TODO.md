@@ -40,6 +40,12 @@ Whether to mask out or include the transition state (TS) in PSD computation is a
 ### general: Run log / settings provenance
 `psd/psd_params.json` already tracks PSD params. Consider extending to a `run_log.jsonl` that appends one entry per pipeline action (timestamp, what ran, which animals, params used). Low urgency but valuable for reproducibility and debugging.
 
+### sleepyrat: Move hardcoded credentials out of source (security)
+`src/ebb/io/sleepyrat.py` defaults `username`/`password` to real production credentials. Repo is currently private so exposure is limited, but git history is permanent and the password cannot be rotated right now. When rotation becomes possible: rotate the password, then move credentials to env vars (`SLEEPYRAT_USER`, `SLEEPYRAT_PASS`) with a config-file fallback (e.g. `~/.config/ebb/sleepyrat.json`), and delete the in-source defaults. Add a credentials dialog in the GUI for first-run setup.
+
+### combine: Expand `ebb.io.combine` to other data types
+Today `combine_edf` and `combine_swd` handle the two specific file types we restart-and-resume. The same per-file shift-and-stack pattern should generalize to drink masks (`.npy`) and any other timestamped data we end up restarting. Sketch a `combine_npy` (or a generic `combine_arrays(loader, writer, ...)`) that mirrors the `combine_swd` semantics: pair files, shift each by `idx * amount_sec`, concatenate, write.
+
 ---
 
 ## Additional Suggestions
@@ -48,3 +54,4 @@ Whether to mask out or include the transition state (TS) in PSD computation is a
 - **Keyboard shortcuts in PSD Visualizer**: `O` = OK, `D` = Drink Mask, `←`/`→` = prev/next animal. With 60+ animals to review, this saves significant time.
 - **Manifest backup before destructive ops**: Auto-save `manifest.json.bak` before cascade-rejects or `reset_sleep_qc` to allow recovery from accidental clicks.
 - **Drink Mask page: highlight missing .npy files**: The ✓/✗ in the table is subtle. Show `"Missing mask file"` in orange for animals where the `.npy` hasn't been placed yet.
+- **`SleepyRatAPI.wait_for_processing` should use `logging` instead of `print`**: Currently prints poll-status to stdout. Could move to a module-level logger, but doing this well requires deciding on log-level config and how Qt worker threads route log output to the GUI — likely larger than it sounds. Defer until a broader logging story is decided.

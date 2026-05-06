@@ -8,12 +8,12 @@ from functools import partial
 from pathlib import Path
 
 import numpy as np
+from openseize.core.producer import producer
 from openseize.file_io import edf
 from openseize.resampling import resampling
 
 from ebb.core.concurrency import set_cores
 from ebb.io.sleepyrat import SleepyRatAPI
-from ebb.io.utils import between_pro
 
 
 def compute_trim_stop_samples(
@@ -61,7 +61,7 @@ def standard(
     # ensure stop is integer multiple of samples per record / downsample
     stop = int(np.ceil(stop / fs) * fs)
 
-    pro = between_pro(reader, 0, stop, chunksize, axis)
+    pro = producer(reader, chunksize, axis, start=0, stop=stop)
     result = resampling.downsample(pro, downsample, fs, chunksize, axis)
     processed = result.to_array()  # until openseize supports streaming writes
 

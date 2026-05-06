@@ -40,6 +40,26 @@ def test_pair_raises_if_no_match(tmp_path: Path):
         pair([lone, other], pattern=r"[^_]+")
 
 
+def test_pair_does_not_match_token_prefix(tmp_path: Path):
+    # Regression: previously `pair` used substring containment (`token in
+    # other.stem`), which silently grouped "CW1" with "CW10..." files.
+    # Now match must be exact on the regex token.
+    a1 = tmp_path / "CW1_P001_part1.edf"
+    a2 = tmp_path / "CW1_P001_part2.edf"
+    b1 = tmp_path / "CW10_P002_part1.edf"
+    b2 = tmp_path / "CW10_P002_part2.edf"
+
+    groups = pair([a1, a2, b1, b2], pattern=r"[^_]+")
+
+    grouped_stems = sorted(sorted(p.stem for p in g) for g in groups)
+    assert grouped_stems == sorted(
+        [
+            sorted([a1.stem, a2.stem]),
+            sorted([b1.stem, b2.stem]),
+        ]
+    )
+
+
 def test_combine_swd_shifts_and_stacks_intervals(tmp_path: Path):
     # Names must satisfy:
     # - pair() token pattern default: r"final_ts_([^_]+)" -> token "ANIMAL"
@@ -80,5 +100,43 @@ def test_combine_swd_shifts_and_stacks_intervals(tmp_path: Path):
     )
 
     # combine_swd sorts by start time; expected is already sorted
+    assert out_swds.shape == expected.shape
+    assert np.allclose(out_swds, expected)
+
+
+def test_combine_swd_truncates_events_straddling_boundary(tmp_path: Path):
+    # Regression: events whose start is within [0, amount_sec) but whose stop
+    # exceeds amount_sec must have their stop clamped to the boundary so
+    # they do not overlap the next file's timespan after shifting.
+    p1 = tmp_path / "final_ts_ANIMAL_P001.mat"
+    p2 = tmp_path / "final_ts_ANIMAL_P002.mat"
+
+    # second event starts before boundary (3500) but ends after (3700)
+    swds1 = np.array([[10.0, 20.0], [3500.0, 3700.0]])
+    swds2 = np.array([[5.0, 7.0]])
+
+    savemat(p1, {"final_ts": swds1})
+    savemat(p2, {"final_ts": swds2})
+
+    created = combine_swd(
+        tmp_path,
+        amount_hours=1,  # amount_sec = 3600
+        pattern=r"final_ts_([^_]+)",
+        verbose=False,
+        label_preference="final_ts",
+        overwrite=False,
+    )
+
+    out = loadmat(created[0], squeeze_me=True, struct_as_record=False)
+    out_swds = np.asarray(out["final_ts"])
+
+    expected = np.array(
+        [
+            [10.0, 20.0],
+            [3500.0, 3600.0],  # straddling event clamped at 3600
+            [3605.0, 3607.0],  # second file's event shifted by +3600
+        ]
+    )
+
     assert out_swds.shape == expected.shape
     assert np.allclose(out_swds, expected)
