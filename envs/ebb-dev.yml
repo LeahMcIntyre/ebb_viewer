@@ -18,3 +18,4 @@ dependencies:
       - fooof
       - openseize==1.3.0
       - pytest
+      - ruff
