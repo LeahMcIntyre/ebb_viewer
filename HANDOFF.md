@@ -227,7 +227,7 @@ so analyses elsewhere line up with PSDs computed in this project.
   + continue-on-error contract). EDF-reading happy path is glue around
   `ebb.masking` primitives — exercised at integration time, not via mocks.
 
-#### Phase 3 — Export Masks sidebar page (uncommitted on disk)
+#### Phase 3 — Export Masks sidebar page (committed: `dbd7259`)
 - **New page** `src/ebb_viewer/pages/export_masks.py`. Sidebar entry
   "10. Export Masks" wired in `main_window.py`. Sections:
   - **Output**: dirname input → `<project_root>/exports/<name>/`. Validates
@@ -250,7 +250,7 @@ so analyses elsewhere line up with PSDs computed in this project.
 - **Worker** `MaskExportWorker(QThread)` wraps `export_run`; emits per-animal
   progress signals so the UI doesn't freeze.
 
-#### Drink mask fix (uncommitted on disk)
+#### Drink mask fix (committed: `dbd7259`)
 - Bug: `resolve_paths` was using `manifest.drink_mask_path(run, ...)` which
   reads `run.drink_mask` — only set after the user has *applied* a drink
   mask through the Drink Mask page workflow (`flag_psd("drink_mask_applied")`).
@@ -260,7 +260,7 @@ so analyses elsewhere line up with PSDs computed in this project.
   ignoring the manifest's review state. Same convention as SWD discovery
   (`swd/<animal_id>_*.mat`).
 
-#### Offset CSV (uncommitted on disk)
+#### Offset CSV (committed: `dbd7259`)
 - `resolve_paths` now picks the first `*.csv` in `drink_masks/` as the offset
   CSV (matches `pages/drink_mask.py:_detect_offset_csv`).
 - `_build_masks` calls `masking.get_offset(drink_path, offset_csv)` and
@@ -285,9 +285,9 @@ so analyses elsewhere line up with PSDs computed in this project.
 
 ## Current Branch State
 
-**Active branch**: `feature/mask_export` (off `dev`).
+**Active branch**: `feature/mask_export` (off `dev`). Working tree clean.
 - `717657e` — Phase 1 + Phase 2 (library + orchestration + smoke script).
-- Uncommitted on disk — Phase 3 page, sidebar wiring, drink/offset/SWD orchestration tweaks, tests.
+- `dbd7259` — Phase 3 page + sidebar wiring + drink/offset/SWD orchestration fixes + tests + handoff update.
 
 **All 317 tests passing.**
 
@@ -437,20 +437,15 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
    wrong one is picked silently. Options: require a fixed filename
    (e.g. `offsets.csv`), per-animal CSVs, or surface the resolved path in
    the page UI. No code change yet — discuss with user.
-2. **Smoke-test the Phase 3 page against real data.** Page is wired in but
-   has not been click-tested by Claude. User to verify: animal list
-   populates, output dir validation, Load from PSD run + modified indicator,
-   drink/SWD/hour-window toggles all behave, Export → status table → Open
-   exports folder.
-3. **Commit Phase 3.** Once UI is sanity-checked, commit
-   `pages/export_masks.py`, `main_window.py` wiring, and the
-   `pipeline/mask_export.py` drink/offset/SWD changes + tests on
-   `feature/mask_export`. SD-threshold TODO line was already marked done.
-4. **Phase 4 polish (optional, not started):**
+2. **Smoke-test the Phase 3 page against real data.** User to verify: animal
+   list populates, output dir validation, Load from PSD run + modified
+   indicator, drink/SWD/hour-window toggles all behave, Export → status
+   table → Open exports folder.
+3. **Phase 4 polish (optional, not started):**
    - Pivoted CSV formats (e.g. one file per state across all animals).
    - EDF+ annotations as an alternative output format.
    - BIDS `events.tsv` output for BIDS users.
-5. **Merge `feature/mask_export` → `dev`** once UI is verified.
+4. **Merge `feature/mask_export` → `dev`** once UI is verified.
 
 ### Older state-selection follow-ups (still applicable)
 
