@@ -185,10 +185,111 @@ explicitly flagged `needs_drink_mask` in the PSD Visualizer.
 
 ---
 
+### Completed (branch `feature/mask_export`, off `dev`)
+
+#### Goal
+Add a way for users to export the project's masks (state, artifact, clean-per-state)
+as time-stamped CSV intervals so external tools (Spike2, MATLAB, R, pandas)
+can ingest them without numpy. Output mirrors what `estimate_psd` analyzes,
+so analyses elsewhere line up with PSDs computed in this project.
+
+#### Phase 1 — pure library (committed: `717657e`)
+- **New module** `src/ebb/process/mask_export.py` — public API:
+  `IntervalRow` (dataclass), `mask_to_intervals`, `build_state_intervals`,
+  `artifact_masks_to_intervals`, `clean_per_state_intervals`,
+  `write_intervals_csv`, `write_meta_json`, `write_animal_export`.
+- Pure / no EDF I/O. Sample-level boolean masks → `[start_s, end_s, start_sample, end_sample, label]` rows.
+  `end_sample` is exclusive (Python slice convention). Built on top of the
+  existing `ebb.core.arraytools.discretize_bool` primitive.
+- Output layout per animal × combo:
+  ```
+  exports/<run_name>/<AnimalID>_<COMBO>_states.csv
+  exports/<run_name>/<AnimalID>_<COMBO>_artifacts.csv
+  exports/<run_name>/<AnimalID>_<COMBO>_clean_per_state.csv
+  exports/<run_name>/<AnimalID>_<COMBO>_meta.json
+  ```
+- 40 unit tests in `tests/ebb/test_mask_export.py`.
+
+#### Phase 2 — pipeline orchestration (committed: `717657e`)
+- **New module** `src/ebb_viewer/pipeline/mask_export.py`:
+  `resolve_paths`, `clean_mask_for_state`, `_build_masks` (mirrors
+  `estimate_psd`), `export_animal` (never raises), `export_run` (batch,
+  continue-on-error), `default_pairs` (all `sleep_qc=='ok'` runs).
+- **Hour windows** treated as `outside_hour_window` artifact source per design
+  decision (a) — `states.csv` covers full recording; `clean_per_state.csv`
+  respects the windows; `artifacts.csv` includes the outside region.
+- **SD-on-wake logic** mirrored: pure wake → SD applied; non-wake → SD ignored;
+  lumped wake group → SD restricted to wake samples via `wake_sub_mask`.
+- **`scripts/smoke_export.py`** — standalone CLI for sanity-checking against a
+  real project before wiring the UI. Loads a saved PSD run's params and
+  runs one animal end to end.
+- 17 tests in `tests/ebb_viewer/test_mask_export_pipeline.py` (pure helpers
+  + continue-on-error contract). EDF-reading happy path is glue around
+  `ebb.masking` primitives — exercised at integration time, not via mocks.
+
+#### Phase 3 — Export Masks sidebar page (committed: `dbd7259`)
+- **New page** `src/ebb_viewer/pages/export_masks.py`. Sidebar entry
+  "10. Export Masks" wired in `main_window.py`. Sections:
+  - **Output**: dirname input → `<project_root>/exports/<name>/`. Validates
+    against `psd_params.RUN_NAME_RE` (`^[A-Za-z0-9_-]{1,64}$`) and refuses
+    to overwrite an existing dir.
+  - **Params**: state preset checkboxes, SD nstd/winsize/radius, spindle
+    noise threshold; `[Load from PSD run…]` button that pre-fills from
+    `psd/<run>/psd_params.json`. After load, an orange italic
+    `Modified — no longer matches '<run>'` indicator appears whenever any
+    of those values change.
+  - **Toggles** (export-only, not in psd_params.json so they don't trigger
+    the modified indicator): `Include drink mask`, `Include SWD mask`,
+    `Apply hour windows from loaded run`.
+  - **Animals**: `QListWidget` of `default_pairs(manifest)`, all checked
+    by default, with select-all / select-none buttons.
+  - **Status**: hidden until export starts, then shows `QTableWidget`
+    (Animal / Combo / Status / Message) populated up-front at "queued",
+    updated in place by the worker via Qt signals. Footer has a progress
+    label and `[Open exports folder]` button (uses `QDesktopServices`).
+- **Worker** `MaskExportWorker(QThread)` wraps `export_run`; emits per-animal
+  progress signals so the UI doesn't freeze.
+
+#### Drink mask fix (committed: `dbd7259`)
+- Bug: `resolve_paths` was using `manifest.drink_mask_path(run, ...)` which
+  reads `run.drink_mask` — only set after the user has *applied* a drink
+  mask through the Drink Mask page workflow (`flag_psd("drink_mask_applied")`).
+  So animals with a `.npy` on disk but no review-workflow trace were missed.
+- Fix: discover by file presence at the canonical path
+  `<project_root>/drink_masks/<animal_id>.npy` (matches `naming.drink_mask_rel`),
+  ignoring the manifest's review state. Same convention as SWD discovery
+  (`swd/<animal_id>_*.mat`).
+
+#### Offset CSV (committed: `dbd7259`)
+- `resolve_paths` now picks the first `*.csv` in `drink_masks/` as the offset
+  CSV (matches `pages/drink_mask.py:_detect_offset_csv`).
+- `_build_masks` calls `masking.get_offset(drink_path, offset_csv)` and
+  passes the result to `masking.drinking_mask`, exactly as `estimate_psd`
+  does. Failures (animal not in CSV, malformed CSV) print a warning to
+  stdout and fall back to `offset=None`.
+- Drink-pad UI removed; orchestration default of `2` now applies via
+  `_coerce_param(params, "drink_pad", 2)`.
+- **Open question**: the "first alphabetical CSV" rule is implicit. If a
+  project has multiple CSVs in `drink_masks/`, the wrong one could be
+  picked silently. Options to consider:
+  - Require a fixed filename (e.g. `offsets.csv`).
+  - Per-animal CSVs at `drink_masks/<animal_id>_offset.csv`.
+  - Surface the resolved offset CSV path in the page UI before Export so
+    the user can verify (currently only recorded in the per-animal
+    `meta.json`).
+
+#### Tests — 317 passing
++19 in `tests/ebb_viewer/test_mask_export_pipeline.py` after the drink/SWD/offset rework.
+
+---
+
 ## Current Branch State
 
-**Active branch**: `feature/state_selection` (one commit ahead of `feature/psd_compute_hours`, plus this session's overlap/ordering polish — uncommitted)  
-**All 251 tests passing**
+**Active branch**: `feature/mask_export` (off `dev`). Working tree clean.
+- `717657e` — Phase 1 + Phase 2 (library + orchestration + smoke script).
+- `dbd7259` — Phase 3 page + sidebar wiring + drink/offset/SWD orchestration fixes + tests + handoff update.
+
+**All 317 tests passing.**
 
 File layout for a named run:
 ```
@@ -328,13 +429,26 @@ animal's rerun line to disappear. Fix: skip eviction when `self._review_mode` is
 
 ## Next Steps
 
-`feature/state_selection` is feature-complete. Open items before merging to `dev`:
+### Mask export (`feature/mask_export`, current branch)
 
-1. **Commit this session's UX polish** — the overlap hint + `gather_states_from_store` refactor + tests are currently uncommitted on `feature/state_selection`. Suggested message: `UX polish: state overlap hint + stable panel order for custom state groups`.
-2. **Open TODO item: SD-threshold rule for lumped groups** (`TODO.md` §P3) — `estimate_psd` currently gates SD masking on `'wake' in combo_state`. For the `all` lumped group this probably needs to mean "apply SD when the group's code list includes `w`"; for `sleep` it should stay off. Scientific decision + code change + tests. This is the only state-selection follow-up that can silently produce wrong science.
-3. **End-to-end test with real data** — full pipeline from scratch with a new run name, plus:
-   - a re-run with an existing name (overwrite guard + manifest reset)
-   - a run selecting lumped groups (`sleep`, `all`) and confirming PSD shapes
-   - a run with overlapping groups (`rem` + `sleep`) to verify the hint appears and PSDs compute as expected
-   - verify hint banners hide/show correctly across runs
-4. **Merge `feature/state_selection` → `feature/psd_compute_hours` → `dev`** once testing passes.
+1. **Decide offset CSV detection rule.** Currently `resolve_paths` picks the
+   first `*.csv` (alphabetically) in `<project_root>/drink_masks/`, matching
+   the Drink Mask page convention. With multiple CSVs in that folder, the
+   wrong one is picked silently. Options: require a fixed filename
+   (e.g. `offsets.csv`), per-animal CSVs, or surface the resolved path in
+   the page UI. No code change yet — discuss with user.
+2. **Smoke-test the Phase 3 page against real data.** User to verify: animal
+   list populates, output dir validation, Load from PSD run + modified
+   indicator, drink/SWD/hour-window toggles all behave, Export → status
+   table → Open exports folder.
+3. **Phase 4 polish (optional, not started):**
+   - Pivoted CSV formats (e.g. one file per state across all animals).
+   - EDF+ annotations as an alternative output format.
+   - BIDS `events.tsv` output for BIDS users.
+4. **Merge `feature/mask_export` → `dev`** once UI is verified.
+
+### Older state-selection follow-ups (still applicable)
+
+- **End-to-end test with real data** — full PSD pipeline from scratch with a
+  new run name, plus: re-run with existing name (overwrite guard), lumped
+  state groups (`sleep`, `all`), overlapping groups (`rem` + `sleep`).
