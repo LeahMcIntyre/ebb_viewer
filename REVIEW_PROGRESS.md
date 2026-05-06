@@ -46,10 +46,10 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [x] `metastores.py` — fixed MetaArray.select metadata bug; guarded MetaMask "metadata" name; misc
 
 ### 1b. `ebb/io/` (525 lines)
-- [ ] `combine.py` (310)
-- [ ] `sleepyrat.py` (135)
-- [ ] `utils.py` (80)
-- [ ] `__init__.py`
+- [x] `combine.py` — fixed `pair` substring bug + `combine_edf` NaN-pad bug + `combine_swd` boundary clamp; added 2 regression tests
+- [x] `sleepyrat.py` — type hints, raise_for_status everywhere, doc; credentials TODO'd
+- [x] `utils.py` — **deleted** (between_pro replaced by native openseize 1.3.0 producer start/stop kwargs; verified empirically)
+- [x] `__init__.py` — left bare (consistent with rest of project)
 
 ### 1c. `ebb/masking/` (614 lines)
 - [ ] `annotations.py` (165)
