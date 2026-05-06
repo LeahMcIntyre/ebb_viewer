@@ -125,7 +125,8 @@ class MetaArray(mixins.ViewInstance):
         coord_shape = tuple(len(v) for v in result.values())
         if coord_shape != self.shape:
             msg = (
-                f"The shape of the coordinates must match data's shape{coord_shape} != {self.shape}"
+                f"The shape of the coordinates must match data's shape: "
+                f"{coord_shape} != {self.shape}"
             )
             raise ValueError(msg)
 
@@ -191,12 +192,8 @@ class MetaArray(mixins.ViewInstance):
             data = np.take(data, indices, axis=axis)
             coords.update({name: labels})
 
-        # build an instance and reassign metadata without change
-        cls = type(self)
-        instance = cls(data, **coords)
-        instance.__dict__.update(self.metadata)
-
-        return instance
+        # build an instance and carry metadata over unchanged
+        return type(self)(data, metadata=copy.deepcopy(self.metadata), **coords)
 
     def to_dict(self) -> dict:
         """Returns a dictionary representation of this MetaArray."""
@@ -262,9 +259,15 @@ class MetaMask(mixins.ViewInstance):
             metadata:
                 Any desired metadata to associate with the named masks.
             named_masks:
-                A mapping of named submasks to store.
+                A mapping of named submasks to store. The name "metadata" is
+                reserved and cannot be used as a mask name.
+
+        Raises:
+            ValueError if "metadata" is used as a named mask key.
         """
 
+        if "metadata" in named_masks:
+            raise ValueError("'metadata' is reserved and cannot be used as a mask name")
         self.__dict__.update(**named_masks)
         self.metadata = {} if metadata is None else metadata
 
@@ -328,14 +331,13 @@ class MetaMask(mixins.ViewInstance):
         submasks = [getattr(self, name) for name in names]
 
         lengths = np.array([len(m) for m in submasks])
-        min_length = np.min(lengths)
-        if any(lengths - min_length):
+        min_length = int(lengths.min())
+        if np.any(lengths != min_length):
             msg = (
-                f"Mask lengths are inconsistent lengths = {lengths}."
+                f"Mask lengths are inconsistent lengths = {lengths}. "
                 f"Truncating masks to minimum length = {min_length}"
             )
-            warnings.warn(msg)
-
+            warnings.warn(msg, stacklevel=2)
             submasks = [mask[:min_length] for mask in submasks]
 
         return names, functools.reduce(logical, submasks)
