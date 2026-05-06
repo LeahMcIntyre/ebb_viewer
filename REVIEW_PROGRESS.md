@@ -52,11 +52,11 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [x] `__init__.py` — left bare (consistent with rest of project)
 
 ### 1c. `ebb/masking/` (614 lines)
-- [ ] `annotations.py` (165)
-- [ ] `events.py` (316)
-- [ ] `spindle.py` (173)
-- [ ] `threshold.py` (133)
-- [ ] `__init__.py`
+- [x] `annotations.py` — fixed `artifact()` `between=(None,b)` bug; doc/typing
+- [x] `events.py` — fixed `swd` docstring; cleaned `drinking_mask` truthiness; rewrote `get_offset` with proper error; restructured `time_of_day_mask` to match `hour_window_mask`; misc
+- [x] `spindle.py` — clarified mask-intent docstrings (`state` selects, `spindle_noise` excludes); simplified `_expand_spindle_column`; extracted `_PROB_COLUMN`; doc/typing
+- [x] `threshold.py` — `zip(strict=True)`; documented chunksize side effect; doc/typing
+- [~] `__init__.py` — re-exports only, reviewed clean
 
 ### 1d. `ebb/preprocess/` + `ebb/process/` (1,641 lines)
 - [ ] `preprocess/edf.py` (209)
