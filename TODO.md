@@ -46,6 +46,9 @@ Whether to mask out or include the transition state (TS) in PSD computation is a
 ### combine: Expand `ebb.io.combine` to other data types
 Today `combine_edf` and `combine_swd` handle the two specific file types we restart-and-resume. The same per-file shift-and-stack pattern should generalize to drink masks (`.npy`) and any other timestamped data we end up restarting. Sketch a `combine_npy` (or a generic `combine_arrays(loader, writer, ...)`) that mirrors the `combine_swd` semantics: pair files, shift each by `idx * amount_sec`, concatenate, write.
 
+### sleep_compute: Pair state CSVs with EDFs and read start times from headers
+`compute_sleep_bins_df_offset` currently parses recording start time from the `_HH_MM_SS_` chunk of the state CSV's filename. This is brittle (depends on filename convention, ignores date, blows up on differently-named files) and the EDF header already carries the authoritative `start_date` / `start_time`. Refactor to take an `edf_dir` (or the manifest) alongside `state_dir`, pair each state CSV with its EDF by animal ID, and pull the start datetime from the EDF header instead of parsing the filename. While here: make the rotation timezone-aware (`zoneinfo`) so multi-day recordings that cross DST align correctly — currently the naive `timedelta(days=1)` arithmetic silently misaligns bin boundaries by one hour across a DST shift.
+
 ---
 
 ## Additional Suggestions
