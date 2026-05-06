@@ -59,11 +59,11 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [~] `__init__.py` — re-exports only, reviewed clean
 
 ### 1d. `ebb/preprocess/` + `ebb/process/` (1,641 lines)
-- [ ] `preprocess/edf.py` (209)
-- [ ] `process/state_presets.py` (111)
-- [ ] `process/sleep_compute.py` (257)
-- [ ] `process/mask_export.py` (281)
-- [ ] `process/psd_compute.py` (782) **— may need its own session**
+- [x] `preprocess/edf.py` — fixed reader-close leak; deduped trim logic; resolved exist_ok TODOs; misc
+- [x] `process/state_presets.py` — doc/typing; stale ref fix
+- [x] `process/sleep_compute.py` — fixed `datetime.today()` race + DST note; parameterized magic 4; raise on short-recording rotation; deduped CSV reading; module docstring
+- [~] `process/mask_export.py` — reviewed clean (recently written, well-structured)
+- [ ] `process/psd_compute.py` (782) **— next session**
 
 ### Phase 1 closeout
 - [ ] All `ebb/` tests pass
