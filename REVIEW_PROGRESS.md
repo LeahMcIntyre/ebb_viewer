@@ -1,0 +1,182 @@
+# Code Cleanup Sweep — Progress Tracker
+
+**Goal:** sweep every source file for correctness, readability, simplification, and documentation. Bottom-up order, leaf modules first.
+
+**Status legend:** `[ ]` not yet · `[~]` reviewed clean (no changes needed) · `[!]` changes pending · `[x]` done
+
+**Active branch convention:** one long-lived `cleanup/<phase>` branch per phase, off `dev`, merged into `dev` when phase completes.
+
+---
+
+## Phase 0 — Foundation
+
+- [x] Run `pytest` and capture baseline — **257 passing on `dev`**, **317 passing post-merge**
+- [x] Resolve `stash@{0}` — applied & committed as `05f601e` on `feature/mask_export`
+- [x] Merge `feature/mask_export` into `cleanup/phase0-foundation` (no conflicts)
+- [x] Add `ruff` config to `pyproject.toml` and to `envs/ebb-dev.yml`
+- [x] `ruff check --fix` pass (672 fixes; 1 real bug exposed in `psd_compute.py`)
+- [x] `ruff format` pass (71 files reformatted)
+- [ ] Commit `CLEANUP_PLAN.md` + `REVIEW_PROGRESS.md`
+- [ ] Merge `cleanup/phase0-foundation` → `dev`
+
+**Phase 0 leftovers to address during per-phase reviews:** 107 non-auto-fixable ruff issues remain. Notable categories:
+- 27 `E702` multiple-statements-on-one-line-semicolon
+- 10 `E701` multiple-statements-on-one-line-colon
+- 7 `B905` `zip()` without explicit `strict=`
+- 5 `F841` unused variables
+- 4 `B007` unused loop control variables
+- 4 `E402` module imports not at top
+- 2 `B006` mutable default args (real bug pattern — flag during phase 1)
+- 2 `B028` `warnings.warn` without `stacklevel`
+- 1 `B011` `assert False` (use `raise AssertionError`)
+- ... plus a handful of SIM simplifications
+
+Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
+
+---
+
+## Phase 1 — `ebb/` library (well-tested, safer)
+
+### 1a. `ebb/core/` (243 lines)
+- [ ] `arraytools.py` (84)
+- [ ] `concurrency.py` (40)
+- [ ] `mixins.py` (79)
+- [ ] `metastores.py` (362)
+
+### 1b. `ebb/io/` (525 lines)
+- [ ] `combine.py` (310)
+- [ ] `sleepyrat.py` (135)
+- [ ] `utils.py` (80)
+- [ ] `__init__.py`
+
+### 1c. `ebb/masking/` (614 lines)
+- [ ] `annotations.py` (165)
+- [ ] `events.py` (316)
+- [ ] `spindle.py` (173)
+- [ ] `threshold.py` (133)
+- [ ] `__init__.py`
+
+### 1d. `ebb/preprocess/` + `ebb/process/` (1,641 lines)
+- [ ] `preprocess/edf.py` (209)
+- [ ] `process/state_presets.py` (111)
+- [ ] `process/sleep_compute.py` (257)
+- [ ] `process/mask_export.py` (281)
+- [ ] `process/psd_compute.py` (782) **— may need its own session**
+
+### Phase 1 closeout
+- [ ] All `ebb/` tests pass
+- [ ] Merge `cleanup/phase1-ebb` → `dev`
+
+---
+
+## Phase 2 — `ebb_viewer/` infrastructure
+
+### 2a. `pipeline/` (~1,400 lines, partial test coverage)
+- [ ] `manifest.py` (726) **— critical, careful**
+- [ ] `mask_export.py` (498)
+- [ ] `naming.py`
+- [ ] `psd_params.py` (96)
+- [ ] `sleepyrat_config.py` (40)
+- [ ] `theme.py`
+
+### 2b. `widgets/` (~1,000 lines)
+- [ ] `worker_helpers.py` (34)
+- [ ] `drink_mask_dialog.py` (45)
+- [ ] `trim_to_widget.py` (51)
+- [ ] `tree_view.py` (56)
+- [ ] `range_dialog.py` (57)
+- [ ] `sleep_viewer.py` (73)
+- [ ] `output_dialog.py`
+- [ ] `table_helpers.py`
+- [ ] `stft_viewer.py` (155)
+- [ ] `psd_graph_widget.py` (566)
+
+### 2c. `edf_viewer/` (~1,800 lines, **untested**)
+- [ ] `recording.py` (38)
+- [ ] `state_legend.py` (73)
+- [ ] `state_bar.py` (90)
+- [ ] `masks.py` (114)
+- [ ] `file_openers.py` (126)
+- [ ] `masks_dock.py` (218)
+- [ ] `mask_builder.py` (247)
+- [ ] `trace_view.py` (532)
+- [ ] `eeg_viewer.py` (678)
+
+### 2d. `data_stores/`
+- [ ] `psd_store.py` (96)
+
+### Phase 2 closeout
+- [ ] Add focused tests for non-trivial pure-Python helpers extracted from `edf_viewer/` and `widgets/`
+- [ ] Merge `cleanup/phase2-viewer-infra` → `dev`
+
+---
+
+## Phase 3 — `pages/` (largely untested, riskiest)
+
+### 3a. Setup pages
+- [ ] `home.py` (886)
+- [ ] `preprocess.py` (401)
+
+### 3b. Spindle pipeline
+- [ ] `spindle.py` (442)
+- [ ] `spindle_upload.py` (670)
+
+### 3c. Sleep QC visualizer (1,535 lines, **2 sessions**)
+- [ ] Session 1: read fully, propose structural refactor plan
+- [ ] Session 2: execute refactor
+
+### 3d. Rerun + PSDs (1,890 lines combined)
+- [ ] `rerun.py` (355)
+- [ ] `psds.py` (1,535) **— own session, possibly 2**
+
+### 3e. PSD review + finalize
+- [ ] `psd_visualizer.py` (249)
+- [ ] `drink_mask.py` (550)
+- [ ] `sleep_visualizer.py` (258)
+- [ ] `finalize.py` (325)
+
+### 3f. Export Masks
+- [ ] `export_masks.py` (642) **— own session**
+
+### 3g. Out-of-tree scripts
+- [ ] `scripts/smoke_export.py` (125)
+
+### Phase 3 closeout
+- [ ] All tests pass; smoke-test the GUI end-to-end
+- [ ] Merge `cleanup/phase3-pages` → `dev`
+
+---
+
+## Phase 4 — Top-level glue
+- [ ] `main_window.py` (225)
+- [ ] `__main__.py`
+- [ ] `_patches.py` (51)
+- [ ] All `__init__.py` files
+
+---
+
+## Phase 5 — Cross-cutting
+- [ ] Consistency sweep (naming, error handling, fs handling)
+- [ ] Audit/consolidate `HANDOFF.md`, `PIPELINE_AUDIT.md`, `PLAN.md`, `TODO.md`
+- [ ] README upgrade
+- [ ] Final end-to-end smoke test
+- [ ] Tag a `v0.2.0` (or similar) release commit
+
+---
+
+## Per-file rubric
+
+1. **Correctness** — off-by-one in sample-index/mask code, float `==`, edge cases (empty/NaN/single), defensive copies of mutable args, race conditions in `QThread` workers, fs hardcoding.
+2. **Readability** — methods >40 lines, args >5, nesting >3, magic numbers, single-letter names outside tight scopes.
+3. **Documentation** — public class/function docstrings; module summary; comments only for non-obvious *why*.
+4. **Simplification** — dead imports/functions, duplication, premature abstractions, defensive checks for impossible cases.
+5. **Type hints** — public API only.
+
+## Per-session loop
+
+1. Open this file; pick next batch.
+2. Read each file fully.
+3. Run `code-improvement-advisor` agent → findings.
+4. Discuss findings; decide what to apply.
+5. Apply edits; run `pytest`; commit per-batch.
+6. Update statuses here; commit tracker update.
