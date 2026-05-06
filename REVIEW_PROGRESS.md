@@ -16,8 +16,10 @@
 - [x] Add `ruff` config to `pyproject.toml` and to `envs/ebb-dev.yml`
 - [x] `ruff check --fix` pass (672 fixes; 1 real bug exposed in `psd_compute.py`)
 - [x] `ruff format` pass (71 files reformatted)
-- [ ] Commit `CLEANUP_PLAN.md` + `REVIEW_PROGRESS.md`
-- [ ] Merge `cleanup/phase0-foundation` → `dev`
+- [x] Commit `CLEANUP_PLAN.md` + `REVIEW_PROGRESS.md`
+- [x] Merge `cleanup/phase0-foundation` → `dev` (fast-forward)
+
+**Phase 0 complete. ✅** Test count holding at 317.
 
 **Phase 0 leftovers to address during per-phase reviews:** 107 non-auto-fixable ruff issues remain. Notable categories:
 - 27 `E702` multiple-statements-on-one-line-semicolon
