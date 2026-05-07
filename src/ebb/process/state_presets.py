@@ -72,8 +72,8 @@ def overlap_groups(preset_keys: Iterable[str]) -> dict[str, list[str]]:
     to the UI that, say, REM epochs will feed into both a REM-only PSD and a
     lumped Sleep PSD when both groups are selected.
 
-    Unknown preset keys are ignored (consistent with
-    :func:`states_from_params`'s filtering).
+    Unknown preset keys are silently ignored (so a typo in saved params
+    doesn't crash this UI helper — `labels_from_presets` is the strict path).
     """
     code_to_groups: dict[str, list[str]] = {}
     for key in preset_keys:
@@ -98,11 +98,17 @@ def canonical_sort_states(names: Iterable[str]) -> list[str]:
 def gather_states_from_store(store) -> list[str]:
     """Union of state names across all animals in ``store``, canonically sorted.
 
-    Falls back to the three single-state presets (wake/nrem/rem) when the
-    store is empty — keeps PSDGridPage usable even when no PSDs have been
-    computed yet.
+    Args:
+        store: Any object exposing ``animals() -> Iterable[str]`` and
+            ``states(animal) -> Iterable[str]`` (matches the
+            `ebb_viewer.data_stores.psd_store.PSDStore` interface).
+
+    Returns:
+        Sorted list of state names. Falls back to the three single-state
+        presets (wake/nrem/rem) when the store is empty — keeps the PSD
+        grid page usable even when no PSDs have been computed yet.
     """
-    found: set = set()
+    found: set[str] = set()
     for animal in store.animals():
         found.update(store.states(animal))
     if not found:

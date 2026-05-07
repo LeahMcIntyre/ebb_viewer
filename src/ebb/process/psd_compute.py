@@ -1,12 +1,28 @@
-"""A script for computing EEG PSDs stored as MetaArrays with shape
-(spindle_state x file x channels x frequencies).
+"""Per-animal PSD computation and batch orchestration.
+
+Two layers:
+- `estimate_psd`: single-file PSD. Builds state masks (one per group in
+  `labels`), artifact masks (commutator threshold, SD threshold within
+  wake, SPINDLE noise, SWD events, drink events, annotation keywords,
+  time-of-day windows), combines them, and emits one `PSDResult` per
+  (state-group ∩ all-artifacts).
+- `batch_estimate` / `rerun_with_drink_masks`: multiprocess drivers that
+  pair EEG files with their state/SWD/drink/annotation companions and
+  fan `estimate_psd` calls out to a process pool. The two functions
+  share the same kwarg-prep logic via `_prepare_estimator_kwargs`.
+
+Output is a list of `PSDResult` dataclasses; `batch_estimate` optionally
+pickles a list of dicts for downstream merging by `build_final_pkl`.
 """
 
 import dataclasses
 import multiprocessing
+import pickle
 import re
 import time
+import warnings
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 
@@ -20,6 +36,29 @@ from ebb import masking
 from ebb.core import concurrency, metastores
 from ebb.masking.annotations import keyword_mask
 from ebb.process.state_presets import labels_from_presets
+
+# Commutator-artifact threshold tunings used by `estimate_psd`. Values were
+# calibrated for the project's EDF acquisition; centralizing them here makes
+# them easier to find and adjust than burying inside the function call.
+_COMMUTATOR_VALUE_UV = 2000  # absolute amplitude limit (μV) for commutator
+_COMMUTATOR_RADIUS_SAMPLES = 250  # 1 s @ 250 Hz: merge events closer than this
+_COMMUTATOR_PAD_SAMPLES = 250  # 1 s @ 250 Hz: extend each event by this much
+_COMMUTATOR_MIN_TO_PAD = 10  # only events longer than this get the pad
+_COMMUTATOR_MASK_CHUNKSIZE = 45_000  # chunksize for streaming the comm mask
+
+# UI-only kwargs that may arrive from saved psd_params.json but must be
+# stripped before forwarding to `estimate_psd`.
+_UI_ONLY_KWARGS = (
+    "path",
+    "state_path",
+    "swd_mode",
+    "ann_enabled",
+    "time_filter_enabled",
+    "tod_start",
+    "tod_end",
+    "time_filter_days",  # legacy
+    "hw_enabled",
+)
 
 
 @dataclasses.dataclass
@@ -55,21 +94,21 @@ def out_fraction(mask: npt.NDArray[np.bool_], state_mask: npt.NDArray[np.bool_])
 def estimate_psd(
     path: str | Path,
     state_path: str | Path,
-    swd_path: str | Path = None,
-    drink_path: str | Path = None,
-    annotation_path: str | Path = None,
-    offset_path: str | Path = None,
-    channels: list = [0, 1, 2],
+    swd_path: str | Path | None = None,
+    drink_path: str | Path | None = None,
+    annotation_path: str | Path | None = None,
+    offset_path: str | Path | None = None,
+    channels: Sequence[int] | None = None,
     winsize: int = 180,
     radius: float = 0.5,
     nstd: int = 5,
     fs: float = 250,
     chunksize: int = int(30e5),
-    labels: dict = {"wake": ["w"], "nrem": ["n"], "rem": ["r"]},
+    labels: dict[str, Sequence[str]] | None = None,
     verbose: bool = True,
     noise_thresh: float = 0.5,
     drink_pad: int = 2,
-    s_prob: float = None,
+    s_prob: float | None = None,
     ann_keywords: list[str] | None = None,
     ann_match_mode: str = "contains",
     ann_pad_before_sec: float = 0.0,
@@ -78,54 +117,85 @@ def estimate_psd(
     selected_days: list[int] | None = None,
     **kwargs,
 ) -> list[PSDResult]:
-    """
-    Estimates the Power spectral density of EEG data stored to an EDF at path
-    for each state in a states path CSV file.
+    """Estimate PSDs for one EDF, one PSDResult per (state-group ∩ artifacts).
+
+    For each label group in `labels`, builds a state mask (which samples
+    belong to that group), intersects it with the combined artifact mask
+    (commutator + SD-within-wake + SPINDLE noise + SWD + drink + annotation
+    + time-of-day), and estimates a PSD on the surviving samples.
 
     Args:
         path:
-            Path to an EDF file whose PSD will be estimated.
+            EDF whose PSD will be estimated.
         state_path:
-            Path to a Spindle generated CSV file of states.For the updated SleepyRat web service, artifact slider can be set as desired:
-            'rawstate' column is used.
+            SPINDLE-scored CSV file. The `rawstate` column drives state
+            masks; `noise_probs` drives the SPINDLE noise mask.
+        swd_path:
+            Optional `.mat` file of SWD timestamps to mask out.
         drink_path:
-            Path to a .npy file containing 1Hz 1D-Boolean array as a drink mask (drinking events
-            are true).
+            Optional `.npy` 1 Hz boolean array of drinking events (True =
+            drinking event).
+        annotation_path:
+            Optional Pinnacle annotation file. Combined with `ann_keywords`
+            to mask out events whose label matches.
         offset_path:
-            Path to a .csv file containing the animal ID and the offset between the eeg start
-            and vidoe (drink mask) start.
+            Optional CSV with `Animal,Offset` columns; the offset (seconds)
+            shifts the drink mask to align with the EEG.
         channels:
-            The channels for which PSDs will be estimated.
-        fs:
-            The sampling rate of the data in the EDF.
-        labels:
-            A dict of label names and spindle codes one per state for which PSDs
-            will be computed.
+            EEG channel indices to use. Defaults to `[0, 1, 2]` if None.
         winsize:
-            The size of the window for threshold artifact detection using the
-            threshold mask. This value has units of seconds. Please see
-            ebb.masking.threshold
-        nstds:
-            The number of standard deviations a deflection must cross to be
-            considered an artifact. Please see ebb.masking.threshold
+            Window length in seconds for SD-threshold artifact detection.
+            See `ebb.masking.threshold.sd_threshold`.
         radius:
-            The number of secs below which two detected artifacts will be merged
-            into a single artifact. Please see ebb.masking.threshold.
+            Seconds below which two detected SD-threshold artifacts are
+            merged into one. See `ebb.masking.threshold.sd_threshold`.
+        nstd:
+            Number of standard deviations a sample must exceed to be
+            flagged as an SD artifact.
+        fs:
+            EDF sampling rate (Hz).
+        chunksize:
+            Samples per producer chunk during streaming.
+        labels:
+            Group name → list of SPINDLE rawstate codes. Defaults to
+            `{"wake": ["w"], "nrem": ["n"], "rem": ["r"]}` if None. Groups
+            containing `"w"` plus other states get SD thresholding applied
+            only to their wake-sub samples.
         verbose:
-            Boolean indicating if information about which PSD is currently being
-            computed should print to stdout.
+            Print per-PSD progress lines.
+        noise_thresh:
+            SPINDLE noise probability threshold (>= → epoch is noise).
+        drink_pad:
+            Pad each drink event by this many seconds on each side. (The
+            unit is seconds despite the unsuffixed name; preserved for
+            backwards compatibility.)
+        s_prob:
+            If set, restricts state masks to epochs whose class probability
+            >= `s_prob` (uses `masking.state_prob` instead of `masking.state`).
+        ann_keywords, ann_match_mode, ann_pad_before_sec, ann_pad_after_sec:
+            Annotation-mask params (see `ebb.masking.annotations.keyword_mask`).
+        hour_windows:
+            Optional list of `(hour_start, hour_end)` decimal-hour pairs;
+            the mask keeps samples within any window. Each window may wrap
+            midnight (`hour_end < hour_start`).
+        selected_days:
+            0-based calendar-day indices to keep, applied to `hour_windows`.
         **kwargs:
-            All kwargs are passed to openseize's psd estimator function.
+            Forwarded to openseize's `estimators.psd`.
 
     Returns:
-        A list of PSDResult instances one per file and state in paths and
-        labels.
+        One `PSDResult` per state group with at least one surviving sample.
+        Groups with no surviving samples are silently skipped.
     """
 
     path, state_path = Path(path), Path(state_path)
+    channels = list(channels) if channels is not None else [0, 1, 2]
+    if labels is None:
+        labels = {"wake": ["w"], "nrem": ["n"], "rem": ["r"]}
     # get the mouse id from path
     animal = path.stem.split("_")[0]
-    print(animal)
+    if verbose:
+        print(animal)
     with edf.Reader(path) as reader:
         # build a producer
         reader.channels = list(channels)
@@ -156,10 +226,13 @@ def estimate_psd(
         else:
             wake_sub_mask = None
 
-        # print(f"{animal}: {reader.shape}")
         # Compute commutator artifact threshold mask
         comm_mask = masking.commutator_threshold(
-            pro, value=2000, radius=250, pad=250, min_to_pad=10
+            pro,
+            value=_COMMUTATOR_VALUE_UV,
+            radius=_COMMUTATOR_RADIUS_SAMPLES,
+            pad=_COMMUTATOR_PAD_SAMPLES,
+            min_to_pad=_COMMUTATOR_MIN_TO_PAD,
         )[0]
 
         spindle_mask = masking.spindle_noise(
@@ -168,7 +241,7 @@ def estimate_psd(
 
         wsize, rad = (winsize * fs), (radius * fs)
 
-        comm_pro = producer(comm_mask, chunksize=4.5e4, axis=-1)
+        comm_pro = producer(comm_mask, chunksize=_COMMUTATOR_MASK_CHUNKSIZE, axis=-1)
         sd_threshold_mask = masking.sd_threshold(
             pro,
             [nstd],
@@ -176,7 +249,8 @@ def estimate_psd(
             radius=rad,
             mask_pro=comm_pro,
         )[0]
-        print(f"{animal} SD threshold mask computed")
+        if verbose:
+            print(f"{animal} SD threshold mask computed")
 
         # Compute SWD mask if path provided
         if swd_path is not None:
@@ -185,9 +259,9 @@ def estimate_psd(
             swd_mask = np.ones(pro.shape[-1], dtype=bool)
 
         # Get offset and drink mask
-        # TODO: FIX THIS MESS LEAH
         if drink_path:
-            print(f"Drink Mask For Animal {animal}")
+            if verbose:
+                print(f"Drink Mask For Animal {animal}")
             offset = (
                 masking.get_offset(drink_path, offset_path) if offset_path is not None else None
             )
@@ -213,11 +287,9 @@ def estimate_psd(
 
         # Build hour-window mask if requested
         if hour_windows is not None:
-            from datetime import datetime as _datetime
-
             start_str = reader.header.start_time  # "HH.MM.SS"
             date_str = reader.header.start_date  # "DD.MM.YY"
-            rec_start = _datetime.strptime(f"{date_str} {start_str}", "%d.%m.%y %H.%M.%S")
+            rec_start = datetime.strptime(f"{date_str} {start_str}", "%d.%m.%y %H.%M.%S")
             tod_mask, used_windows = masking.hour_window_mask(
                 rec_start,
                 n_samples,
@@ -225,8 +297,9 @@ def estimate_psd(
                 hour_windows,
                 selected_days,
             )
-            for ws, we in used_windows:
-                print(f"  {animal}: {ws.strftime('%Y-%m-%d %H:%M')}–{we.strftime('%H:%M')}")
+            if verbose:
+                for ws, we in used_windows:
+                    print(f"  {animal}: {ws.strftime('%Y-%m-%d %H:%M')}–{we.strftime('%H:%M')}")
         else:
             tod_mask = np.ones(n_samples, dtype=bool)
             used_windows = []
@@ -247,7 +320,8 @@ def estimate_psd(
 
             if not np.any(mask):
                 # some mice may not exhibit all behavior states
-                print(f"mask {combo_state} has no data ... skipping")
+                if verbose:
+                    print(f"mask {combo_state} has no data ... skipping")
                 continue
 
             codes = labels[state_name]
@@ -256,7 +330,12 @@ def estimate_psd(
                     mask &= sd_threshold_mask
                     sd_out = out_fraction(sd_threshold_mask, st_mask)
                 else:
-                    # Mixed group: restrict SD to the wake samples only.
+                    # Mixed group (wake + non-wake): apply SD threshold only to
+                    # the wake portion. `~wake_sub_mask | sd_threshold_mask`
+                    # passes every non-wake sample (so NREM/REM unaffected) and
+                    # passes wake samples only if they survive the SD threshold.
+                    # All three operands have length pro.shape[-1] by
+                    # construction, so the broadcast is unambiguous.
                     mask &= ~wake_sub_mask | sd_threshold_mask
                     sd_out = out_fraction(sd_threshold_mask, st_mask & wake_sub_mask)
             else:
@@ -268,11 +347,15 @@ def estimate_psd(
             ann_out = out_fraction(ann_mask, st_mask)
 
             if verbose:
-                print(f"Computing PSD for producer with mask: {combo_state}", end="\n")
+                print(f"Computing PSD for producer with mask: {combo_state}")
 
             masked_pro = producer(pro, chunksize, axis=-1, mask=mask)
             cnt, freqs, psds = estimators.psd(masked_pro, fs=fs, **kwargs)
 
+            # `used_*` flags record whether each source was *configured*, not
+            # whether it actually masked any samples. To know the latter,
+            # check the corresponding `*_out_frac` field (0.0 = no samples
+            # excluded by that source within this state).
             r = PSDResult(
                 path=path,
                 channels=channels,
@@ -283,8 +366,8 @@ def estimate_psd(
                 sd_out_frac=float(sd_out),
                 swd_out_frac=float(swd_out),
                 ann_out_frac=float(ann_out),
-                used_swd=bool(swd_path is not None),
-                used_drink=bool(drink_path is not None),
+                used_swd=swd_path is not None,
+                used_drink=drink_path is not None,
                 used_ann=bool(annotation_path is not None and _ann_keywords),
                 freqs=freqs,
                 psd=psds,
@@ -293,10 +376,6 @@ def estimate_psd(
 
             result.append(r)
     return result
-
-
-import pickle
-from pathlib import Path
 
 
 def _animal_id(p: Path, pattern: str = r"[^_]+") -> str:
@@ -309,6 +388,59 @@ def _star_call(fn_args):
     """Module-level unpacker for pool.imap — lambdas aren't picklable with spawn."""
     fn, args = fn_args
     return fn(*args)
+
+
+def _prepare_estimator_kwargs(
+    kwargs: dict,
+    ann_params: dict | None = None,
+    offset_path: str | Path | None = None,
+) -> tuple[dict, list[tuple[float, float]] | None, list[int] | None, dict[str, Path]]:
+    """Prepare kwargs to pass to `estimate_psd` via `partial`.
+
+    Mutates `kwargs` in place (stripping UI-only keys, migrating legacy
+    `hour_window` → `hour_windows`, translating `states` preset list →
+    `labels` dict, spreading `ann_params` into `kwargs`, setting
+    `offset_path` if supplied) and returns the surviving values that need
+    to be passed positionally rather than via `kwargs`.
+
+    Returns:
+        Tuple of (kwargs, hour_windows, selected_days, ann_by_animal). The
+        returned `kwargs` is the same dict that was passed in (mutated).
+    """
+    for key in _UI_ONLY_KWARGS:
+        kwargs.pop(key, None)
+
+    hour_windows = kwargs.pop("hour_windows", None)
+    legacy_hw = kwargs.pop("hour_window", None)  # migrate old single-window saves
+    if hour_windows is None and legacy_hw is not None:
+        hour_windows = [tuple(legacy_hw)]
+    selected_days = kwargs.pop("selected_days", None)
+
+    # Translate preset-key list (as saved in psd_params.json) → labels dict.
+    # Explicit labels= wins; absent both → estimate_psd's default applies.
+    states = kwargs.pop("states", None)
+    if states is not None and "labels" not in kwargs:
+        kwargs["labels"] = labels_from_presets(states)
+
+    if offset_path is not None:
+        kwargs["offset_path"] = offset_path
+
+    ann_by_animal: dict[str, Path] = {}
+    if ann_params:
+        ann_dir = ann_params.get("ann_dir")
+        if ann_dir and Path(ann_dir).is_dir():
+            for f in list(Path(ann_dir).glob("*.txt")) + list(Path(ann_dir).glob("*.csv")):
+                ann_by_animal[_animal_id(f)] = f
+        kwargs.update(
+            {
+                "ann_keywords": ann_params.get("keywords") or [],
+                "ann_match_mode": ann_params.get("match_mode", "contains"),
+                "ann_pad_before_sec": ann_params.get("pad_before_sec", 0.0),
+                "ann_pad_after_sec": ann_params.get("pad_after_sec", 0.0),
+            }
+        )
+
+    return kwargs, hour_windows, selected_days, ann_by_animal
 
 
 def match_paths(
@@ -367,86 +499,61 @@ def match_paths(
 def batch_estimate(
     eeg_dir: str | Path,
     state_dir: str | Path,
-    swd_dir: str | Path = None,
-    drink_dir: str | Path = None,
-    offset_path: str | Path = None,
+    swd_dir: str | Path | None = None,
+    drink_dir: str | Path | None = None,
+    offset_path: str | Path | None = None,
     ncores: int | None = None,
     verbose: bool = True,
-    savepath: str | Path = None,
+    savepath: str | Path | None = None,
     progress_fn: Callable | None = None,
     ann_params: dict | None = None,
     **kwargs,
 ) -> list[PSDResult]:
-    """Concurrently estimates PSDResults from a directories of EEG files and
-    Spindle state files.
+    """Concurrently estimate PSDs across every EDF in `eeg_dir`.
+
+    Pairs each EDF with its SPINDLE CSV (required), SWD `.mat` (optional),
+    drink `.npy` (optional, sparse), and annotation file (optional, sparse),
+    then fans `estimate_psd` calls out to a process pool.
 
     Args:
         eeg_dir:
-            Directory to EEG files to estimate PSDs of.
+            Directory of EDFs (matched on `*PROCESSED.edf`).
         state_dir:
-            Directory of spindle files one per EEG file in eeg_dir indicating
-            sleep states.
+            Directory of SPINDLE-scored CSVs. Authoritative for which animals
+            are included — EDFs without a matching CSV are skipped.
         swd_dir:
-            Optional directory of SWD .mat files one per EEG file in eeg_dir.
-        mask_dir:
-            Optional directory of .npy mask files one per EEG file in eeg_dir. Need to add more flexibility.
-        pattern:
-            A regex string for pairing EEG files with Spindle state files.
+            Optional directory of SWD `.mat` files (one per animal).
+        drink_dir:
+            Optional directory of drink-mask `.npy` files (sparse — animals
+            without a matching file get no drink mask).
+        offset_path:
+            Optional CSV mapping animal IDs to drink-EEG offset seconds.
         ncores:
-            The number of processing cores to utilize to concurrently process
-            EEG files.
-        kwargs:
-            Any valid kwarg for the estimate function.
+            Worker count. None = use all available, capped by file count.
+        verbose:
+            Forwarded to `estimate_psd` and used for the batch-level banner.
+        savepath:
+            If set, pickles results as a list of dicts here (used by the
+            two-step pipeline; downstream `build_final_pkl` consumes these).
+        progress_fn:
+            Optional callable invoked with a status string per file.
+        ann_params:
+            Optional dict with keys `ann_dir`, `keywords`, `match_mode`,
+            `pad_before_sec`, `pad_after_sec`. Annotation files are matched
+            to EDFs by animal ID.
+        **kwargs:
+            Forwarded to `estimate_psd`. UI-only keys in `_UI_ONLY_KWARGS`
+            are stripped first (so saved psd_params.json can be passed as-is).
 
     Returns:
-        A list of lists of PSDResults, one PSD result for each file and state.
+        Flat list of PSDResults across all animals × state groups.
     """
 
-    import tracemalloc
-    import warnings
-
-    tracemalloc.start()
     warnings.filterwarnings("ignore", category=ResourceWarning)
 
-    # remove path arguments and UI-only keys that must not reach estimate_psd
-    [
-        kwargs.pop(x, None)
-        for x in (
-            "path",
-            "state_path",
-            "swd_mode",
-            "ann_enabled",
-            "time_filter_enabled",
-            "tod_start",
-            "tod_end",
-            "time_filter_days",  # legacy keys
-            "hw_enabled",
-        )
-    ]
-    hour_windows = kwargs.pop("hour_windows", None)
-    _legacy_hw = kwargs.pop("hour_window", None)  # migrate old single-window saves
-    if hour_windows is None and _legacy_hw is not None:
-        hour_windows = [tuple(_legacy_hw)]
-    selected_days = kwargs.pop("selected_days", None)
-
-    # Translate preset-key list (as saved in psd_params.json) → labels dict.
-    # Explicit labels= wins; absent both → estimate_psd's default applies.
-    states = kwargs.pop("states", None)
-    if states is not None and "labels" not in kwargs:
-        kwargs["labels"] = labels_from_presets(states)
-
-    # unpack annotation params
-    ann_keywords = ann_match_mode = ann_pad_before = ann_pad_after = None
-    ann_by_animal: dict[str, Path] = {}
-    if ann_params:
-        ann_dir = ann_params.get("ann_dir")
-        ann_keywords = ann_params.get("keywords") or []
-        ann_match_mode = ann_params.get("match_mode", "contains")
-        ann_pad_before = ann_params.get("pad_before_sec", 0.0)
-        ann_pad_after = ann_params.get("pad_after_sec", 0.0)
-        if ann_dir and Path(ann_dir).is_dir():
-            for f in list(Path(ann_dir).glob("*.txt")) + list(Path(ann_dir).glob("*.csv")):
-                ann_by_animal[_animal_id(f)] = f
+    kwargs, hour_windows, selected_days, ann_by_animal = _prepare_estimator_kwargs(
+        kwargs, ann_params, offset_path
+    )
 
     # pair the eeg paths with the state paths
     state_paths = sorted(Path(state_dir).glob("*.csv"))
@@ -473,18 +580,6 @@ def batch_estimate(
     msg = f"Executing Batch on {len(paired)} files using {workers} cores."
     print(msg)
 
-    # construct a partial to pass to Multiprocess pool
-    if offset_path is not None:
-        kwargs["offset_path"] = offset_path
-    if ann_params:
-        kwargs.update(
-            {
-                "ann_keywords": ann_keywords,
-                "ann_match_mode": ann_match_mode,
-                "ann_pad_before_sec": ann_pad_before,
-                "ann_pad_after_sec": ann_pad_after,
-            }
-        )
     estimator = partial(
         estimate_psd, hour_windows=hour_windows, selected_days=selected_days, **kwargs
     )
@@ -520,11 +615,14 @@ def batch_estimate(
 
 
 def build_run_final_pkl(project_root, run_name: str = "default") -> Path:
-    """Seal a completed PSD run by writing psds_final.pkl.
+    """Seal a completed PSD run by copying the latest merged PKL to psds_final.pkl.
 
-    Prefers psds_channel_merged_drink.pkl (drink-masked overrides applied) over
-    psds_channel_merged.pkl.  Raises FileNotFoundError if neither exists.
-    Returns the path written.
+    Prefers `psds_channel_merged_drink.pkl` (which contains drink-masked
+    overrides — see `rerun_with_drink_masks`) over `psds_channel_merged.pkl`.
+    Raises `FileNotFoundError` if neither exists. Returns the path written.
+
+    Distinct from `build_final_pkl`, which builds the channel-merged PKL in
+    the first place from per-combo PKLs + manifest sleep_qc decisions.
     """
     psd_dir = Path(project_root) / "psd" / run_name
     drink = psd_dir / "psds_channel_merged_drink.pkl"
@@ -543,13 +641,17 @@ def build_run_final_pkl(project_root, run_name: str = "default") -> Path:
 
 
 def build_final_pkl(project_root, manifest, run_name: str = "default") -> Path:
-    """For each animal with sleep_qc == "ok", load their entry from
-    psds_<ok_combo>.pkl in psd/<run_name>/, annotate with source_combo, and write to
-    psd/<run_name>/psds_channel_merged.pkl. Atomically replaces the file.
-    Returns the path written.
-    """
-    import warnings
+    """Build psds_channel_merged.pkl by merging per-combo PKLs.
 
+    For each animal whose manifest entry has `sleep_qc == "ok"` for some
+    combo, load their record from `psds_<ok_combo>.pkl` in
+    `psd/<run_name>/`, annotate with `source_combo`, and write the
+    aggregated list to `psds_channel_merged.pkl` (atomically). Returns the
+    path written.
+
+    Distinct from `build_run_final_pkl`, which seals an existing merged PKL
+    by copying it to `psds_final.pkl`.
+    """
     project_root = Path(project_root)
     psd_dir = project_root / "psd" / run_name
 
@@ -565,7 +667,9 @@ def build_final_pkl(project_root, manifest, run_name: str = "default") -> Path:
     for combo, animal_ids in combo_to_animals.items():
         pkl = psd_dir / f"psds_{combo}.pkl"
         if not pkl.exists():
-            warnings.warn(f"build_final_pkl: PKL not found for combo '{combo}': {pkl}")
+            warnings.warn(
+                f"build_final_pkl: PKL not found for combo '{combo}': {pkl}", stacklevel=2
+            )
             continue
         with open(pkl, "rb") as f:
             records = pickle.load(f)
@@ -595,8 +699,8 @@ def rerun_with_drink_masks(
     spindle_root: str | Path,
     drink_dir: str | Path,
     animal_combos: dict[str, str],
-    offset_path: str | Path = None,
-    swd_dir: str | Path = None,
+    offset_path: str | Path | None = None,
+    swd_dir: str | Path | None = None,
     ncores: int | None = None,
     ann_params: dict | None = None,
     run_name: str = "default",
@@ -625,9 +729,6 @@ def rerun_with_drink_masks(
     Returns:
         Tuple of (psds_drink.pkl path, psds_channel_merged_drink.pkl path).
     """
-    import tracemalloc
-    import warnings
-
     psd_dir = Path(psd_dir) / run_name
     eeg_dir = Path(eeg_dir)
     spindle_root = Path(spindle_root)
@@ -670,54 +771,11 @@ def rerun_with_drink_masks(
     for animal_id, combo in animal_combos.items():
         combo_to_animals.setdefault(combo, []).append(animal_id)
 
-    tracemalloc.start()
     warnings.filterwarnings("ignore", category=ResourceWarning)
-    [
-        kwargs.pop(x, None)
-        for x in (
-            "path",
-            "state_path",
-            "time_filter_enabled",
-            "swd_mode",
-            "ann_enabled",
-            "tod_start",
-            "tod_end",
-            "time_filter_days",  # legacy keys
-            "hw_enabled",
-        )
-    ]
-    hour_windows = kwargs.pop("hour_windows", None)
-    _legacy_hw = kwargs.pop("hour_window", None)  # migrate old single-window saves
-    if hour_windows is None and _legacy_hw is not None:
-        hour_windows = [tuple(_legacy_hw)]
-    selected_days = kwargs.pop("selected_days", None)
 
-    states = kwargs.pop("states", None)
-    if states is not None and "labels" not in kwargs:
-        kwargs["labels"] = labels_from_presets(states)
-
-    if offset_path is not None:
-        kwargs["offset_path"] = offset_path
-
-    # Unpack annotation params (mirrors batch_estimate)
-    ann_by_animal: dict[str, Path] = {}
-    if ann_params:
-        ann_dir = ann_params.get("ann_dir")
-        ann_keywords = ann_params.get("keywords") or []
-        ann_match_mode = ann_params.get("match_mode", "contains")
-        ann_pad_before = ann_params.get("pad_before_sec", 0.0)
-        ann_pad_after = ann_params.get("pad_after_sec", 0.0)
-        if ann_dir and Path(ann_dir).is_dir():
-            for f in list(Path(ann_dir).glob("*.txt")) + list(Path(ann_dir).glob("*.csv")):
-                ann_by_animal[_animal_id(f)] = f
-        kwargs.update(
-            {
-                "ann_keywords": ann_keywords,
-                "ann_match_mode": ann_match_mode,
-                "ann_pad_before_sec": ann_pad_before,
-                "ann_pad_after_sec": ann_pad_after,
-            }
-        )
+    kwargs, hour_windows, selected_days, ann_by_animal = _prepare_estimator_kwargs(
+        kwargs, ann_params, offset_path
+    )
 
     estimator = partial(
         estimate_psd, hour_windows=hour_windows, selected_days=selected_days, **kwargs

@@ -1,3 +1,9 @@
+"""Boolean masks built from event-time sources (drink masks, SWD timestamps,
+time-of-day windows).
+
+Returned masks follow the project convention: True = keep, False = mask.
+"""
+
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 from datetime import time as dtime
@@ -10,7 +16,10 @@ from scipy.io import loadmat
 
 
 def drinking_mask(
-    mask_path: str | Path, offset_sec: float | None = None, fs: int = 250, pad_sec: int = 2
+    mask_path: str | Path,
+    offset_sec: float | None = None,
+    fs: int = 250,
+    pad_sec: float = 2,
 ) -> npt.NDArray[np.bool_]:
     """
     Builds a drinking mask from a 1 Hz .npy file.
@@ -41,41 +50,67 @@ def drinking_mask(
     mask_samples = np.repeat(mask_sec, fs)
 
     # --- apply offset as a right shift (insert False at start, drop tail) ---
-    if (offset_sec) and (offset_sec > 0):
+    if offset_sec is not None and offset_sec > 0:
         shift = int(round(offset_sec * fs))
         mask_samples = np.pad(mask_samples, (shift, 0), constant_values=False)[:-shift]
 
     return ~mask_samples.astype(bool)
 
 
-# TODO: Organize this better --> best way to get offset from files?
-def get_offset(mask_path, offset_path):
+def get_offset(mask_path: str | Path, offset_path: str | Path) -> float:
+    """Look up the video-to-EEG offset (seconds) for the animal in `mask_path`.
 
+    The animal ID is the first `_`-delimited token of `mask_path`'s stem
+    (matching the project's EDF stem convention). The offset CSV must have
+    `Animal` and `Offset` columns.
+
+    Args:
+        mask_path: Path to a drink-mask file whose stem encodes the animal ID.
+        offset_path: Path to a CSV with at least `Animal` and `Offset` columns.
+
+    Returns:
+        The offset in seconds (positive = video starts after EEG).
+
+    Raises:
+        KeyError if no row in the offset CSV matches the animal ID.
+    """
     animal = Path(mask_path).stem.split("_")[0]
     offsets = pd.read_csv(offset_path)
-    # Get the offset between the mask from video and the eeg recording
-    return offsets[offsets["Animal"] == animal]["Offset"].values[0]
+    matches = offsets.loc[offsets["Animal"] == animal, "Offset"]
+    if matches.empty:
+        raise KeyError(
+            f"Animal {animal!r} not found in offset CSV {offset_path!s}. "
+            f"Known animals: {sorted(offsets['Animal'].unique().tolist())}"
+        )
+    return float(matches.iloc[0])
 
 
-def swd(path: str | Path, n_samples: int, fs: int = 250, label: str = "DEL_ts", pad_sec: int = 0):
-    """
-    Builds a mask from a .mat file containing time stamps of SWDs.
+def swd(
+    path: str | Path,
+    n_samples: int,
+    fs: int = 250,
+    label: str = "DEL_ts",
+    pad_sec: float = 0,
+) -> npt.NDArray[np.bool_]:
+    """Builds a mask from a .mat file containing time stamps of SWDs.
 
     Args:
         path:
-            Path to a .mat file containing the SWDs
+            Path to a .mat file containing the SWDs.
         n_samples:
-            Number of samples the mask must be (number of samples in .edf file)
+            Number of samples the mask must be (number of samples in .edf file).
         fs:
             Target sampling rate for the output mask (samples/sec).
         label:
-            Label the timestamp matric is save under in .mat file. Defaults to 'DEL_ts'. If
-            label is not in the file, the first object in file will be taken as key.
+            The key under which the (N, 2) timestamp matrix is stored in the
+            .mat file. Defaults to 'DEL_ts'. If `label` is not present, the
+            first non-meta key in the file is used.
         pad_sec:
-            Pad swd events by this many seconds on each side (at 1 Hz before upsampling).
+            Pad each SWD event by this many seconds on both sides before
+            converting to samples.
 
     Returns:
-        A 1-D boolean array where drinking events and padding are False.
+        A 1-D boolean array where SWD events (plus padding) are False.
     """
 
     path = Path(path)
@@ -85,7 +120,7 @@ def swd(path: str | Path, n_samples: int, fs: int = 250, label: str = "DEL_ts", 
         data = loadmat(f, squeeze_me=True, struct_as_record=False)
 
     # pick key
-    keys = [k for k in data.keys() if not k.startswith("__")]
+    keys = [k for k in data if not k.startswith("__")]
     key = label if label in keys else keys[0]
 
     swds = np.asarray(data[key])
@@ -105,10 +140,9 @@ def swd(path: str | Path, n_samples: int, fs: int = 250, label: str = "DEL_ts", 
                 "expected length 2 for [start, stop]."
             )
     elif swds.ndim == 2:
-        if swds.shape[1] == 0:
-            # (0, 0) or (0, ?) case: no intervals
-            return np.ones(n_samples, dtype=bool)
-        elif swds.shape[1] >= 2:
+        # Note: a (0, 2) "no events" array hits the `swds.size == 0` guard
+        # above, so reaching here with shape[1] < 2 means malformed data.
+        if swds.shape[1] >= 2:
             swds = swds[:, 0:2]
         else:
             raise ValueError(
@@ -124,7 +158,7 @@ def swd(path: str | Path, n_samples: int, fs: int = 250, label: str = "DEL_ts", 
         return np.ones(n_samples, dtype=bool)
 
     if pad_sec > 0:
-        swds = swds + [(-1 * pad_sec), pad_sec]
+        swds = swds + np.array([-pad_sec, pad_sec])
 
     iv = _seconds_to_intervals(swds, fs, n_samples)
     iv = _normalize_intervals(iv, n_samples)
@@ -176,18 +210,17 @@ def hour_window_mask(
             req_end = midnight0 + timedelta(days=d + wraps, seconds=hour_end * 3600)
             if req_start >= recording_end:
                 break
-            if req_end > recording_start:
-                if selected_days is None or d in selected_days:
-                    actual_start = max(req_start, recording_start)
-                    actual_end = min(req_end, recording_end)
-                    if actual_start < actual_end:
-                        all_used_windows.append((actual_start, actual_end))
-                        all_intervals_s.append(
-                            (
-                                (actual_start - recording_start).total_seconds(),
-                                (actual_end - recording_start).total_seconds(),
-                            )
+            if req_end > recording_start and (selected_days is None or d in selected_days):
+                actual_start = max(req_start, recording_start)
+                actual_end = min(req_end, recording_end)
+                if actual_start < actual_end:
+                    all_used_windows.append((actual_start, actual_end))
+                    all_intervals_s.append(
+                        (
+                            (actual_start - recording_start).total_seconds(),
+                            (actual_end - recording_start).total_seconds(),
                         )
+                    )
             d += 1
 
     if not all_intervals_s:
@@ -231,38 +264,36 @@ def time_of_day_mask(
     Returns:
         A 1-D boolean array where samples inside the window are True.
     """
-    duration_s = n_samples / fs
+    recording_end = start_datetime + timedelta(seconds=n_samples / fs)
     wraps = tod_end < tod_start
-    intervals = []
+
+    intervals_s: list[tuple[float, float]] = []
     d = 0
     while True:
         day_date = start_datetime.date() + timedelta(days=d)
-        earliest = datetime.combine(day_date, tod_start)
-        if (earliest - start_datetime).total_seconds() > duration_s:
+        win_start = datetime.combine(day_date, tod_start)
+        if win_start >= recording_end:
             break
-
-        if selected_days is None or d in selected_days:
-            if not wraps:
-                win_start = datetime.combine(day_date, tod_start)
-                win_end = datetime.combine(day_date, tod_end)
-            else:
-                win_start = datetime.combine(day_date, tod_start)
-                win_end = datetime.combine(day_date + timedelta(days=1), tod_end)
-            intervals.append(
-                (
-                    (win_start - start_datetime).total_seconds(),
-                    (win_end - start_datetime).total_seconds(),
+        win_end = datetime.combine(
+            day_date + (timedelta(days=1) if wraps else timedelta(0)),
+            tod_end,
+        )
+        if win_end > start_datetime and (selected_days is None or d in selected_days):
+            actual_start = max(win_start, start_datetime)
+            actual_end = min(win_end, recording_end)
+            if actual_start < actual_end:
+                intervals_s.append(
+                    (
+                        (actual_start - start_datetime).total_seconds(),
+                        (actual_end - start_datetime).total_seconds(),
+                    )
                 )
-            )
         d += 1
 
-    if not intervals:
+    if not intervals_s:
         return np.zeros(n_samples, dtype=bool)
 
-    iv = _seconds_to_intervals(np.array(intervals), fs, n_samples)
-    if iv.size == 0:
-        return np.zeros(n_samples, dtype=bool)
-
+    iv = _seconds_to_intervals(np.array(intervals_s), fs, n_samples)
     mask = np.zeros(n_samples, dtype=bool)
     for s, e in iv:
         mask[s:e] = True
@@ -277,14 +308,14 @@ def _normalize_intervals(iv: np.ndarray, n: int) -> np.ndarray:
         return iv
 
     iv = iv[np.argsort(iv[:, 0])]  # Sort intervals by start time
-    merged = [iv[0]]
+    merged: list[list[int]] = [list(iv[0])]
 
     for s, e in iv[1:]:
         ms, me = merged[-1]
         if s <= me:  # Overlap or touch -> merge
-            merged[-1][1] = max(me, e)
+            merged[-1] = [ms, max(me, int(e))]
         else:
-            merged.append([s, e])
+            merged.append([int(s), int(e)])
 
     return np.asarray(merged)
 

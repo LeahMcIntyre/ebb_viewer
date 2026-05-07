@@ -43,9 +43,18 @@ def locate(dirpath: str | Path, fs: float, expected_hours: float) -> list[Path]:
     return result
 
 
-# TODO: make this more flexible to handle different patterns
 def pair(paths: Sequence[Path], pattern: str | Pattern[str] = r"[^_]+") -> list[tuple[Path, ...]]:
-    """Group files whose stems share the same token (matched by regex)."""
+    """Group files whose stems share the same token captured by `pattern`.
+
+    The token is the regex match (the literal `m.group()`); two files belong
+    in the same group iff `pattern` extracts the same token from each stem.
+    Substring containment is intentionally avoided so that `"CW1"` does not
+    silently group with `"CW10..."`.
+
+    Raises:
+        ValueError if `pattern` fails to match any path's stem, or if a
+        path's token has no companion in the input.
+    """
     pat = re.compile(pattern) if isinstance(pattern, str) else pattern
 
     result: list[tuple[Path, ...]] = []
@@ -56,16 +65,18 @@ def pair(paths: Sequence[Path], pattern: str | Pattern[str] = r"[^_]+") -> list[
         m = pat.search(path.stem)
         if not m:
             raise ValueError(f"Pattern {pat.pattern!r} did not match: {path.stem}")
-
         token = m.group()
-        matches = [other for other in cpaths if token in other.stem]
 
+        matches = [
+            other
+            for other in cpaths
+            if (m2 := pat.search(other.stem)) and m2.group() == token
+        ]
         if not matches:
             raise ValueError(f"No match found for token {token!r} from {path.name}")
 
         for mm in matches:
             cpaths.remove(mm)
-
         result.append((path, *matches))
 
     return result
@@ -108,7 +119,6 @@ def combine_edf(
     path_tuples = pair(short_files, pattern)
 
     created: list[Path] = []
-    aRepr = reprlib.Repr()
     samples = int(amount_hours * fs * 3600)
 
     for tup in path_tuples:
@@ -116,19 +126,27 @@ def combine_edf(
         readers = sorted(readers, key=attrgetter("header.start_date"))
 
         if verbose:
-            msg = aRepr.repr([r.path.stem for r in readers])
-            print("Combining EDFs:\n" + msg)
+            print("Combining EDFs:\n" + reprlib.repr([r.path.stem for r in readers]))
 
-        # allocate (channels, samples_total)
-        arr = np.zeros((*readers[0].shape[:-1], samples * len(readers)), dtype=float)
-
-        for idx, r in enumerate(readers):
-            start, stop = idx * samples, (idx + 1) * samples
-            arr[..., start:stop] = r.read(0, samples)
+        # Read up to `samples` from each reader; concatenate. Reading
+        # `samples` past a short reader's end would NaN-pad silently
+        # (openseize Reader.read pads with `padvalue=nan` by default), so
+        # we cap each read at the reader's actual length.
+        chunks = []
+        for r in readers:
+            n = min(samples, r.shape[-1])
+            chunks.append(r.read(0, n))
             r.close()
+        arr = np.concatenate(chunks, axis=-1)
 
         header = copy.deepcopy(readers[0].header)
-        header["num_records"] = arr.shape[-1] // header.samples_per_record[0]
+        spr = header.samples_per_record[0]
+        if arr.shape[-1] % spr != 0:
+            raise ValueError(
+                f"Combined sample count ({arr.shape[-1]}) is not a multiple of "
+                f"samples_per_record ({spr}); cannot write a valid EDF."
+            )
+        header["num_records"] = arr.shape[-1] // spr
 
         out_fp = readers[0].path.with_stem(readers[0].path.stem + "_COMBINED")
         if out_fp.exists() and not overwrite:
@@ -148,8 +166,6 @@ def combine_edf(
 # -------------------------
 # SWD combine
 # -------------------------
-# TODO: make this more flexible to handle different patterns
-# TODO: figure out how to best incorporate this into pipeline (e.g., SWD files may not always be present)
 def combine_swd(
     swd_dir: str | Path,
     *,
@@ -186,23 +202,21 @@ def combine_swd(
         swd_paths = sorted(tup, key=extract_pnum)
 
         if verbose:
-            stems = [p.stem for p in swd_paths]
-            print(f"Combining SWD files: {stems}")
+            print(f"Combining SWD files: {[p.stem for p in swd_paths]}")
+
+        # Resolve label and capture the first file's auxiliary keys before
+        # the per-file loop (label is constant across files in a group).
+        first_data = loadmat(swd_paths[0], squeeze_me=True, struct_as_record=False)
+        first_keys = [k for k in first_data if not k.startswith("__")]
+        label = label_preference if label_preference in first_keys else first_keys[0]
+        first_data_dict = {k: v for k, v in first_data.items() if not k.startswith("__")}
 
         combined_swds = []
-        label = None
-        first_data_dict = None
 
         for idx, path in enumerate(swd_paths):
             data = loadmat(path, squeeze_me=True, struct_as_record=False)
-            keys = [k for k in data.keys() if not k.startswith("__")]
-
-            if label is None:
-                label = label_preference if label_preference in keys else keys[0]
+            keys = [k for k in data if not k.startswith("__")]
             key = label if label in keys else keys[0]
-
-            if first_data_dict is None:
-                first_data_dict = {k: v for k, v in data.items() if not k.startswith("__")}
 
             swds = np.asarray(data[key])
 
@@ -216,12 +230,13 @@ def combine_swd(
             else:
                 raise ValueError(f"Unexpected SWD array shape {swds.shape} in {path}")
 
-            # keep intervals with start < amount_sec
+            # Keep events that begin within this chunk; clamp any straddling
+            # event's stop to the chunk boundary so it doesn't spill into the
+            # next file's timespan after shifting.
             swds = swds[swds[:, 0] < amount_sec].copy()
+            swds[:, 1] = np.minimum(swds[:, 1], amount_sec)
 
-            # shift
-            offset = idx * amount_sec
-            swds += offset
+            swds += idx * amount_sec
 
             if swds.size:
                 combined_swds.append(swds)
@@ -253,8 +268,8 @@ def combine_swd(
 # -------------------------
 # CLI
 # -------------------------
-# CREDIT --> Chatgpt
-# DO NOT USE THIS AS-IS WITHOUT TESTING AND POSSIBLY MODIFYING IT, I DID NOT WRITE IT/VERIFY IT MYSELF - Leah
+# Invoke as: python -m ebb.io.combine {edf|swd} ...
+# Not registered as a console_script in pyproject.toml.
 def main(argv: Sequence[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="ebb-combine")
     sub = p.add_subparsers(dest="cmd", required=True)

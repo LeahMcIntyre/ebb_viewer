@@ -1,24 +1,27 @@
-import pickle
+"""System-level helpers for choosing worker counts in multiprocessing."""
 
 from psutil import Process, cpu_count
 
 
-def hyperthreaded():
-    """Returns True if system is using hyperthreading."""
+def hyperthreaded() -> bool:
+    """Returns True if the system is using hyperthreading."""
 
     return cpu_count(logical=True) > cpu_count(logical=False)
 
 
-def set_cores(requested, num_ops):
-    """Returns the minimun of the requested cores, the system available cores
-    and the number of operations to be performed.
+def set_cores(requested: int | None, num_ops: int) -> int:
+    """Choose a worker count clamped by request, system, and operation count.
 
     Args:
-        requested (int or None):       number of cores to utilize
-                                       if None use all available upto
-                                       num_ops
-        numm_ops (int):                number of multicore operations to
-                                       perform, must be > 0
+        requested:
+            Desired worker count. If None, fall back to all available cores
+            (capped at num_ops).
+        num_ops:
+            Number of multicore operations to perform; must be > 0.
+
+    Returns:
+        The minimum of `requested` (when set), the system's available cores,
+        and `num_ops`.
     """
 
     try:
@@ -31,14 +34,3 @@ def set_cores(requested, num_ops):
     if not requested:
         return min(available, num_ops)
     return min((requested, available, num_ops))
-
-
-def is_pickleable(obj):
-    """Test wheter an object supports multiprocessing."""
-
-    try:
-        pickle.dumps(obj)
-        return "Pickled Successfully"
-    except Exception as e:
-        print(e)
-        return "Pickling FAILED"

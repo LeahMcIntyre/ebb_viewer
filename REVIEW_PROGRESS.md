@@ -40,33 +40,33 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 ## Phase 1 — `ebb/` library (well-tested, safer)
 
 ### 1a. `ebb/core/` (243 lines)
-- [ ] `arraytools.py` (84)
-- [ ] `concurrency.py` (40)
-- [ ] `mixins.py` (79)
-- [ ] `metastores.py` (362)
+- [x] `arraytools.py` — fixed empty-input bug in `aggregate1d`; cleaned `else` on while; doc/typing
+- [x] `concurrency.py` — deleted dead `is_pickleable`; doc/typing
+- [x] `mixins.py` — deleted dead `_fetch_methods`; simplified `__str__`; doc/typing
+- [x] `metastores.py` — fixed MetaArray.select metadata bug; guarded MetaMask "metadata" name; misc
 
 ### 1b. `ebb/io/` (525 lines)
-- [ ] `combine.py` (310)
-- [ ] `sleepyrat.py` (135)
-- [ ] `utils.py` (80)
-- [ ] `__init__.py`
+- [x] `combine.py` — fixed `pair` substring bug + `combine_edf` NaN-pad bug + `combine_swd` boundary clamp; added 2 regression tests
+- [x] `sleepyrat.py` — type hints, raise_for_status everywhere, doc; credentials TODO'd
+- [x] `utils.py` — **deleted** (between_pro replaced by native openseize 1.3.0 producer start/stop kwargs; verified empirically)
+- [x] `__init__.py` — left bare (consistent with rest of project)
 
 ### 1c. `ebb/masking/` (614 lines)
-- [ ] `annotations.py` (165)
-- [ ] `events.py` (316)
-- [ ] `spindle.py` (173)
-- [ ] `threshold.py` (133)
-- [ ] `__init__.py`
+- [x] `annotations.py` — fixed `artifact()` `between=(None,b)` bug; doc/typing
+- [x] `events.py` — fixed `swd` docstring; cleaned `drinking_mask` truthiness; rewrote `get_offset` with proper error; restructured `time_of_day_mask` to match `hour_window_mask`; misc
+- [x] `spindle.py` — clarified mask-intent docstrings (`state` selects, `spindle_noise` excludes); simplified `_expand_spindle_column`; extracted `_PROB_COLUMN`; doc/typing
+- [x] `threshold.py` — `zip(strict=True)`; documented chunksize side effect; doc/typing
+- [~] `__init__.py` — re-exports only, reviewed clean
 
 ### 1d. `ebb/preprocess/` + `ebb/process/` (1,641 lines)
-- [ ] `preprocess/edf.py` (209)
-- [ ] `process/state_presets.py` (111)
-- [ ] `process/sleep_compute.py` (257)
-- [ ] `process/mask_export.py` (281)
-- [ ] `process/psd_compute.py` (782) **— may need its own session**
+- [x] `preprocess/edf.py` — fixed reader-close leak; deduped trim logic; resolved exist_ok TODOs; misc
+- [x] `process/state_presets.py` — doc/typing; stale ref fix
+- [x] `process/sleep_compute.py` — fixed `datetime.today()` race + DST note; parameterized magic 4; raise on short-recording rotation; deduped CSV reading; module docstring
+- [~] `process/mask_export.py` — reviewed clean (recently written, well-structured)
+- [x] `process/psd_compute.py` — fixed mutable defaults bug + tracemalloc leak; extracted scientific constants + helper for kwarg prep; full docstring rewrites; verified producer re-iteration empirically
 
 ### Phase 1 closeout
-- [ ] All `ebb/` tests pass
+- [x] All `ebb/` tests pass — **319 passing**
 - [ ] Merge `cleanup/phase1-ebb` → `dev`
 
 ---

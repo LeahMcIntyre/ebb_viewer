@@ -1,45 +1,61 @@
+"""Boolean masks built from a SPINDLE-scored CSV.
+
+SPINDLE writes one row per epoch (epochs are `winsize` seconds long, default
+4 s) with a state label and per-class probabilities. These helpers expand
+each per-epoch decision to a sample-resolution mask at rate `fs`.
+
+Returned masks follow the project convention: True = keep, False = mask.
+"""
+
 import csv
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
 
+# SPINDLE encodes class probabilities under columns named `class_prob_{i}`
+# where i is the model's output index. The state-letter to index mapping
+# below mirrors SPINDLE's training: 0=wake, 1=NREM, 2=REM.
+_PROB_COLUMN = {"w": "class_prob_0", "n": "class_prob_1", "r": "class_prob_2"}
+
 
 def state(
-    path: str | Path, labels: list[str], fs: int = 250, winsize: int = 4, include=True
+    path: str | Path,
+    labels: list[str],
+    fs: int = 250,
+    winsize: int = 4,
+    include: bool = True,
 ) -> npt.NDArray[np.bool_]:
-    """Returns a boolean mask from a spindle sleep score csv file. Uses values from 'rawstate' column
-    as to include values listed as spindle artifacts (separate artifact mask). Default returns True for samples where
-    rawstate matches label.
+    """Returns a mask **selecting** samples whose epoch is in `labels`.
+
+    With `include=True` (default), True marks samples whose SPINDLE-scored
+    epoch state is one of `labels` — i.e. the state(s) you want to keep
+    for downstream analysis. Set `include=False` to invert (mask the
+    state out instead).
 
     Args:
         path:
-            A path to a spindle file.
+            Path to a SPINDLE-scored CSV.
         labels:
-            A list of labels to include or exclude depending on include
-            argument.
+            Epoch states to match, e.g. `["w"]` or `["n", "r"]`.
         fs:
-            The sampling rate of the data this mask will be applied.
+            Sample rate of the EEG data the mask will be applied to.
         winsize:
-            The window length in seconds that spindle used to estimate states.
+            SPINDLE epoch length in seconds (default 4).
         include:
-            A boolean indicating if labels should be included (i.e. True) and
-            all else False or labels should be excluded (i.e. False) from the
-            returned mask.
+            If True (default), matched samples are True (kept); if False,
+            matched samples are False.
 
     Returns:
-        A 1-D boolean array state mask
+        A 1-D boolean array of length `n_epochs * fs * winsize`.
     """
-
-    def is_in_labels(s):
-        return s in labels
-
     return _expand_spindle_column(
         path=path,
         column_name="rawstate",
         fs=fs,
         winsize=winsize,
-        value_fn=is_in_labels,
+        value_fn=lambda s: s in labels,
         include=include,
     )
 
@@ -49,103 +65,86 @@ def state_prob(
     label: str,
     fs: int = 250,
     winsize: int = 4,
-    sprob=0.9,
+    sprob: float = 0.9,
 ) -> npt.NDArray[np.bool_]:
-    """Returns a boolean mask from a spindle sleep score csv file. Uses values from 'rawstate' column
-    as to include values listed as spindle artifacts (separate artifact mask). Default returns True for samples where
-    rawstate matches label.
+    """Returns a mask **selecting** samples whose epoch is `label` *and* whose
+    class probability is at least `sprob`.
+
+    True marks samples in confidently-labeled epochs (the ones you want to
+    keep). Use this when you want to be stricter than `state` — e.g. only
+    take wake epochs SPINDLE was very confident about.
 
     Args:
-        path:
-            A path to a spindle file.
-        labels:
-            A label to to get the class probability for.
-        fs:
-            The sampling rate of the data this mask will be applied.
-        winsize:
-            The window length in seconds that spindle used to estimate states.
-        state_prob:
-            The class probability the an epoch must be to be considered as being the label
+        path: Path to a SPINDLE-scored CSV.
+        label: Single state letter to match (`"w"`, `"n"`, or `"r"`).
+        fs: Sample rate of the target EEG data.
+        winsize: SPINDLE epoch length in seconds.
+        sprob: Class-probability threshold an epoch must clear.
 
     Returns:
-        A 1-D boolean array state mask
+        A 1-D boolean mask True where state matches AND probability passes.
     """
     state_mask = state(path, labels=[label], fs=fs, winsize=winsize, include=True)
-
-    p_column = {"w": "class_prob_0", "n": "class_prob_1", "r": "class_prob_2"}
-
-    def above_thresh(val):
-        return float(val) >= sprob
-
     prob_mask = _expand_spindle_column(
         path=path,
-        column_name=p_column[label],
+        column_name=_PROB_COLUMN[label],
         fs=fs,
         winsize=winsize,
-        value_fn=above_thresh,
+        value_fn=lambda v: float(v) >= sprob,
         include=True,
     )
-
     return state_mask & prob_mask
 
 
 def spindle_noise(
-    path: str | Path, noise_thresh: float = 0.5, fs: int = 250, winsize: int = 4, include=False
+    path: str | Path,
+    noise_thresh: float = 0.5,
+    fs: int = 250,
+    winsize: int = 4,
+    include: bool = False,
 ) -> npt.NDArray[np.bool_]:
-    """Returns a boolean mask from a spindle sleep score csv file. Default returns False for
-    samples with a noise probability >= noise_thresh.
+    """Returns a mask **excluding** noise/artifact epochs.
+
+    With `include=False` (default), True marks samples whose epoch noise
+    probability is *below* `noise_thresh` — i.e. clean samples you want
+    to keep; False marks noisy/artifact samples to drop. Set
+    `include=True` to invert (keep only noise — useful for inspection).
 
     Args:
-        path:
-            A path to a spindle file.
-        noise_thresh:
-            A noise probability threshold between 0-1. Samples with value >= noise_thresh will be False
-            in mask (when include=False).
-        fs:
-            The sampling rate of the data this mask will be applied.
-        winsize:
-            The window length in seconds that spindle used to estimate states.
-        include:
-            A boolean indicating if labels should be included (i.e. True) and
-            all else False or labels should be excluded (i.e. False) from the
-            returned mask.
+        path: Path to a SPINDLE-scored CSV.
+        noise_thresh: Probability threshold in [0, 1]. Samples in epochs
+            whose `noise_probs` is at or above this become False (when
+            `include=False`).
+        fs: Sample rate of the target EEG data.
+        winsize: SPINDLE epoch length in seconds.
+        include: If False (default), high-noise samples are masked out;
+            if True, they are kept and everything else is masked.
 
     Returns:
-        A 1-D boolean array state mask
+        A 1-D boolean mask.
     """
-
-    def above_thresh(val):
-        return float(val) >= noise_thresh
-
     return _expand_spindle_column(
         path=path,
         column_name="noise_probs",
         fs=fs,
         winsize=winsize,
-        value_fn=above_thresh,
+        value_fn=lambda v: float(v) >= noise_thresh,
         include=include,
     )
 
 
-def _expand_spindle_column(path, column_name, fs, winsize, value_fn, include=True):
-    """Generic helper to read a column from spindle CSV and expand to sample mask.
+def _expand_spindle_column(
+    path: str | Path,
+    column_name: str,
+    fs: int,
+    winsize: int,
+    value_fn: Callable[[str], bool],
+    include: bool = True,
+) -> npt.NDArray[np.bool_]:
+    """Read one column of a SPINDLE CSV and expand to a sample-resolution mask.
 
-    Args:
-        path : str or Path
-            Path to CSV file.
-        column_name : str
-            Name of the column to extract.
-        fs : int
-            Sampling rate in Hz.
-        winsize : int or float
-            Window size in seconds (matches spindle scoring resolution).
-        value_fn : callable
-            Function that maps a string value → bool (True means keep).
-        include : bool
-            If False, invert the resulting mask.
-
-    Returns:
-        1-D boolean array mask
+    Each per-epoch boolean is repeated `fs * winsize` times so the result
+    has one element per audio sample over the recording.
     """
     with open(path, newline="") as infile:
         reader = csv.reader(infile)
@@ -163,7 +162,4 @@ def _expand_spindle_column(path, column_name, fs, winsize, value_fn, include=Tru
     mask = np.array([value_fn(v) for v in values], dtype=bool)
     if not include:
         mask = ~mask
-
-    mask = np.atleast_2d(mask)
-    expanded = np.repeat(mask, fs * winsize, axis=0)
-    return expanded.flatten(order="F")
+    return np.repeat(mask, fs * winsize)
