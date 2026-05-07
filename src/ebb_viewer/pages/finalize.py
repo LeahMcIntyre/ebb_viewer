@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ebb.core.naming import parse_animal_id
 from ebb.process.state_presets import PRESET_DISPLAY
 from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest
@@ -98,7 +99,7 @@ class _RunSettingsDialog(QDialog):
 
                 with open(drink_pkl, "rb") as f:
                     drink_records = pickle.load(f)
-                animal_ids = sorted({Path(r["path"]).stem.split("_")[0] for r in drink_records})
+                animal_ids = sorted({parse_animal_id(r["path"]) for r in drink_records})
                 lbl = QLabel(f"Applied — {', '.join(animal_ids)}")
                 lbl.setWordWrap(True)
                 lbl.setStyleSheet("color: #1a5c8a;")

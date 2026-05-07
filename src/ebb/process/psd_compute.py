@@ -18,7 +18,6 @@ pickles a list of dicts for downstream merging by `build_final_pkl`.
 import dataclasses
 import multiprocessing
 import pickle
-import re
 import time
 import warnings
 from collections.abc import Callable, Sequence
@@ -34,6 +33,7 @@ from openseize.spectra import estimators
 
 from ebb import masking
 from ebb.core import concurrency, metastores
+from ebb.core.naming import parse_animal_id
 from ebb.masking.annotations import keyword_mask
 from ebb.process.state_presets import labels_from_presets
 
@@ -192,8 +192,7 @@ def estimate_psd(
     channels = list(channels) if channels is not None else [0, 1, 2]
     if labels is None:
         labels = {"wake": ["w"], "nrem": ["n"], "rem": ["r"]}
-    # get the mouse id from path
-    animal = path.stem.split("_")[0]
+    animal = parse_animal_id(path)
     if verbose:
         print(animal)
     with edf.Reader(path) as reader:
@@ -378,12 +377,6 @@ def estimate_psd(
     return result
 
 
-def _animal_id(p: Path, pattern: str = r"[^_]+") -> str:
-    """Join key used across EDF/CSV/MAT/NPY: everything before first underscore."""
-    m = re.match(pattern, p.stem)
-    return m.group(0) if m else p.stem
-
-
 def _star_call(fn_args):
     """Module-level unpacker for pool.imap — lambdas aren't picklable with spawn."""
     fn, args = fn_args
@@ -430,7 +423,7 @@ def _prepare_estimator_kwargs(
         ann_dir = ann_params.get("ann_dir")
         if ann_dir and Path(ann_dir).is_dir():
             for f in list(Path(ann_dir).glob("*.txt")) + list(Path(ann_dir).glob("*.csv")):
-                ann_by_animal[_animal_id(f)] = f
+                ann_by_animal[parse_animal_id(f)] = f
         kwargs.update(
             {
                 "ann_keywords": ann_params.get("keywords") or [],
@@ -478,12 +471,12 @@ def match_paths(
     # per-file sparse OK): drink masks via animal-id dict
     drink_by_animal: dict[str, Path] = {}
     if drink_paths is not None:
-        drink_by_animal = {_animal_id(p): p for p in drink_paths}
+        drink_by_animal = {parse_animal_id(p): p for p in drink_paths}
 
     # Build final paired list (no zip truncation)
     paired: list[tuple[Path, Path, Path | None, Path | None]] = []
     for ep in eeg_paths:
-        animal = _animal_id(ep)
+        animal = parse_animal_id(ep)
         paired.append(
             (
                 ep,
@@ -559,12 +552,12 @@ def batch_estimate(
     state_paths = sorted(Path(state_dir).glob("*.csv"))
     # Only process EDFs that have a matching spindle CSV — the state CSV is
     # authoritative for which animals to include in this batch.
-    state_animal_ids = {_animal_id(p) for p in state_paths}
+    state_animal_ids = {parse_animal_id(p) for p in state_paths}
     eeg_paths = sorted(
-        p for p in Path(eeg_dir).glob("*PROCESSED.edf") if _animal_id(p) in state_animal_ids
+        p for p in Path(eeg_dir).glob("*PROCESSED.edf") if parse_animal_id(p) in state_animal_ids
     )
     swd_paths = (
-        sorted(p for p in Path(swd_dir).glob("*.mat") if _animal_id(p) in state_animal_ids)
+        sorted(p for p in Path(swd_dir).glob("*.mat") if parse_animal_id(p) in state_animal_ids)
         if swd_dir
         else None
     )
@@ -573,7 +566,7 @@ def batch_estimate(
     paired_base = match_paths(eeg_paths, state_paths, swd_paths, drink_paths)
 
     # Extend to 5-tuples: (eeg, state, swd, drink, annotation_path_or_None)
-    paired = [(*base, ann_by_animal.get(_animal_id(base[0]))) for base in paired_base]
+    paired = [(*base, ann_by_animal.get(parse_animal_id(base[0]))) for base in paired_base]
 
     # set number of cpu workers and print to stdout
     workers = concurrency.set_cores(ncores, len(paired))
@@ -678,7 +671,7 @@ def build_final_pkl(project_root, manifest, run_name: str = "default") -> Path:
 
         animal_ids_set = set(animal_ids)
         for rec in records:
-            rec_animal = Path(rec["path"]).stem.split("_")[0]
+            rec_animal = parse_animal_id(rec["path"])
             if rec_animal in animal_ids_set:
                 rec = dict(rec)
                 rec["source_combo"] = combo
@@ -748,7 +741,7 @@ def rerun_with_drink_masks(
 
     merged_combo_by_animal: dict[str, str] = {}
     for rec in merged_data:
-        animal = Path(rec["path"]).stem.split("_")[0]
+        animal = parse_animal_id(rec["path"])
         if animal in animal_ids_set:
             merged_combo_by_animal.setdefault(animal, rec.get("source_combo"))
 
@@ -788,21 +781,21 @@ def rerun_with_drink_masks(
         eeg_paths = [
             p
             for p in sorted(Path(eeg_dir).glob("*PROCESSED.edf"))
-            if p.stem.split("_")[0] in animals_set
+            if parse_animal_id(p) in animals_set
         ]
         if not eeg_paths:
             raise ValueError(f"No EDF files found for animals {animals_set} in {eeg_dir}")
-        state_paths = [p for p in sorted(state_dir.glob("*.csv")) if _animal_id(p) in animals_set]
-        drink_paths = [p for p in sorted(drink_dir.glob("*.npy")) if _animal_id(p) in animals_set]
+        state_paths = [p for p in sorted(state_dir.glob("*.csv")) if parse_animal_id(p) in animals_set]
+        drink_paths = [p for p in sorted(drink_dir.glob("*.npy")) if parse_animal_id(p) in animals_set]
         swd_paths = (
-            [p for p in sorted(Path(swd_dir).glob("*.mat")) if _animal_id(p) in animals_set]
+            [p for p in sorted(Path(swd_dir).glob("*.mat")) if parse_animal_id(p) in animals_set]
             if swd_dir
             else None
         )
         base_paired = match_paths(
             eeg_paths, state_paths, swd_paths=swd_paths, drink_paths=drink_paths
         )
-        paired = [(*base, ann_by_animal.get(_animal_id(base[0]))) for base in base_paired]
+        paired = [(*base, ann_by_animal.get(parse_animal_id(base[0]))) for base in base_paired]
 
         workers = concurrency.set_cores(ncores, len(paired))
         t0 = time.perf_counter()
@@ -831,7 +824,7 @@ def rerun_with_drink_masks(
         existing_drink = []
 
     kept_drink = [
-        e for e in existing_drink if Path(e["path"]).stem.split("_")[0] not in animal_ids_set
+        e for e in existing_drink if parse_animal_id(e["path"]) not in animal_ids_set
     ]
     tmp = drink_pkl.with_suffix(".pkl.tmp")
     with open(tmp, "wb") as f:
@@ -842,9 +835,9 @@ def rerun_with_drink_masks(
     # Use all accumulated drink records (not just this session's) to override merged
     with open(drink_pkl, "rb") as f:
         all_drink: list[dict] = pickle.load(f)
-    drink_animals = {Path(r["path"]).stem.split("_")[0] for r in all_drink}
+    drink_animals = {parse_animal_id(r["path"]) for r in all_drink}
     merged_base_kept = [
-        r for r in merged_data if Path(r["path"]).stem.split("_")[0] not in drink_animals
+        r for r in merged_data if parse_animal_id(r["path"]) not in drink_animals
     ]
     merged_drink_path = psd_dir / "psds_channel_merged_drink.pkl"
     tmp2 = merged_drink_path.with_suffix(".pkl.tmp")

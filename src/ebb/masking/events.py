@@ -14,6 +14,8 @@ import numpy.typing as npt
 import pandas as pd
 from scipy.io import loadmat
 
+from ebb.core.naming import parse_animal_id
+
 
 def drinking_mask(
     mask_path: str | Path,
@@ -74,7 +76,7 @@ def get_offset(mask_path: str | Path, offset_path: str | Path) -> float:
     Raises:
         KeyError if no row in the offset CSV matches the animal ID.
     """
-    animal = Path(mask_path).stem.split("_")[0]
+    animal = parse_animal_id(mask_path)
     offsets = pd.read_csv(offset_path)
     matches = offsets.loc[offsets["Animal"] == animal, "Offset"]
     if matches.empty:

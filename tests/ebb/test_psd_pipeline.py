@@ -4,16 +4,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from ebb.process.psd_compute import _animal_id, build_final_pkl, match_paths, out_fraction
+from ebb.core.naming import parse_animal_id
+from ebb.process.psd_compute import build_final_pkl, match_paths, out_fraction
 
-
-# TO BE CHANGED LATER WHEN MORE FLEXIBILITY IS ADDED
-def test_animal_id():
-    assert _animal_id(Path("AM0185_6wk_whatever.edf")) == "AM0185"
-    assert _animal_id(Path("CW0DA2_P096_KO_foo.csv")) == "CW0DA2"
-    assert _animal_id(Path("XYZ123_something.edf")) == "XYZ123"
-    assert _animal_id(Path("Mice-1234_tester.edf")) == "Mice-1234"
-    assert _animal_id(Path("noidfile.edf")) == "noidfile"
+# Direct test cases for parse_animal_id moved to tests/ebb/test_naming.py.
 
 
 def test_out_fraction_basic():
@@ -119,7 +113,7 @@ def test_batch_estimate_filters_eeg_by_state_csv(tmp_path):
 
         batch_estimate(eeg_dir=standard, state_dir=spindle_out)
 
-    eeg_animal_ids = {_animal_id(p) for p in captured["eeg_paths"]}
+    eeg_animal_ids = {parse_animal_id(p) for p in captured["eeg_paths"]}
     assert eeg_animal_ids == {"AM001", "AM002"}
     assert "AM003" not in eeg_animal_ids
 
@@ -212,7 +206,7 @@ def test_build_final_pkl_basic(tmp_path):
         records = pickle.load(f)
 
     assert len(records) == 2
-    animal_ids = {Path(r["path"]).stem.split("_")[0] for r in records}
+    animal_ids = {parse_animal_id(r["path"]) for r in records}
     assert animal_ids == {"AM001", "AM002"}
     for r in records:
         assert r["source_combo"] == "LFC_RSC"
@@ -244,7 +238,7 @@ def test_build_final_pkl_filters_to_ok_combo(tmp_path):
         records = pickle.load(f)
 
     assert len(records) == 1
-    assert Path(records[0]["path"]).stem.split("_")[0] == "AM001"
+    assert parse_animal_id(records[0]["path"]) == "AM001"
 
 
 def test_build_final_pkl_multiple_combos(tmp_path):
@@ -266,7 +260,7 @@ def test_build_final_pkl_multiple_combos(tmp_path):
         records = pickle.load(f)
 
     assert len(records) == 2
-    by_animal = {Path(r["path"]).stem.split("_")[0]: r for r in records}
+    by_animal = {parse_animal_id(r["path"]): r for r in records}
     assert by_animal["AM001"]["source_combo"] == "LFC_RSC"
     assert by_animal["AM002"]["source_combo"] == "LSC_RSC"
 

@@ -12,8 +12,7 @@ def parse_animal_from_path(path: str | Path) -> str:
 
 
 def parse_animal_from_path_masks(rec: dict) -> str:
-    stem = Path(rec["path"]).stem
-    animal = stem.split("_")[0] if "_" in stem else stem
+    animal = parse_animal_id(rec["path"])
     a_mask = "_artifact" if rec.get("used_artifact", False) else ""
     d_mask = "_drink" if rec.get("used_drink", False) else ""
     return f"{animal}{a_mask}{d_mask}"
@@ -49,7 +48,7 @@ class PSDStore:
         self.first_freqs = np.asarray(items[0]["freqs"], float)
         for rec in items:
             animal = self.parse_animal(rec)
-            raw_animal = Path(rec["path"]).stem.split("_")[0]
+            raw_animal = parse_animal_id(rec["path"])
             if "source_combo" in rec:
                 self._source_combos[raw_animal] = rec["source_combo"]
             # behavior like ('threshold','wake') -> we care about state='wake'
