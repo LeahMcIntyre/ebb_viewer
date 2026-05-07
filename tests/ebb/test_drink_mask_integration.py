@@ -18,6 +18,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from ebb.core.naming import parse_animal_id
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -426,17 +428,17 @@ def test_rerun_writes_drink_pkl_and_final_drink_pkl(tmp_path):
     # psds_channel_merged.pkl is untouched
     with open(psd_dir / "default" / "psds_channel_merged.pkl", "rb") as f:
         final = pickle.load(f)
-    assert [Path(r["path"]).stem.split("_")[0] for r in final] == ["AM001", "AM002"]
+    assert [parse_animal_id(r["path"]) for r in final] == ["AM001", "AM002"]
 
     # psds_drink.pkl contains only AM002
     with open(drink_pkl, "rb") as f:
         drink = pickle.load(f)
-    assert [Path(r["path"]).stem.split("_")[0] for r in drink] == ["AM002"]
+    assert [parse_animal_id(r["path"]) for r in drink] == ["AM002"]
 
     # psds_channel_merged_drink.pkl has AM001 (from merged) + AM002 (from drink)
     with open(final_drink_pkl, "rb") as f:
         merged = pickle.load(f)
-    ids = [Path(r["path"]).stem.split("_")[0] for r in merged]
+    ids = [parse_animal_id(r["path"]) for r in merged]
     assert "AM001" in ids
     assert ids.count("AM002") == 1
 
@@ -485,7 +487,7 @@ def test_rerun_accumulates_drink_pkl_across_sessions(tmp_path):
 
     with open(psd_dir / "default" / "psds_drink.pkl", "rb") as f:
         drink = pickle.load(f)
-    ids = [Path(r["path"]).stem.split("_")[0] for r in drink]
+    ids = [parse_animal_id(r["path"]) for r in drink]
     assert sorted(ids) == ["AM001", "AM002"]
 
 
@@ -904,7 +906,7 @@ def test_build_final_pkl_warns_and_skips_when_combo_pkl_missing(tmp_path):
     # Merged PKL written; AM001 present, AM002 absent (its combo PKL was missing)
     with open(out, "rb") as f:
         records = pickle.load(f)
-    animal_ids = {Path(r["path"]).stem.split("_")[0] for r in records}
+    animal_ids = {parse_animal_id(r["path"]) for r in records}
     assert "AM001" in animal_ids
     assert "AM002" not in animal_ids
 

@@ -519,7 +519,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         )
         if not dir_path:
             return
-        animal_id = self.rec.edf_path.stem.split("_")[0]
+        animal_id = parse_animal_id(self.rec.edf_path)
         matches = sorted(Path(dir_path).glob(f"{animal_id}*.txt")) + sorted(
             Path(dir_path).glob(f"{animal_id}*.csv")
         )

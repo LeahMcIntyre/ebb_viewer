@@ -24,6 +24,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from ebb.core.naming import parse_animal_id
+
 # SPINDLE epoch length in seconds. Used to upsample 0.25 Hz epoch-rate state
 # arrays to 1 Hz second-rate when rotating to a fixed clock hour.
 DEFAULT_SPINDLE_EPOCH_SEC = 4
@@ -163,7 +165,7 @@ def compute_sleep_bins_df(
     """
     sleep_dfs = []
     for state_path in Path(state_dir).glob("*.csv"):
-        animal = state_path.stem.split("_")[0]
+        animal = parse_animal_id(state_path)
         states = _read_rawstate_column(state_path)
         df_mouse = compute_sleep_metrics_per_mouse(
             states, mouse_id=animal, bin_hours=bin_hours, sample_rate_hz=0.25
@@ -202,7 +204,7 @@ def compute_sleep_bins_df_offset(
     # the filename. See TODO.md "sleep_compute: Pair state CSVs with EDFs".
     sleep_dfs = []
     for state_path in Path(state_dir).glob("*.csv"):
-        animal = state_path.stem.split("_")[0]
+        animal = parse_animal_id(state_path)
         match = re.search(r"_(\d{2})_(\d{2})_(\d{2})_", str(state_path))
         if not match:
             raise ValueError(f"Could not parse start time from filename: {state_path.name}")
@@ -252,7 +254,7 @@ def compute_spindle_fractions(
     """
     rows: list[dict] = []
     for state_path in sorted(Path(state_dir).glob("*.csv")):
-        animal = state_path.stem.split("_")[0]
+        animal = parse_animal_id(state_path)
         with open(state_path) as f:
             reader = csv.reader(f)
             header = next(reader)

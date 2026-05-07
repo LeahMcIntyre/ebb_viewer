@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ebb.core.naming import parse_animal_id
 from ebb.process.psd_compute import batch_estimate, build_final_pkl
 from ebb.process.state_presets import (
     CANONICAL_ORDER,
@@ -1214,7 +1215,7 @@ class PSDPage(QWidget):
 
         # Pre-flight: warn about ok animals with no state CSV (they'll be silently skipped)
         for combo in combos:
-            csv_animal_ids = {p.stem.split("_")[0] for p in (spindle_root / combo).glob("*.csv")}
+            csv_animal_ids = {parse_animal_id(p) for p in (spindle_root / combo).glob("*.csv")}
             ok_animals = [
                 entry.animal_id
                 for entry in manifest
@@ -1231,7 +1232,7 @@ class PSDPage(QWidget):
         swd_dir: Path | None = None
         if self._masking_params.get("swd_mode") == "mask_out":
             swd_dir = self.project_root / "swd"
-            swd_animal_ids = {p.stem.split("_")[0] for p in swd_dir.glob("*.mat")}
+            swd_animal_ids = {parse_animal_id(p) for p in swd_dir.glob("*.mat")}
             all_ok_animals = {
                 entry.animal_id
                 for entry in manifest
