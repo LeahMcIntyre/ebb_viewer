@@ -2,7 +2,6 @@
 
 Covers:
 - save / load round-trip
-- old-format migration (including notes preservation)
 - flag_sleep_qc: one-ok invariant, cascade-rejection, restoration, psd cleanup
 - reset_sleep_qc: sibling restoration, psd cleanup
 - flag_psd: sleep_qc guard, drink_mask management
@@ -79,79 +78,9 @@ def test_save_load_roundtrip(tmp_path):
 
 def test_save_is_atomic(tmp_path):
     """Ensure no partial-write .tmp file is left behind after save."""
-    m = _make_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry()}})
+    _make_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry()}})
     assert not (tmp_path / "manifest.json.tmp").exists()
     assert (tmp_path / "manifest.json").exists()
-
-
-# ---------------------------------------------------------------------------
-# Old-format migration
-# ---------------------------------------------------------------------------
-
-
-def _write_old_format(tmp_path: Path, data: dict) -> None:
-    (tmp_path / "manifest.json").write_text(json.dumps(data))
-
-
-def test_migration_basic(tmp_path):
-    _write_old_format(
-        tmp_path,
-        {
-            "AM001": {
-                "preprocessed_edf": "standard/AM001_PREPROCESSED.edf",
-                "spindle_channels": "LFC_RSC",
-                "sleep_qc": "ok",
-                "psd_status": "needs_drink_mask",
-                "drink_mask": None,
-                "rerun_channels": None,
-            }
-        },
-    )
-    m = Manifest.load(tmp_path)
-    run = m.get_run("AM001", "LFC_RSC")
-    assert run is not None
-    assert run.sleep_qc == "ok"
-    assert run.psd_status == {"default": "needs_drink_mask"}
-
-
-def test_migration_rerun_channels_status(tmp_path):
-    """Old 'rerun_channels' sleep_qc value maps to 'needs_rerun'."""
-    _write_old_format(
-        tmp_path,
-        {
-            "AM001": {
-                "preprocessed_edf": "standard/AM001_PREPROCESSED.edf",
-                "spindle_channels": "LFC_RSC",
-                "sleep_qc": "rerun_channels",
-                "rerun_channels": "LSC_RSC",
-                "psd_status": None,
-                "drink_mask": None,
-            }
-        },
-    )
-    m = Manifest.load(tmp_path)
-    run = m.get_run("AM001", "LFC_RSC")
-    assert run.sleep_qc == "needs_rerun"
-    assert run.rerun_combo == "LSC_RSC"
-
-
-def test_migration_preserves_notes(tmp_path):
-    _write_old_format(
-        tmp_path,
-        {
-            "AM001": {
-                "preprocessed_edf": "standard/AM001_PREPROCESSED.edf",
-                "spindle_channels": "LFC_RSC",
-                "sleep_qc": None,
-                "psd_status": None,
-                "drink_mask": None,
-                "rerun_channels": None,
-                "notes": "check this animal",
-            }
-        },
-    )
-    m = Manifest.load(tmp_path)
-    assert m.get("AM001").notes == "check this animal"
 
 
 # ---------------------------------------------------------------------------
@@ -1118,3 +1047,77 @@ def test_pending_count_no_double_count(tmp_path):
         + len(m.pending_drink_verification("default"))
     )
     assert total == 3  # one animal in each queue, no double-counting
+
+
+def test_flag_needs_rerun_restores_rerun_target_cascade_siblings(tmp_path):
+    """When the rerun target was itself an ok run, its cascade-rejected siblings
+    must be restored before the target is reset — otherwise their rejected_by
+    orphans to a non-ok combo until the next Manifest.load() integrity check.
+    """
+    # LSC_RSC is ok and cascade-rejected both LFC_RSC and RSC_LSC.
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(
+                    sleep_qc="rejected",
+                    rejected_by="LSC_RSC",
+                    prev_sleep_qc="needs_review",
+                ),
+                "LSC_RSC": RunEntry(sleep_qc="ok"),
+                "RSC_LSC": RunEntry(
+                    sleep_qc="rejected",
+                    rejected_by="LSC_RSC",
+                    prev_sleep_qc=None,
+                ),
+            },
+        },
+    )
+
+    # Flag the rejected LFC_RSC as needing a rerun on LSC_RSC (the current ok).
+    m.flag_sleep_qc("AM001", "LFC_RSC", "needs_rerun", rerun_combo="LSC_RSC")
+
+    # LFC_RSC: now needs_rerun, own cascade metadata cleared.
+    lfc = m.get_run("AM001", "LFC_RSC")
+    assert lfc.sleep_qc == "needs_rerun"
+    assert lfc.rerun_combo == "LSC_RSC"
+    assert lfc.rejected_by is None
+    assert lfc.prev_sleep_qc is None
+
+    # LSC_RSC: reset to fresh rerun-target state.
+    lsc = m.get_run("AM001", "LSC_RSC")
+    assert lsc.sleep_qc is None
+    assert lsc.source_combo == "LFC_RSC"
+
+    # RSC_LSC: must be restored — its rejected_by would otherwise orphan.
+    rsc = m.get_run("AM001", "RSC_LSC")
+    assert rsc.rejected_by is None
+    assert rsc.prev_sleep_qc is None
+    assert rsc.sleep_qc is None  # original prev_sleep_qc
+
+
+def test_reset_sleep_qc_clears_sibling_psd_status_when_restored_to_non_ok(tmp_path):
+    """Mirror of test_sibling_psd_status_cleared_when_restored_to_non_ok but for
+    reset_sleep_qc — the same cleanup contract should hold on both code paths.
+    """
+    m = _make_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="ok"),
+                "RSC": RunEntry(
+                    sleep_qc="rejected",
+                    rejected_by="LFC_RSC",
+                    prev_sleep_qc=None,
+                    psd_status={"default": "ok"},
+                ),
+            },
+        },
+    )
+
+    m.reset_sleep_qc("AM001", "LFC_RSC")
+
+    rsc = m.get_run("AM001", "RSC")
+    assert rsc.sleep_qc is None
+    assert rsc.psd_status == {}
+    assert rsc.drink_mask is None

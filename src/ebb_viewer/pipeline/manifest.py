@@ -35,10 +35,11 @@ this automatically:
 
 import json
 import warnings
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from ebb_viewer.pipeline import psd_params as _pp
 from ebb_viewer.pipeline.naming import drink_mask_rel, parse_animal_id
 
 # ---------------------------------------------------------------------------
@@ -131,14 +132,14 @@ def _run_to_dict(run: RunEntry) -> dict:
 
 
 def _run_from_dict(d: dict) -> RunEntry:
+    """Build a RunEntry from a JSON-loaded dict, dropping unknown fields.
+
+    Defensive only: a non-dict ``psd_status`` (e.g. ``None`` from a manually
+    edited JSON) is replaced with an empty dict so the dataclass validates.
+    """
     kwargs = {k: v for k, v in d.items() if k in RunEntry.__dataclass_fields__}
-    # Migrate psd_status from old str|None → dict
-    raw = kwargs.get("psd_status")
-    if raw is None:
+    if not isinstance(kwargs.get("psd_status"), dict):
         kwargs["psd_status"] = {}
-    elif isinstance(raw, str):
-        kwargs["psd_status"] = {"default": raw}
-    # else: already a dict
     return RunEntry(**kwargs)
 
 
@@ -168,12 +169,9 @@ class Manifest:
     def load(cls, project_root: Path) -> "Manifest":
         """Load from manifest.json; return empty manifest if file is missing.
 
-        Handles migration from the old flat format (spindle_channels, sleep_qc,
-        psd_status as top-level fields) to the new per-run dict format.
-
-        Also performs integrity checks:
+        Performs integrity checks while loading:
         - Animals with multiple "ok" runs are auto-fixed (first ok wins, rest
-          are cascade-rejected) with a warning printed to stderr.
+          are cascade-rejected) with a warning emitted via the warnings module.
         - Orphaned rejected_by references (pointing to a non-ok or missing combo)
           are cleared so the run can be manually reset.
         """
@@ -183,44 +181,14 @@ class Manifest:
         with m.path.open("r", encoding="utf-8") as f:
             raw = json.load(f)
         for animal_id, d in raw.items():
-            # --- migration from old flat format ---
-            if "spindle_channels" in d:
-                old_ch = d.pop("spindle_channels")
-                old_qc = d.pop("sleep_qc", None)
-                old_rerun = d.pop("rerun_channels", None)
-                old_psd = d.pop("psd_status", None)
-                old_drink = d.pop("drink_mask", None)
-                old_notes = d.pop("notes", "")
-                runs: dict[str, RunEntry] = {}
-                if old_ch:
-                    # Map old "rerun_channels" status → "needs_rerun"
-                    if old_qc == "rerun_channels":
-                        runs[old_ch] = RunEntry(
-                            sleep_qc="needs_rerun",
-                            rerun_combo=old_rerun,
-                        )
-                    else:
-                        runs[old_ch] = RunEntry(
-                            sleep_qc=old_qc,
-                            psd_status={"default": old_psd} if isinstance(old_psd, str) else {},
-                            drink_mask=old_drink,
-                        )
-                m._entries[animal_id] = ManifestEntry(
-                    animal_id=animal_id,
-                    preprocessed_edf=d.get("preprocessed_edf", ""),
-                    runs=runs,
-                    notes=old_notes,
-                )
-            else:
-                # New format
-                runs_raw = d.pop("runs", {})
-                runs = {combo: _run_from_dict(r) for combo, r in runs_raw.items()}
-                m._entries[animal_id] = ManifestEntry(
-                    animal_id=animal_id,
-                    preprocessed_edf=d.get("preprocessed_edf", ""),
-                    notes=d.get("notes", ""),
-                    runs=runs,
-                )
+            runs_raw = d.get("runs", {})
+            runs = {combo: _run_from_dict(r) for combo, r in runs_raw.items()}
+            m._entries[animal_id] = ManifestEntry(
+                animal_id=animal_id,
+                preprocessed_edf=d.get("preprocessed_edf", ""),
+                notes=d.get("notes", ""),
+                runs=runs,
+            )
 
         # --- integrity checks ---
         needs_resave = False
@@ -243,7 +211,7 @@ class Manifest:
                 needs_resave = True
 
             # Orphaned rejected_by: the referenced combo no longer exists or isn't ok
-            for combo, run in entry.runs.items():
+            for run in entry.runs.values():
                 if (
                     run.sleep_qc == "rejected"
                     and run.rejected_by is not None
@@ -271,8 +239,13 @@ class Manifest:
         - Existing entries and run statuses are never overwritten.
         - New runs are auto-rejected (with rejected_by set) if the animal
           already has an ok run.
+
+        Saves only if new entries or runs were added during this scan
+        (load() may have already saved if the integrity checks fired).
+        Must be called from the main thread.
         """
         m = cls.load(project_root)
+        dirty = False
 
         # 1. Add new animal entries from standard/
         standard = project_root / "standard"
@@ -284,6 +257,7 @@ class Manifest:
                         animal_id=animal_id,
                         preprocessed_edf=str(edf.relative_to(project_root)),
                     )
+                    dirty = True
 
         # 2. Add RunEntry for each (animal, combo) found on disk.
         # PSD files (psds_<COMBO>.pkl) are per-combo aggregates, not per-animal,
@@ -319,8 +293,10 @@ class Manifest:
                                     new_run.source_combo = src_combo
                                     break
                         entry.runs[combo] = new_run
+                        dirty = True
 
-        m.save()
+        if dirty:
+            m.save()
         return m
 
     # ------------------------------------------------------------------
@@ -441,7 +417,6 @@ class Manifest:
         """Runs flagged for spindle rerun with a different channel combo."""
         return self._filter_runs(lambda e, r: r.sleep_qc == "needs_rerun")
 
-    # TODO: Look at this and think how it might break
     def needs_rerun_pending(self) -> list[tuple[ManifestEntry, str]]:
         """Runs flagged for rerun where the output CSV has not yet been downloaded.
 
@@ -513,50 +488,32 @@ class Manifest:
             lambda e, r: r.sleep_qc == "ok" and r.psd_status.get(run_name) == "drink_mask_applied"
         )
 
-    def all_pending_psd_review(self) -> list[tuple[ManifestEntry, str]]:
-        """Pending PSD review across ALL runs — for sidebar badge counts."""
-        from ebb_viewer.pipeline import psd_params as _pp
-
-        runs = _pp.list_runs(self.project_root)
-        seen: set = set()
-        result = []
-        for run_name in runs:
-            for entry, combo in self.pending_psd_review(run_name):
+    def _aggregate_across_runs(
+        self,
+        per_run_method: Callable[[str], list[tuple[ManifestEntry, str]]],
+    ) -> list[tuple[ManifestEntry, str]]:
+        """Union of `per_run_method(run_name)` over every PSD run, deduped."""
+        seen: set[tuple[str, str]] = set()
+        result: list[tuple[ManifestEntry, str]] = []
+        for run_name in _pp.list_runs(self.project_root):
+            for entry, combo in per_run_method(run_name):
                 key = (entry.animal_id, combo)
                 if key not in seen:
                     seen.add(key)
                     result.append((entry, combo))
         return result
+
+    def all_pending_psd_review(self) -> list[tuple[ManifestEntry, str]]:
+        """Pending PSD review across ALL runs — for sidebar badge counts."""
+        return self._aggregate_across_runs(self.pending_psd_review)
 
     def all_needs_drink_mask(self) -> list[tuple[ManifestEntry, str]]:
         """Needs-drink-mask across ALL runs — for sidebar badge counts."""
-        from ebb_viewer.pipeline import psd_params as _pp
-
-        runs = _pp.list_runs(self.project_root)
-        seen: set = set()
-        result = []
-        for run_name in runs:
-            for entry, combo in self.needs_drink_mask(run_name):
-                key = (entry.animal_id, combo)
-                if key not in seen:
-                    seen.add(key)
-                    result.append((entry, combo))
-        return result
+        return self._aggregate_across_runs(self.needs_drink_mask)
 
     def all_pending_drink_verification(self) -> list[tuple[ManifestEntry, str]]:
         """Pending drink verification across ALL runs — for sidebar badge counts."""
-        from ebb_viewer.pipeline import psd_params as _pp
-
-        runs = _pp.list_runs(self.project_root)
-        seen: set = set()
-        result = []
-        for run_name in runs:
-            for entry, combo in self.pending_drink_verification(run_name):
-                key = (entry.animal_id, combo)
-                if key not in seen:
-                    seen.add(key)
-                    result.append((entry, combo))
-        return result
+        return self._aggregate_across_runs(self.pending_drink_verification)
 
     # ------------------------------------------------------------------
     # Flagging
@@ -653,6 +610,23 @@ class Manifest:
             # because sleep_qc is not None, leaving the animal in a dead zone.
             rerun_run = entry.runs.get(rerun_combo)
             if rerun_run is not None:
+                # If the target was itself an ok run, restore the siblings it
+                # cascade-rejected before un-okaying it; otherwise their
+                # rejected_by would orphan to a non-ok combo until the next load.
+                if rerun_run.sleep_qc == "ok":
+                    for sib_combo, sibling in entry.runs.items():
+                        if sib_combo == rerun_combo:
+                            continue
+                        if (
+                            sibling.sleep_qc == "rejected"
+                            and sibling.rejected_by == rerun_combo
+                        ):
+                            sibling.sleep_qc = sibling.prev_sleep_qc
+                            sibling.prev_sleep_qc = None
+                            sibling.rejected_by = None
+                            if sibling.sleep_qc != "ok":
+                                sibling.psd_status = {}
+                                sibling.drink_mask = None
                 rerun_run.sleep_qc = None
                 rerun_run.source_combo = channels
                 rerun_run.prev_sleep_qc = None
@@ -687,13 +661,12 @@ class Manifest:
         run.psd_status[run_name] = status
         if status == "drink_mask_applied":
             run.drink_mask = drink_mask_rel(animal_id)
-        elif status == "ok":
-            # Clear drink_mask only if no other psd run still has drink_mask_applied
-            if not any(
-                v == "drink_mask_applied" for k, v in run.psd_status.items() if k != run_name
-            ):
-                run.drink_mask = None
-        # "needs_drink_mask": leave drink_mask as-is
+        # Clear drink_mask only if no other psd run still has drink_mask_applied.
+        # "needs_drink_mask" is left as-is since the mask file may still be needed.
+        elif status == "ok" and not any(
+            v == "drink_mask_applied" for k, v in run.psd_status.items() if k != run_name
+        ):
+            run.drink_mask = None
         self.save()
 
     def reset_psd_status(self, animal_id: str, channels: str, run_name: str = "default") -> None:
@@ -705,7 +678,9 @@ class Manifest:
         """Clear sleep QC status for a specific run.
 
         If the run was "ok", restores all siblings that were cascade-rejected
-        by it before clearing its own status.
+        by it before clearing its own status. Restored siblings whose
+        prev_sleep_qc was not "ok" have their PSD metadata cleared, since
+        psd_status is only meaningful while sleep_qc == "ok".
         """
         entry = self._entries[animal_id]
         run = entry.runs[channels]
@@ -717,7 +692,9 @@ class Manifest:
                     sibling.sleep_qc = sibling.prev_sleep_qc
                     sibling.prev_sleep_qc = None
                     sibling.rejected_by = None
-            # PSD review progress is only valid while sleep_qc == "ok"
+                    if sibling.sleep_qc != "ok":
+                        sibling.psd_status = {}
+                        sibling.drink_mask = None
             run.psd_status = {}
             run.drink_mask = None
         run.sleep_qc = None

@@ -74,7 +74,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 ## Phase 2 — `ebb_viewer/` infrastructure
 
 ### 2a. `pipeline/` (~1,400 lines, partial test coverage)
-- [ ] `manifest.py` (726) **— critical, careful**
+- [x] `manifest.py` — fixed 2 correctness bugs (rerun-target sibling restore in `flag_sleep_qc`; psd cleanup in `reset_sleep_qc`); deleted old flat-format migration; simplified `_run_from_dict` to defensive guard; extracted `_aggregate_across_runs` (3-method dedupe); hoisted `psd_params` import; tracked `dirty` in `build_from_standard`; +2 tests, -3 migration tests; SIM102/B007/F841 cleared
 - [x] `mask_export.py` — fixed `_coerce_param`/bool flag silent-None bug; enforced one offset CSV per project (raise on >1); 8-tuple → `_BuiltMasks` dataclass; flattened nested `if s_prob`; SIM105 → `contextlib.suppress`; +1 test
 - [~] `naming.py` — already cleaned in Phase 1 (re-export shim)
 - [x] `psd_params.py` — deleted `_migrate_legacy` (no legacy compat); narrowed `load()` exception; cleaned docstring
