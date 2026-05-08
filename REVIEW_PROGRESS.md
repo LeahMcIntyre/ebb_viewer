@@ -90,7 +90,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [x] `sleep_viewer.py` — replaced inline CSV reader with shared `read_rawstate_column`; added module + class + method docstrings
 - [x] `output_dialog.py` — added module docstring
 - [~] `table_helpers.py` — reviewed clean
-- [ ] `stft_viewer.py` (183)
+- [x] `stft_viewer.py` — added module + class docstrings; commented 56-64 Hz line-noise exclusion
 - [ ] `psd_graph_widget.py` (573)
 
 **2b dedupe:** promoted `_read_rawstate_column` → `read_rawstate_column` in `ebb/process/sleep_compute.py`; deleted the duplicate copy in `ebb/process/mask_export.py` (which had a slightly more robust version — kept its `newline=""`, None-check, empty-row skip).

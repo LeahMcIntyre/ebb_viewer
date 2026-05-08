@@ -1,3 +1,5 @@
+"""Modeless STFT/PSD viewer for inspecting a window of multi-channel EEG."""
+
 import numpy as np
 from matplotlib.backends.backend_qtagg import (
     FigureCanvasQTAgg as FigureCanvas,
@@ -11,6 +13,8 @@ from scipy.signal import stft, welch
 
 
 class STFTPopup(QtWidgets.QDialog):
+    """Stacked per-channel STFT spectrogram or Welch PSD for one EEG window."""
+
     def __init__(self, parent=None, title="EEG STFT"):
         super().__init__(parent)
         self.setWindowTitle(title)
@@ -43,6 +47,8 @@ class STFTPopup(QtWidgets.QDialog):
                 data[ch, s0:s1], fs=fs, nperseg=nperseg, noverlap=noverlap, boundary=None
             )
             freq_mask = (f >= fmin) & (f <= fmax)
+            # Exclude the US 60 Hz line-noise band from the color scale so
+            # power-line bleed doesn't dominate the dynamic range.
             line_mask = (f >= 56.0) & (f <= 64.0)
             scale_mask = freq_mask & (~line_mask)
             band = np.abs(Z[scale_mask, :]) ** 2
