@@ -75,7 +75,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 
 ### 2a. `pipeline/` (~1,400 lines, partial test coverage)
 - [ ] `manifest.py` (726) **— critical, careful**
-- [ ] `mask_export.py` (498)
+- [x] `mask_export.py` — fixed `_coerce_param`/bool flag silent-None bug; enforced one offset CSV per project (raise on >1); 8-tuple → `_BuiltMasks` dataclass; flattened nested `if s_prob`; SIM105 → `contextlib.suppress`; +1 test
 - [~] `naming.py` — already cleaned in Phase 1 (re-export shim)
 - [x] `psd_params.py` — deleted `_migrate_legacy` (no legacy compat); narrowed `load()` exception; cleaned docstring
 - [~] `sleepyrat_config.py` — reviewed clean

@@ -82,6 +82,18 @@ def test_resolve_paths_finds_offset_csv_in_drink_masks_dir(tmp_path):
     assert paths.offset_csv == offset_csv
 
 
+def test_resolve_paths_raises_on_multiple_offset_csvs(tmp_path):
+    """Convention is one offset CSV per project — ambiguity is an error."""
+    manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
+    _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
+    _drop_drink_npy(tmp_path, "Mice-1")
+    drink_dir = tmp_path / "drink_masks"
+    (drink_dir / "offsets_a.csv").write_text("Animal,Offset\nMice-1,1.0\n")
+    (drink_dir / "offsets_b.csv").write_text("Animal,Offset\nMice-1,2.0\n")
+    with pytest.raises(ValueError, match="Expected at most one offset CSV"):
+        me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
+
+
 def test_resolve_paths_drink_discovered_by_file_presence_only(tmp_path):
     """Drink file on disk is sufficient — manifest tracking is irrelevant for export."""
     manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
