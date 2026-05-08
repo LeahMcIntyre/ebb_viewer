@@ -81,7 +81,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [~] `sleepyrat_config.py` — reviewed clean
 - [~] `theme.py` — reviewed clean
 
-### 2b. `widgets/` (~1,000 lines)
+### 2b. `widgets/` — DONE
 - [~] `worker_helpers.py` — reviewed clean
 - [x] `drink_mask_dialog.py` — added module docstring
 - [x] `trim_to_widget.py` — dropped stale filename comment, added module + class docstrings
@@ -91,7 +91,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [x] `output_dialog.py` — added module docstring
 - [~] `table_helpers.py` — reviewed clean
 - [x] `stft_viewer.py` — added module + class docstrings; commented 56-64 Hz line-noise exclusion
-- [ ] `psd_graph_widget.py` (573)
+- [x] `psd_graph_widget.py` — fixed log-Y clip-to-wrong-variable bug (silent gaps at zero/neg power); removed debug print; deleted half-implemented `_export_png` + dead toolbar block + stale filename comment; renamed shadowed `act_invfil`; hoisted `(0.5, 110)` to `DEFAULT_XRANGE`; renamed `_drink_review` → `drink_review` for sibling consistency; localized `first_plot`; added module + class docstrings + INVERSE_FILTER doc placeholder
 
 **2b dedupe:** promoted `_read_rawstate_column` → `read_rawstate_column` in `ebb/process/sleep_compute.py`; deleted the duplicate copy in `ebb/process/mask_export.py` (which had a slightly more robust version — kept its `newline=""`, None-check, empty-row skip).
 
