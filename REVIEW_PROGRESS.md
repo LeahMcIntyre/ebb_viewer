@@ -96,11 +96,11 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 **2b dedupe:** promoted `_read_rawstate_column` → `read_rawstate_column` in `ebb/process/sleep_compute.py`; deleted the duplicate copy in `ebb/process/mask_export.py` (which had a slightly more robust version — kept its `newline=""`, None-check, empty-row skip).
 
 ### 2c. `edf_viewer/` (~1,800 lines, **untested**)
-- [ ] `recording.py` (38)
-- [ ] `state_legend.py` (73)
-- [ ] `state_bar.py` (90)
-- [ ] `masks.py` (114)
-- [ ] `file_openers.py` (126)
+- [x] `recording.py` — added module + class docstrings
+- [x] `state_legend.py` — added module docstring; renamed unused `a` → `_a` (B007)
+- [x] `state_bar.py` — added module docstring
+- [x] `masks.py` — dropped stale `# model.py` filename comment; added module docstring; `zip(strict=True)` (B905)
+- [x] `file_openers.py` — added module docstring; renamed `dir` → `start_dir` (Python builtin shadowing); hoisted `import csv` to module level
 - [ ] `masks_dock.py` (218)
 - [ ] `mask_builder.py` (247)
 - [ ] `trace_view.py` (532)

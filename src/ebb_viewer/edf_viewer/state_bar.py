@@ -1,3 +1,5 @@
+"""Thin horizontal sleep-state strip painted above the EDF trace plot."""
+
 import numpy as np
 from PyQt6 import QtGui, QtWidgets
 from PyQt6.QtCore import Qt
