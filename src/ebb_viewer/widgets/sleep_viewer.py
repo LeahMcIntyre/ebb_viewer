@@ -1,4 +1,8 @@
-import csv
+"""Modeless dialog showing per-state sleep metrics across binned hours.
+
+Reads a SPINDLE scoring CSV and renders a 3x3 grid of plots: rows are metrics
+(frac time / # bouts / mean bout duration) and columns are states (Wake/NREM/REM).
+"""
 
 from matplotlib.backends.backend_qtagg import (
     FigureCanvasQTAgg as FigureCanvas,
@@ -9,10 +13,12 @@ from matplotlib.backends.backend_qtagg import (
 from matplotlib.figure import Figure
 from PyQt6 import QtWidgets
 
-from ebb.process.sleep_compute import compute_sleep_metrics_per_mouse
+from ebb.process.sleep_compute import compute_sleep_metrics_per_mouse, read_rawstate_column
 
 
 class SleepPopup(QtWidgets.QDialog):
+    """3x3 grid plot of per-state sleep metrics across time bins."""
+
     STATE_ORDER = ["w", "n", "r"]
     STATE_DEF = {"w": "Wake", "n": "NREM", "r": "REM"}
     METRIC_ORDER = [
@@ -35,17 +41,11 @@ class SleepPopup(QtWidgets.QDialog):
         lay.addWidget(self.canvas)
 
     def plot_sleep(self, state_path, bin_hours=2):
-        # Draw
+        """Render metrics for the SPINDLE scoring CSV at ``state_path``."""
         self.fig.clear()
         axarr = [self.fig.add_subplot(3, 3, i + 1) for i in range(9)]
 
-        with open(state_path) as infile:
-            reader = csv.reader(infile)
-            header = next(reader)
-            if "rawstate" not in header:
-                raise ValueError(f"'rawstate' column not found in {state_path}")
-            idx = header.index("rawstate")
-            states = [row[idx] for row in reader]
+        states = read_rawstate_column(state_path)
         adf = compute_sleep_metrics_per_mouse(states, bin_hours=bin_hours, sample_rate_hz=0.25)
 
         for j, (metric, metric_label) in enumerate(self.METRIC_ORDER):

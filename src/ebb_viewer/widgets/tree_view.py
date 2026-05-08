@@ -1,3 +1,5 @@
+"""Read-only file-system tree view rooted at the active project directory."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,6 +10,8 @@ from PyQt6.QtWidgets import QTreeView, QVBoxLayout, QWidget
 
 
 class ProjectTree(QWidget):
+    """Tree view of the project root; updates via :meth:`set_root`."""
+
     def __init__(
         self, parent=None, name_filters=None, show_sizes=True, show_types=True, show_dates=False
     ):

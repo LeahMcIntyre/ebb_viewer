@@ -82,16 +82,18 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [~] `theme.py` — reviewed clean
 
 ### 2b. `widgets/` (~1,000 lines)
-- [ ] `worker_helpers.py` (34)
-- [ ] `drink_mask_dialog.py` (45)
-- [ ] `trim_to_widget.py` (51)
-- [ ] `tree_view.py` (56)
-- [ ] `range_dialog.py` (57)
-- [ ] `sleep_viewer.py` (73)
-- [ ] `output_dialog.py`
-- [ ] `table_helpers.py`
-- [ ] `stft_viewer.py` (155)
-- [ ] `psd_graph_widget.py` (566)
+- [~] `worker_helpers.py` — reviewed clean
+- [x] `drink_mask_dialog.py` — added module docstring
+- [x] `trim_to_widget.py` — dropped stale filename comment, added module + class docstrings
+- [x] `tree_view.py` — added module + class docstrings
+- [x] `range_dialog.py` — added module docstring
+- [x] `sleep_viewer.py` — replaced inline CSV reader with shared `read_rawstate_column`; added module + class + method docstrings
+- [x] `output_dialog.py` — added module docstring
+- [~] `table_helpers.py` — reviewed clean
+- [ ] `stft_viewer.py` (183)
+- [ ] `psd_graph_widget.py` (573)
+
+**2b dedupe:** promoted `_read_rawstate_column` → `read_rawstate_column` in `ebb/process/sleep_compute.py`; deleted the duplicate copy in `ebb/process/mask_export.py` (which had a slightly more robust version — kept its `newline=""`, None-check, empty-row skip).
 
 ### 2c. `edf_viewer/` (~1,800 lines, **untested**)
 - [ ] `recording.py` (38)

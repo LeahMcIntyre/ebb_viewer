@@ -56,15 +56,19 @@ def seconds_until_target(t: time, h: int = 6) -> int:
     return int((target - now).total_seconds())
 
 
-def _read_rawstate_column(state_path: Path) -> list[str]:
-    """Read the `rawstate` column from a SPINDLE-scored CSV (one entry per epoch)."""
-    with open(state_path) as infile:
-        reader = csv.reader(infile)
-        header = next(reader)
-        if "rawstate" not in header:
+def read_rawstate_column(state_path: Path) -> list[str]:
+    """Read the ``rawstate`` column from a SPINDLE-scored CSV (one entry per epoch).
+
+    Raises:
+        ValueError: if the file is empty or has no ``rawstate`` column.
+    """
+    with open(state_path, newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None or "rawstate" not in header:
             raise ValueError(f"'rawstate' column not found in {state_path.name}")
         idx = header.index("rawstate")
-        return [row[idx] for row in reader]
+        return [row[idx] for row in reader if row]
 
 
 def compute_sleep_metrics_per_mouse(
@@ -166,7 +170,7 @@ def compute_sleep_bins_df(
     sleep_dfs = []
     for state_path in Path(state_dir).glob("*.csv"):
         animal = parse_animal_id(state_path)
-        states = _read_rawstate_column(state_path)
+        states = read_rawstate_column(state_path)
         df_mouse = compute_sleep_metrics_per_mouse(
             states, mouse_id=animal, bin_hours=bin_hours, sample_rate_hz=0.25
         )
@@ -211,7 +215,7 @@ def compute_sleep_bins_df_offset(
         hh, mm, ss = map(int, match.groups())
         t = time(hh, mm, ss)
 
-        states = _read_rawstate_column(state_path)
+        states = read_rawstate_column(state_path)
         # SPINDLE epoch-rate (0.25 Hz) → per-second by repeating each epoch
         # spindle_epoch_sec times.
         expanded_states = [s for s in states for _ in range(spindle_epoch_sec)]

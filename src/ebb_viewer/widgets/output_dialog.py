@@ -1,3 +1,5 @@
+"""Folder picker for output destinations with overwrite-confirmation."""
+
 from pathlib import Path
 
 from PyQt6.QtWidgets import QFileDialog, QMessageBox
