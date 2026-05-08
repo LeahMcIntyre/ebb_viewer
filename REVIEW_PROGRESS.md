@@ -76,10 +76,10 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 ### 2a. `pipeline/` (~1,400 lines, partial test coverage)
 - [ ] `manifest.py` (726) **— critical, careful**
 - [ ] `mask_export.py` (498)
-- [ ] `naming.py`
-- [ ] `psd_params.py` (96)
-- [ ] `sleepyrat_config.py` (40)
-- [ ] `theme.py`
+- [~] `naming.py` — already cleaned in Phase 1 (re-export shim)
+- [x] `psd_params.py` — deleted `_migrate_legacy` (no legacy compat); narrowed `load()` exception; cleaned docstring
+- [~] `sleepyrat_config.py` — reviewed clean
+- [~] `theme.py` — reviewed clean
 
 ### 2b. `widgets/` (~1,000 lines)
 - [ ] `worker_helpers.py` (34)

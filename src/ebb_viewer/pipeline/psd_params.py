@@ -2,7 +2,6 @@
 
 import json
 import re
-import shutil
 from pathlib import Path
 
 from ebb.process.state_presets import DEFAULT_STATES, STATE_PRESETS
@@ -13,10 +12,10 @@ RUN_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 def states_from_params(params: dict | None) -> list[str]:
     """Return the list of state preset keys saved in params.
 
-    Falls back to the canonical default (wake/nrem/rem) for params that
-    predate state selection or omit the field. Unknown keys are filtered so
-    that a typo in a hand-edited json file doesn't crash loading — consumers
-    should re-validate before using.
+    Falls back to the canonical default (wake/nrem/rem) when params is None
+    or its "states" field is empty. Unknown keys are filtered so that a typo
+    in a hand-edited json file doesn't crash loading — consumers should
+    re-validate before using.
     """
     if params is None:
         return list(DEFAULT_STATES)
@@ -53,41 +52,15 @@ def load(project_root: Path, run_name: str) -> dict | None:
         return None
     try:
         return json.loads(path.read_text())
-    except Exception:
+    except (json.JSONDecodeError, OSError):
         return None
 
 
 def list_runs(project_root: Path) -> list[str]:
-    """Return sorted list of run names that have a psd_params.json.
-
-    Silently migrates legacy flat psd/psd_params.json to psd/default/ on first call.
-    """
-    _migrate_legacy(project_root)
+    """Return sorted list of run names that have a psd_params.json."""
     psd_dir = Path(project_root) / "psd"
     if not psd_dir.is_dir():
         return []
-    runs = sorted(
+    return sorted(
         d.name for d in psd_dir.iterdir() if d.is_dir() and (d / "psd_params.json").exists()
     )
-    return runs
-
-
-def _migrate_legacy(project_root: Path) -> None:
-    """Move legacy flat psd/psd_params.json + psds_*.pkl → psd/default/."""
-    psd_dir = Path(project_root) / "psd"
-    legacy_params = psd_dir / "psd_params.json"
-    if not legacy_params.exists():
-        return
-    default_dir = psd_dir / "default"
-    default_dir.mkdir(parents=True, exist_ok=True)
-    # Move params
-    dest_params = default_dir / "psd_params.json"
-    if not dest_params.exists():
-        shutil.move(str(legacy_params), str(dest_params))
-    else:
-        legacy_params.unlink()
-    # Move any flat pkl files
-    for pkl in psd_dir.glob("*.pkl"):
-        dest = default_dir / pkl.name
-        if not dest.exists():
-            shutil.move(str(pkl), str(dest))
