@@ -1,3 +1,9 @@
+"""Bottom dock that lists each mask as a swatch + checkbox + nav buttons.
+
+Right-clicking a row opens a `MaskParamsDialog` whose widgets are auto-built
+from the mask's `metadata` dict + `param_specs` (min/max/step/units/desc).
+"""
+
 from collections.abc import Callable
 
 from PyQt6 import QtGui, QtWidgets
@@ -130,7 +136,7 @@ class MasksDock(QtWidgets.QDockWidget):
 
     # ------------------------------------------------------------------
 
-    def rebuild(self, mask_set: MaskSet, state_set: MaskSet = None) -> None:
+    def rebuild(self, mask_set: MaskSet, state_set: MaskSet | None = None) -> None:
         """Clear and repopulate the row list from mask_set."""
         # Remove all existing rows
         while self._layout.count():
@@ -145,7 +151,7 @@ class MasksDock(QtWidgets.QDockWidget):
     # ------------------------------------------------------------------
 
     def _make_row(
-        self, mask_set: MaskSet, name: str, state_set: MaskSet = None
+        self, mask_set: MaskSet, name: str, state_set: MaskSet | None = None
     ) -> QtWidgets.QWidget:
         mask = mask_set.get(name)
 
@@ -216,6 +222,11 @@ class MasksDock(QtWidgets.QDockWidget):
     def _state_overlap(self, mask: Mask, state_set: MaskSet) -> str:
         msg = []
         for state_mask in state_set:
-            overlap = state_mask.overlap_samples(mask) / state_mask.total_samples
+            total = state_mask.total_samples
+            if total == 0:
+                # Animal has zero coverage in this state (e.g. no REM bouts).
+                msg.append(f"{state_mask.name[0].upper()}: —")
+                continue
+            overlap = state_mask.overlap_samples(mask) / total
             msg.append(f"{state_mask.name[0].upper()}: {100 * overlap:.2f}%")
         return "\n".join(msg)

@@ -1,3 +1,10 @@
+"""Factory functions that translate UI metadata dicts into ebb.masking calls.
+
+Defaults intentionally mirror those in `estimate_psd` so the viewer shows what
+the PSD pipeline actually computes; they are duplicated here rather than
+imported to keep `ebb_viewer` independent of `ebb.process` orchestration.
+"""
+
 import inspect
 import re
 
@@ -10,9 +17,13 @@ from ebb_viewer.edf_viewer.masks import Mask, MaskSet, ParamSpec
 from ebb_viewer.edf_viewer.recording import Recording
 
 
-# TODO: Is this the best way to implement? Better to hard code?
 def _param_desc(func, name: str) -> str | None:
-    """Pull a parameter description from a Google-style Args: section."""
+    """Pull a parameter description from a Google-style ``Args:`` block.
+
+    Returns None if the docstring lacks an Args block or the parameter isn't
+    found. Callers handle None gracefully (no tooltip is set), so this only
+    breaks if upstream functions switch to a different docstring style.
+    """
     doc = inspect.getdoc(func) or ""
     m = re.search(r"Args:\s*\n((?:[ \t]+\S.*\n?)+)", doc)
     if not m:
@@ -72,36 +83,70 @@ _STATE_LABELS = {
 }
 
 
+_DEFAULT_COMM_META = {"value": 2000, "radius": 250, "pad": 250, "min_to_pad": 10}
+_DEFAULT_SD_META = {"nstd": 5, "winsize": 180, "radius": 0.5, "comm_mask": True}
+
+
+def _compute_artifact_masks(
+    rec: Recording, comm_meta: dict, sd_meta: dict
+) -> tuple[np.ndarray, np.ndarray]:
+    """Run commutator + SD-threshold on `rec`, returning both raw boolean arrays.
+
+    Centers each channel on its median before producer construction so the
+    SD-threshold's per-window stats aren't biased by DC offsets. SD's
+    commutator-mask gating is controlled by `sd_meta["comm_mask"]` (default True).
+    """
+    chunksize = int(30e5)
+    eeg_data = rec.data[:3]
+    baseline = np.median(eeg_data, axis=1, keepdims=True)  # shape (3, 1)
+    pro = make_producer(eeg_data - baseline, chunksize=chunksize, axis=-1)
+
+    comm_mask, _ = masking.commutator_threshold(
+        pro,
+        value=comm_meta["value"],
+        radius=comm_meta["radius"],
+        pad=comm_meta["pad"],
+        min_to_pad=comm_meta["min_to_pad"],
+    )
+
+    mask_pro = (
+        make_producer(comm_mask, chunksize=int(4.5e4), axis=-1)
+        if sd_meta.get("comm_mask", True)
+        else None
+    )
+    sd_mask = masking.sd_threshold(
+        pro,
+        nstds=[sd_meta["nstd"]],
+        winsize=int(sd_meta["winsize"] * rec.fs),
+        radius=int(sd_meta["radius"] * rec.fs),
+        mask_pro=mask_pro,
+    )[0]
+    return comm_mask, sd_mask
+
+
+def _wrap_artifact_masks(
+    comm_mask: np.ndarray, sd_mask: np.ndarray, comm_meta: dict, sd_meta: dict
+) -> tuple[Mask, Mask]:
+    """Wrap raw boolean arrays as viewer-side Mask objects with metadata + specs."""
+    c = Mask.from_bool("commutator", (255, 0, 0, 80), ~comm_mask)
+    c.metadata.update(comm_meta)
+    c.param_specs.update(_comm_param_specs())
+
+    sd = Mask.from_bool("sd", (255, 100, 0, 80), ~sd_mask)
+    sd.metadata.update(sd_meta)
+    sd.param_specs.update(_sd_param_specs())
+    return c, sd
+
+
 def build_default_masks(rec: Recording) -> MaskSet:
     """Compute default artifact masks from a Recording using the same
     parameters as estimate_psd. Always computes commutator and SD masks.
     Adds spindle_noise mask if rec.csv_path is available.
     """
-    chunksize = int(30e5)
-    eeg_data = rec.data[:3]
-    baseline = np.median(eeg_data, axis=1, keepdims=True)  # shape (3, 1)
-    eeg_centered = eeg_data - baseline
-    pro = make_producer(eeg_centered, chunksize=chunksize, axis=-1)
-    # pro = make_producer(eeg_data, chunksize=chunksize, axis=-1)
-
-    comm_mask, _ = masking.commutator_threshold(pro, value=2000, radius=250, pad=250, min_to_pad=10)
-
-    comm_pro = make_producer(comm_mask, chunksize=int(4.5e4), axis=-1)
-    sd_mask = masking.sd_threshold(
-        pro,
-        nstds=[5],
-        winsize=int(180 * rec.fs),
-        radius=int(0.5 * rec.fs),
-        mask_pro=comm_pro,
-    )[0]
-
-    c = Mask.from_bool("commutator", (255, 0, 0, 80), ~comm_mask)
-    c.metadata.update({"value": 2000, "radius": 250, "pad": 250, "min_to_pad": 10})
-    c.param_specs.update(_comm_param_specs())
-
-    sd = Mask.from_bool("sd", (255, 100, 0, 80), ~sd_mask)
-    sd.metadata.update({"nstd": 5, "winsize": 180, "radius": 0.5, "comm_mask": True})
-    sd.param_specs.update(_sd_param_specs())
+    comm_meta = dict(_DEFAULT_COMM_META)
+    sd_meta = dict(_DEFAULT_SD_META)
+    comm_mask, sd_mask = _compute_artifact_masks(rec, comm_meta, sd_meta)
+    c, sd = _wrap_artifact_masks(comm_mask, sd_mask, comm_meta, sd_meta)
 
     mask_set = MaskSet()
     mask_set.add(c)
@@ -121,43 +166,8 @@ def build_default_masks(rec: Recording) -> MaskSet:
 
 def rebuild_artifact_masks(rec: Recording, comm_meta: dict, sd_meta: dict) -> tuple[Mask, Mask]:
     """Recompute commutator and sd masks from their current metadata dicts."""
-    chunksize = int(30e5)
-    eeg_data = rec.data[:3]
-    baseline = np.median(eeg_data, axis=1, keepdims=True)  # shape (3, 1)
-    eeg_centered = eeg_data - baseline
-    pro = make_producer(eeg_centered, chunksize=chunksize, axis=-1)
-
-    # pro = make_producer(rec.data[:3], chunksize=chunksize, axis=-1)
-
-    comm_mask, _ = masking.commutator_threshold(
-        pro,
-        value=comm_meta["value"],
-        radius=comm_meta["radius"],
-        pad=comm_meta["pad"],
-        min_to_pad=comm_meta["min_to_pad"],
-    )
-
-    mask_pro = None
-    if sd_meta.get("comm_mask", True):
-        mask_pro = make_producer(comm_mask, chunksize=int(4.5e4), axis=-1)
-
-    sd_mask = masking.sd_threshold(
-        pro,
-        nstds=[sd_meta["nstd"]],
-        winsize=int(sd_meta["winsize"] * rec.fs),
-        radius=int(sd_meta["radius"] * rec.fs),
-        mask_pro=mask_pro,
-    )[0]
-
-    c = Mask.from_bool("commutator", (255, 0, 0, 80), ~comm_mask)
-    c.metadata.update(comm_meta)
-    c.param_specs.update(_comm_param_specs())
-
-    sd = Mask.from_bool("sd", (255, 100, 0, 80), ~sd_mask)
-    sd.metadata.update(sd_meta)
-    sd.param_specs.update(_sd_param_specs())
-
-    return c, sd
+    comm_mask, sd_mask = _compute_artifact_masks(rec, comm_meta, sd_meta)
+    return _wrap_artifact_masks(comm_mask, sd_mask, comm_meta, sd_meta)
 
 
 def rebuild_spindle_mask(csv_path, fs: int, meta: dict) -> Mask:

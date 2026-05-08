@@ -101,8 +101,8 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [x] `state_bar.py` — added module docstring
 - [x] `masks.py` — dropped stale `# model.py` filename comment; added module docstring; `zip(strict=True)` (B905)
 - [x] `file_openers.py` — added module docstring; renamed `dir` → `start_dir` (Python builtin shadowing); hoisted `import csv` to module level
-- [ ] `masks_dock.py` (218)
-- [ ] `mask_builder.py` (247)
+- [x] `masks_dock.py` — fixed ZeroDivisionError in `_state_overlap` for zero-coverage states (e.g. animal with no REM); added module docstring; `state_set: MaskSet | None`
+- [x] `mask_builder.py` — extracted `_compute_artifact_masks` + `_wrap_artifact_masks` helpers (deduped ~25 lines between `build_default_masks` and `rebuild_artifact_masks`, killed 2 commented-out `# pro = make_producer` lines); hoisted `_DEFAULT_COMM_META`/`_DEFAULT_SD_META` constants; added module docstring; replaced vestigial TODO with real docstring on `_param_desc`
 - [ ] `trace_view.py` (532)
 - [ ] `eeg_viewer.py` (678)
 
