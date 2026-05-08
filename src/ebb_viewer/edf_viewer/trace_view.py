@@ -1,3 +1,15 @@
+"""Multi-channel EEG trace renderer with mask overlays and state bar.
+
+Per-channel y-zoom uses a "sticky center" model:
+- ``base_y[ch]`` is the per-channel y-range fitted to the current window
+  (``min/max + 5% pad``). It is recalculated only when ``reset_zooms`` runs.
+- ``_ch_centers[ch]`` is the user-chosen vertical center for each channel.
+  It is set when the user touches a per-channel zoom slider; before that,
+  ``_apply_y`` falls back to the midpoint of ``base_y``.
+- ``reset_zooms`` resets sliders to 1×, refits ``base_y``, and deliberately
+  leaves ``_ch_centers`` intact so the user's chosen centers survive.
+"""
+
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 
@@ -36,6 +48,8 @@ _SHIFT_NUM_KEYS = {
 
 
 class TimeClickViewBox(pg.ViewBox):
+    """ViewBox that emits a `timeDoubleClicked(t_sec)` signal on left-double-click."""
+
     timeDoubleClicked = pyqtSignal(float)
 
     def mouseDoubleClickEvent(self, event):
@@ -48,6 +62,9 @@ class TimeClickViewBox(pg.ViewBox):
 
 
 class TraceView(QtWidgets.QWidget):
+    """Multi-channel EEG trace plot with horizontal pan, per-channel y-zoom,
+    mask overlays, sleep-state bar, and keyboard mask navigation."""
+
     timeDoubleClicked = pyqtSignal(float)
 
     def __init__(
@@ -76,9 +93,11 @@ class TraceView(QtWidgets.QWidget):
         self.win = max(1, int(self.fs * self.win_sec))
         self.start = 0
 
-        # Zoom states
+        # Zoom states. `base_y` is filled before the first render in __init__
+        # via _fit_base_y; it stays in sync only with `reset_zooms` calls
+        # (deliberate — user's zoom levels persist across pan/seek).
         self.y_zoom = np.ones(self.nch, dtype=float)
-        self.base_y: list[tuple[float | None, float | None]] = [(None, None)] * self.nch
+        self.base_y: list[tuple[float, float]] = [(-1.0, 1.0)] * self.nch
         self._ch_centers: list[float | None] = [None] * self.nch
 
         self.plots: list[pg.PlotWidget] = []
@@ -91,17 +110,22 @@ class TraceView(QtWidgets.QWidget):
         self.state_set: MaskSet | None = None
         self._overlay_items: list[tuple[pg.PlotWidget, pg.LinearRegionItem]] = []
 
-        # Annotation vertical lines: list of (t_sec, label)
+        # Annotation vertical lines: list of (t_sec, label). Items are tracked
+        # alongside their plot widget so teardown doesn't depend on
+        # InfiniteLine.getViewBox() (which can return None after detachment).
         self._annotations: list[tuple[float, str]] = []
-        self._annotation_items: list[pg.InfiniteLine] = []
+        self._annotation_items: list[tuple[pg.PlotWidget, pg.InfiniteLine]] = []
 
         # State bar + legend (both hidden until set_state_masks is called)
         self.state_bar = StateBar(self)
         self.state_legend = StateLegend(self)
 
         self._build_ui()
+        # Fit base_y from the initial window so _apply_y has a real range to
+        # work with on the first render.
+        for ch in range(self.nch):
+            self.base_y[ch] = self._fit_base_y(ch)
         self._set_window(0)
-        self.reset_zooms()
 
     def _build_ui(self):
         outer = QtWidgets.QVBoxLayout(self)
@@ -130,7 +154,6 @@ class TraceView(QtWidgets.QWidget):
             lv.setContentsMargins(0, 0, 4, 0)
 
             lbl = QtWidgets.QLabel(f"{self.ch_names[i]}")
-            # lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             lv.addWidget(lbl)
             self.vlabels.append(lbl)
 
@@ -387,10 +410,12 @@ class TraceView(QtWidgets.QWidget):
             self.state_bar.update_window(t[0], t[-1])
 
     def set_masks(self, mask_set: MaskSet) -> None:
+        """Replace the active mask set and redraw overlays."""
         self.mask_set = mask_set
         self._set_window(self.start)
 
     def set_state_masks(self, state_set: MaskSet) -> None:
+        """Set the sleep-state masks and reveal the state bar + legend row."""
         self.state_set = state_set
         self.state_bar.set_state_masks(state_set, self.fs)
         self.state_legend.rebuild(state_set)
@@ -398,6 +423,11 @@ class TraceView(QtWidgets.QWidget):
         self._set_window(self.start)
 
     def refresh_overlays(self) -> None:
+        """Redraw mask overlays without replacing mask data.
+
+        Use after toggling mask visibility or changing colors when the
+        underlying ``mask_set`` has not been replaced.
+        """
         stop = min(self.start + self.win, self.n)
         t = np.arange(self.start, stop) / self.fs
         if t.size:
@@ -440,9 +470,8 @@ class TraceView(QtWidgets.QWidget):
             self.vlabels[ch].setText(f"{self.ch_names[ch]}\n1.00×")
 
             self.base_y[ch] = self._fit_base_y(ch)
-            # start, stop = self.start, min(self.start + self.win, self.n)
-            # seg = self.data[ch, start:stop]
-            # self._ch_centers[ch] = float(np.median(seg)) if seg.size > 0 else None
+            # _ch_centers is intentionally NOT reset — the user's chosen
+            # vertical centers persist across reset_zooms calls.
             self._apply_y(ch)
 
     def _fit_base_y(self, ch: int) -> tuple[float, float]:
@@ -458,9 +487,6 @@ class TraceView(QtWidgets.QWidget):
 
     def _apply_y(self, ch: int, zero_centered: bool = False):
         y0, y1 = self.base_y[ch]
-        if y0 is None:
-            y0, y1 = self._fit_base_y(ch)
-            self.base_y[ch] = (y0, y1)
         z = max(self.y_zoom[ch], 1e-6)
         if zero_centered:
             center = 0.0
@@ -482,8 +508,11 @@ class TraceView(QtWidgets.QWidget):
         if not self._annotations:
             return
         t_current = self.center_sample / self.fs
+        # One-sample epsilon so we skip the annotation at the current center
+        # without skipping a legitimately-close neighbor.
+        epsilon = 1.0 / self.fs
         for t_sec, _ in sorted(self._annotations):
-            if t_sec > t_current + 0.01:
+            if t_sec > t_current + epsilon:
                 self.jump_to_sample(int(t_sec * self.fs))
                 return
 
@@ -491,15 +520,16 @@ class TraceView(QtWidgets.QWidget):
         if not self._annotations:
             return
         t_current = self.center_sample / self.fs
+        epsilon = 1.0 / self.fs
         for t_sec, _ in sorted(self._annotations, reverse=True):
-            if t_sec < t_current - 0.01:
+            if t_sec < t_current - epsilon:
                 self.jump_to_sample(int(t_sec * self.fs))
                 return
 
     def set_annotations(self, annotations: list[tuple[float, str]]) -> None:
         """Draw vertical lines for each (t_sec, label) annotation across all channels."""
-        for item in self._annotation_items:
-            item.getViewBox().removeItem(item)
+        for pw, item in self._annotation_items:
+            pw.removeItem(item)
         self._annotation_items.clear()
 
         self._annotations = annotations
@@ -515,10 +545,10 @@ class TraceView(QtWidgets.QWidget):
             )
             labeled.setZValue(20)
             self.plots[0].addItem(labeled)
-            self._annotation_items.append(labeled)
+            self._annotation_items.append((self.plots[0], labeled))
 
             for pw in self.plots[1:]:
                 line = pg.InfiniteLine(pos=t_sec, angle=90, movable=False, pen=pen)
                 line.setZValue(20)
                 pw.addItem(line)
-                self._annotation_items.append(line)
+                self._annotation_items.append((pw, line))

@@ -103,7 +103,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [x] `file_openers.py` — added module docstring; renamed `dir` → `start_dir` (Python builtin shadowing); hoisted `import csv` to module level
 - [x] `masks_dock.py` — fixed ZeroDivisionError in `_state_overlap` for zero-coverage states (e.g. animal with no REM); added module docstring; `state_set: MaskSet | None`
 - [x] `mask_builder.py` — extracted `_compute_artifact_masks` + `_wrap_artifact_masks` helpers (deduped ~25 lines between `build_default_masks` and `rebuild_artifact_masks`, killed 2 commented-out `# pro = make_producer` lines); hoisted `_DEFAULT_COMM_META`/`_DEFAULT_SD_META` constants; added module docstring; replaced vestigial TODO with real docstring on `_param_desc`
-- [ ] `trace_view.py` (532)
+- [x] `trace_view.py` — fixed annotation teardown crash (now tracks `(pw, item)` pairs); replaced 0.01s magic epsilon with one-sample `1.0/fs`; eliminated `__init__` double `base_y` init + dropped `_apply_y`'s now-unneeded lazy guard; deleted commented-out reset-centers archaeology + dead `# lbl.setAlignment` line; added module/class/method docstrings (sticky-center zoom design now lives in module docstring)
 - [ ] `eeg_viewer.py` (678)
 
 ### 2d. `data_stores/`
