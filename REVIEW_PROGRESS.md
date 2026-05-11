@@ -137,7 +137,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 
 ### 3e. PSD review + finalize
 - [x] `psd_visualizer.py` — module + class docstrings; lifted `_FINAL_VIEW_STEMS` and `_CHANNEL_NAMES` to module level; flattened nested-ternary `run_channels` parse
-- [ ] `drink_mask.py` (581)
+- [x] `drink_mask.py` — module + class docstrings; hoisted 5 inline imports (`psd_params`, `Manifest`, `PRESET_DISPLAY`, `rerun_with_drink_masks`, `csv`); promoted `_AMBER` to class constant; declared `_pending_run_name` in `__init__`; documented `_UI_ONLY_PARAM_KEYS` scope; defensive `animal_combos` loop with assertion (one-ok invariant); fixed `_detect_offset_csv` to return None on multi-CSV (matches Export Masks pipeline policy); extracted `_validate_offset_csv` helper; renamed "Mask File" column → "Mask"; emptied redundant initial offset-hint state; post-run hint now interpolates run_name + full path; `swd_dir`/`ann_params` typed as `Path | None`/`dict | None`; updated 5 tests to monkey-patch at the use site (where `rerun_with_drink_masks` is imported) + replaced "first wins" multi-CSV test with explicit single-CSV + multi-CSV-returns-None tests
 - [x] `sleep_visualizer.py` — **deleted** (unused — zero imports anywhere in the codebase; functionality lives in `widgets/sleep_viewer.py`)
 - [x] `finalize.py` — module docstring; replaced `__import__("PyQt6.QtCore", ...)` cargo-cult with the already-imported `Qt`; hoisted `import pickle` to module top; tightened dead initial values in card builder
 
