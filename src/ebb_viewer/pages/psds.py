@@ -1,11 +1,33 @@
+"""PSD compute page — wraps :func:`ebb.process.psd_compute.batch_estimate`.
+
+Drives the initial PSD computation step of the pipeline. Each run produces
+one ``psds_<combo>.pkl`` per channel combination plus a merged
+``psds_channel_merged.pkl`` consumed by the visualizer.
+
+Run-specific params (states, mask thresholds, SWD/annotation/hour-window
+selection) live in ``MaskingSettingsDialog`` (modal) and the inline
+"Advanced PSD Settings" section. They round-trip through
+``project/psd/<run_name>/psd_params.json`` and are passed to the worker
+verbatim — the worker also writes the params file alongside the PKLs after
+a successful run.
+
+Drink masking is intentionally *not* applied here; the Drink Mask page
+re-applies it after PSD review. ``BatchEstimateWorker`` always forwards
+``drink_dir=None``.
+"""
+
+from __future__ import annotations
+
 import dataclasses
 import pickle
+import warnings
+from datetime import datetime
 from pathlib import Path
 
+from openseize.file_io import edf as edf_io
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QApplication,
     QButtonGroup,
     QCheckBox,
     QDialog,
@@ -58,7 +80,20 @@ CH_LABELS = ["LFC", "RSC", "LSC"]
 
 
 class MaskingSettingsDialog(QDialog):
-    """Modal dialog for configuring optional masking/filtering for PSD computation."""
+    """Modal dialog for configuring optional masking/filtering for PSD computation.
+
+    Edits a flat dict round-trippable to/from ``psd_params.json``. Three
+    masking subsystems live here: SWD mask (binary on/off; keyed as
+    ``swd_mode``), annotation mask (keyed under ``ann_*``), and the
+    hour-window filter (keyed under ``hw_enabled``/``hour_windows``/
+    ``selected_days``). The dialog also shows live previews — SWD file
+    counts, annotation file availability per animal, hour-window coverage
+    per recording.
+
+    The SD-mask, spindle-noise threshold, and state-group selection live
+    on the parent page rather than here; this dialog only owns the *optional*
+    masking/filtering knobs.
+    """
 
     def __init__(
         self, parent=None, *, swd_available: bool, swd_status_text: str, project_root: Path
@@ -449,30 +484,30 @@ class MaskingSettingsDialog(QDialog):
                 self._hw_partial_label.setStyleSheet("color: #2a7a2a; font-size: 11px;")
 
     def _read_edf_headers(self) -> None:
-        """Cache (rec_start, n_samples) for all standard EDFs."""
+        """Cache (rec_start, n_samples) for all standard EDFs.
+
+        Used by the hour-window preview to show per-window coverage. Errors
+        on individual EDFs (corrupt headers, missing files) are skipped
+        silently — the preview is best-effort and shouldn't fail the dialog.
+        """
         standard_dir = self._project_root / "standard"
         if not standard_dir.is_dir():
             return
         edfs = sorted(standard_dir.glob("*PROCESSED.edf"))
         if not edfs:
             return
-        import warnings
-        from datetime import datetime as _datetime
-
-        from openseize.file_io import edf as edf_io
-
         recordings = []
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=ResourceWarning)
             for edf_path in edfs:
                 try:
                     with edf_io.Reader(str(edf_path)) as r:
-                        rec_start = _datetime.strptime(
+                        rec_start = datetime.strptime(
                             f"{r.header.start_date} {r.header.start_time}", "%d.%m.%y %H.%M.%S"
                         )
                         recordings.append((rec_start, r.shape[-1]))
-                except Exception:
-                    pass
+                except (OSError, ValueError):
+                    continue
         self._hw_recordings = recordings
 
     def _on_accept(self):
@@ -545,7 +580,14 @@ class MaskingSettingsDialog(QDialog):
             )
 
     def load_params(self, params: dict) -> None:
-        if params.get("swd_mode") == "mask_out" and self._swd_available:
+        # Accept both the legacy ``swd_mode`` key (written by this page) and
+        # the widget-style ``use_swd_mask`` (written by the Export Masks
+        # page) so saved configs round-trip across both surfaces.
+        if "use_swd_mask" in params:
+            swd_on = bool(params["use_swd_mask"])
+        else:
+            swd_on = params.get("swd_mode") == "mask_out"
+        if swd_on and self._swd_available:
             self._radio_swd_mask.setChecked(True)
         else:
             self._radio_swd_none.setChecked(True)
@@ -566,9 +608,7 @@ class MaskingSettingsDialog(QDialog):
             self.chk_ann.setChecked(True)
             self._refresh_ann_status()
         if params.get("hw_enabled"):
-            windows = params.get("hour_windows") or (
-                [params["hour_window"]] if params.get("hour_window") else []
-            )
+            windows = params.get("hour_windows") or []
             for hw in windows:
                 self._add_window_row(float(hw[0]), float(hw[1]))
             if params.get("selected_days") is not None:
@@ -597,6 +637,20 @@ class MaskingSettingsDialog(QDialog):
 
 
 class PSDPage(QWidget):
+    """Sidebar page #6 — drives the PSD compute step of the pipeline.
+
+    Owns: folder selection (standard EDFs + named run output dir), per-combo
+    status table, state-group checkboxes, masking dialog (modal),
+    advanced PSD settings (channels, fs, SD-mask, spindle-noise threshold),
+    and a worker thread that runs ``batch_estimate`` per combo and writes
+    one PKL + the shared ``psd_params.json`` per run.
+
+    Run state lives in ``self._masking_params`` (mirrors the saved JSON
+    shape, including the legacy ``swd_mode`` key) and the individual
+    advanced-settings spinboxes. Initial values are loaded from the most
+    recently modified saved run when the page is constructed.
+    """
+
     manifest_changed = pyqtSignal()
     navigate_to = pyqtSignal(str)
 
@@ -1033,9 +1087,15 @@ class PSDPage(QWidget):
                         f"✓ {mat_count} .mat {'file' if mat_count == 1 else 'files'} in swd/"
                     )
                 self._swd_available = True
-        # If SWD mask was selected but is no longer available, fall back to none
+        # If SWD mask was selected but is no longer available, fall back to none.
+        # Surface this in the log so the user notices their saved choice has
+        # been overridden rather than silently dropping their masking intent.
         if not self._swd_available and self._masking_params.get("swd_mode") == "mask_out":
             self._masking_params["swd_mode"] = "none"
+            self._log(
+                "⚠ SWD masking was enabled in saved params but swd/ is unavailable "
+                f"({self._swd_status_text}) — SWD mask has been turned off."
+            )
             self._update_masking_summary()
         self._validate()
 
@@ -1121,10 +1181,9 @@ class PSDPage(QWidget):
             "ann_keywords": params.get("ann_keywords", ""),
             "ann_match_mode": params.get("ann_match_mode", "contains"),
             "ann_pad_before": params.get("ann_pad_before", 0.0),
-            "ann_pad_after": params.get("ann_pad_after", 10.0),
+            "ann_pad_after": params.get("ann_pad_after", 0.0),
             "hw_enabled": bool(params.get("hw_enabled", False)),
-            "hour_windows": params.get("hour_windows")
-            or ([params["hour_window"]] if params.get("hour_window") else None),
+            "hour_windows": params.get("hour_windows"),
             "selected_days": params.get("selected_days"),
         }
         self._update_masking_summary()
@@ -1300,7 +1359,7 @@ class PSDPage(QWidget):
                 "keywords": [k.strip() for k in mp.get("ann_keywords", "").split(",") if k.strip()],
                 "match_mode": mp.get("ann_match_mode", "contains"),
                 "pad_before_sec": mp.get("ann_pad_before", 0.0),
-                "pad_after_sec": mp.get("ann_pad_after", 10.0),
+                "pad_after_sec": mp.get("ann_pad_after", 0.0),
             }
 
         if mp.get("hw_enabled"):
@@ -1318,8 +1377,8 @@ class PSDPage(QWidget):
                 for run in entry.runs.values():
                     run.psd_status.pop(run_name, None)
             manifest.save()
-        except Exception:
-            pass
+        except (OSError, ValueError) as e:
+            self._log(f"⚠ Could not clear stale PSD review flags: {e}")
 
         self._computing = True
         self._hint_frame.setVisible(False)
@@ -1501,12 +1560,22 @@ class PSDPage(QWidget):
         QMessageBox.critical(self, "PSD Error", msg)
         self._validate()
 
-    def _log(self, msg: str):
+    def _log(self, msg: str) -> None:
+        """Append a one-line status message to the page's log box."""
         self.log_box.appendPlainText(msg)
-        QApplication.processEvents()
 
 
 class BatchEstimateWorker(QObject):
+    """Worker that drives ``batch_estimate`` per (combo, savepath) pair.
+
+    Lives on a ``QThread`` started via ``launch_worker``. For each combo,
+    calls ``batch_estimate`` with ``drink_dir=None`` (drink masking is
+    applied later by the Drink Mask page) and ``savepath=None``, then
+    writes the PKL manually with ``params`` embedded in each record.
+    After the last combo completes, writes ``psd/<run_name>/psd_params.json``
+    so the run is fully reproducible from disk.
+    """
+
     progress = pyqtSignal(str)
     finished = pyqtSignal()
     error = pyqtSignal(str)
@@ -1518,7 +1587,7 @@ class BatchEstimateWorker(QObject):
         params: dict,
         project_root: Path,
         run_name: str = "default",
-        offset_path=None,
+        offset_path: Path | None = None,
         swd_dir: Path | None = None,
         ann_params: dict | None = None,
         parent=None,

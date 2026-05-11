@@ -133,7 +133,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 
 ### 3d. Rerun + PSDs (1,890 lines combined)
 - [x] `rerun.py` — module + class docstrings; fixed "SleepyRate" → "SleepyRat" typo; extracted `_on_sr_finished`/`_on_sr_error` from inline lambdas; disabled `btn_run` during a run + re-enabled in finish/error/cancel paths (prevents double-trigger); dropped unused `_combo_to_channels` fallback (`_COMBO_CHANNELS` is exhaustive); added inline comment on the multi-worker reassignment in `_offer_upload`; +TODO for consolidating multi-combo upload dialogs
-- [ ] `psds.py` (1,535) **— own session, possibly 2**
+- [~] `psds.py` — **Stage A complete** (bug fixes + param-flow tests). Stage B (MaskingSettingsDialog → MaskParamsWidget unification) deferred to its own session. **Bugs fixed:** B1 `ann_pad_after` default was 10.0 in 2 sites where every other site used 0.0 — silently injected unintended padding when loading legacy psd_params.json with annotation enabled; B2 bare `except Exception: pass` swallowed `manifest.save` errors when clearing stale `psd_status` flags — narrowed to `(OSError, ValueError)` + logged; B3 `MaskingSettingsDialog.load_params` only read legacy `swd_mode` — silently ignored widget-style `use_swd_mask`, now accepts both; B4 SWD auto-revert when swd/ becomes unavailable was silent — now logged. **Cleanup:** dropped legacy `hour_window` (singular) migration at 2 sites; hoisted inline imports (`warnings`, `datetime`, `openseize.edf_io`) from `_read_edf_headers` to module top; narrowed bare `except Exception` in header reading to `(OSError, ValueError)`; removed `QApplication.processEvents()` from `_log` (worker emits via Qt signals); typed `offset_path: Path | None`. **Added module + PSDPage + BatchEstimateWorker + MaskingSettingsDialog docstrings.** **+11 tests** in `tests/ebb_viewer/test_psds_page.py` covering B1 defaults, B3 dual-key tolerance, hour-window forwarding (with + without hw_enabled), annotation forwarding, full save↔load round-trip via psd_params.json
 
 ### 3e. PSD review + finalize
 - [x] `psd_visualizer.py` — module + class docstrings; lifted `_FINAL_VIEW_STEMS` and `_CHANNEL_NAMES` to module level; flattened nested-ternary `run_channels` parse
@@ -162,6 +162,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 ---
 
 ## Phase 5 — Cross-cutting
+- [ ] **psds.py Stage B** — unify `MaskingSettingsDialog` body with shared `MaskParamsWidget`. Requires porting the dialog's richer hour-window preview (per-window status badges, total-hours-per-animal estimate, day-availability check), SWD status text, and annotation file count to the widget. Own session, advisor required.
 - [ ] Consistency sweep (naming, error handling, fs handling)
 - [ ] Audit/consolidate `HANDOFF.md`, `PIPELINE_AUDIT.md`, `PLAN.md`, `TODO.md`
 - [ ] README upgrade
