@@ -447,6 +447,92 @@ def test_offset_csv_auto_detect_ignores_multiple_csvs(qapp, tmp_path: Path):
     assert w.lbl_offset_csv.text() == ""
 
 
+# ---------------------------------------------------------------------------
+# Section-visibility flags
+# ---------------------------------------------------------------------------
+
+
+def test_all_sections_visible_by_default(qapp):
+    """No group is explicitly hidden when all show_* flags are at defaults."""
+    from PyQt6.QtWidgets import QGroupBox
+
+    w = MaskParamsWidget()
+    boxes = w.findChildren(QGroupBox)
+    assert len(boxes) >= 7  # states, sd, spindle, swd, ann, hw, drink
+    assert not any(b.isHidden() for b in boxes)
+
+
+def test_show_drink_false_hides_only_the_drink_group(qapp):
+    from PyQt6.QtWidgets import QGroupBox
+
+    w = MaskParamsWidget(show_drink=False)
+    boxes = w.findChildren(QGroupBox)
+    hidden = [b.title() for b in boxes if b.isHidden()]
+    assert hidden == ["Drink Mask"]
+
+
+def test_show_sd_spindle_states_drink_false_hides_those_four(qapp):
+    from PyQt6.QtWidgets import QGroupBox
+
+    w = MaskParamsWidget(
+        show_states=False,
+        show_sd=False,
+        show_spindle=False,
+        show_drink=False,
+    )
+    hidden = sorted(b.title() for b in w.findChildren(QGroupBox) if b.isHidden())
+    assert hidden == sorted(
+        [
+            "Drink Mask",
+            "Spindle Noise Mask: Applied To All States",
+            "Standard Deviation Mask: Applied Only To Wake",
+            "States to Compute",
+        ]
+    )
+
+
+def test_show_drink_false_hides_drink_group_but_keeps_default_in_params(qapp):
+    w = MaskParamsWidget(show_drink=False)
+    # The drink section's QGroupBox should be hidden but the keys are still
+    # emitted with default values.
+    p = w.to_params()
+    assert p["use_drink_mask"] is True  # default
+    assert p["drink_pad"] == 2  # default
+    assert p["drink_offset_csv_override"] is None
+
+
+def test_show_states_false_hides_states_group_but_keeps_default_in_params(qapp):
+    w = MaskParamsWidget(show_states=False)
+    p = w.to_params()
+    # Defaults still emitted; embedder is expected to override `states`.
+    assert set(p["states"]) == {"wake", "nrem", "rem"}
+
+
+def test_show_sd_and_spindle_false_keep_defaults_in_params(qapp):
+    """Pre-PSD-page-refactor: SD/spindle hidden, defaults emitted, page overrides."""
+    w = MaskParamsWidget(show_sd=False, show_spindle=False)
+    p = w.to_params()
+    assert p["nstd"] == 5.0
+    assert p["winsize"] == 180
+    assert p["radius"] == 0.5
+    assert p["noise_thresh"] == 0.5
+
+
+def test_hidden_sections_still_round_trip(qapp, tmp_path: Path):
+    """from_params → to_params works even when sections are hidden."""
+    w = MaskParamsWidget(
+        project_root=tmp_path,
+        swd_available=True,
+        show_drink=False,
+        show_states=False,
+    )
+    params = _full_params(tmp_path)
+    w.from_params(params)
+    got = w.to_params()
+    # Same key set, same values — visibility flags only affect UI.
+    assert got == params
+
+
 def test_set_project_root_refreshes_auto_detect(qapp, tmp_path: Path):
     w = MaskParamsWidget(project_root=None, swd_available=False)
     drink_dir = tmp_path / "drink_masks"

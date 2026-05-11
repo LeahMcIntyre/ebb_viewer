@@ -85,10 +85,28 @@ class MaskParamsWidget(QWidget):
         parent: QWidget | None = None,
         *,
         swd_available: bool = False,
+        show_states: bool = True,
+        show_sd: bool = True,
+        show_spindle: bool = True,
+        show_drink: bool = True,
     ):
+        """Construct the widget.
+
+        Section-visibility flags let embedders hide groups that aren't
+        relevant in their context (e.g. the PSD compute page keeps SD,
+        spindle, and states on its main page so they're hidden here).
+        Hidden sections keep their default values — ``to_params()`` still
+        emits their keys, and the embedding page is free to override.
+        """
         super().__init__(parent)
         self._project_root = Path(project_root) if project_root else None
         self._swd_available = swd_available
+        self._show = {
+            "states": show_states,
+            "sd": show_sd,
+            "spindle": show_spindle,
+            "drink": show_drink,
+        }
         self._ann_dir: Path | None = None
         self._offset_csv_override: Path | None = None
 
@@ -235,13 +253,22 @@ class MaskParamsWidget(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(8)
 
-        root.addWidget(self._build_states_group())
-        root.addWidget(self._build_sd_group())
-        root.addWidget(self._build_spindle_group())
-        root.addWidget(self._build_swd_group())
-        root.addWidget(self._build_annotation_group())
-        root.addWidget(self._build_hour_window_group())
-        root.addWidget(self._build_drink_group())
+        # Always build all sections so internal widget refs exist; hide groups
+        # whose section flag is False (their values still flow through
+        # to_params/from_params, just aren't user-editable).
+        sections = [
+            ("states", self._build_states_group()),
+            ("sd", self._build_sd_group()),
+            ("spindle", self._build_spindle_group()),
+            (None, self._build_swd_group()),
+            (None, self._build_annotation_group()),
+            (None, self._build_hour_window_group()),
+            ("drink", self._build_drink_group()),
+        ]
+        for key, group in sections:
+            root.addWidget(group)
+            if key is not None and not self._show[key]:
+                group.setVisible(False)
 
     def _build_states_group(self) -> QGroupBox:
         gb = QGroupBox("States to Compute")

@@ -52,7 +52,16 @@ _UI_ONLY_KWARGS = (
     "path",
     "state_path",
     "swd_mode",
+    "use_swd_mask",  # widget-emitted boolean shadow of swd_mode (export-side key)
+    "swd_pad",  # used by export pipeline only; estimate_psd has no SWD pad
+    "use_drink_mask",  # widget-emitted; estimate_psd uses drink_path presence instead
+    "drink_offset_csv_override",  # used by export pipeline only
     "ann_enabled",
+    "ann_dir",  # estimate_psd takes annotation_path per-animal; not a kwarg
+    "ann_keywords",  # estimate_psd uses ann_keywords directly — see below
+    "ann_match_mode",  # but the widget emits a different key shape — re-keyed by
+    "ann_pad_before",  # the page before forwarding via ann_params, so strip here.
+    "ann_pad_after",
     "time_filter_enabled",
     "tod_start",
     "tod_end",
