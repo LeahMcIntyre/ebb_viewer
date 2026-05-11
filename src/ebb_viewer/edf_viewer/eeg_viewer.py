@@ -1,3 +1,9 @@
+"""EEG viewer main window — central trace view + masks dock + QC toolbar.
+
+Used both inside pipeline pages (via `launch_edf_window`) and standalone
+(via `main` / the `ebb-eeg-viewer` console script).
+"""
+
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +14,7 @@ from PyQt6 import QtGui, QtWidgets
 from PyQt6.QtCore import Qt
 
 from ebb.masking import get_offset
+from ebb.process.sleep_compute import DEFAULT_SPINDLE_EPOCH_SEC
 from ebb_viewer.edf_viewer.file_openers import (
     load_annotations,
     pick_annotations_csv,
@@ -33,6 +40,44 @@ from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, parse_animal_id
 from ebb_viewer.widgets.drink_mask_dialog import DrinkMaskDialogue
 from ebb_viewer.widgets.sleep_viewer import SleepPopup
 from ebb_viewer.widgets.stft_viewer import STFTBoundsDialog, STFTPopup
+
+_CH_NAMES = ("LFC", "RSC", "LSC", "EMG")
+_EDF_TIME_FMT = "%d.%m.%y %H.%M.%S"
+
+
+def _load_recording(edf_path: Path, csv_path: Path | None = None) -> Recording:
+    """Read an EDF + optional state CSV and return a Recording.
+
+    Raises:
+        ValueError: if the EDF's sampling rate is not 250 Hz.
+    """
+    with edf.Reader(str(edf_path)) as reader:
+        data = reader.read(start=0)
+        fs = int(reader.header.samples_per_record[0])
+        if fs != 250:
+            raise ValueError(
+                f"Expected fs=250 Hz, got {fs} Hz. Please select a compatible file."
+            )
+        start_str = reader.header.start_time
+        date_str = reader.header.start_date
+    start_time = datetime.strptime(f"{date_str} {start_str}", _EDF_TIME_FMT)
+    return Recording(
+        data=data,
+        fs=fs,
+        start_time=start_time,
+        ch_names=_CH_NAMES,
+        edf_path=edf_path,
+        csv_path=csv_path,
+    )
+
+
+def _load_state_df(csv_path: Path) -> pd.DataFrame | None:
+    """Load a SPINDLE-scored CSV and drop UI-only columns. Return None on parse error."""
+    try:
+        df = pd.read_csv(csv_path)
+        return df.drop(columns=["state", "threshold"], errors="ignore")
+    except (OSError, pd.errors.ParserError):
+        return None
 
 
 class AnnotationMaskDialog(QtWidgets.QDialog):
@@ -143,6 +188,14 @@ class AnnotationMaskDialog(QtWidgets.QDialog):
 
 
 class EegMainWindow(QtWidgets.QMainWindow):
+    """Main EEG viewer window. Trace view + masks dock + optional QC toolbar."""
+
+    _QC_STYLES: dict[str, str] = {
+        "ok": "color: green; font-weight: bold;",
+        "needs_review": "color: #b8860b; font-weight: bold;",
+        "needs_rerun": "color: darkorange; font-weight: bold;",
+    }
+
     def __init__(
         self,
         recording: Recording,
@@ -169,8 +222,13 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.stft_fmin = 0
         self.stft_fmax = 120
         self.nperseg = 125  # 0.5 s at 250 Hz
+
+        # Popups created once and reused so repeated menu clicks don't accumulate
+        # hidden dialogs parented to self.
         self._stft_popup = STFTPopup(self, title="EEG STFT")
         self._stft_popup.resize(1200, 800)
+        self._sleep_popup = SleepPopup(parent=self)
+        self._sleep_popup.resize(1000, 800)
 
         self.setWindowTitle("EEG Viewer")
         self.resize(1200, 800)
@@ -188,11 +246,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         if recording.csv_path is not None:
             self.state_set = load_state_masks(recording.csv_path, int(recording.fs))
             self.trace_view.set_state_masks(self.state_set)
-            try:
-                df = pd.read_csv(recording.csv_path)
-                self.state_df = df.drop(columns=["state", "threshold"], errors="ignore")
-            except Exception:
-                self.state_df = None
+            self.state_df = _load_state_df(recording.csv_path)
 
         # actions/toolbars/menus
         self._build_actions()
@@ -285,16 +339,13 @@ class EegMainWindow(QtWidgets.QMainWindow):
     def _build_toolbars(self):
         nav_tb = self.addToolBar("Navigation")
         nav_tb.setObjectName("NavigationToolbar")
-        # example: add open action here too
         nav_tb.addAction(self.act_open)
         nav_tb.addAction(self.act_load_swd)
         nav_tb.addAction(self.act_load_drink)
-        # later, add zoom / “go to next mask” etc.
 
         tools_tb = self.addToolBar("Tools")
         tools_tb.setObjectName("ToolsToolbar")
         tools_tb.addAction(self.act_stft)
-        # tools_tb.addAction(self.act_psd)
 
     def on_show_stft(self):
         self._stft_popup.plot_window(
@@ -325,10 +376,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
     def on_plot_sleep(self):
         if not self.rec.csv_path:
             return
-
-        self._sleep_popup = SleepPopup(parent=self)
         self._sleep_popup.plot_sleep(self.rec.csv_path)
-        self._sleep_popup.resize(1000, 800)
         self._sleep_popup.show()
         self._sleep_popup.raise_()
 
@@ -409,14 +457,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
     def _update_qc_status(self) -> None:
         run = self.manifest.get_run(self.animal_id, self.run_channels)
         status = run.sleep_qc if run else None
-        _STYLE = {
-            "ok": "color: green; font-weight: bold;",
-            "needs_review": "color: #b8860b; font-weight: bold;",
-            "needs_rerun": "color: darkorange; font-weight: bold;",
-        }
         txt = (status or "unflagged").replace("_", " ")
         self._qc_status_label.setText(f"QC [{self.run_channels}]: {txt}")
-        self._qc_status_label.setStyleSheet(_STYLE.get(status, ""))
+        self._qc_status_label.setStyleSheet(self._QC_STYLES.get(status, ""))
         self._act_ok.setChecked(status == "ok")
         self._act_rerun.setChecked(status == "needs_rerun")
 
@@ -519,7 +562,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         )
         if not dir_path:
             return
-        animal_id = parse_animal_id(self.rec.edf_path)
+        animal_id = self.animal_id or parse_animal_id(self.rec.edf_path)
         matches = sorted(Path(dir_path).glob(f"{animal_id}*.txt")) + sorted(
             Path(dir_path).glob(f"{animal_id}*.csv")
         )
@@ -561,41 +604,28 @@ class EegMainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, "Mask Error", f"{type(e).__name__}: {e}")
 
     def on_open(self):
-        # reuse your existing pick_edf_csv_npy
         edf_path, csv_path = pick_edf_csv(self, self.initial_dir)
         if not edf_path:
             return
 
         try:
-            with edf.Reader(str(edf_path)) as reader:
-                data = reader.read(start=0)
-                fs = float(250)  # or use reader.header.samples_per_record[0]
-                start_str = reader.header.start_time
-                date_str = reader.header.start_date
-
-            fmt_eeg = "%d.%m.%y %H.%M.%S"
-            start_time = datetime.strptime(f"{date_str} {start_str}", fmt_eeg)
-            ch_names = ("LFC", "RSC", "LSC", "EMG")
-            rec = Recording(
-                edf_path=edf_path,
-                data=data,
-                fs=fs,
-                start_time=start_time,
-                ch_names=ch_names,
-                csv_path=csv_path,
-            )
-
-            # launch a *new* window with the new recording
-            win = EegMainWindow(rec, initial_dir=self.initial_dir)
-            win.resize(self.width(), self.height())
-            win.show()
-        except Exception as e:
+            rec = _load_recording(edf_path, csv_path)
+        except Exception as e:  # noqa: BLE001 — surface any load failure as a dialog
             QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
+            return
+
+        # Open as a separate, independent window. WA_DeleteOnClose ensures the
+        # window is freed when the user closes it instead of lingering as a
+        # hidden child of self.
+        win = EegMainWindow(rec, initial_dir=self.initial_dir)
+        win.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        win.resize(self.width(), self.height())
+        win.show()
 
     def on_time_double_clicked(self, t_sec: float):
         if self.state_df is None:
             return
-        epoch_samples = int(4 * self.rec.fs)
+        epoch_samples = int(DEFAULT_SPINDLE_EPOCH_SEC * self.rec.fs)
         row = int(t_sec * self.rec.fs) // epoch_samples
         row = max(0, min(row, len(self.state_df) - 1))
         msg = QtWidgets.QMessageBox(self)
@@ -623,26 +653,12 @@ def launch_edf_window(
     run_channels: str | None = None,
     initial_dir: str = "",
 ) -> EegMainWindow:
-    """Load an EDF file and return a configured (not yet shown) EegMainWindow."""
-    with edf.Reader(str(edf_path)) as reader:
-        data = reader.read(start=0)
-        fs = int(reader.header.samples_per_record[0])
-        if fs != 250:
-            print(
-                f"Sampling frequency of selected file is {fs}. Please pick a file with a frequency of 250."
-            )
-            return
-        start_str = reader.header.start_time
-        date_str = reader.header.start_date
-    start_time = datetime.strptime(f"{date_str} {start_str}", "%d.%m.%y %H.%M.%S")
-    rec = Recording(
-        data=data,
-        fs=fs,
-        start_time=start_time,
-        ch_names=("LFC", "RSC", "LSC", "EMG"),
-        edf_path=edf_path,
-        csv_path=csv_path,
-    )
+    """Load an EDF file and return a configured (not yet shown) EegMainWindow.
+
+    Raises:
+        ValueError: if the EDF's sampling rate is not 250 Hz.
+    """
+    rec = _load_recording(edf_path, csv_path)
     win = EegMainWindow(
         rec,
         initial_dir=initial_dir,
@@ -655,53 +671,24 @@ def launch_edf_window(
 
 
 def main():
-    app = QtWidgets.QApplication(sys.argv)
+    """Standalone launcher: pick an EDF (and optional state CSV), open the viewer.
+
+    Usage: ``ebb-eeg-viewer [initial_dir]``
     """
-    # initial dir and one dataset load (as you already do)
-    initial_dir = "/media/matt/Data_A/leah/SRA/SRA_6_mo"
-    edf_path, csv_path = pick_edf_csv(None, initial_dir)
-    if not edf_path:
-        return"""
+    app = QtWidgets.QApplication(sys.argv)
+    initial_dir = sys.argv[1] if len(sys.argv) > 1 else ""
 
-    initial_dir = "/media/matt/Data_A/leah/Stxbp1 characterization"
-
-    # edf_path = '/media/matt/Data_A/leah/Stxbp1 characterization/standard/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED.edf'
-    # csv_path = '/media/matt/Data_A/leah/Stxbp1 characterization/spindle_outputs/LFC_RSC/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED_SPINDLE_labels.csv'
     edf_path, csv_path = pick_edf_csv(None, initial_dir)
     if not edf_path:
         return
 
-    with edf.Reader(str(edf_path)) as reader:
-        data = reader.read(start=0)
-        fs = int(reader.header.samples_per_record[0])
-        if fs != 250:
-            print(
-                f"Sampling frequency of selected file is {fs}. Please pick a file with a frequency of 250."
-            )
-            return
+    try:
+        win = launch_edf_window(edf_path, csv_path=csv_path, initial_dir=initial_dir)
+    except Exception as e:  # noqa: BLE001 — surface any load failure as a dialog
+        QtWidgets.QMessageBox.critical(None, "Load Error", f"{type(e).__name__}: {e}")
+        return
 
-        start_str = reader.header.start_time
-        date_str = reader.header.start_date
-
-    fmt_eeg = "%d.%m.%y %H.%M.%S"
-    start_time = datetime.strptime(f"{date_str} {start_str}", fmt_eeg)
-    animal = parse_animal_id(edf_path)
-
-    ch_names = ("LFC", "RSC", "LSC", "EMG")
-
-    rec = Recording(
-        data=data,
-        fs=fs,
-        start_time=start_time,
-        ch_names=ch_names,
-        edf_path=edf_path,
-        csv_path=csv_path,
-    )
-
-    w = EegMainWindow(rec, initial_dir=initial_dir)
-    w.setWindowTitle(f"{Path(edf_path).stem} EEG Viewer")
-    w.show()
-
+    win.show()
     sys.exit(app.exec())
 
 

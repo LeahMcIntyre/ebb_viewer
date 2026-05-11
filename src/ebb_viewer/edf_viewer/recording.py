@@ -1,3 +1,5 @@
+"""Recording dataclass: in-memory EEG buffer + paired metadata paths."""
+
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -8,6 +10,20 @@ import numpy as np
 
 @dataclass
 class Recording:
+    """Loaded EDF + side files for one recording.
+
+    Attributes:
+        data: EEG samples, shape ``(n_channels, n_samples)``.
+        fs: Sampling rate in Hz.
+        start_time: Recording start (parsed from EDF header).
+        ch_names: Channel labels, ordered to match ``data``'s channel axis.
+        edf_path: Path to the source EDF.
+        csv_path: Optional sleep-state CSV (SPINDLE-scored).
+        swd_path: Optional .mat with SWD intervals.
+        drink_path: Optional drink-mask .npy.
+        video_offset: Optional seconds offset between EEG start and video start.
+    """
+
     data: np.ndarray
     fs: int
     start_time: datetime

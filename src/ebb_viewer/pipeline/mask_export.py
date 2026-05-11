@@ -8,6 +8,7 @@ status table.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import traceback
 from collections.abc import Callable
@@ -110,9 +111,16 @@ def resolve_paths(
     drink_candidate = Path(project_root) / drink_mask_rel(animal_id)
     drink = drink_candidate if drink_candidate.is_file() else None
 
-    # Offset CSV: optional. Aligns video-derived drink mask to EEG start.
-    # Convention (matches the Drink Mask page): first *.csv in drink_masks/.
+    # Offset CSV: optional, aligns video-derived drink mask to EEG start.
+    # Convention: at most one *.csv per project in drink_masks/. Multiple
+    # CSVs are an error rather than silently picking the first sorted one.
     offset_csvs = sorted(drink_dir.glob("*.csv")) if drink_dir.is_dir() else []
+    if len(offset_csvs) > 1:
+        names = ", ".join(p.name for p in offset_csvs)
+        raise ValueError(
+            f"Expected at most one offset CSV in {drink_dir}, found {len(offset_csvs)}: "
+            f"{names}. Remove the extra files or pick the canonical one."
+        )
     offset_csv = offset_csvs[0] if offset_csvs else None
 
     swd_dir = Path(project_root) / "swd"
@@ -168,6 +176,14 @@ def clean_mask_for_state(
 
 
 def _coerce_param(params: dict[str, Any], key: str, default: Any) -> Any:
+    """Return ``params[key]`` if present and not None, else ``default``.
+
+    Note: an explicit ``None`` value in ``params`` is treated the same as a
+    missing key. This is intended for scalar params with sensible defaults
+    (``fs``, ``winsize``, etc.). Callers that use ``None`` as a meaningful
+    sentinel (e.g. boolean flags where ``None`` ≠ default) should read
+    ``params`` directly with ``params.get(key, default)`` instead.
+    """
     val = params.get(key)
     return default if val is None else val
 
@@ -183,19 +199,20 @@ def _read_recording_start(reader: edf.Reader) -> _dt.datetime:
     return _dt.datetime.strptime(f"{date_str} {start_str}", "%d.%m.%y %H.%M.%S")
 
 
-def _build_masks(
-    paths: ResolvedPaths,
-    params: dict[str, Any],
-) -> tuple[
-    dict[str, np.ndarray],  # state_masks_raw (rawstate, no sprob)
-    dict[str, np.ndarray],  # state_masks_filtered (sprob applied if set)
-    dict[str, np.ndarray],  # artifact_masks (True=OK)
-    np.ndarray | None,  # wake_sub_mask (only if mixed-wake group present)
-    np.ndarray,  # sd_threshold_mask (separate; always built)
-    list[tuple[_dt.datetime, _dt.datetime]],  # used hour windows
-    _dt.datetime,  # recording start
-    int,  # n_samples
-]:
+@dataclass
+class _BuiltMasks:
+    """Output of `_build_masks` — every mask + bookkeeping needed to write an export."""
+
+    state_masks_filtered: dict[str, np.ndarray]
+    artifact_masks: dict[str, np.ndarray]
+    wake_sub_mask: np.ndarray | None
+    sd_threshold_mask: np.ndarray
+    used_windows: list[tuple[_dt.datetime, _dt.datetime]]
+    rec_start: _dt.datetime
+    n_samples: int
+
+
+def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
     """Open the EDF and build every mask we need to write the three CSVs.
 
     ``estimate_psd``'s mask construction is the source of truth for which
@@ -208,7 +225,7 @@ def _build_masks(
     sd_radius_s = float(_coerce_param(params, "radius", 0.5))
     nstd = float(_coerce_param(params, "nstd", 5))
     noise_thresh = float(_coerce_param(params, "noise_thresh", 0.5))
-    s_prob = params.get("s_prob")  # may legitimately be None
+    s_prob = params.get("s_prob")  # None means "no sprob filtering"
     drink_pad = int(_coerce_param(params, "drink_pad", 2))
     chunksize = int(_coerce_param(params, "chunksize", int(30e5)))
     state_keys = params.get("states") or list(DEFAULT_STATES)
@@ -223,25 +240,24 @@ def _build_masks(
         rec_start = _read_recording_start(reader)
 
         # --- state masks ---
-        state_masks_raw: dict[str, np.ndarray] = {}
+        # Lumped groups can't be filtered with the single-class sprob; OR the
+        # per-code filtered masks together instead.
         state_masks_filtered: dict[str, np.ndarray] = {}
         for label, codes in labels.items():
-            state_masks_raw[label] = masking.state(paths.state, codes, fs, winsize=epoch_winsize)
-            if s_prob is not None and len(codes) == 1:
+            if s_prob is None:
+                state_masks_filtered[label] = masking.state(
+                    paths.state, codes, fs, winsize=epoch_winsize
+                )
+            elif len(codes) == 1:
                 state_masks_filtered[label] = masking.state_prob(
                     paths.state, codes[0], fs, winsize=epoch_winsize, sprob=s_prob
                 )
             else:
-                # Lumped groups can't be filtered with the single-class sprob;
-                # just OR the per-code filtered masks together.
-                if s_prob is not None:
-                    parts = [
-                        masking.state_prob(paths.state, c, fs, winsize=epoch_winsize, sprob=s_prob)
-                        for c in codes
-                    ]
-                    state_masks_filtered[label] = np.any(parts, axis=0)
-                else:
-                    state_masks_filtered[label] = state_masks_raw[label]
+                parts = [
+                    masking.state_prob(paths.state, c, fs, winsize=epoch_winsize, sprob=s_prob)
+                    for c in codes
+                ]
+                state_masks_filtered[label] = np.any(parts, axis=0)
 
         # --- wake sub-mask for mixed-wake groups ---
         needs_wake_sub = any("w" in codes and len(codes) > 1 for codes in labels.values())
@@ -280,8 +296,8 @@ def _build_masks(
             mask_pro=comm_pro,
         )[0]
 
-        use_drink = bool(_coerce_param(params, "use_drink_mask", True))
-        use_swd = bool(_coerce_param(params, "use_swd_mask", True))
+        use_drink = bool(params.get("use_drink_mask", True))
+        use_swd = bool(params.get("use_swd_mask", True))
 
         if paths.drink is not None and use_drink:
             offset = None
@@ -339,15 +355,14 @@ def _build_masks(
     if hour_windows:
         artifact_masks["outside_hour_window"] = tod_mask
 
-    return (
-        state_masks_raw,
-        state_masks_filtered,
-        artifact_masks,
-        wake_sub_mask,
-        sd_threshold_mask,
-        used_windows,
-        rec_start,
-        n_samples,
+    return _BuiltMasks(
+        state_masks_filtered=state_masks_filtered,
+        artifact_masks=artifact_masks,
+        wake_sub_mask=wake_sub_mask,
+        sd_threshold_mask=sd_threshold_mask,
+        used_windows=used_windows,
+        rec_start=rec_start,
+        n_samples=n_samples,
     )
 
 
@@ -366,16 +381,7 @@ def export_animal(
     """
     try:
         paths = resolve_paths(project_root, manifest, animal_id, combo)
-        (
-            state_masks_raw,
-            state_masks_filtered,
-            artifact_masks,
-            wake_sub_mask,
-            sd_threshold_mask,
-            used_windows,
-            rec_start,
-            n_samples,
-        ) = _build_masks(paths, params)
+        built = _build_masks(paths, params)
 
         fs = float(_coerce_param(params, "fs", 250))
         epoch_winsize = float(_coerce_param(params, "epoch_winsize", 4.0))
@@ -384,8 +390,8 @@ def export_animal(
         # Per-state clean intervals — SD-on-wake logic differs per state.
         # Base clean = AND of every artifact mask except sd_threshold (since
         # SD only applies to wake samples).
-        base_clean = np.ones(n_samples, dtype=bool)
-        for source, mask in artifact_masks.items():
+        base_clean = np.ones(built.n_samples, dtype=bool)
+        for source, mask in built.artifact_masks.items():
             if source == "sd_threshold":
                 continue
             base_clean = base_clean & mask
@@ -395,12 +401,12 @@ def export_animal(
             clean_for_state = clean_mask_for_state(
                 codes,
                 base_clean,
-                sd_threshold_mask,
-                wake_sub_mask,
+                built.sd_threshold_mask,
+                built.wake_sub_mask,
             )
             clean_intervals.extend(
                 clean_per_state_intervals(
-                    {label: state_masks_filtered[label]},
+                    {label: built.state_masks_filtered[label]},
                     clean_for_state,
                     fs,
                 )
@@ -412,23 +418,23 @@ def export_animal(
             fs=fs,
             winsize=epoch_winsize,
         )
-        artifact_intervals = artifact_masks_to_intervals(artifact_masks, fs)
+        artifact_intervals = artifact_masks_to_intervals(built.artifact_masks, fs)
 
         meta = {
             "animal_id": animal_id,
             "combo": combo,
             "fs": fs,
             "epoch_winsize_s": epoch_winsize,
-            "n_samples": int(n_samples),
-            "duration_s": n_samples / fs,
-            "recording_start": rec_start.isoformat(),
+            "n_samples": int(built.n_samples),
+            "duration_s": built.n_samples / fs,
+            "recording_start": built.rec_start.isoformat(),
             "edf_path": str(paths.edf),
             "state_csv_path": str(paths.state),
             "drink_mask_path": str(paths.drink) if paths.drink else None,
             "offset_csv_path": str(paths.offset_csv) if paths.offset_csv else None,
             "swd_path": str(paths.swd) if paths.swd else None,
             "params": dict(params),
-            "used_hour_windows": [(s.isoformat(), e.isoformat()) for s, e in used_windows],
+            "used_hour_windows": [(s.isoformat(), e.isoformat()) for s, e in built.used_windows],
             "exported_at": _dt.datetime.now().isoformat(timespec="seconds"),
         }
 
@@ -498,10 +504,9 @@ def export_run(
         per = export_animal(project_root, out_dir, manifest, animal_id, combo, params)
         result.results.append(per)
         if progress_cb is not None:
-            try:
+            # Never let a UI callback abort the batch.
+            with contextlib.suppress(Exception):
                 progress_cb(animal_id, combo, i, total)
-            except Exception:
-                pass  # never let a UI callback abort the batch
     return result
 
 

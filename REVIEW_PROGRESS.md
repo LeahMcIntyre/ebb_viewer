@@ -74,41 +74,43 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 ## Phase 2 — `ebb_viewer/` infrastructure
 
 ### 2a. `pipeline/` (~1,400 lines, partial test coverage)
-- [ ] `manifest.py` (726) **— critical, careful**
-- [ ] `mask_export.py` (498)
-- [ ] `naming.py`
-- [ ] `psd_params.py` (96)
-- [ ] `sleepyrat_config.py` (40)
-- [ ] `theme.py`
+- [x] `manifest.py` — fixed 2 correctness bugs (rerun-target sibling restore in `flag_sleep_qc`; psd cleanup in `reset_sleep_qc`); deleted old flat-format migration; simplified `_run_from_dict` to defensive guard; extracted `_aggregate_across_runs` (3-method dedupe); hoisted `psd_params` import; tracked `dirty` in `build_from_standard`; +2 tests, -3 migration tests; SIM102/B007/F841 cleared
+- [x] `mask_export.py` — fixed `_coerce_param`/bool flag silent-None bug; enforced one offset CSV per project (raise on >1); 8-tuple → `_BuiltMasks` dataclass; flattened nested `if s_prob`; SIM105 → `contextlib.suppress`; +1 test
+- [~] `naming.py` — already cleaned in Phase 1 (re-export shim)
+- [x] `psd_params.py` — deleted `_migrate_legacy` (no legacy compat); narrowed `load()` exception; cleaned docstring
+- [~] `sleepyrat_config.py` — reviewed clean
+- [~] `theme.py` — reviewed clean
 
-### 2b. `widgets/` (~1,000 lines)
-- [ ] `worker_helpers.py` (34)
-- [ ] `drink_mask_dialog.py` (45)
-- [ ] `trim_to_widget.py` (51)
-- [ ] `tree_view.py` (56)
-- [ ] `range_dialog.py` (57)
-- [ ] `sleep_viewer.py` (73)
-- [ ] `output_dialog.py`
-- [ ] `table_helpers.py`
-- [ ] `stft_viewer.py` (155)
-- [ ] `psd_graph_widget.py` (566)
+### 2b. `widgets/` — DONE
+- [~] `worker_helpers.py` — reviewed clean
+- [x] `drink_mask_dialog.py` — added module docstring
+- [x] `trim_to_widget.py` — dropped stale filename comment, added module + class docstrings
+- [x] `tree_view.py` — added module + class docstrings
+- [x] `range_dialog.py` — added module docstring
+- [x] `sleep_viewer.py` — replaced inline CSV reader with shared `read_rawstate_column`; added module + class + method docstrings
+- [x] `output_dialog.py` — added module docstring
+- [~] `table_helpers.py` — reviewed clean
+- [x] `stft_viewer.py` — added module + class docstrings; commented 56-64 Hz line-noise exclusion
+- [x] `psd_graph_widget.py` — fixed log-Y clip-to-wrong-variable bug (silent gaps at zero/neg power); removed debug print; deleted half-implemented `_export_png` + dead toolbar block + stale filename comment; renamed shadowed `act_invfil`; hoisted `(0.5, 110)` to `DEFAULT_XRANGE`; renamed `_drink_review` → `drink_review` for sibling consistency; localized `first_plot`; added module + class docstrings + INVERSE_FILTER doc placeholder
 
-### 2c. `edf_viewer/` (~1,800 lines, **untested**)
-- [ ] `recording.py` (38)
-- [ ] `state_legend.py` (73)
-- [ ] `state_bar.py` (90)
-- [ ] `masks.py` (114)
-- [ ] `file_openers.py` (126)
-- [ ] `masks_dock.py` (218)
-- [ ] `mask_builder.py` (247)
-- [ ] `trace_view.py` (532)
-- [ ] `eeg_viewer.py` (678)
+**2b dedupe:** promoted `_read_rawstate_column` → `read_rawstate_column` in `ebb/process/sleep_compute.py`; deleted the duplicate copy in `ebb/process/mask_export.py` (which had a slightly more robust version — kept its `newline=""`, None-check, empty-row skip).
 
-### 2d. `data_stores/`
-- [ ] `psd_store.py` (96)
+### 2c. `edf_viewer/` — DONE (~1,800 lines, **untested**)
+- [x] `recording.py` — added module + class docstrings
+- [x] `state_legend.py` — added module docstring; renamed unused `a` → `_a` (B007)
+- [x] `state_bar.py` — added module docstring
+- [x] `masks.py` — dropped stale `# model.py` filename comment; added module docstring; `zip(strict=True)` (B905)
+- [x] `file_openers.py` — added module docstring; renamed `dir` → `start_dir` (Python builtin shadowing); hoisted `import csv` to module level
+- [x] `masks_dock.py` — fixed ZeroDivisionError in `_state_overlap` for zero-coverage states (e.g. animal with no REM); added module docstring; `state_set: MaskSet | None`
+- [x] `mask_builder.py` — extracted `_compute_artifact_masks` + `_wrap_artifact_masks` helpers (deduped ~25 lines between `build_default_masks` and `rebuild_artifact_masks`, killed 2 commented-out `# pro = make_producer` lines); hoisted `_DEFAULT_COMM_META`/`_DEFAULT_SD_META` constants; added module docstring; replaced vestigial TODO with real docstring on `_param_desc`
+- [x] `trace_view.py` — fixed annotation teardown crash (now tracks `(pw, item)` pairs); replaced 0.01s magic epsilon with one-sample `1.0/fs`; eliminated `__init__` double `base_y` init + dropped `_apply_y`'s now-unneeded lazy guard; deleted commented-out reset-centers archaeology + dead `# lbl.setAlignment` line; added module/class/method docstrings (sticky-center zoom design now lives in module docstring)
+- [x] `eeg_viewer.py` — fixed orphan-window leak in `on_open` (now sets `WA_DeleteOnClose`); fixed SleepPopup accumulation (now created once in `__init__` like STFTPopup); `launch_edf_window` now raises `ValueError` on fs != 250 instead of `print+return None`; extracted `_load_recording` (deduped EDF reading across 3 sites) + `_load_state_df` (narrows bare except, removes inline I/O from `__init__`); hoisted `_QC_STYLES` to class constant; replaced magic `4` with `DEFAULT_SPINDLE_EPOCH_SEC`; rewrote `main()` as a thin wrapper around `launch_edf_window` (no more hardcoded `/media/...` paths); added module + class docstrings; deleted dead toolbar comments. **Also added `ebb-eeg-viewer` console-script entry point in `pyproject.toml`** for standalone viewer launch.
+
+### 2d. `data_stores/` — DONE
+- [x] `psd_store.py` — deleted unused `parse_animal_from_path` wrapper; moved `_source_combos` init to `__init__`; moved freq-mismatch validation before `by_animal` mutation; typed `first_freqs` as `np.empty(0)` (was empty list); resolved 2 vague TODOs; added module + class docstrings
 
 ### Phase 2 closeout
-- [ ] Add focused tests for non-trivial pure-Python helpers extracted from `edf_viewer/` and `widgets/`
+- [~] Tests for pure-Python helpers — deferred to Phase 5 (no non-trivial pure helpers were extracted in 2c that warrant tests today; `_load_recording`, `_load_state_df`, `_compute_artifact_masks` all wrap external I/O or numerics covered by integration use)
 - [ ] Merge `cleanup/phase2-viewer-infra` → `dev`
 
 ---

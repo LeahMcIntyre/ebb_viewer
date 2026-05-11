@@ -1,4 +1,12 @@
-# psd_matrix_page.py
+"""Channel × state grid of PSD plots for one animal, with manifest-flagging UI.
+
+Used in two modes:
+- **Pass 1 PSD review** (`drink_review=False`): pending = animals whose
+  ``psd_status[run_name]`` is unset; user flags ``ok`` or ``needs_drink_mask``.
+- **Pass 2 drink review** (`drink_review=True`): pending = animals whose
+  ``psd_status[run_name] == "drink_mask_applied"``; user verifies the mask
+  worked and flags ``ok``.
+"""
 
 import numpy as np
 import pyqtgraph as pg
@@ -23,13 +31,24 @@ from PyQt6.QtWidgets import (
 from ebb.process.state_presets import gather_states_from_store
 from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
 
+# Inverse-filter coefficients applied in FILTER_RANGE Hz (inclusive) when the
+# Inverse Filter toggle is on, to compensate for hardware-induced amplitude
+# roll-off at low frequencies.
+# TODO: document coefficient source (preamp model + derivation).
 INVERSE_FILTER = np.array(
     [2.485297985, 1.360646853, 1.145286775, 1.071699399, 1.038017048, 1.018656356, 1.007806318]
 )
-FILTER_RANGE = [0.5, 3.5]  # Filter applied in filter range (inclusive)
+FILTER_RANGE = [0.5, 3.5]
 
 
 class PSDGridPage(QWidget):
+    """Channel × state PSD plot grid with toolbar, navigation, and flagging.
+
+    See module docstring for the Pass 1 / Pass 2 mode distinction.
+    """
+
+    DEFAULT_XRANGE: tuple[float, float] = (0.5, 110)
+
     navigate_to = pyqtSignal(str)
     manifest_changed = pyqtSignal()
 
@@ -55,12 +74,12 @@ class PSDGridPage(QWidget):
             self.states = list(states)
         self.manifest = manifest
         self.run_channels = run_channels
-        self._drink_review = drink_review
+        self.drink_review = drink_review
         self._run_name = run_name
         self._project_root = project_root
 
         # View preferences
-        self.xrange: tuple[float, float] = (0.5, 110)  # default window to show
+        self.xrange: tuple[float, float] = self.DEFAULT_XRANGE
         self.interp_range = [58, 62]
         self.xlog = False
         self.ylog = True
@@ -96,12 +115,6 @@ class PSDGridPage(QWidget):
             QToolButton { padding: 3px 8px; }
         """)
 
-        """ # Left: export
-        act_export = QAction("Export PNG", self)
-        act_export.setShortcut(QKeySequence("Ctrl+E"))
-        act_export.triggered.connect(self._export_png)
-        tb.addAction(act_export)"""
-
         # Log-X toggle
         act_logx = _make_toggle(self, "Log-X", checked=self.xlog, slot=self._on_logx_toggled)
         tb.addAction(act_logx)
@@ -116,10 +129,10 @@ class PSDGridPage(QWidget):
         )
         tb.addAction(act_invfil)
 
-        act_invfil = _make_toggle(
+        act_interp = _make_toggle(
             self, "Interpolate", checked=self.interpolate, slot=self._on_interpolate
         )
-        tb.addAction(act_invfil)
+        tb.addAction(act_interp)
 
         tb.addSeparator()
 
@@ -245,7 +258,7 @@ class PSDGridPage(QWidget):
             self.glw.addLabel(f"<b>{state.upper()}</b>", row=0, col=c, justify="center")
 
         # Build matrix: row = channel, col = state
-        self.first_plot = None
+        first_plot = None
         for r, ch in enumerate(self.channel_names, start=1):
             # Row header (channel name)
             self.glw.addLabel(f"<b>{ch}</b>", row=r, col=0, angle=0, justify="right")
@@ -267,10 +280,10 @@ class PSDGridPage(QWidget):
                 self.curves[(ch, state)] = curve
 
                 # Link X across all cells
-                if self.first_plot is None:
-                    self.first_plot = p
+                if first_plot is None:
+                    first_plot = p
                 else:
-                    p.setXLink(self.first_plot)
+                    p.setXLink(first_plot)
 
     # ---------------- SHORTCUTS ----------------
 
@@ -314,9 +327,7 @@ class PSDGridPage(QWidget):
             parent=self,
         )
         if dlg.exec():  # QDialog.Accepted
-            xrange = dlg.values()
-            self.xrange = xrange
-            print(self.xrange)
+            self.xrange = dlg.values()
             self._render()
 
     def _on_set_interp_range(self):
@@ -335,7 +346,7 @@ class PSDGridPage(QWidget):
             self._render()
 
     def _on_reset_zoom(self):
-        self.xrange = (0.5, 110)
+        self.xrange = self.DEFAULT_XRANGE
         self._render()
 
     def _prev_animal(self):
@@ -392,7 +403,9 @@ class PSDGridPage(QWidget):
                 # Data-space mask; ensure >0 for log axes
                 m = (f > 0.0) & (f >= xmin) & (f <= xmax)
                 if self.ylog:
-                    y = np.clip(y_copy, 1e-12, None)
+                    # Clip to a tiny positive floor so pyqtgraph's log mode
+                    # doesn't produce NaN gaps at zero/negative power bins.
+                    y_copy = np.clip(y_copy, 1e-12, None)
 
                 curve.setData(f[m], y_copy[m])
 
@@ -410,7 +423,7 @@ class PSDGridPage(QWidget):
     def _pending_animal_ids(self) -> set[str]:
         if self.manifest is None:
             return set()
-        if self._drink_review:
+        if self.drink_review:
             return {
                 entry.animal_id
                 for entry, _ in self.manifest.pending_drink_verification(self._run_name)
@@ -485,7 +498,7 @@ class PSDGridPage(QWidget):
 
         # Drink-mask-on-disk hint: show during Pass 1 when status is not yet set
         show_mask_hint = (
-            not self._drink_review
+            not self.drink_review
             and status is None
             and animal_id is not None
             and self._project_root is not None
@@ -527,12 +540,6 @@ class PSDGridPage(QWidget):
     def _clear_all(self):
         for curve in self.curves.values():
             curve.setData([], [])
-
-    # ---------------- EXPORT ----------------
-
-    def _export_png(self):
-        # TODO: Implement export of the entire grid or active view.
-        print("Export!")
 
 
 # ---------------- Toolbar helpers ----------------

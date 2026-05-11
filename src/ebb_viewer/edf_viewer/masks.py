@@ -1,4 +1,9 @@
-# model.py (or top of file for now)
+"""Mask / MaskSet / ParamSpec dataclasses used by the EDF viewer.
+
+Masks are 1-D sample-aligned spans (no per-channel data); spans are
+half-open `[start_sample, end_sample)` integer pairs.
+"""
+
 import bisect
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -52,7 +57,7 @@ class Mask:
         if arr[-1]:
             stops = np.r_[stops, n]
 
-        spans: list[Span] = [(int(s), int(e)) for s, e in zip(starts, stops)]
+        spans: list[Span] = [(int(s), int(e)) for s, e in zip(starts, stops, strict=True)]
         return cls(name=name, color=color, spans=spans)
 
     @property

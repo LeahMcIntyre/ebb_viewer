@@ -1,3 +1,5 @@
+"""Modal dialog for setting frequency-axis plotting bounds (fmin, fmax)."""
+
 from PyQt6 import QtWidgets
 
 

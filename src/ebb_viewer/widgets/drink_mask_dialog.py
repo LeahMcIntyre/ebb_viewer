@@ -1,3 +1,5 @@
+"""Modal dialog for confirming drink-mask offset and pad before applying."""
+
 from PyQt6 import QtWidgets
 
 

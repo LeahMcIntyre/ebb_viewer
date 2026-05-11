@@ -1,3 +1,5 @@
+"""Compact swatch+letter legend rendered next to the trace state bar."""
+
 from PyQt6 import QtGui, QtWidgets
 from PyQt6.QtCore import QSize, Qt
 
@@ -54,7 +56,7 @@ class StateLegend(QtWidgets.QWidget):
         x = max(0, (self.width() - total_w) // 2)
         y_top = max(0, (self.height() - self.SWATCH) // 2)
 
-        for (r, g, b, a), letter in self._entries:
+        for (r, g, b, _a), letter in self._entries:
             # Swatch — use fully opaque version of the state color
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QtGui.QColor(r, g, b, 255))

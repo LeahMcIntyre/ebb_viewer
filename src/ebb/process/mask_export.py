@@ -22,6 +22,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ebb.core.arraytools import discretize_bool
+from ebb.process.sleep_compute import read_rawstate_column
 
 RAWSTATE_TO_NAME: dict[str, str] = {"w": "wake", "n": "nrem", "r": "rem"}
 
@@ -71,17 +72,6 @@ def mask_to_intervals(
     ]
 
 
-def _read_rawstate_column(state_path: Path) -> list[str]:
-    """Read the ``rawstate`` column from a Spindle scoring CSV (one entry per epoch)."""
-    with open(state_path, newline="") as f:
-        reader = csv.reader(f)
-        header = next(reader, None)
-        if header is None or "rawstate" not in header:
-            raise ValueError(f"Expected a 'rawstate' column in {state_path}; got header={header!r}")
-        idx = header.index("rawstate")
-        return [row[idx] for row in reader if row]
-
-
 def build_state_intervals(
     state_path: str | Path,
     fs: float = 250,
@@ -108,7 +98,7 @@ def build_state_intervals(
         exclusive.
     """
     mapping = dict(RAWSTATE_TO_NAME) if code_to_name is None else code_to_name
-    raws = _read_rawstate_column(Path(state_path))
+    raws = read_rawstate_column(Path(state_path))
     if not raws:
         return []
 

@@ -1,9 +1,12 @@
-# trim_pair_widget.py
+"""Two-spinbox widget for entering an inclusive (start, end) hour range."""
+
 from PyQt6.QtCore import QSignalBlocker, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QSpinBox, QWidget
 
 
 class TrimToWidget(QWidget):
+    """Pair of spinboxes for picking an hour range; emits ``changed(start, end)``."""
+
     changed = pyqtSignal(int, int)  # emits (a, b) exactly as shown
 
     def __init__(self, parent=None, *, minimum=1, maximum=168, step=1, values=(48, 72)):
