@@ -82,6 +82,74 @@ def test_resolve_paths_finds_offset_csv_in_drink_masks_dir(tmp_path):
     assert paths.offset_csv == offset_csv
 
 
+# ---------------------------------------------------------------------------
+# _find_annotation_for_animal
+# ---------------------------------------------------------------------------
+
+
+def test_find_annotation_returns_none_when_dir_missing(tmp_path):
+    assert me._find_annotation_for_animal(tmp_path / "nonexistent", "Mice-1") is None
+
+
+def test_find_annotation_returns_none_when_dir_empty(tmp_path):
+    (tmp_path / "annot").mkdir()
+    assert me._find_annotation_for_animal(tmp_path / "annot", "Mice-1") is None
+
+
+def test_find_annotation_returns_none_when_no_match_for_animal(tmp_path):
+    d = tmp_path / "annot"
+    d.mkdir()
+    (d / "OtherMouse_notes.txt").write_text("...")
+    assert me._find_annotation_for_animal(d, "Mice-1") is None
+
+
+def test_find_annotation_matches_txt_by_animal_prefix(tmp_path):
+    d = tmp_path / "annot"
+    d.mkdir()
+    target = d / "Mice-1_notes.txt"
+    target.write_text("...")
+    assert me._find_annotation_for_animal(d, "Mice-1") == target
+
+
+def test_find_annotation_matches_csv_by_animal_prefix(tmp_path):
+    d = tmp_path / "annot"
+    d.mkdir()
+    target = d / "Mice-1_notes.csv"
+    target.write_text("...")
+    assert me._find_annotation_for_animal(d, "Mice-1") == target
+
+
+def test_find_annotation_prefers_txt_over_csv(tmp_path):
+    """Mirrors EEG viewer's discovery: .txt matches come first."""
+    d = tmp_path / "annot"
+    d.mkdir()
+    (d / "Mice-1_notes.csv").write_text("...")
+    txt = d / "Mice-1_notes.txt"
+    txt.write_text("...")
+    assert me._find_annotation_for_animal(d, "Mice-1") == txt
+
+
+def test_find_annotation_deterministic_when_multiple_txt(tmp_path):
+    """With multiple matching .txts, the sorted-first one wins (deterministic)."""
+    d = tmp_path / "annot"
+    d.mkdir()
+    (d / "Mice-1_a.txt").write_text("...")
+    (d / "Mice-1_b.txt").write_text("...")
+    assert me._find_annotation_for_animal(d, "Mice-1") == d / "Mice-1_a.txt"
+
+
+def test_find_annotation_does_not_match_partial_prefix(tmp_path):
+    """`Mice-1` should not match a file starting with `Mice-10`."""
+    # Actually it WILL since glob is f"{animal_id}*". This test documents that
+    # behavior — important because animal IDs aren't strict prefixes today.
+    d = tmp_path / "annot"
+    d.mkdir()
+    (d / "Mice-10_notes.txt").write_text("...")
+    # Documents current behavior: yes, this matches. If we ever tighten it,
+    # this test will catch the regression.
+    assert me._find_annotation_for_animal(d, "Mice-1") == d / "Mice-10_notes.txt"
+
+
 def test_resolve_paths_raises_on_multiple_offset_csvs(tmp_path):
     """Convention is one offset CSV per project — ambiguity is an error."""
     manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")

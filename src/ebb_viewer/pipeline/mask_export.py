@@ -21,6 +21,7 @@ from openseize import producer
 from openseize.file_io import edf
 
 from ebb import masking
+from ebb.masking.annotations import keyword_mask
 from ebb.process.mask_export import (
     artifact_masks_to_intervals,
     build_state_intervals,
@@ -32,7 +33,7 @@ from ebb_viewer.pipeline.manifest import (
     Manifest,
     spindle_output_dir,
 )
-from ebb_viewer.pipeline.naming import drink_mask_rel
+from ebb_viewer.pipeline.naming import drink_mask_rel, parse_animal_id
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -175,6 +176,20 @@ def clean_mask_for_state(
     return base_clean & (~wake_sub_mask | sd_threshold_mask)
 
 
+def _find_annotation_for_animal(ann_dir: Path | str, animal_id: str) -> Path | None:
+    """Locate the annotation file for an animal inside ``ann_dir``.
+
+    Mirrors the EEG viewer's auto-discovery rule used by
+    ``on_load_annotation_dir``: .txt matches preferred over .csv, sorted
+    deterministically, first hit wins. Returns ``None`` if no match.
+    """
+    d = Path(ann_dir)
+    if not d.is_dir():
+        return None
+    matches = sorted(d.glob(f"{animal_id}*.txt")) + sorted(d.glob(f"{animal_id}*.csv"))
+    return matches[0] if matches else None
+
+
 def _coerce_param(params: dict[str, Any], key: str, default: Any) -> Any:
     """Return ``params[key]`` if present and not None, else ``default``.
 
@@ -210,6 +225,7 @@ class _BuiltMasks:
     used_windows: list[tuple[_dt.datetime, _dt.datetime]]
     rec_start: _dt.datetime
     n_samples: int
+    annotation_path: Path | None = None
 
 
 def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
@@ -343,6 +359,31 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
             tod_mask = np.ones(n_samples, dtype=bool)
             used_windows = []
 
+        # --- annotation mask (optional) ---
+        # Discovered per-animal from `ann_dir`; widget emits the keyword list as
+        # a comma-separated string, so split here. keyword_mask returns
+        # True=match (artifact); invert to the True=keep convention.
+        ann_mask = None
+        ann_path: Path | None = None
+        if bool(params.get("ann_enabled", False)):
+            ann_dir = params.get("ann_dir")
+            kw_str = params.get("ann_keywords") or ""
+            keywords = [k.strip() for k in kw_str.split(",") if k.strip()]
+            if ann_dir and keywords:
+                animal_id = parse_animal_id(paths.edf)
+                ann_path = _find_annotation_for_animal(ann_dir, animal_id)
+                if ann_path is not None:
+                    match_arr = keyword_mask(
+                        ann_path,
+                        keywords=keywords,
+                        pad_before_sec=float(params.get("ann_pad_before", 0.0)),
+                        pad_after_sec=float(params.get("ann_pad_after", 0.0)),
+                        match_mode=params.get("ann_match_mode", "contains"),
+                        size=n_samples,
+                        fs=fs,
+                    )
+                    ann_mask = ~match_arr
+
     artifact_masks: dict[str, np.ndarray] = {
         "commutator": comm_mask,
         "spindle_noise": spindle_mask,
@@ -354,6 +395,8 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
         artifact_masks["swd"] = swd_mask
     if hour_windows:
         artifact_masks["outside_hour_window"] = tod_mask
+    if ann_mask is not None:
+        artifact_masks["annotation"] = ann_mask
 
     return _BuiltMasks(
         state_masks_filtered=state_masks_filtered,
@@ -363,6 +406,7 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
         used_windows=used_windows,
         rec_start=rec_start,
         n_samples=n_samples,
+        annotation_path=ann_path,
     )
 
 
@@ -433,6 +477,7 @@ def export_animal(
             "drink_mask_path": str(paths.drink) if paths.drink else None,
             "offset_csv_path": str(paths.offset_csv) if paths.offset_csv else None,
             "swd_path": str(paths.swd) if paths.swd else None,
+            "annotation_path": str(built.annotation_path) if built.annotation_path else None,
             "params": dict(params),
             "used_hour_windows": [(s.isoformat(), e.isoformat()) for s, e in built.used_windows],
             "exported_at": _dt.datetime.now().isoformat(timespec="seconds"),
