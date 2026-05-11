@@ -14,9 +14,6 @@ from typing import Any
 from PyQt6.QtCore import Qt, QThread, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
-    QCheckBox,
-    QDoubleSpinBox,
-    QFormLayout,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -28,24 +25,20 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from ebb.process.state_presets import DEFAULT_STATES, PRESET_DISPLAY
-from ebb_viewer.pipeline import psd_params
+from ebb_viewer.pipeline import export_params, psd_params
 from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.pipeline.mask_export import (
     ExportResult,
     default_pairs,
     export_run,
 )
-
-_STATE_PRESET_ORDER = ("wake", "nrem", "rem", "all", "sleep")
-
+from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget
 
 # ---------------------------------------------------------------------------
 # Worker thread
@@ -163,11 +156,17 @@ class ExportMasksPage(QWidget):
         gb = QGroupBox("Params")
         v = QVBoxLayout(gb)
 
-        # Load-from-run row
+        # Load-from-run row (optional; build manually otherwise).
         row = QHBoxLayout()
         self.btn_load_run = QPushButton("Load from PSD run…")
         self.btn_load_run.clicked.connect(self._on_load_from_run)
         row.addWidget(self.btn_load_run)
+        self.btn_load_export = QPushButton("Load from saved export…")
+        self.btn_load_export.clicked.connect(self._on_load_from_export_config)
+        self.btn_load_export.setToolTip(
+            "Load a previously-run export's params. Saved on every successful export."
+        )
+        row.addWidget(self.btn_load_export)
         self.lbl_loaded = QLabel("(no run loaded — defaults shown)")
         self.lbl_loaded.setStyleSheet("color: #666; font-size: 11px;")
         row.addWidget(self.lbl_loaded, 1)
@@ -177,73 +176,16 @@ class ExportMasksPage(QWidget):
         self.lbl_modified.setStyleSheet("color: #b07000; font-size: 11px; font-style: italic;")
         v.addWidget(self.lbl_modified)
 
-        # State preset checkboxes
-        states_row = QHBoxLayout()
-        states_row.addWidget(QLabel("States:"))
-        self.cb_states: dict[str, QCheckBox] = {}
-        for key in _STATE_PRESET_ORDER:
-            cb = QCheckBox(PRESET_DISPLAY.get(key, key))
-            cb.setChecked(key in DEFAULT_STATES)
-            cb.stateChanged.connect(self._check_modified)
-            self.cb_states[key] = cb
-            states_row.addWidget(cb)
-        states_row.addStretch(1)
-        v.addLayout(states_row)
-
-        # Numeric params
-        form = QFormLayout()
-        self.spin_nstd = QDoubleSpinBox()
-        self.spin_nstd.setRange(0.1, 20.0)
-        self.spin_nstd.setSingleStep(0.5)
-        self.spin_nstd.setValue(5.0)
-        form.addRow("SD threshold (n stds):", self.spin_nstd)
-
-        self.spin_sd_winsize = QSpinBox()
-        self.spin_sd_winsize.setRange(1, 3600)
-        self.spin_sd_winsize.setSuffix(" s")
-        self.spin_sd_winsize.setValue(180)
-        form.addRow("SD winsize:", self.spin_sd_winsize)
-
-        self.spin_sd_radius = QDoubleSpinBox()
-        self.spin_sd_radius.setRange(0.0, 60.0)
-        self.spin_sd_radius.setSingleStep(0.1)
-        self.spin_sd_radius.setSuffix(" s")
-        self.spin_sd_radius.setValue(0.5)
-        form.addRow("SD radius:", self.spin_sd_radius)
-
-        self.spin_noise = QDoubleSpinBox()
-        self.spin_noise.setRange(0.0, 1.0)
-        self.spin_noise.setSingleStep(0.05)
-        self.spin_noise.setValue(0.5)
-        form.addRow("Spindle noise threshold:", self.spin_noise)
-        v.addLayout(form)
-
-        for w in (
-            self.spin_nstd,
-            self.spin_sd_winsize,
-            self.spin_sd_radius,
-            self.spin_noise,
-        ):
-            w.valueChanged.connect(self._check_modified)
-
-        # Optional artifact sources (file-discovered; user opts in/out)
-        self.cb_use_drink = QCheckBox("Include drink mask (when available)")
-        self.cb_use_drink.setChecked(True)
-        v.addWidget(self.cb_use_drink)
-
-        self.cb_use_swd = QCheckBox("Include SWD mask (when available)")
-        self.cb_use_swd.setChecked(True)
-        v.addWidget(self.cb_use_swd)
-
-        # Hour windows (read-only summary)
-        self.cb_hw_enabled = QCheckBox("Apply hour windows from loaded run")
-        self.cb_hw_enabled.setEnabled(False)  # only meaningful when a run is loaded
-        self.cb_hw_enabled.stateChanged.connect(self._check_modified)
-        v.addWidget(self.cb_hw_enabled)
-
-        self.lbl_hw_summary = QLabel("(no hour windows)")
-        self.lbl_hw_summary.setStyleSheet("color: #666; font-size: 11px;")
-        v.addWidget(self.lbl_hw_summary)
+        # Full mask + filter editor.
+        swd_available = (self.project_root / "swd").is_dir() and any(
+            (self.project_root / "swd").glob("*.mat")
+        )
+        self.mask_widget = MaskParamsWidget(
+            project_root=self.project_root,
+            swd_available=swd_available,
+        )
+        self.mask_widget.changed.connect(self._check_modified)
+        v.addWidget(self.mask_widget)
         return gb
 
     # ----- Animals -----------------------------------------------------
@@ -394,40 +336,40 @@ class ExportMasksPage(QWidget):
             return
         self._apply_loaded_params(params, run)
 
-    def _apply_loaded_params(self, params: dict[str, Any], run_name: str) -> None:
-        # Block signals while bulk-setting widget values, then snapshot.
-        widgets = [
-            *self.cb_states.values(),
-            self.spin_nstd,
-            self.spin_sd_winsize,
-            self.spin_sd_radius,
-            self.spin_noise,
-            self.cb_hw_enabled,
-        ]
-        for w in widgets:
-            w.blockSignals(True)
-        try:
-            states = psd_params.states_from_params(params)
-            for key, cb in self.cb_states.items():
-                cb.setChecked(key in states)
-            if "nstd" in params:
-                self.spin_nstd.setValue(float(params["nstd"]))
-            if "winsize" in params:
-                self.spin_sd_winsize.setValue(int(params["winsize"]))
-            if "radius" in params:
-                self.spin_sd_radius.setValue(float(params["radius"]))
-            if "noise_thresh" in params:
-                self.spin_noise.setValue(float(params["noise_thresh"]))
+    def _on_load_from_export_config(self) -> None:
+        configs = export_params.list_configs(self.project_root)
+        if not configs:
+            QMessageBox.information(
+                self,
+                "No saved export configs",
+                "No saved export configs found at exports/<name>/export_params.json. "
+                "Configs are saved automatically after a successful export.",
+            )
+            return
+        name, ok = QInputDialog.getItem(
+            self,
+            "Load from saved export",
+            "Config:",
+            configs,
+            0,
+            False,
+        )
+        if not ok or not name:
+            return
+        params = export_params.load(self.project_root, name)
+        if params is None:
+            QMessageBox.warning(self, "Load failed", f"Could not read params for '{name}'.")
+            return
+        self._apply_loaded_params(params, f"export:{name}")
 
-            hw_enabled = bool(params.get("hw_enabled"))
-            self.cb_hw_enabled.setChecked(hw_enabled)
-            self.cb_hw_enabled.setEnabled(bool(params.get("hour_windows")))
-            self._update_hw_summary(params)
-            self._loaded_hour_windows = params.get("hour_windows")
-            self._loaded_selected_days = params.get("selected_days")
+    def _apply_loaded_params(self, params: dict[str, Any], run_name: str) -> None:
+        # The widget's from_params handles missing keys by leaving defaults
+        # and emits one `changed` signal at the end (filtered out by snapshot).
+        self.mask_widget.blockSignals(True)
+        try:
+            self.mask_widget.from_params(params)
         finally:
-            for w in widgets:
-                w.blockSignals(False)
+            self.mask_widget.blockSignals(False)
 
         self._loaded_run_name = run_name
         self._loaded_snapshot = self._snapshot_widget_values()
@@ -435,25 +377,9 @@ class ExportMasksPage(QWidget):
         self.lbl_loaded.setStyleSheet("color: #1a5c8a; font-size: 11px;")
         self.lbl_modified.setText("")
 
-    def _update_hw_summary(self, params: dict[str, Any]) -> None:
-        windows = params.get("hour_windows") or []
-        if not windows:
-            self.lbl_hw_summary.setText("(no hour windows in loaded run)")
-            return
-        wins = ", ".join(f"{int(w[0])}–{int(w[1])}h" for w in windows)
-        days = params.get("selected_days")
-        day_str = "all days" if not days else f"days {','.join(str(d) for d in days)}"
-        self.lbl_hw_summary.setText(f"Windows: {wins}   ({day_str})")
-
     def _snapshot_widget_values(self) -> dict[str, Any]:
-        return {
-            "states": [k for k, cb in self.cb_states.items() if cb.isChecked()],
-            "nstd": self.spin_nstd.value(),
-            "winsize": self.spin_sd_winsize.value(),
-            "radius": self.spin_sd_radius.value(),
-            "noise_thresh": self.spin_noise.value(),
-            "hw_enabled": self.cb_hw_enabled.isChecked(),
-        }
+        """Snapshot the widget's current params for modification detection."""
+        return self.mask_widget.to_params()
 
     def _check_modified(self, *_args) -> None:
         if self._loaded_snapshot is None:
@@ -489,25 +415,13 @@ class ExportMasksPage(QWidget):
     # ------------------------------------------------------------------
 
     def _current_params(self) -> dict[str, Any]:
-        params: dict[str, Any] = {
-            "states": [k for k, cb in self.cb_states.items() if cb.isChecked()],
-            "nstd": self.spin_nstd.value(),
-            "winsize": self.spin_sd_winsize.value(),
-            "radius": self.spin_sd_radius.value(),
-            "noise_thresh": self.spin_noise.value(),
-            "use_drink_mask": self.cb_use_drink.isChecked(),
-            "use_swd_mask": self.cb_use_swd.isChecked(),
-        }
-        if self.cb_hw_enabled.isChecked() and getattr(self, "_loaded_hour_windows", None):
-            params["hour_windows"] = self._loaded_hour_windows
-            params["selected_days"] = getattr(self, "_loaded_selected_days", None)
-            params["hw_enabled"] = True
-        return params
+        """Current params, ready to pass to the export pipeline."""
+        return self.mask_widget.to_params()
 
     def _update_export_button(self) -> None:
         ok_dir, msg_dir = self._validate_dirname()
         n_animals = len(self._selected_pairs())
-        params_ok = any(cb.isChecked() for cb in self.cb_states.values())
+        params_ok = bool(self.mask_widget.to_params().get("states"))
 
         ok = ok_dir and n_animals > 0 and params_ok
         self.btn_export.setEnabled(ok and self._worker is None)
@@ -539,6 +453,14 @@ class ExportMasksPage(QWidget):
         manifest = Manifest.load(self.project_root)
         params = self._current_params()
 
+        # Persist the params alongside the export output so the run can be
+        # reproduced later via "Load from saved export…".
+        try:
+            export_params.save(self.project_root, self.le_dirname.text().strip(), params)
+        except OSError as e:
+            # Non-fatal: warn but still run the export.
+            self.lbl_action_hint.setText(f"Note: couldn't save export config ({e}).")
+
         self._populate_status_table(pairs)
         self._status_box.setVisible(True)
         self.progress_bar.setVisible(True)
@@ -565,15 +487,9 @@ class ExportMasksPage(QWidget):
         for w in (
             self.le_dirname,
             self.btn_load_run,
+            self.btn_load_export,
             self.list_animals,
-            self.cb_hw_enabled,
-            self.cb_use_drink,
-            self.cb_use_swd,
-            self.spin_nstd,
-            self.spin_sd_winsize,
-            self.spin_sd_radius,
-            self.spin_noise,
-            *self.cb_states.values(),
+            self.mask_widget,
         ):
             w.setEnabled(enabled)
         self.btn_export.setEnabled(enabled and self._worker is None)
