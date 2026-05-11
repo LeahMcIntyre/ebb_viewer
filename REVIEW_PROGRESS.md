@@ -111,7 +111,9 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 
 ### Phase 2 closeout
 - [~] Tests for pure-Python helpers — deferred to Phase 5 (no non-trivial pure helpers were extracted in 2c that warrant tests today; `_load_recording`, `_load_state_df`, `_compute_artifact_masks` all wrap external I/O or numerics covered by integration use)
-- [ ] Merge `cleanup/phase2-viewer-infra` → `dev`
+- [x] Merge `cleanup/phase2-viewer-infra` → `dev`
+
+**Phase 2 complete. ✅** 26 source files reviewed end-to-end. 330 tests passing.
 
 ---
 
