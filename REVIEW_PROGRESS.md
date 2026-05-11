@@ -106,11 +106,11 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [x] `trace_view.py` — fixed annotation teardown crash (now tracks `(pw, item)` pairs); replaced 0.01s magic epsilon with one-sample `1.0/fs`; eliminated `__init__` double `base_y` init + dropped `_apply_y`'s now-unneeded lazy guard; deleted commented-out reset-centers archaeology + dead `# lbl.setAlignment` line; added module/class/method docstrings (sticky-center zoom design now lives in module docstring)
 - [x] `eeg_viewer.py` — fixed orphan-window leak in `on_open` (now sets `WA_DeleteOnClose`); fixed SleepPopup accumulation (now created once in `__init__` like STFTPopup); `launch_edf_window` now raises `ValueError` on fs != 250 instead of `print+return None`; extracted `_load_recording` (deduped EDF reading across 3 sites) + `_load_state_df` (narrows bare except, removes inline I/O from `__init__`); hoisted `_QC_STYLES` to class constant; replaced magic `4` with `DEFAULT_SPINDLE_EPOCH_SEC`; rewrote `main()` as a thin wrapper around `launch_edf_window` (no more hardcoded `/media/...` paths); added module + class docstrings; deleted dead toolbar comments. **Also added `ebb-eeg-viewer` console-script entry point in `pyproject.toml`** for standalone viewer launch.
 
-### 2d. `data_stores/`
-- [ ] `psd_store.py` (96)
+### 2d. `data_stores/` — DONE
+- [x] `psd_store.py` — deleted unused `parse_animal_from_path` wrapper; moved `_source_combos` init to `__init__`; moved freq-mismatch validation before `by_animal` mutation; typed `first_freqs` as `np.empty(0)` (was empty list); resolved 2 vague TODOs; added module + class docstrings
 
 ### Phase 2 closeout
-- [ ] Add focused tests for non-trivial pure-Python helpers extracted from `edf_viewer/` and `widgets/`
+- [~] Tests for pure-Python helpers — deferred to Phase 5 (no non-trivial pure helpers were extracted in 2c that warrant tests today; `_load_recording`, `_load_state_df`, `_compute_artifact_masks` all wrap external I/O or numerics covered by integration use)
 - [ ] Merge `cleanup/phase2-viewer-infra` → `dev`
 
 ---

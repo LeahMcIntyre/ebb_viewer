@@ -1,3 +1,9 @@
+"""In-memory PSD store loaded from a per-run pkl file.
+
+Indexes one ``psds_*.pkl`` file as ``by_animal[animal][state][channel] -> (freqs, psd)``
+for the PSD review widgets to consume.
+"""
+
 import pickle
 from collections.abc import Sequence
 from pathlib import Path
@@ -7,11 +13,8 @@ import numpy as np
 from ebb_viewer.pipeline.naming import parse_animal_id
 
 
-def parse_animal_from_path(path: str | Path) -> str:
-    return parse_animal_id(path)
-
-
 def parse_animal_from_path_masks(rec: dict) -> str:
+    """Animal display key including ``_artifact`` / ``_drink`` suffixes for variant PSDs."""
     animal = parse_animal_id(rec["path"])
     a_mask = "_artifact" if rec.get("used_artifact", False) else ""
     d_mask = "_drink" if rec.get("used_drink", False) else ""
@@ -19,7 +22,15 @@ def parse_animal_from_path_masks(rec: dict) -> str:
 
 
 class PSDStore:
-    # by_animal[animal][state][channel_name] -> (freqs, psd)
+    """Indexed view of a single ``psds_*.pkl`` for the PSD review widgets.
+
+    Layout: ``by_animal[animal][state][channel_name] -> (freqs, psd)``.
+
+    Raises ``ValueError`` on load if the PKL's records have mismatched
+    frequency vectors — every record in a run is expected to be computed on
+    the same frequency grid.
+    """
+
     def __init__(
         self,
         pkl_path: str | Path,
@@ -30,9 +41,10 @@ class PSDStore:
         self.pkl_path = Path(pkl_path)
         self.channel_names = list(channel_names) if channel_names else None
         self.parse_animal = parse_animal
-        self.first_freqs = []
+        self.first_freqs: np.ndarray = np.empty(0)
 
         self.by_animal: dict[str, dict[str, dict[str, tuple[np.ndarray, np.ndarray]]]] = {}
+        self._source_combos: dict[str, str] = {}  # raw_animal_id -> source_combo
         self._load()
 
     def _load(self):
@@ -41,27 +53,28 @@ class PSDStore:
         if isinstance(items, dict):
             items = [items]
 
-        # TODO: Better way to implement this?
-
-        self._source_combos: dict[str, str] = {}  # raw_animal_id -> source_combo
-
         self.first_freqs = np.asarray(items[0]["freqs"], float)
         for rec in items:
+            freqs = np.asarray(rec["freqs"], float)
+            # Validate before mutating so a mismatch can't leave the store
+            # half-populated.
+            if not np.allclose(self.first_freqs, freqs):
+                raise ValueError(
+                    f"PSDs in {self.pkl_path} do not have PSDs with the same frequency values."
+                )
+
             animal = self.parse_animal(rec)
             raw_animal = parse_animal_id(rec["path"])
             if "source_combo" in rec:
                 self._source_combos[raw_animal] = rec["source_combo"]
-            # behavior like ('threshold','wake') -> we care about state='wake'
-            bhv = rec.get("behavior", (None, None))
 
-            # TODO: This is a bit hacky; improve behavior handling
+            # behavior is stored as e.g. ('threshold', 'wake'); index 1 is the state.
+            bhv = rec.get("behavior", (None, None))
             state = bhv[1] if isinstance(bhv, (list, tuple)) and len(bhv) >= 2 else "unknown"
 
-            freqs = np.asarray(rec["freqs"], float)
             psd = np.asarray(rec["psd"], float)  # shape (C, F)
             chidx = list(rec["channels"])
 
-            # channel map
             ch_map: dict[str, tuple[np.ndarray, np.ndarray]] = {}
             for i, ci in enumerate(chidx):
                 name = (
@@ -72,12 +85,6 @@ class PSDStore:
                 ch_map[name] = (freqs, psd[i])
 
             self.by_animal.setdefault(animal, {})[state] = ch_map
-
-            # Raise an error if the freqs are not all the same
-            if not np.allclose(self.first_freqs, freqs):
-                raise ValueError(
-                    f"PSDs in {self.pkl_path} do not have PSDs with the same frequency values."
-                )
 
     def animals(self) -> list[str]:
         return sorted(self.by_animal.keys())
