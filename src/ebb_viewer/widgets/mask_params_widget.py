@@ -86,6 +86,9 @@ class MaskParamsWidget(QWidget):
 
         self._build_ui()
         self._wire()
+        # Seed each section's header summary; live updates wired below.
+        self.changed.connect(self._refresh_subtitles)
+        self._refresh_subtitles()
 
     # ------------------------------------------------------------------
     # Public API
@@ -204,38 +207,56 @@ class MaskParamsWidget(QWidget):
     # UI construction
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Header subtitle summaries — show current settings at a glance.
+    # ------------------------------------------------------------------
+
+    def _refresh_subtitles(self) -> None:
+        """Recompute each section's header summary from the current params."""
+        p = self.to_params()
+        self._sections["states"].set_subtitle(_states_subtitle(p))
+        self._sections["sd"].set_subtitle(_sd_subtitle(p))
+        self._sections["spindle"].set_subtitle(_spindle_subtitle(p))
+        self._sections["swd"].set_subtitle(_swd_subtitle(p))
+        self._sections["annotation"].set_subtitle(_annotation_subtitle(p))
+        self._sections["hour_window"].set_subtitle(_hour_window_subtitle(p))
+        self._sections["drink"].set_subtitle(_drink_subtitle(p))
+
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(6)
 
-        # Always-expanded sections — these are the routine knobs for every export.
-        root.addWidget(CollapsibleSection("States to Compute", self._build_states_group(), collapsed=False))
-        root.addWidget(CollapsibleSection(
-            "Standard Deviation Mask (applied only to wake)",
-            self._build_sd_group(),
-            collapsed=False,
-        ))
-        root.addWidget(CollapsibleSection(
-            "Spindle Noise Mask (applied to all states)",
-            self._build_spindle_group(),
-            collapsed=False,
-        ))
-        root.addWidget(CollapsibleSection(
-            "Drink Mask",
-            self._build_drink_group(),
-            collapsed=False,
-        ))
-
-        # Optional sections — disabled bodies by default; start collapsed to
-        # save scroll space.
-        root.addWidget(CollapsibleSection("SWD Mask", self._build_swd_group(), collapsed=True))
-        root.addWidget(CollapsibleSection(
-            "Annotation Mask", self._build_annotation_group(), collapsed=True
-        ))
-        root.addWidget(CollapsibleSection(
-            "Compute Hours", self._build_hour_window_group(), collapsed=True
-        ))
+        # Build each section + wrap in a CollapsibleSection. Routine knobs
+        # start expanded; optional sections (disabled bodies by default)
+        # start collapsed to save scroll space.
+        self._sections: dict[str, CollapsibleSection] = {
+            "states": CollapsibleSection(
+                "States to Compute", self._build_states_group(), collapsed=False
+            ),
+            "sd": CollapsibleSection(
+                "Standard Deviation Mask (applied only to wake)",
+                self._build_sd_group(),
+                collapsed=False,
+            ),
+            "spindle": CollapsibleSection(
+                "Spindle Noise Mask (applied to all states)",
+                self._build_spindle_group(),
+                collapsed=False,
+            ),
+            "drink": CollapsibleSection(
+                "Drink Mask", self._build_drink_group(), collapsed=False
+            ),
+            "swd": CollapsibleSection("SWD Mask", self._build_swd_group(), collapsed=True),
+            "annotation": CollapsibleSection(
+                "Annotation Mask", self._build_annotation_group(), collapsed=True
+            ),
+            "hour_window": CollapsibleSection(
+                "Compute Hours", self._build_hour_window_group(), collapsed=True
+            ),
+        }
+        for section in self._sections.values():
+            root.addWidget(section)
 
     def _build_states_group(self) -> QWidget:
         w = QWidget()
@@ -662,3 +683,61 @@ class _block_signals:
     def __exit__(self, *exc):
         for w in self._widgets:
             w.blockSignals(False)
+
+
+# ---------------------------------------------------------------------------
+# Subtitle formatters — terse summaries of each section's current settings
+# shown in the CollapsibleSection headers. Pure functions of the params dict
+# for easy unit testing.
+# ---------------------------------------------------------------------------
+
+
+def _states_subtitle(p: dict) -> str:
+    states = p.get("states") or []
+    if not states:
+        return "none"
+    if len(states) <= 3:
+        return ", ".join(PRESET_DISPLAY.get(s, s) for s in states)
+    return f"{len(states)} selected"
+
+
+def _sd_subtitle(p: dict) -> str:
+    return f"{p['winsize']}s · {p['radius']}s · {p['nstd']:g}σ"
+
+
+def _spindle_subtitle(p: dict) -> str:
+    return f"{p['noise_thresh']:.2f}"
+
+
+def _swd_subtitle(p: dict) -> str:
+    if not p.get("use_swd_mask"):
+        return "off"
+    return f"mask out · {p['swd_pad']}s pad"
+
+
+def _annotation_subtitle(p: dict) -> str:
+    if not p.get("ann_enabled"):
+        return "off"
+    kws = [k.strip() for k in (p.get("ann_keywords") or "").split(",") if k.strip()]
+    n = len(kws)
+    return f"on · {n} keyword{'s' if n != 1 else ''} · {p.get('ann_match_mode', 'contains')}"
+
+
+def _hour_window_subtitle(p: dict) -> str:
+    if not p.get("hw_enabled"):
+        return "off"
+    windows = p.get("hour_windows") or []
+    if not windows:
+        return "on · no windows"
+    if len(windows) == 1:
+        s, e = windows[0]
+        base = f"{int(s)}–{int(e)}h"
+        days = p.get("selected_days")
+        return base if not days else f"{base}, days {','.join(str(d) for d in days)}"
+    return f"{len(windows)} windows"
+
+
+def _drink_subtitle(p: dict) -> str:
+    if not p.get("use_drink_mask"):
+        return "off"
+    return f"on · {p['drink_pad']}s pad"

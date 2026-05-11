@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QSizePolicy, QToolButton, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class CollapsibleSection(QWidget):
@@ -47,12 +54,27 @@ class CollapsibleSection(QWidget):
         )
         self._btn.clicked.connect(self._on_toggle)
 
+        # Right-aligned dim subtitle (e.g. summary of current settings).
+        self._subtitle_lbl = QLabel("")
+        self._subtitle_lbl.setStyleSheet(
+            "color: #666; font-size: 11px; padding-right: 8px; background: transparent;"
+        )
+        self._subtitle_lbl.setAlignment(
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight
+        )
+
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(2)
+        header_row.addWidget(self._btn, 1)
+        header_row.addWidget(self._subtitle_lbl)
+
         self._body.setVisible(not collapsed)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
-        layout.addWidget(self._btn)
+        layout.addLayout(header_row)
         layout.addWidget(self._body)
 
     def _on_toggle(self, checked: bool) -> None:
@@ -69,3 +91,10 @@ class CollapsibleSection(QWidget):
 
     def is_collapsed(self) -> bool:
         return not self._btn.isChecked()
+
+    def set_subtitle(self, text: str) -> None:
+        """Set a short summary string displayed right-aligned in the header."""
+        self._subtitle_lbl.setText(text)
+
+    def subtitle(self) -> str:
+        return self._subtitle_lbl.text()

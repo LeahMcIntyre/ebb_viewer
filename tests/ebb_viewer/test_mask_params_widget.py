@@ -8,7 +8,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget
+from ebb_viewer.widgets.mask_params_widget import (
+    MaskParamsWidget,
+    _annotation_subtitle,
+    _drink_subtitle,
+    _hour_window_subtitle,
+    _sd_subtitle,
+    _spindle_subtitle,
+    _states_subtitle,
+    _swd_subtitle,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -413,3 +422,133 @@ def test_set_project_root_refreshes_auto_detect(qapp, tmp_path: Path):
     (drink_dir / "offsets.csv").write_text("")
     w.set_project_root(tmp_path)
     assert "offsets.csv" in w.lbl_offset_csv.text()
+
+
+# ---------------------------------------------------------------------------
+# Header subtitle summaries
+# ---------------------------------------------------------------------------
+
+
+def test_states_subtitle_lists_up_to_three():
+    assert _states_subtitle({"states": ["wake", "nrem", "rem"]}) == "Wake, NREM, REM"
+
+
+def test_states_subtitle_counts_more_than_three():
+    assert _states_subtitle({"states": ["wake", "nrem", "rem", "sleep"]}) == "4 selected"
+
+
+def test_states_subtitle_none_when_empty():
+    assert _states_subtitle({"states": []}) == "none"
+
+
+def test_sd_subtitle_format():
+    p = {"winsize": 180, "radius": 0.5, "nstd": 5.0}
+    assert _sd_subtitle(p) == "180s · 0.5s · 5σ"
+
+
+def test_sd_subtitle_uses_g_format_for_nstd():
+    """Non-integer nstd renders without trailing zeros."""
+    p = {"winsize": 180, "radius": 0.75, "nstd": 3.5}
+    assert _sd_subtitle(p) == "180s · 0.75s · 3.5σ"
+
+
+def test_spindle_subtitle_format():
+    assert _spindle_subtitle({"noise_thresh": 0.5}) == "0.50"
+    assert _spindle_subtitle({"noise_thresh": 0.3}) == "0.30"
+
+
+def test_swd_subtitle_off_when_disabled():
+    assert _swd_subtitle({"use_swd_mask": False, "swd_pad": 0}) == "off"
+
+
+def test_swd_subtitle_on_with_pad():
+    assert _swd_subtitle({"use_swd_mask": True, "swd_pad": 5}) == "mask out · 5s pad"
+
+
+def test_annotation_subtitle_off_when_disabled():
+    assert _annotation_subtitle({"ann_enabled": False}) == "off"
+
+
+def test_annotation_subtitle_singular_keyword():
+    p = {"ann_enabled": True, "ann_keywords": "drink", "ann_match_mode": "contains"}
+    assert _annotation_subtitle(p) == "on · 1 keyword · contains"
+
+
+def test_annotation_subtitle_plural_keywords():
+    p = {"ann_enabled": True, "ann_keywords": "drink, artifact", "ann_match_mode": "exact"}
+    assert _annotation_subtitle(p) == "on · 2 keywords · exact"
+
+
+def test_hour_window_subtitle_off():
+    assert _hour_window_subtitle({"hw_enabled": False}) == "off"
+
+
+def test_hour_window_subtitle_single_window_all_days():
+    p = {"hw_enabled": True, "hour_windows": [(6.0, 18.0)], "selected_days": None}
+    assert _hour_window_subtitle(p) == "6–18h"
+
+
+def test_hour_window_subtitle_single_window_specific_days():
+    p = {"hw_enabled": True, "hour_windows": [(6.0, 18.0)], "selected_days": [0, 1, 2]}
+    assert _hour_window_subtitle(p) == "6–18h, days 0,1,2"
+
+
+def test_hour_window_subtitle_multiple_windows():
+    p = {
+        "hw_enabled": True,
+        "hour_windows": [(6.0, 12.0), (20.0, 6.0)],
+        "selected_days": None,
+    }
+    assert _hour_window_subtitle(p) == "2 windows"
+
+
+def test_drink_subtitle_off():
+    assert _drink_subtitle({"use_drink_mask": False, "drink_pad": 2}) == "off"
+
+
+def test_drink_subtitle_on():
+    assert _drink_subtitle({"use_drink_mask": True, "drink_pad": 2}) == "on · 2s pad"
+
+
+# ---------------------------------------------------------------------------
+# Live subtitle updates — the widget refreshes headers as the user edits.
+# ---------------------------------------------------------------------------
+
+
+def test_subtitle_initialized_at_construction(qapp):
+    w = MaskParamsWidget()
+    assert w._sections["states"].subtitle() == "Wake, NREM, REM"
+    assert w._sections["sd"].subtitle() == "180s · 0.5s · 5σ"
+    assert w._sections["spindle"].subtitle() == "0.50"
+    assert w._sections["swd"].subtitle() == "off"
+    assert w._sections["annotation"].subtitle() == "off"
+    assert w._sections["hour_window"].subtitle() == "off"
+    assert w._sections["drink"].subtitle() == "on · 2s pad"
+
+
+def test_subtitle_updates_on_edit(qapp):
+    w = MaskParamsWidget()
+    w.dspin_noise.setValue(0.75)
+    assert w._sections["spindle"].subtitle() == "0.75"
+
+
+def test_subtitle_updates_on_state_toggle(qapp):
+    w = MaskParamsWidget()
+    w._state_boxes["rem"].setChecked(False)
+    # After unchecking REM, the summary shows only Wake + NREM.
+    assert w._sections["states"].subtitle() == "Wake, NREM"
+
+
+def test_subtitle_updates_after_from_params(qapp, tmp_path: Path):
+    w = MaskParamsWidget(project_root=tmp_path, swd_available=True)
+    w.from_params(
+        {
+            "use_swd_mask": True,
+            "swd_pad": 10,
+            "hw_enabled": True,
+            "hour_windows": [(6.0, 18.0)],
+            "selected_days": [0],
+        }
+    )
+    assert w._sections["swd"].subtitle() == "mask out · 10s pad"
+    assert w._sections["hour_window"].subtitle() == "6–18h, days 0"
