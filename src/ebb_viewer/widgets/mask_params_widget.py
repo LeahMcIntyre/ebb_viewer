@@ -27,7 +27,6 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QGridLayout,
@@ -36,7 +35,6 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QRadioButton,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -48,6 +46,7 @@ from ebb.process.state_presets import (
     PRESET_DISPLAY,
 )
 from ebb_viewer.widgets.collapsible_section import CollapsibleSection
+from ebb_viewer.widgets.no_scroll_spinbox import NoScrollDoubleSpinBox, NoScrollSpinBox
 
 # Defaults mirror estimate_psd's signature so a freshly-constructed widget
 # matches the PSD pipeline's untouched behavior.
@@ -291,12 +290,12 @@ class MaskParamsWidget(QWidget):
         form.setContentsMargins(8, 4, 8, 8)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
-        self.spin_window = QSpinBox()
+        self.spin_window = NoScrollSpinBox()
         self.spin_window.setRange(1, 6000)
         self.spin_window.setSuffix(" s")
         self.spin_window.setValue(_DEFAULT_WINSIZE_S)
 
-        self.dspin_radius = QDoubleSpinBox()
+        self.dspin_radius = NoScrollDoubleSpinBox()
         # 2 decimals so saved values like 0.75 don't silently round to 0.8.
         self.dspin_radius.setDecimals(2)
         self.dspin_radius.setSingleStep(0.05)
@@ -304,7 +303,7 @@ class MaskParamsWidget(QWidget):
         self.dspin_radius.setSuffix(" s")
         self.dspin_radius.setValue(_DEFAULT_RADIUS_S)
 
-        self.dspin_z = QDoubleSpinBox()
+        self.dspin_z = NoScrollDoubleSpinBox()
         self.dspin_z.setDecimals(2)
         self.dspin_z.setRange(1.0, 20.0)
         self.dspin_z.setSuffix(" σ")
@@ -320,7 +319,7 @@ class MaskParamsWidget(QWidget):
         form = QFormLayout(w)
         form.setContentsMargins(8, 4, 8, 8)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        self.dspin_noise = QDoubleSpinBox()
+        self.dspin_noise = NoScrollDoubleSpinBox()
         self.dspin_noise.setDecimals(2)
         self.dspin_noise.setRange(0.0, 1.0)
         self.dspin_noise.setSingleStep(0.05)
@@ -344,7 +343,7 @@ class MaskParamsWidget(QWidget):
 
         pad_form = QFormLayout()
         pad_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        self.spin_swd_pad = QSpinBox()
+        self.spin_swd_pad = NoScrollSpinBox()
         self.spin_swd_pad.setRange(0, 600)
         self.spin_swd_pad.setSuffix(" s")
         self.spin_swd_pad.setValue(_DEFAULT_SWD_PAD_S)
@@ -405,12 +404,12 @@ class MaskParamsWidget(QWidget):
 
         pad_form = QFormLayout()
         pad_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        self._ann_pad_before = QDoubleSpinBox()
+        self._ann_pad_before = NoScrollDoubleSpinBox()
         self._ann_pad_before.setRange(0.0, 3600.0)
         self._ann_pad_before.setSingleStep(1.0)
         self._ann_pad_before.setDecimals(1)
         self._ann_pad_before.setSuffix(" s")
-        self._ann_pad_after = QDoubleSpinBox()
+        self._ann_pad_after = NoScrollDoubleSpinBox()
         self._ann_pad_after.setRange(0.0, 3600.0)
         self._ann_pad_after.setSingleStep(1.0)
         self._ann_pad_after.setDecimals(1)
@@ -442,10 +441,10 @@ class MaskParamsWidget(QWidget):
         body.addWidget(self._hw_windows_widget)
 
         add_row = QHBoxLayout()
-        self.spin_add_start = QSpinBox()
+        self.spin_add_start = NoScrollSpinBox()
         self.spin_add_start.setRange(0, 23)
         self.spin_add_start.setSuffix(" h")
-        self.spin_add_end = QSpinBox()
+        self.spin_add_end = NoScrollSpinBox()
         self.spin_add_end.setRange(0, 23)
         self.spin_add_end.setSuffix(" h")
         self.spin_add_end.setValue(1)
@@ -493,7 +492,7 @@ class MaskParamsWidget(QWidget):
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        self.spin_drink_pad = QSpinBox()
+        self.spin_drink_pad = NoScrollSpinBox()
         self.spin_drink_pad.setRange(0, 600)
         self.spin_drink_pad.setSuffix(" s")
         self.spin_drink_pad.setValue(_DEFAULT_DRINK_PAD_S)
