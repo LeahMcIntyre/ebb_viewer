@@ -38,7 +38,6 @@ def test_to_params_returns_dict_with_expected_keys(qapp):
         "winsize",
         "radius",
         "noise_thresh",
-        "swd_mode",
         "use_swd_mask",
         "swd_pad",
         "ann_enabled",
@@ -52,7 +51,6 @@ def test_to_params_returns_dict_with_expected_keys(qapp):
         "selected_days",
         "use_drink_mask",
         "drink_pad",
-        "drink_offset_csv_override",
     }
     assert set(params.keys()) == expected_keys
 
@@ -65,7 +63,6 @@ def test_default_to_params_matches_estimate_psd_defaults(qapp):
     assert params["winsize"] == 180
     assert params["radius"] == 0.5
     assert params["noise_thresh"] == 0.5
-    assert params["swd_mode"] == "none"
     assert params["use_swd_mask"] is False
     assert params["swd_pad"] == 0
     assert params["ann_enabled"] is False
@@ -74,7 +71,6 @@ def test_default_to_params_matches_estimate_psd_defaults(qapp):
     assert params["selected_days"] is None
     assert params["use_drink_mask"] is True
     assert params["drink_pad"] == 2
-    assert params["drink_offset_csv_override"] is None
     # default states are wake/nrem/rem
     assert sorted(params["states"]) == sorted(["wake", "nrem", "rem"])
 
@@ -134,21 +130,16 @@ def test_spindle_noise_threshold_round_trip(qapp):
 # ---------------------------------------------------------------------------
 
 
-def test_swd_mask_out_emits_both_shapes(qapp):
-    """`swd_mode` and `use_swd_mask` must stay in sync."""
+def test_swd_mask_out_emits_use_swd_mask_true(qapp):
     w = _make_widget(qapp, swd_available=True)
     w._radio_swd_mask.setChecked(True)
-    p = w.to_params()
-    assert p["swd_mode"] == "mask_out"
-    assert p["use_swd_mask"] is True
+    assert w.to_params()["use_swd_mask"] is True
 
 
-def test_swd_none_emits_both_shapes(qapp):
+def test_swd_none_emits_use_swd_mask_false(qapp):
     w = _make_widget(qapp, swd_available=True)
     w._radio_swd_none.setChecked(True)
-    p = w.to_params()
-    assert p["swd_mode"] == "none"
-    assert p["use_swd_mask"] is False
+    assert w.to_params()["use_swd_mask"] is False
 
 
 def test_swd_radio_disabled_when_unavailable(qapp):
@@ -162,11 +153,18 @@ def test_set_swd_available_after_construction(qapp):
     assert w._radio_swd_mask.isEnabled()
 
 
-def test_swd_unavailable_falls_back_to_none_even_if_params_say_mask_out(qapp):
+def test_swd_unavailable_falls_back_to_none_even_if_params_say_use(qapp):
     w = _make_widget(qapp, swd_available=False)
-    w.from_params({"swd_mode": "mask_out"})
+    w.from_params({"use_swd_mask": True})
     assert w._radio_swd_none.isChecked()
-    assert w.to_params()["swd_mode"] == "none"
+    assert w.to_params()["use_swd_mask"] is False
+
+
+def test_legacy_swd_mode_key_loads_correctly(qapp):
+    """Old PSD params used `swd_mode`; widget still loads them."""
+    w = _make_widget(qapp, swd_available=True)
+    w.from_params({"swd_mode": "mask_out"})
+    assert w.to_params()["use_swd_mask"] is True
 
 
 def test_swd_pad_round_trip(qapp):
@@ -281,31 +279,6 @@ def test_drink_pad_round_trip(qapp):
     assert w.to_params()["drink_pad"] == 10
 
 
-def test_drink_offset_csv_override_round_trip(qapp, tmp_path: Path):
-    """If the user picks an override path, it survives a save/load round-trip."""
-    csv = tmp_path / "offsets.csv"
-    csv.write_text("animal,offset\n")
-    w = _make_widget(qapp, tmp_path)
-    w._offset_csv_override = csv
-    w.lbl_offset_csv.setText(str(csv))
-    assert w.to_params()["drink_offset_csv_override"] == str(csv)
-
-
-def test_drink_offset_csv_override_loaded_via_from_params(qapp, tmp_path: Path):
-    csv = tmp_path / "offsets.csv"
-    csv.write_text("animal,offset\n")
-    w = _make_widget(qapp, tmp_path)
-    w.from_params({"drink_offset_csv_override": str(csv)})
-    assert w._offset_csv_override == csv
-    assert w.to_params()["drink_offset_csv_override"] == str(csv)
-
-
-def test_drink_offset_csv_override_ignored_if_file_missing(qapp, tmp_path: Path):
-    w = _make_widget(qapp, tmp_path)
-    w.from_params({"drink_offset_csv_override": str(tmp_path / "nonexistent.csv")})
-    assert w.to_params()["drink_offset_csv_override"] is None
-
-
 # ---------------------------------------------------------------------------
 # Full round-trip — the primary safety net
 # ---------------------------------------------------------------------------
@@ -315,15 +288,12 @@ def _full_params(tmp_path: Path) -> dict:
     """A params dict that exercises every field."""
     ann_dir = tmp_path / "annotations"
     ann_dir.mkdir()
-    offset_csv = tmp_path / "offsets.csv"
-    offset_csv.write_text("animal,offset\n")
     return {
         "states": ["wake", "sleep"],
         "nstd": 4.0,
         "winsize": 240,
         "radius": 0.75,
         "noise_thresh": 0.3,
-        "swd_mode": "mask_out",
         "use_swd_mask": True,
         "swd_pad": 5,
         "ann_enabled": True,
@@ -337,7 +307,6 @@ def _full_params(tmp_path: Path) -> dict:
         "selected_days": [0, 1],
         "use_drink_mask": True,
         "drink_pad": 4,
-        "drink_offset_csv_override": str(offset_csv),
     }
 
 
@@ -375,15 +344,6 @@ def test_from_params_disabling_hour_window_clears_windows_in_output(qapp):
     assert w.to_params()["hour_windows"] == [(6.0, 18.0)]
     w.from_params({"hw_enabled": False})
     assert w.to_params()["hour_windows"] is None
-
-
-def test_use_swd_mask_only_in_input_still_loads_correctly(qapp):
-    """Old export configs that only set use_swd_mask (not swd_mode) load correctly."""
-    w = _make_widget(qapp, swd_available=True)
-    w.from_params({"use_swd_mask": True})
-    p = w.to_params()
-    assert p["swd_mode"] == "mask_out"
-    assert p["use_swd_mask"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -427,11 +387,10 @@ def test_offset_csv_auto_detect_finds_single_csv_in_drink_masks(qapp, tmp_path: 
     drink_dir.mkdir()
     (drink_dir / "offsets.csv").write_text("animal,offset\n")
     w = _make_widget(qapp, tmp_path)
-    # Auto-detected path appears in the label (the (auto) suffix marks it)
+    # Auto-detected path appears in the read-only label.
     assert "offsets.csv" in w.lbl_offset_csv.text()
-    assert "(auto)" in w.lbl_offset_csv.text()
-    # But auto-detected CSVs are NOT serialized — the override key stays None.
-    assert w.to_params()["drink_offset_csv_override"] is None
+    # Auto-detected CSVs are display-only; not stored in params.
+    assert "drink_offset_csv_override" not in w.to_params()
 
 
 def test_offset_csv_auto_detect_ignores_multiple_csvs(qapp, tmp_path: Path):
@@ -445,92 +404,6 @@ def test_offset_csv_auto_detect_ignores_multiple_csvs(qapp, tmp_path: Path):
     (drink_dir / "b.csv").write_text("")
     w = _make_widget(qapp, tmp_path)
     assert w.lbl_offset_csv.text() == ""
-
-
-# ---------------------------------------------------------------------------
-# Section-visibility flags
-# ---------------------------------------------------------------------------
-
-
-def test_all_sections_visible_by_default(qapp):
-    """No group is explicitly hidden when all show_* flags are at defaults."""
-    from PyQt6.QtWidgets import QGroupBox
-
-    w = MaskParamsWidget()
-    boxes = w.findChildren(QGroupBox)
-    assert len(boxes) >= 7  # states, sd, spindle, swd, ann, hw, drink
-    assert not any(b.isHidden() for b in boxes)
-
-
-def test_show_drink_false_hides_only_the_drink_group(qapp):
-    from PyQt6.QtWidgets import QGroupBox
-
-    w = MaskParamsWidget(show_drink=False)
-    boxes = w.findChildren(QGroupBox)
-    hidden = [b.title() for b in boxes if b.isHidden()]
-    assert hidden == ["Drink Mask"]
-
-
-def test_show_sd_spindle_states_drink_false_hides_those_four(qapp):
-    from PyQt6.QtWidgets import QGroupBox
-
-    w = MaskParamsWidget(
-        show_states=False,
-        show_sd=False,
-        show_spindle=False,
-        show_drink=False,
-    )
-    hidden = sorted(b.title() for b in w.findChildren(QGroupBox) if b.isHidden())
-    assert hidden == sorted(
-        [
-            "Drink Mask",
-            "Spindle Noise Mask: Applied To All States",
-            "Standard Deviation Mask: Applied Only To Wake",
-            "States to Compute",
-        ]
-    )
-
-
-def test_show_drink_false_hides_drink_group_but_keeps_default_in_params(qapp):
-    w = MaskParamsWidget(show_drink=False)
-    # The drink section's QGroupBox should be hidden but the keys are still
-    # emitted with default values.
-    p = w.to_params()
-    assert p["use_drink_mask"] is True  # default
-    assert p["drink_pad"] == 2  # default
-    assert p["drink_offset_csv_override"] is None
-
-
-def test_show_states_false_hides_states_group_but_keeps_default_in_params(qapp):
-    w = MaskParamsWidget(show_states=False)
-    p = w.to_params()
-    # Defaults still emitted; embedder is expected to override `states`.
-    assert set(p["states"]) == {"wake", "nrem", "rem"}
-
-
-def test_show_sd_and_spindle_false_keep_defaults_in_params(qapp):
-    """Pre-PSD-page-refactor: SD/spindle hidden, defaults emitted, page overrides."""
-    w = MaskParamsWidget(show_sd=False, show_spindle=False)
-    p = w.to_params()
-    assert p["nstd"] == 5.0
-    assert p["winsize"] == 180
-    assert p["radius"] == 0.5
-    assert p["noise_thresh"] == 0.5
-
-
-def test_hidden_sections_still_round_trip(qapp, tmp_path: Path):
-    """from_params → to_params works even when sections are hidden."""
-    w = MaskParamsWidget(
-        project_root=tmp_path,
-        swd_available=True,
-        show_drink=False,
-        show_states=False,
-    )
-    params = _full_params(tmp_path)
-    w.from_params(params)
-    got = w.to_params()
-    # Same key set, same values — visibility flags only affect UI.
-    assert got == params
 
 
 def test_set_project_root_refreshes_auto_detect(qapp, tmp_path: Path):

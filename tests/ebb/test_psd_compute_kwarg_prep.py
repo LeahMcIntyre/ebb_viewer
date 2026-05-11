@@ -50,28 +50,21 @@ def test_strips_all_known_ui_only_kwargs():
 
 
 def test_strips_widget_emitted_swd_keys():
-    """MaskParamsWidget emits both swd_mode and use_swd_mask; both must be stripped."""
+    """MaskParamsWidget emits use_swd_mask + swd_pad; both must be stripped."""
     kwargs, _, _, _ = _prepare_estimator_kwargs(
-        {"swd_mode": "mask_out", "use_swd_mask": True, "swd_pad": 5, "fs": 250}
+        {"use_swd_mask": True, "swd_pad": 5, "fs": 250}
     )
-    assert "swd_mode" not in kwargs
     assert "use_swd_mask" not in kwargs
     assert "swd_pad" not in kwargs
     assert kwargs["fs"] == 250
 
 
 def test_strips_widget_emitted_drink_keys():
-    """use_drink_mask + drink_offset_csv_override are widget-only; estimate_psd uses drink_path."""
+    """use_drink_mask is widget-only; estimate_psd uses drink_path presence."""
     kwargs, _, _, _ = _prepare_estimator_kwargs(
-        {
-            "use_drink_mask": False,
-            "drink_offset_csv_override": "/foo/bar.csv",
-            "drink_pad": 2,
-            "fs": 250,
-        }
+        {"use_drink_mask": False, "drink_pad": 2, "fs": 250}
     )
     assert "use_drink_mask" not in kwargs
-    assert "drink_offset_csv_override" not in kwargs
     # drink_pad IS a real estimate_psd kwarg and must NOT be stripped.
     assert kwargs.get("drink_pad") == 2
 
@@ -201,11 +194,9 @@ def test_full_widget_emitted_dict_does_not_crash_estimator_kwargs_prep():
         "channels": [0, 1, 2],
         "states": ["wake", "nrem"],
         # UI-only / widget-only
-        "swd_mode": "mask_out",
         "use_swd_mask": True,
         "swd_pad": 5,
         "use_drink_mask": True,
-        "drink_offset_csv_override": None,
         "ann_enabled": True,
         "ann_dir": "/some/dir",
         "ann_keywords": "drink",
@@ -224,11 +215,9 @@ def test_full_widget_emitted_dict_does_not_crash_estimator_kwargs_prep():
 
     # All UI-only keys gone
     ui_only = [
-        "swd_mode",
         "use_swd_mask",
         "swd_pad",
         "use_drink_mask",
-        "drink_offset_csv_override",
         "ann_enabled",
         "ann_dir",
         "ann_pad_before",

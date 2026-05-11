@@ -1,29 +1,22 @@
-"""Shared widget for editing mask + filter parameters.
+"""Widget for editing mask + filter parameters in the Export Masks page.
 
-Used by both the PSD Compute page (`pages/psds.py`) and the Export Masks page
-(`pages/export_masks.py`) so the two flows can't drift on what each mask
-parameter means or how it's serialized.
+Currently used only by `pages/export_masks.py`. The PSD compute page
+(`pages/psds.py`) keeps its own `MaskingSettingsDialog` — unifying the
+two is tracked as a Phase 3 cleanup TODO.
 
 The widget owns its UI state and exposes:
 - :meth:`to_params` — current values as a JSON-serializable dict
 - :meth:`from_params` — load values from a previously-saved dict
 - ``changed`` signal — emitted on any user-visible change (for "modified" UI)
 
-Sections (each wrapped in its own ``QGroupBox`` so embedders can choose to
-hide/collapse individual groups):
+Sections (each wrapped in its own ``QGroupBox``):
 - States
 - SD mask
 - Spindle noise threshold
 - SWD mask + pad
 - Annotation mask
 - Hour windows (clock-time filter)
-- Drink mask + pad + offset CSV
-
-A note on key conventions: ``swd_mode`` (string) is what saved PSD params use
-historically; ``use_swd_mask`` (bool) is what the export pipeline reads. The
-widget emits BOTH and keeps them in sync so neither consumer needs to know
-about the other's preferred shape.
-TODO: unify on a single key once both consumers are migrated.
+- Drink mask + pad + auto-detected offset CSV display
 """
 
 from __future__ import annotations
@@ -85,30 +78,11 @@ class MaskParamsWidget(QWidget):
         parent: QWidget | None = None,
         *,
         swd_available: bool = False,
-        show_states: bool = True,
-        show_sd: bool = True,
-        show_spindle: bool = True,
-        show_drink: bool = True,
     ):
-        """Construct the widget.
-
-        Section-visibility flags let embedders hide groups that aren't
-        relevant in their context (e.g. the PSD compute page keeps SD,
-        spindle, and states on its main page so they're hidden here).
-        Hidden sections keep their default values — ``to_params()`` still
-        emits their keys, and the embedding page is free to override.
-        """
         super().__init__(parent)
         self._project_root = Path(project_root) if project_root else None
         self._swd_available = swd_available
-        self._show = {
-            "states": show_states,
-            "sd": show_sd,
-            "spindle": show_spindle,
-            "drink": show_drink,
-        }
         self._ann_dir: Path | None = None
-        self._offset_csv_override: Path | None = None
 
         self._build_ui()
         self._wire()
@@ -121,40 +95,28 @@ class MaskParamsWidget(QWidget):
         """Return current values as a JSON-serializable dict."""
         states = [k for k, cb in self._state_boxes.items() if cb.isChecked()]
         hw_enabled = self.chk_hour_window.isChecked()
-        swd_mask_out = self._radio_swd_mask.isChecked()
         days_specific = self._radio_hw_sel.isChecked()
         return {
-            # States
             "states": states,
-            # SD mask
             "nstd": float(self.dspin_z.value()),
             "winsize": int(self.spin_window.value()),
             "radius": float(self.dspin_radius.value()),
-            # Spindle noise
             "noise_thresh": float(self.dspin_noise.value()),
-            # SWD — emit both shapes for cross-consumer compatibility
-            "swd_mode": "mask_out" if swd_mask_out else "none",
-            "use_swd_mask": swd_mask_out,
+            "use_swd_mask": self._radio_swd_mask.isChecked(),
             "swd_pad": int(self.spin_swd_pad.value()),
-            # Annotation
             "ann_enabled": self.chk_ann.isChecked(),
             "ann_dir": str(self._ann_dir) if self._ann_dir else None,
             "ann_keywords": self._ann_keyword_edit.text().strip(),
             "ann_match_mode": "exact" if self._radio_ann_exact.isChecked() else "contains",
             "ann_pad_before": float(self._ann_pad_before.value()),
             "ann_pad_after": float(self._ann_pad_after.value()),
-            # Hour windows
             "hw_enabled": hw_enabled,
             "hour_windows": self._get_defined_windows() if hw_enabled else None,
             "selected_days": (
                 self._parse_days_field() if hw_enabled and days_specific else None
             ),
-            # Drink mask
             "use_drink_mask": self.chk_use_drink.isChecked(),
             "drink_pad": int(self.spin_drink_pad.value()),
-            "drink_offset_csv_override": (
-                str(self._offset_csv_override) if self._offset_csv_override else None
-            ),
         }
 
     def from_params(self, params: dict) -> None:
@@ -174,11 +136,11 @@ class MaskParamsWidget(QWidget):
             # Spindle noise
             self.dspin_noise.setValue(float(params.get("noise_thresh", _DEFAULT_NOISE_THRESH)))
 
-            # SWD — accept either shape; swd_mode takes precedence if both are set.
-            if "swd_mode" in params:
-                swd_on = params["swd_mode"] == "mask_out"
+            # SWD — also tolerate legacy psd_params.json shape that used swd_mode.
+            if "use_swd_mask" in params:
+                swd_on = bool(params["use_swd_mask"])
             else:
-                swd_on = bool(params.get("use_swd_mask", False))
+                swd_on = params.get("swd_mode") == "mask_out"
             if swd_on and self._swd_available:
                 self._radio_swd_mask.setChecked(True)
             else:
@@ -222,13 +184,7 @@ class MaskParamsWidget(QWidget):
             # Drink mask
             self.chk_use_drink.setChecked(bool(params.get("use_drink_mask", True)))
             self.spin_drink_pad.setValue(int(params.get("drink_pad", _DEFAULT_DRINK_PAD_S)))
-            override = params.get("drink_offset_csv_override")
-            if override and Path(override).is_file():
-                self._offset_csv_override = Path(override)
-                self.lbl_offset_csv.setText(str(self._offset_csv_override))
-            else:
-                self._offset_csv_override = None
-                self._refresh_offset_csv_label()
+            self._refresh_offset_csv_label()
 
         self.changed.emit()
 
@@ -253,22 +209,13 @@ class MaskParamsWidget(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(8)
 
-        # Always build all sections so internal widget refs exist; hide groups
-        # whose section flag is False (their values still flow through
-        # to_params/from_params, just aren't user-editable).
-        sections = [
-            ("states", self._build_states_group()),
-            ("sd", self._build_sd_group()),
-            ("spindle", self._build_spindle_group()),
-            (None, self._build_swd_group()),
-            (None, self._build_annotation_group()),
-            (None, self._build_hour_window_group()),
-            ("drink", self._build_drink_group()),
-        ]
-        for key, group in sections:
-            root.addWidget(group)
-            if key is not None and not self._show[key]:
-                group.setVisible(False)
+        root.addWidget(self._build_states_group())
+        root.addWidget(self._build_sd_group())
+        root.addWidget(self._build_spindle_group())
+        root.addWidget(self._build_swd_group())
+        root.addWidget(self._build_annotation_group())
+        root.addWidget(self._build_hour_window_group())
+        root.addWidget(self._build_drink_group())
 
     def _build_states_group(self) -> QGroupBox:
         gb = QGroupBox("States to Compute")
@@ -505,23 +452,18 @@ class MaskParamsWidget(QWidget):
         form.addRow("Pad each event:", self.spin_drink_pad)
         v.addLayout(form)
 
-        # Offset CSV: auto-detected from drink_masks/, with optional override.
+        # Auto-detected offset CSV: read-only display, no override.
         offset_row = QHBoxLayout()
         offset_row.addWidget(QLabel("Offset CSV:"))
         self.lbl_offset_csv = QLineEdit()
         self.lbl_offset_csv.setReadOnly(True)
         self.lbl_offset_csv.setPlaceholderText("(none — using zero offset)")
-        self.btn_offset_csv = QPushButton("Override…")
-        self.btn_offset_csv_clear = QPushButton("Auto")
-        self.btn_offset_csv_clear.setToolTip("Clear override; auto-detect from drink_masks/")
         offset_row.addWidget(self.lbl_offset_csv, 1)
-        offset_row.addWidget(self.btn_offset_csv)
-        offset_row.addWidget(self.btn_offset_csv_clear)
         v.addLayout(offset_row)
 
         hint = QLabel(
-            "When set, the override CSV is used to look up each animal's video offset. "
-            "Otherwise the single CSV in project/drink_masks/ (if any) is used."
+            "Place a single CSV with per-animal video offsets in project/drink_masks/. "
+            "The widget auto-detects it; multiple CSVs are an error (see Export Masks docs)."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("font-size: 10px; color: #777; padding-left: 4px;")
@@ -568,8 +510,6 @@ class MaskParamsWidget(QWidget):
         self.btn_add_window.clicked.connect(self._on_add_window_clicked)
 
         self.chk_use_drink.toggled.connect(self._emit_changed)
-        self.btn_offset_csv.clicked.connect(self._choose_offset_csv)
-        self.btn_offset_csv_clear.clicked.connect(self._clear_offset_csv)
 
     def _emit_changed(self, *_args) -> None:
         self.changed.emit()
@@ -667,15 +607,9 @@ class MaskParamsWidget(QWidget):
     # ------------------------------------------------------------------
 
     def _refresh_offset_csv_label(self) -> None:
-        """Display the override path if set, else the auto-detected CSV (if any)."""
-        if self._offset_csv_override is not None:
-            self.lbl_offset_csv.setText(str(self._offset_csv_override))
-            return
+        """Display the auto-detected offset CSV (if a single one exists in drink_masks/)."""
         auto = self._auto_offset_csv()
-        if auto is not None:
-            self.lbl_offset_csv.setText(f"{auto}  (auto)")
-        else:
-            self.lbl_offset_csv.setText("")
+        self.lbl_offset_csv.setText(str(auto) if auto is not None else "")
 
     def _auto_offset_csv(self) -> Path | None:
         if self._project_root is None:
@@ -685,22 +619,6 @@ class MaskParamsWidget(QWidget):
             return None
         matches = sorted(drink_dir.glob("*.csv"))
         return matches[0] if len(matches) == 1 else None
-
-    def _choose_offset_csv(self) -> None:
-        start = str(self._project_root) if self._project_root else ""
-        chosen, _ = QFileDialog.getOpenFileName(
-            self, "Select offset CSV override", start, "CSV files (*.csv);;All files (*)"
-        )
-        if chosen:
-            self._offset_csv_override = Path(chosen)
-            self.lbl_offset_csv.setText(str(self._offset_csv_override))
-            self.changed.emit()
-
-    def _clear_offset_csv(self) -> None:
-        if self._offset_csv_override is not None:
-            self._offset_csv_override = None
-            self._refresh_offset_csv_label()
-            self.changed.emit()
 
 
 class _block_signals:
