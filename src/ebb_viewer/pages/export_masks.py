@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -108,7 +109,19 @@ class ExportMasksPage(QWidget):
     # ------------------------------------------------------------------
 
     def _build_ui(self) -> None:
-        root = QVBoxLayout(self)
+        # Outer layout hosts only the scroll area so the page handles tall
+        # content gracefully on short screens.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        outer.addWidget(scroll)
+
+        content = QWidget()
+        scroll.setWidget(content)
+        root = QVBoxLayout(content)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
