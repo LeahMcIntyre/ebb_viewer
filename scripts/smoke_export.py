@@ -22,8 +22,8 @@ from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.pipeline.mask_export import default_pairs, export_animal
 
 
-def _read_csv_head(path: Path, n: int = 6) -> str:
-    """Return the first ``n`` lines of a CSV, indented for printing."""
+def _read_file_head(path: Path, n: int = 6) -> str:
+    """Return the first ``n`` lines of a text file, indented for printing."""
     if not path.exists():
         return "  (file not written)"
     lines = path.read_text().splitlines()[:n]
@@ -119,13 +119,13 @@ def main() -> int:
         print(f"  {kind:18s} {path}")
 
     print("\n--- states.csv (head) ---")
-    print(_read_csv_head(result.paths["states"]))
+    print(_read_file_head(result.paths["states"]))
     print("\n--- artifacts.csv (head) ---")
-    print(_read_csv_head(result.paths["artifacts"]))
+    print(_read_file_head(result.paths["artifacts"]))
     print("\n--- clean_per_state.csv (head) ---")
-    print(_read_csv_head(result.paths["clean_per_state"]))
+    print(_read_file_head(result.paths["clean_per_state"]))
     print("\n--- meta.json ---")
-    print(_read_csv_head(result.paths["meta"], n=200))
+    print(_read_file_head(result.paths["meta"], n=200))
     return 0
 
 

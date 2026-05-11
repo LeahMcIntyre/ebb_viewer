@@ -75,7 +75,7 @@ class MaskExportWorker(QThread):
             manifest=self._manifest,
             params=self._params,
             pairs=self._pairs,
-            progress_cb=lambda a, c, d, t: self.progress.emit(a, c, d, t),
+            progress_cb=self.progress.emit,
         )
         self.finished_with_result.emit(result)
 
@@ -94,6 +94,7 @@ class ExportMasksPage(QWidget):
         super().__init__(parent)
         self.project_root = Path(project_root)
 
+        self._loaded_source: str | None = None  # "psd" or "export"
         self._loaded_run_name: str | None = None
         self._loaded_snapshot: dict[str, Any] | None = None
         self._worker: MaskExportWorker | None = None
@@ -347,7 +348,7 @@ class ExportMasksPage(QWidget):
         if params is None:
             QMessageBox.warning(self, "Load failed", f"Could not read params for '{run}'.")
             return
-        self._apply_loaded_params(params, run)
+        self._apply_loaded_params(params, source="psd", run_name=run)
 
     def _on_load_from_export_config(self) -> None:
         configs = export_params.list_configs(self.project_root)
@@ -373,9 +374,11 @@ class ExportMasksPage(QWidget):
         if params is None:
             QMessageBox.warning(self, "Load failed", f"Could not read params for '{name}'.")
             return
-        self._apply_loaded_params(params, f"export:{name}")
+        self._apply_loaded_params(params, source="export", run_name=name)
 
-    def _apply_loaded_params(self, params: dict[str, Any], run_name: str) -> None:
+    def _apply_loaded_params(
+        self, params: dict[str, Any], *, source: str, run_name: str
+    ) -> None:
         # Don't blockSignals the widget here — that also blocks its internal
         # `changed` signal, which is what triggers the section-header
         # subtitle refresh. Instead, let `changed` fire normally; we update
@@ -383,9 +386,11 @@ class ExportMasksPage(QWidget):
         # transient "Modified" flash from _check_modified is neutralized.
         self.mask_widget.from_params(params)
 
+        self._loaded_source = source
         self._loaded_run_name = run_name
         self._loaded_snapshot = self._snapshot_widget_values()
-        self.lbl_loaded.setText(f"Loaded: '{run_name}'")
+        label = "PSD run" if source == "psd" else "export config"
+        self.lbl_loaded.setText(f"Loaded {label}: '{run_name}'")
         self.lbl_loaded.setStyleSheet("color: #1a5c8a; font-size: 11px;")
         self.lbl_modified.setText("")
 
@@ -397,7 +402,10 @@ class ExportMasksPage(QWidget):
         if self._loaded_snapshot is None:
             return
         if self._snapshot_widget_values() != self._loaded_snapshot:
-            self.lbl_modified.setText(f"Modified — no longer matches '{self._loaded_run_name}'")
+            label = "PSD run" if self._loaded_source == "psd" else "export config"
+            self.lbl_modified.setText(
+                f"Modified — no longer matches {label} '{self._loaded_run_name}'"
+            )
         else:
             self.lbl_modified.setText("")
 

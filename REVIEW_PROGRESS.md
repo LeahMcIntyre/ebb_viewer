@@ -142,10 +142,10 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [x] `finalize.py` — module docstring; replaced `__import__("PyQt6.QtCore", ...)` cargo-cult with the already-imported `Qt`; hoisted `import pickle` to module top; tightened dead initial values in card builder
 
 ### 3f. Export Masks
-- [ ] `export_masks.py` (642) **— own session**
+- [x] `export_masks.py` — light second-look pass (file was just heavily feature-refactored); collapsed `progress_cb=lambda` to `self.progress.emit` (closure noise); UX: replaced `"export:<name>"` internal-prefix leak by tracking `(source, run_name)` separately — labels now read "Loaded PSD run: 'run_a'" / "Loaded export config: 'my_export'" / "Modified — no longer matches PSD run 'run_a'"; updated 6 tests for the new keyword-arg signature
 
 ### 3g. Out-of-tree scripts
-- [ ] `scripts/smoke_export.py` (125)
+- [x] `scripts/smoke_export.py` — renamed `_read_csv_head` → `_read_file_head` (it's also used for `meta.json`); tightened docstring to "text file" rather than "CSV"
 
 ### Phase 3 closeout
 - [ ] All tests pass; smoke-test the GUI end-to-end

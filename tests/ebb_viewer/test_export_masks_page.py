@@ -56,7 +56,9 @@ def test_apply_loaded_params_from_psd_run(qapp, tmp_path: Path):
         },
     )
     page = _make_page(qapp, tmp_path)
-    page._apply_loaded_params(psd_params.load(tmp_path, "run_a"), "run_a")
+    page._apply_loaded_params(
+        psd_params.load(tmp_path, "run_a"), source="psd", run_name="run_a"
+    )
 
     p = page._current_params()
     assert p["nstd"] == 4.0
@@ -75,19 +77,21 @@ def test_legacy_swd_mode_loads_correctly_in_page(qapp, tmp_path: Path):
     (tmp_path / "swd").mkdir()
     (tmp_path / "swd" / "AM001.mat").write_text("")
     page = _make_page(qapp, tmp_path)
-    page._apply_loaded_params({"swd_mode": "mask_out"}, "run_legacy")
+    page._apply_loaded_params(
+        {"swd_mode": "mask_out"}, source="psd", run_name="run_legacy"
+    )
     assert page._current_params()["use_swd_mask"] is True
 
 
 def test_modified_label_clears_after_load(qapp, tmp_path: Path):
     page = _make_page(qapp, tmp_path)
-    page._apply_loaded_params({"nstd": 3.0}, "run_a")
+    page._apply_loaded_params({"nstd": 3.0}, source="psd", run_name="run_a")
     assert page.lbl_modified.text() == ""
 
 
 def test_modified_label_appears_after_editing_loaded_params(qapp, tmp_path: Path):
     page = _make_page(qapp, tmp_path)
-    page._apply_loaded_params({"nstd": 3.0}, "run_a")
+    page._apply_loaded_params({"nstd": 3.0}, source="psd", run_name="run_a")
     # Edit the widget; should trigger modified state.
     page.mask_widget.dspin_z.setValue(7.0)
     assert "Modified" in page.lbl_modified.text()
@@ -121,7 +125,9 @@ def test_load_from_export_config_populates_widget(qapp, tmp_path: Path):
     page = _make_page(qapp, tmp_path)
     # Simulate the load button's behavior.
     page._apply_loaded_params(
-        export_params.load(tmp_path, "my_export"), "export:my_export"
+        export_params.load(tmp_path, "my_export"),
+        source="export",
+        run_name="my_export",
     )
 
     p = page._current_params()
@@ -170,6 +176,8 @@ def test_load_from_psd_run_refreshes_section_subtitles(qapp, tmp_path: Path):
         },
     )
     page = _make_page(qapp, tmp_path)
-    page._apply_loaded_params(psd_params.load(tmp_path, "run_a"), "run_a")
+    page._apply_loaded_params(
+        psd_params.load(tmp_path, "run_a"), source="psd", run_name="run_a"
+    )
     assert page.mask_widget._sections["hour_window"].subtitle() == "6–18h, days 0,1,2"
     assert page.mask_widget._sections["spindle"].subtitle() == "0.75"
