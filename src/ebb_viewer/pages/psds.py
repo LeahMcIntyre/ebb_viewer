@@ -291,7 +291,10 @@ class MaskingSettingsDialog(QDialog):
         self.chk_ann.toggled.connect(lambda checked: self._ann_body.setEnabled(checked))
         self.chk_ann.toggled.connect(self._refresh_ann_status)
         self.btn_ann_dir.clicked.connect(self._choose_ann_dir)
-        self._ann_keyword_edit.textChanged.connect(self._refresh_ann_status)
+        # Note: do NOT connect keyword textChanged → _refresh_ann_status —
+        # that helper loads the manifest and counts files per animal, which
+        # doesn't depend on the keyword text. The directory-choose handler
+        # calls it explicitly; the chk_ann.toggled signal covers enable/disable.
         self.chk_hour_window.toggled.connect(self._on_hw_toggled)
         self._radio_hw_all.toggled.connect(
             lambda checked: self._hw_days_edit.setEnabled(not checked)
@@ -605,8 +608,9 @@ class MaskingSettingsDialog(QDialog):
         if "ann_pad_after" in params:
             self._ann_pad_after.setValue(params["ann_pad_after"])
         if params.get("ann_enabled"):
+            # chk_ann.toggled is connected to _refresh_ann_status; setChecked
+            # below will fire the signal — no explicit call needed.
             self.chk_ann.setChecked(True)
-            self._refresh_ann_status()
         if params.get("hw_enabled"):
             windows = params.get("hour_windows") or []
             for hw in windows:
@@ -797,7 +801,9 @@ class PSDPage(QWidget):
             cb = QCheckBox(PRESET_DISPLAY[key])
             cb.setChecked(key in DEFAULT_STATES)
             cb.setToolTip(PRESET_DESCRIPTIONS[key])
-            cb.toggled.connect(self._validate)
+            # Discard the toggled-bool — _validate signature accepts an
+            # optional manifest, which the bool would otherwise bind to.
+            cb.toggled.connect(lambda _checked: self._validate())
             cb.toggled.connect(self._refresh_state_overlap_hint)
             self._state_boxes[key] = cb
             r, c = divmod(idx, 3)
@@ -887,6 +893,7 @@ class PSDPage(QWidget):
         for i, label in enumerate(CH_LABELS):
             cb = QCheckBox(label)
             cb.setChecked(True)
+            cb.toggled.connect(lambda _checked: self._validate())
             self._channel_boxes.append(cb)
             r, c = divmod(i, cols)
             self._channels_grid.addWidget(cb, r, c)
@@ -929,7 +936,10 @@ class PSDPage(QWidget):
         self.spin_window.setValue(DEFAULT_WINSIZE)
 
         self.dspin_radius = QDoubleSpinBox()
-        self.dspin_radius.setDecimals(1)
+        # 2 decimals + 0.05 step so saved values like 0.75 don't silently
+        # round to 0.8 on display/re-save (matches MaskParamsWidget).
+        self.dspin_radius.setDecimals(2)
+        self.dspin_radius.setSingleStep(0.05)
         self.dspin_radius.setRange(0.0, 60.0)
         self.dspin_radius.setSuffix(" s")
         self.dspin_radius.setValue(DEFAULT_RADIUS)
@@ -1067,6 +1077,7 @@ class PSDPage(QWidget):
 
     def _refresh_swd_status(self):
         swd_dir = self.project_root / "swd"
+        manifest: Manifest | None = None
         if not swd_dir.is_dir():
             self._swd_available = False
             self._swd_status_text = "swd/ not found in project root"
@@ -1076,7 +1087,8 @@ class PSDPage(QWidget):
                 self._swd_available = False
                 self._swd_status_text = "swd/ found — no .mat files"
             else:
-                n_animals = sum(1 for _ in Manifest.load(self.project_root))
+                manifest = Manifest.load(self.project_root)
+                n_animals = sum(1 for _ in manifest)
                 if n_animals > 0 and mat_count != n_animals:
                     self._swd_status_text = (
                         f"⚠ {mat_count} .mat {'file' if mat_count == 1 else 'files'} in swd/ "
@@ -1097,7 +1109,7 @@ class PSDPage(QWidget):
                 f"({self._swd_status_text}) — SWD mask has been turned off."
             )
             self._update_masking_summary()
-        self._validate()
+        self._validate(manifest)
 
     def _open_masking_dialog(self):
         dlg = MaskingSettingsDialog(
@@ -1241,7 +1253,7 @@ class PSDPage(QWidget):
             self._merged_pkl_label.setText("Channel merged PKL: not yet built")
             self._merged_pkl_label.setStyleSheet("font-size: 10px; color: #555; padding-top: 2px;")
 
-        self._validate()
+        self._validate(manifest)
 
     # ------------- Actions -------------
 
@@ -1370,9 +1382,9 @@ class PSDPage(QWidget):
             params["hw_enabled"] = False
 
         # Clear stale PSD review flags for this run so the visualizer doesn't
-        # show old decisions against freshly computed data.
+        # show old decisions against freshly computed data. Reuse the manifest
+        # loaded above for the pre-flight checks rather than re-reading.
         try:
-            manifest = Manifest.load(self.project_root)
             for entry in manifest:
                 for run in entry.runs.values():
                     run.psd_status.pop(run_name, None)
@@ -1427,11 +1439,9 @@ class PSDPage(QWidget):
 
     # ---------- Channels API ----------
 
-    def selected_channels(self):
+    def selected_channels(self) -> list[int]:
+        """Return indices of checked channel boxes (in CH_LABELS order)."""
         return [i for i, cb in enumerate(self._channel_boxes) if cb.isChecked()]
-
-    def channel_labels(self):
-        return [cb.text() for cb in self._channel_boxes]
 
     def _selected_states(self) -> list[str]:
         """Return checked state preset keys in canonical order."""
@@ -1470,14 +1480,22 @@ class PSDPage(QWidget):
         self.lbl_standard.setText(str(self.standard_folder))
         self._validate()
 
-    def _validate(self):
+    def _validate(self, manifest: Manifest | None = None) -> None:
+        """Recompute the Run button's enabled state + status labels.
+
+        Args:
+            manifest: Optional pre-loaded manifest to avoid a redundant disk
+                read when the caller has already loaded one. When ``None``,
+                the manifest is loaded here.
+        """
         if self._computing:
             self._gate_label.setText("")
             self._summary_label.setText("")
             return
         has_standard = self.standard_folder is not None and self.standard_folder.exists()
 
-        manifest = Manifest.load(self.project_root)
+        if manifest is None:
+            manifest = Manifest.load(self.project_root)
         n_animals = sum(1 for _ in manifest)
         n_ready = len(manifest.ready_for_psd())
         all_ready = n_animals > 0 and n_ready == n_animals
@@ -1499,9 +1517,15 @@ class PSDPage(QWidget):
                 ann_ok = False
 
         states_ok = bool(self._selected_states())
+        channels_ok = bool(self.selected_channels())
 
         self.btn_run_pipeline.setEnabled(
-            has_standard and all_ready and has_combos and ann_ok and states_ok
+            has_standard
+            and all_ready
+            and has_combos
+            and ann_ok
+            and states_ok
+            and channels_ok
         )
 
         if not has_standard:
@@ -1533,6 +1557,9 @@ class PSDPage(QWidget):
             self._summary_label.setText("")
         elif not states_ok:
             self._gate_label.setText("Select at least one state group to compute")
+            self._summary_label.setText("")
+        elif not channels_ok:
+            self._gate_label.setText("Select at least one channel to compute")
             self._summary_label.setText("")
         else:
             self._gate_label.setText("")
@@ -1624,12 +1651,12 @@ class BatchEstimateWorker(QObject):
                     pickle.dump(records, f)
                 self.progress.emit(f"  → Saved: {savepath.name}")
 
+            # self.params already carries hw_enabled / hour_windows /
+            # selected_days when set (see _run_pipeline_clicked), so the
+            # spread below covers them — only swd_mode and ann_* need to
+            # be added on top.
             swd_mode = "mask_out" if self.swd_dir is not None else "none"
             saved = {**self.params, "swd_mode": swd_mode}
-            saved["hw_enabled"] = self.params.get("hw_enabled", False)
-            if self.params.get("hw_enabled"):
-                saved["hour_windows"] = self.params.get("hour_windows")
-                saved["selected_days"] = self.params.get("selected_days")
             if self.ann_params is not None:
                 saved.update(
                     {

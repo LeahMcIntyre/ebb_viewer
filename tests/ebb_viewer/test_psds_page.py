@@ -262,6 +262,80 @@ def test_full_masking_roundtrip_psd_params_json(qapp, tmp_path: Path):
     assert mp["selected_days"] == [0, 1, 2]
 
 
+# ---------------------------------------------------------------------------
+# Gating + advanced-settings precision
+# ---------------------------------------------------------------------------
+
+
+def test_empty_channel_selection_disables_run_button(qapp, tmp_path: Path):
+    """Unchecking every channel must gate the Run button.
+
+    Background: ``estimate_psd``'s ``channels=None`` default only kicks in
+    when channels is ``None``, not ``[]`` — so an empty list would either
+    crash the compute or silently produce nothing.
+
+    Other gates may also fail in the empty project (no standard/ folder,
+    no manifest, etc.), but the button-disabled assertion below is what
+    actually protects the compute. We additionally verify the channel
+    gate is reached by toggling channels on/off and checking the gate
+    label changes when channels are the *only* unsatisfied check.
+    """
+    page = _make_page(qapp, tmp_path)
+    for cb in page._channel_boxes:
+        cb.setChecked(False)
+    page._validate()
+    assert not page.btn_run_pipeline.isEnabled()
+    # Toggling channels also fires the signal-driven validate; confirm
+    # the live wiring still gates the button.
+    page._channel_boxes[0].setChecked(True)
+    assert not page.btn_run_pipeline.isEnabled()  # other gates still fail
+    for cb in page._channel_boxes:
+        cb.setChecked(True)
+
+
+def test_channel_gate_label_when_channels_are_sole_failure(qapp, tmp_path: Path):
+    """When every other gate passes, the empty-channels gate must surface
+    its dedicated label so the user understands why Run is disabled."""
+    # Set up just enough state to satisfy every earlier gate.
+    (tmp_path / "standard").mkdir()
+    spindle = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle.mkdir(parents=True)
+    (spindle / "AM001_LFC_RSC.csv").write_text("rawstate\n")
+    # Manifest with one animal whose LFC_RSC run is ok.
+    from ebb_viewer.pipeline.manifest import (
+        Manifest,
+        ManifestEntry,
+        RunEntry,
+    )
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        runs={"LFC_RSC": RunEntry(sleep_qc="ok")},
+    )
+    m.save()
+
+    page = _make_page(qapp, tmp_path)
+    for cb in page._channel_boxes:
+        cb.setChecked(False)
+    page._validate()
+    assert not page.btn_run_pipeline.isEnabled()
+    assert "channel" in page._gate_label.text().lower()
+
+
+def test_radius_two_decimals_no_rounding(qapp, tmp_path: Path):
+    """Saved ``radius=0.75`` must reload as 0.75, not round to 0.8.
+
+    The SD-mask radius spinbox previously had ``decimals=1`` which silently
+    rounded any value with a 0.05 step down on display + re-save. The
+    Export Masks widget has used 2 decimals + 0.05 step for the same reason.
+    """
+    psd_params.save(tmp_path, "default", {"fs": 250, "states": ["wake"], "radius": 0.75})
+    page = _make_page(qapp, tmp_path)
+    assert page.dspin_radius.value() == 0.75
+
+
 def test_pipeline_save_format_includes_all_masking_keys(tmp_path: Path):
     """After a successful run, psd_params.json must contain every masking
     key the page knows about (so a subsequent reload is lossless)."""
