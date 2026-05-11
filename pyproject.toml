@@ -15,9 +15,10 @@ dependencies = [
   "openseize",
 ]
 
-# Command-line entry point to launch your viewer
+# Command-line entry points: pipeline GUI and standalone EEG viewer
 [project.scripts]
 ebb-viewer = "ebb_viewer.__main__:main"
+ebb-eeg-viewer = "ebb_viewer.edf_viewer.eeg_viewer:main"
 
 [tool.setuptools]
 # Tell setuptools that all packages live under src/

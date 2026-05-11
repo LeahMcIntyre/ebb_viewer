@@ -95,7 +95,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 
 **2b dedupe:** promoted `_read_rawstate_column` → `read_rawstate_column` in `ebb/process/sleep_compute.py`; deleted the duplicate copy in `ebb/process/mask_export.py` (which had a slightly more robust version — kept its `newline=""`, None-check, empty-row skip).
 
-### 2c. `edf_viewer/` (~1,800 lines, **untested**)
+### 2c. `edf_viewer/` — DONE (~1,800 lines, **untested**)
 - [x] `recording.py` — added module + class docstrings
 - [x] `state_legend.py` — added module docstring; renamed unused `a` → `_a` (B007)
 - [x] `state_bar.py` — added module docstring
@@ -104,7 +104,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [x] `masks_dock.py` — fixed ZeroDivisionError in `_state_overlap` for zero-coverage states (e.g. animal with no REM); added module docstring; `state_set: MaskSet | None`
 - [x] `mask_builder.py` — extracted `_compute_artifact_masks` + `_wrap_artifact_masks` helpers (deduped ~25 lines between `build_default_masks` and `rebuild_artifact_masks`, killed 2 commented-out `# pro = make_producer` lines); hoisted `_DEFAULT_COMM_META`/`_DEFAULT_SD_META` constants; added module docstring; replaced vestigial TODO with real docstring on `_param_desc`
 - [x] `trace_view.py` — fixed annotation teardown crash (now tracks `(pw, item)` pairs); replaced 0.01s magic epsilon with one-sample `1.0/fs`; eliminated `__init__` double `base_y` init + dropped `_apply_y`'s now-unneeded lazy guard; deleted commented-out reset-centers archaeology + dead `# lbl.setAlignment` line; added module/class/method docstrings (sticky-center zoom design now lives in module docstring)
-- [ ] `eeg_viewer.py` (678)
+- [x] `eeg_viewer.py` — fixed orphan-window leak in `on_open` (now sets `WA_DeleteOnClose`); fixed SleepPopup accumulation (now created once in `__init__` like STFTPopup); `launch_edf_window` now raises `ValueError` on fs != 250 instead of `print+return None`; extracted `_load_recording` (deduped EDF reading across 3 sites) + `_load_state_df` (narrows bare except, removes inline I/O from `__init__`); hoisted `_QC_STYLES` to class constant; replaced magic `4` with `DEFAULT_SPINDLE_EPOCH_SEC`; rewrote `main()` as a thin wrapper around `launch_edf_window` (no more hardcoded `/media/...` paths); added module + class docstrings; deleted dead toolbar comments. **Also added `ebb-eeg-viewer` console-script entry point in `pyproject.toml`** for standalone viewer launch.
 
 ### 2d. `data_stores/`
 - [ ] `psd_store.py` (96)
