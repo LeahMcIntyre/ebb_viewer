@@ -9,6 +9,19 @@ jarring. Consider replacing the per-combo dialog loop with a single dialog
 showing one row per combo (project + remote folder editable inline) and
 launching all uploads at once on confirmation.
 
+### psd: Unify mask controls UI with Export Masks page
+The PSD page has two different config/expand patterns for masking knobs —
+a "Configure…" modal (SWD / annotation / hour windows) and an inline
+"Advanced PSD Settings" collapsible (SD mask + spindle noise). Things get
+lost between the two surfaces, and the Export Masks page already has a
+cleaner inline-collapsibles layout via `MaskParamsWidget`. Swap the
+modal's body for `MaskParamsWidget` (rendered inline rather than as a
+dialog) so both pages look and behave the same. This is the work tracked
+in Phase 5 as "psds.py Stage B" — porting the dialog's richer hour-window
+preview (per-window badges, total-hours estimate, day-availability check),
+SWD status text, and annotation file count into the widget is required
+before this swap.
+
 ### preprocess: "Rescan" button + initial-state wording
 Today the EDF duration scan runs only on the first `showEvent`. If the user
 adds or removes EDFs in the project root after the page has been opened,
