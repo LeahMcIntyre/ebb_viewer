@@ -121,7 +121,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 
 ### 3a. Setup pages
 - [ ] `home.py` (886)
-- [ ] `preprocess.py` (401)
+- [x] `preprocess.py` — module + class docstrings; removed dead target-dir fallback in `_run_clicked` + stale "Not Relevant Now…" comment; localized `_min_duration_hrs`; narrowed bare-except in `_scan_edfs` and surfaced unreadable-file count in the scan label; extracted `_on_preprocess_error` from inline lambda; +TODO for rescan button + initial-state wording
 
 ### 3b. Spindle pipeline
 - [ ] `spindle.py` (442)

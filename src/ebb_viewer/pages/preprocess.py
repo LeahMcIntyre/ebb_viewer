@@ -1,3 +1,13 @@
+"""Preprocess page — trim, downsample, and standardize raw EDFs.
+
+Inputs: ``.edf`` files in the project root with names matching
+``AnimalID_..._YYYY_MM_DD_HH_MM_SS.edf``. Outputs: trimmed + downsampled
+copies written to ``standard/``.
+
+Trim policy: each EDF is trimmed to the longest target hour count that
+fits its duration. Recordings shorter than the smallest target fail.
+"""
+
 import time
 from pathlib import Path
 
@@ -41,6 +51,8 @@ _SAME_DURATION_THRESHOLD = 1 / 60  # 1 minute — treat as identical
 
 
 class PreprocessPage(QWidget):
+    """Sidebar page #1 — preprocess raw EDFs into standard/."""
+
     navigate_to = pyqtSignal(str)
 
     _STYLE_NORMAL = "color: #666; font-size: 10px;"
@@ -52,7 +64,6 @@ class PreprocessPage(QWidget):
         self.project_root = project_root
         self.default_target_dir = project_root / "standard"
         self._durations_hrs: list[float] | None = None  # None = not yet scanned
-        self._min_duration_hrs: float | None = None
         self._build_ui()
         self._wire()
 
@@ -228,37 +239,41 @@ class PreprocessPage(QWidget):
             self._scan_label.setText("No EDF files found")
             self._scan_label.setStyleSheet(self._STYLE_ERROR)
             self._durations_hrs = []
-            self._min_duration_hrs = None
             return
 
-        durations = []
+        durations: list[float] = []
+        n_skipped = 0
         for p in paths:
             try:
                 with edf_io.Reader(p) as reader:
                     secs = reader.header["num_records"] * reader.header["record_duration"]
                 durations.append(secs / 3600.0)
-            except Exception:
-                pass
+            except (OSError, KeyError, ValueError):
+                # Unreadable header / wrong format / corrupt file — count and
+                # surface in the scan label so the user knows files were skipped.
+                n_skipped += 1
 
         self._durations_hrs = durations
-        self._min_duration_hrs = min(durations) if durations else None
 
         n = len(paths)
         if not durations:
             self._scan_label.setText(
-                f"Found {n} file{'s' if n != 1 else ''} · could not read durations"
+                f"Found {n} file{'s' if n != 1 else ''} · could not read any durations"
             )
-            self._scan_label.setStyleSheet(self._STYLE_NORMAL)
+            self._scan_label.setStyleSheet(self._STYLE_ERROR)
             return
 
-        min_hrs = self._min_duration_hrs
+        min_hrs = min(durations)
         max_hrs = max(durations)
         if abs(max_hrs - min_hrs) < _SAME_DURATION_THRESHOLD:
             dur_str = f"all {_fmt_hrs(min_hrs)}"
         else:
             dur_str = f"{_fmt_hrs(min_hrs)} – {_fmt_hrs(max_hrs)}"
 
-        self._scan_label.setText(f"Found {n} file{'s' if n != 1 else ''} · {dur_str}")
+        skip_str = f" · {n_skipped} unreadable" if n_skipped else ""
+        self._scan_label.setText(
+            f"Found {n} file{'s' if n != 1 else ''} · {dur_str}{skip_str}"
+        )
         self._update_trim_hint()
 
     def _update_trim_hint(self) -> None:
@@ -311,28 +326,14 @@ class PreprocessPage(QWidget):
         self.btn_run.setEnabled(True)
         self._hint_frame.setVisible(True)
 
-    # Run Preprocessing
+    def _on_preprocess_error(self, msg: str) -> None:
+        self.btn_run.setEnabled(True)
+        QMessageBox.critical(self, "Preprocess failed", msg)
+
     def _run_clicked(self):
+        # Target dir is always project_root/standard — the UI just displays it.
+        target_dir = self.default_target_dir
 
-        # Read the current target directory text (Not Relevant Now Because I force default)
-        target_text = self.target_name_edit.text().strip()
-        if target_text:
-            target_dir = Path(target_text)
-        else:
-            target_dir = self.default_target_dir
-
-        # Validate: if the parent of target_dir doesn't exist, warn & fall back
-        if not target_dir.parent.is_dir():
-            msg = f"Target folder will default to '{self.default_target_dir}'.\nContinue?"
-            btn = QMessageBox.question(self, "No Target Folder Selected", msg)
-            if btn != QMessageBox.StandardButton.Yes:
-                return
-
-            target_dir = self.default_target_dir
-            self.target_name_edit.setText(str(target_dir))
-            self.target_name_edit.setToolTip(str(target_dir))
-
-        # Pull a snapshot from the UI
         params = {
             "fs": int(self.fs_original.value()),
             "downsample": int(self.downsample.value()),
@@ -364,14 +365,13 @@ class PreprocessPage(QWidget):
             self._preprocess_thread,
             self._preprocess_worker,
             on_finished=self._on_preprocess_done,
-            on_error=lambda msg: (
-                self.btn_run.setEnabled(True),
-                QMessageBox.critical(self, "Preprocess failed", msg),
-            ),
+            on_error=self._on_preprocess_error,
         )
 
 
 class _PreprocessWorker(QObject):
+    """Off-thread worker that drives `batch_preprocess` and reports progress via log/finished/error signals."""
+
     log = pyqtSignal(str)
     finished = pyqtSignal()
     error = pyqtSignal(str)

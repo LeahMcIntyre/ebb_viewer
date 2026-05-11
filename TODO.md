@@ -2,6 +2,16 @@
 
 ## P2 — Moderate Value, Moderate Effort
 
+### preprocess: "Rescan" button + initial-state wording
+Today the EDF duration scan runs only on the first `showEvent`. If the user
+adds or removes EDFs in the project root after the page has been opened,
+the scan label is stale until the page is closed + reopened. Add an
+explicit "Rescan" button that re-runs `_scan_edfs()` and re-renders the
+trim-hint summary. Also: the placeholder text "Scanning…" is shown before
+`showEvent` fires (i.e. before the scan actually starts). Replace with
+something like "(EDF scan pending)" or leave the label empty until the
+first scan completes.
+
 ### home: Remove editable channel combo from pipeline summary table (if redundant)
 The rerun combo is already settable from the yellow card in Needs Attention. A second editable combo in the pipeline table is a duplicate code path with no extra clarity. Evaluate and remove if nothing is lost.
 
