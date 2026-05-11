@@ -124,8 +124,8 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [x] `preprocess.py` — module + class docstrings; removed dead target-dir fallback in `_run_clicked` + stale "Not Relevant Now…" comment; localized `_min_duration_hrs`; narrowed bare-except in `_scan_edfs` and surfaced unreadable-file count in the scan label; extracted `_on_preprocess_error` from inline lambda; +TODO for rescan button + initial-state wording
 
 ### 3b. Spindle pipeline
-- [ ] `spindle.py` (442)
-- [ ] `spindle_upload.py` (670)
+- [x] `spindle.py` — module + class docstrings; declared `_spindle_thread`/`_spindle_worker` in `__init__`; dropped dead target-dir override (read-only field); replaced hard-reject "Folder Already Exists" with confirm-and-proceed (matches SleepyRat output pattern); extracted `_on_spindle_error`; unified validation messages ("1 EEG channel selected — ready to run" / "2 EEG channels…"); per user, shortened lock label to just 🔒 emoji
+- [x] `spindle_upload.py` — module + class docstrings; **GUI freeze fix**: extracted `_fetch_folders` and `_refresh_projects_clicked` to off-thread `_ApiFetchWorker` (was blocking the main thread on SleepyRat HTTP calls); extracted `_upload_pending` (~30 lines of dup between files/dir branches); added upload progress count `Uploading (i/N): name…`; safe `_pending_save` consume (try/except around `sleepyrat_config.save_combo`); renamed `Process Spindle` → `Upload & Download`; deleted dead `_download_only_clicked` method; dropped 2 commented-out `# self.btn_run.setEnabled(False)` lines (refer to nonexistent button) + duplicate inline `SleepyRatAPI` import; extracted `_on_remote_folder_changed` from 2-statement tuple-lambda; type-annotated `_get_common_run_context` return
 
 ### 3c. Sleep QC visualizer (1,535 lines, **2 sessions**)
 - [ ] Session 1: read fully, propose structural refactor plan

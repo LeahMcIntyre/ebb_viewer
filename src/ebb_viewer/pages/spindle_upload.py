@@ -1,3 +1,14 @@
+"""Spindle Upload page — push spindle EDFs to SleepyRat, pull label CSVs back.
+
+User picks a ``spindle_edfs/<COMBO>/`` subfolder and a SleepyRat project +
+remote folder name. Uploads any EDFs not already on SleepyRat, waits for
+scoring to finish, then downloads each label CSV into
+``spindle_outputs/<COMBO>/``.
+
+Also exposes the ``SleepyRatWorker`` QObject for re-use by the Rerun page,
+which feeds it an explicit list of files rather than a directory glob.
+"""
+
 import unicodedata
 from pathlib import Path
 
@@ -178,7 +189,7 @@ class SpindleUploadPage(QWidget):
         form_layout.addRow("", self.remote_folder_hint)
 
         btn_row = QHBoxLayout()
-        self.btn_upload_and_download = QPushButton("Process Spindle")
+        self.btn_upload_and_download = QPushButton("Upload && Download")
 
         self.btn_upload_and_download.setEnabled(False)
 
@@ -230,11 +241,13 @@ class SpindleUploadPage(QWidget):
         self.project_list.currentItemChanged.connect(lambda *_: self._on_project_selected())
 
         # Remote folder text
-        self.remote_folder_edit.currentTextChanged.connect(
-            lambda _: (self._update_run_enabled(), self._update_folder_hint())
-        )
+        self.remote_folder_edit.currentTextChanged.connect(self._on_remote_folder_changed)
 
         self.btn_upload_and_download.clicked.connect(self._upload_and_download_clicked)
+
+    def _on_remote_folder_changed(self, _text: str) -> None:
+        self._update_run_enabled()
+        self._update_folder_hint()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -268,7 +281,6 @@ class SpindleUploadPage(QWidget):
                 "Spindle EDFs need to be created before using this page."
             )
             self.output_dir_edit.clear()
-            # self.btn_run.setEnabled(False)
             return
 
         subdirs = sorted(p for p in root.iterdir() if p.is_dir())
@@ -279,7 +291,6 @@ class SpindleUploadPage(QWidget):
                 "Spindle EDFs need to be created before using this page."
             )
             self.output_dir_edit.clear()
-            # self.btn_run.setEnabled(False)
             return
 
         self.upload_hint.setText(
@@ -340,13 +351,17 @@ class SpindleUploadPage(QWidget):
         self._fetch_folders(project)
 
     def _fetch_folders(self, project: str):
+        # Off-thread fetch so a slow/unreachable SleepyRat doesn't freeze the GUI.
         api = self._ensure_api()
-        try:
-            names = api.folder_names(project)
-        except Exception as e:
-            self._log(f"Could not fetch folders for '{project}': {e}")
-            return
-        self._on_folders_fetched(project, names)
+        self._folders_thread = QThread(self)
+        self._folders_worker = _ApiFetchWorker(lambda: api.folder_names(project))
+        self._folders_worker.result.connect(
+            lambda names: self._on_folders_fetched(project, names)
+        )
+        self._folders_worker.error.connect(
+            lambda msg: self._log(f"Could not fetch folders for '{project}': {msg}")
+        )
+        launch_worker(self._folders_thread, self._folders_worker)
 
     def _on_folders_fetched(self, project: str, names: list[str]):
         self._known_folders = set(names)
@@ -392,26 +407,36 @@ class SpindleUploadPage(QWidget):
 
     # ------------- SleepyRat – project list -------------
     def _refresh_projects_clicked(self):
+        # Off-thread fetch so a slow/unreachable SleepyRat doesn't freeze the GUI.
         api = self._ensure_api()
         self._log("Fetching SleepyRat projects...")
-        try:
-            names = api.project_names()
-        except Exception as e:
-            self._log(f"ERROR fetching projects: {e}")
-            QMessageBox.critical(self, "SleepyRat Error", str(e))
-            return
+        self.btn_refresh_projects.setEnabled(False)
 
+        self._projects_thread = QThread(self)
+        self._projects_worker = _ApiFetchWorker(api.project_names)
+        self._projects_worker.result.connect(self._on_projects_fetched)
+        self._projects_worker.error.connect(self._on_projects_error)
+        launch_worker(
+            self._projects_thread,
+            self._projects_worker,
+            on_finished=lambda: self.btn_refresh_projects.setEnabled(True),
+        )
+
+    def _on_projects_fetched(self, names: list[str]) -> None:
         self.project_list.blockSignals(True)
         self.project_list.clear()
         for name in names:
             self.project_list.addItem(name)
         self.project_list.blockSignals(False)
-
         if names and self.project_list.currentRow() < 0:
             self.project_list.setCurrentRow(0)
-
         self._log(f"Loaded {len(names)} project(s) from SleepyRat.")
         self._update_run_enabled()
+
+    def _on_projects_error(self, msg: str) -> None:
+        self.btn_refresh_projects.setEnabled(True)
+        self._log(f"ERROR fetching projects: {msg}")
+        QMessageBox.critical(self, "SleepyRat Error", msg)
 
     def _new_project_clicked(self):
         api = self._ensure_api()
@@ -450,7 +475,9 @@ class SpindleUploadPage(QWidget):
         self._log(f"Project '{name}' created and selected.")
 
     # ------------- Run action -------------
-    def _get_common_run_context(self):
+    def _get_common_run_context(
+        self,
+    ) -> tuple[str, str, Path | None, Path] | None:
         """Return (project, remote_folder, upload_dir, out_dir) or show errors and return None."""
         upload_dir = self._current_upload_dir()
         remote_folder = self.remote_folder_edit.currentText().strip()
@@ -511,7 +538,12 @@ class SpindleUploadPage(QWidget):
     def _on_sr_done(self):
         if self._pending_save:
             combo, project, remote_folder = self._pending_save
-            sleepyrat_config.save_combo(self.project_root, combo, project, remote_folder)
+            try:
+                sleepyrat_config.save_combo(self.project_root, combo, project, remote_folder)
+            except Exception as e:
+                # Don't fail the whole post-run flow if the side-config write
+                # fails (e.g. disk full, permissions). Log and move on.
+                self._log(f"Warning: could not save sleepyrat combo config: {e}")
             self._pending_save = None
         Manifest.build_from_standard(self.project_root)
         self._update_run_enabled()
@@ -544,17 +576,17 @@ class SpindleUploadPage(QWidget):
             project, remote_folder, out_dir, upload_dir=upload_dir, save_combo=combo
         )
 
-    def _download_only_clicked(self):
-        ctx = self._get_common_run_context()
-        if ctx is None:
-            return
-        project, remote_folder, _upload_dir, out_dir = ctx
-        if not self._check_output_dir(out_dir):
-            return
-        self._launch_worker(project, remote_folder, out_dir, upload_dir=None)
-
-
 class SleepyRatWorker(QObject):
+    """Worker QObject: uploads spindle EDFs to SleepyRat and downloads label CSVs.
+
+    Two operating modes:
+    - ``files=`` (explicit list) — used by the Rerun page for per-animal reruns.
+    - ``upload_dir=`` (directory glob) — used by the Spindle Upload page for
+      bulk runs.
+    Both modes skip files that are already on SleepyRat and only wait for
+    processing when there's something new to upload.
+    """
+
     log = pyqtSignal(str)
     finished = pyqtSignal()
     error = pyqtSignal(str)
@@ -579,54 +611,35 @@ class SleepyRatWorker(QObject):
         except Exception:
             return set()
 
-    def run(self):
-        from ebb.io.sleepyrat import SleepyRatAPI
+    def _upload_pending(self, api, candidates: list[Path]) -> None:
+        """Upload candidates not already on SleepyRat; wait for processing if any were uploaded."""
+        self.log.emit("Checking for existing edf files on SleepyRat...")
+        existing = self._existing_stems(api, self.project, self.remote_folder)
+        to_upload = [p for p in candidates if _norm_stem(p) not in existing]
+        already_there = len(candidates) - len(to_upload)
+        if already_there:
+            self.log.emit(f"Skipping {already_there} already-uploaded edf file(s).")
+        for i, p in enumerate(to_upload, start=1):
+            self.log.emit(f"Uploading ({i}/{len(to_upload)}): {p.name}…")
+            api.upload_edf(self.project, self.remote_folder, p)
+        if to_upload:
+            self.log.emit("Upload complete. Waiting for SleepyRat processing…")
+            ok = api.wait_for_processing(self.project, self.remote_folder)
+            if not ok:
+                raise RuntimeError("Processing did not finish within the wait limit.")
+        else:
+            self.log.emit("All edf files already on SleepyRat, skipping upload and wait.")
 
+    def run(self):
         try:
             api = SleepyRatAPI()
 
             if self.files is not None:
-                # Explicit file list (rerun path) — check remote before uploading anything.
-                self.log.emit("Checking for existing edf files on SleepyRat...")
-                existing = self._existing_stems(api, self.project, self.remote_folder)
-
-                to_upload = [p for p in self.files if _norm_stem(p) not in existing]
-                already_there = len(self.files) - len(to_upload)
-                if already_there:
-                    self.log.emit(
-                        f"Found {already_there} submission(s) already on SleepyRat "
-                        f"— downloading instead of re-uploading."
-                    )
-                for p in to_upload:
-                    self.log.emit(f"Uploading {p.name}...")
-                    api.upload_edf(self.project, self.remote_folder, p)
-                if to_upload:
-                    self.log.emit("Upload complete. Waiting for SleepyRat processing...")
-                    ok = api.wait_for_processing(self.project, self.remote_folder)
-                    if not ok:
-                        raise RuntimeError("Processing did not finish within the wait limit.")
-                else:
-                    self.log.emit("All edf files already on SleepyRat, skipping upload and wait.")
-
+                # Explicit file list (rerun path).
+                self._upload_pending(api, list(self.files))
             elif self.upload_dir is not None:
-                # Directory batch — glob EDFs, skip already-uploaded by remote check.
-                edfs = sorted(self.upload_dir.glob("*.edf"))
-                self.log.emit("Checking for existing edf files on SleepyRat...")
-                existing = self._existing_stems(api, self.project, self.remote_folder)
-                to_upload = [p for p in edfs if _norm_stem(p) not in existing]
-                already_there = len(edfs) - len(to_upload)
-                if already_there:
-                    self.log.emit(f"Skipping {already_there} already-uploaded edf file(s).")
-                for p in to_upload:
-                    self.log.emit(f"Uploading {p.name}...")
-                    api.upload_edf(self.project, self.remote_folder, p)
-                if to_upload:
-                    self.log.emit("Upload complete. Waiting for SleepyRat processing...")
-                    ok = api.wait_for_processing(self.project, self.remote_folder)
-                    if not ok:
-                        raise RuntimeError("Processing did not finish within the wait limit.")
-                else:
-                    self.log.emit("All edf files already uploaded, skipping wait.")
+                # Directory batch — glob EDFs.
+                self._upload_pending(api, sorted(self.upload_dir.glob("*.edf")))
 
             self.log.emit("Checking remote files...")
             info = api.get_submissions(self.project, self.remote_folder)
@@ -668,3 +681,28 @@ class SleepyRatWorker(QObject):
             self.finished.emit()
         except Exception as e:
             self.error.emit(str(e))
+
+
+class _ApiFetchWorker(QObject):
+    """One-shot off-thread fetcher: runs a zero-arg callable and emits the result.
+
+    Used to keep SleepyRat list calls off the GUI thread. ``result`` carries
+    whatever the callable returned; ``error`` carries the exception's str.
+    """
+
+    result = pyqtSignal(object)
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self, fn, parent=None):
+        super().__init__(parent)
+        self._fn = fn
+
+    def run(self):
+        try:
+            value = self._fn()
+        except Exception as e:
+            self.error.emit(str(e))
+            return
+        self.result.emit(value)
+        self.finished.emit()
