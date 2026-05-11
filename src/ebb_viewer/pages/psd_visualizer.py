@@ -1,3 +1,12 @@
+"""PSD Visualizer page — pick a PSD run/pkl and review per-animal PSDs.
+
+Two review passes are supported:
+- Pass 1 ("psds_channel_merged.pkl"): flag each animal OK or needs-drink-mask.
+- Pass 2 ("psds_channel_merged_drink.pkl"): verify drink masks worked.
+
+Non-merged per-combo pkls can also be opened for ad-hoc viewing (no flagging).
+"""
+
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, pyqtSignal
@@ -20,8 +29,14 @@ from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.widgets.psd_graph_widget import PSDGridPage
 
+# Pkl stems treated as "final" merged views eligible for manifest flagging.
+_FINAL_VIEW_STEMS = frozenset({"psds_channel_merged", "psds_channel_merged_drink"})
+_CHANNEL_NAMES = ["LFC", "RSC", "LSC"]
+
 
 class PSDVisualizer(QWidget):
+    """Sidebar page #7 — pick a PSD pkl and review animals via PSDGridPage."""
+
     navigate_to = pyqtSignal(str)
 
     def __init__(self, parent=None, *, project_root: Path):
@@ -214,15 +229,15 @@ class PSDVisualizer(QWidget):
         if not psd_file or not Path(psd_file).is_file():
             return
 
-        _FINAL_VIEW_STEMS = frozenset({"psds_channel_merged", "psds_channel_merged_drink"})
-
-        channel_names = ["LFC", "RSC", "LSC"]
         stem = Path(psd_file).stem
         is_final_view = stem in _FINAL_VIEW_STEMS
         is_drink_review = stem == "psds_channel_merged_drink"
-        run_channels = (
-            None if is_final_view else (stem[len("psds_") :] if stem.startswith("psds_") else stem)
-        )
+        if is_final_view:
+            run_channels = None
+        elif stem.startswith("psds_"):
+            run_channels = stem[len("psds_") :]
+        else:
+            run_channels = stem
         run_name = self._current_run_name()
 
         fname = Path(psd_file).name
@@ -235,11 +250,11 @@ class PSDVisualizer(QWidget):
         self._reviewing_lbl.setText(lbl_text)
         self._reviewing_lbl.setVisible(True)
 
-        self.psd_store = PSDStore(psd_file, channel_names=channel_names)
+        self.psd_store = PSDStore(psd_file, channel_names=_CHANNEL_NAMES)
         self.psd_page = PSDGridPage(
             self,
             store=self.psd_store,
-            channel_names=channel_names,
+            channel_names=_CHANNEL_NAMES,
             states=None,  # derived from pkl contents (see PSDGridPage)
             manifest=Manifest.load(self.project_root) if is_final_view else None,
             run_channels=run_channels,

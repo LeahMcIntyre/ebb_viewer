@@ -136,10 +136,10 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [ ] `psds.py` (1,535) **— own session, possibly 2**
 
 ### 3e. PSD review + finalize
-- [ ] `psd_visualizer.py` (249)
-- [ ] `drink_mask.py` (550)
-- [ ] `sleep_visualizer.py` (258)
-- [ ] `finalize.py` (325)
+- [x] `psd_visualizer.py` — module + class docstrings; lifted `_FINAL_VIEW_STEMS` and `_CHANNEL_NAMES` to module level; flattened nested-ternary `run_channels` parse
+- [ ] `drink_mask.py` (581)
+- [x] `sleep_visualizer.py` — **deleted** (unused — zero imports anywhere in the codebase; functionality lives in `widgets/sleep_viewer.py`)
+- [x] `finalize.py` — module docstring; replaced `__import__("PyQt6.QtCore", ...)` cargo-cult with the already-imported `Qt`; hoisted `import pickle` to module top; tightened dead initial values in card builder
 
 ### 3f. Export Masks
 - [ ] `export_masks.py` (642) **— own session**
