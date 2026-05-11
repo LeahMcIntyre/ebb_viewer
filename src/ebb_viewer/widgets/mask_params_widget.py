@@ -31,7 +31,6 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -48,6 +47,7 @@ from ebb.process.state_presets import (
     PRESET_DESCRIPTIONS,
     PRESET_DISPLAY,
 )
+from ebb_viewer.widgets.collapsible_section import CollapsibleSection
 
 # Defaults mirror estimate_psd's signature so a freshly-constructed widget
 # matches the PSD pipeline's untouched behavior.
@@ -207,19 +207,40 @@ class MaskParamsWidget(QWidget):
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(8)
+        root.setSpacing(6)
 
-        root.addWidget(self._build_states_group())
-        root.addWidget(self._build_sd_group())
-        root.addWidget(self._build_spindle_group())
-        root.addWidget(self._build_swd_group())
-        root.addWidget(self._build_annotation_group())
-        root.addWidget(self._build_hour_window_group())
-        root.addWidget(self._build_drink_group())
+        # Always-expanded sections — these are the routine knobs for every export.
+        root.addWidget(CollapsibleSection("States to Compute", self._build_states_group(), collapsed=False))
+        root.addWidget(CollapsibleSection(
+            "Standard Deviation Mask (applied only to wake)",
+            self._build_sd_group(),
+            collapsed=False,
+        ))
+        root.addWidget(CollapsibleSection(
+            "Spindle Noise Mask (applied to all states)",
+            self._build_spindle_group(),
+            collapsed=False,
+        ))
+        root.addWidget(CollapsibleSection(
+            "Drink Mask",
+            self._build_drink_group(),
+            collapsed=False,
+        ))
 
-    def _build_states_group(self) -> QGroupBox:
-        gb = QGroupBox("States to Compute")
-        v = QVBoxLayout(gb)
+        # Optional sections — disabled bodies by default; start collapsed to
+        # save scroll space.
+        root.addWidget(CollapsibleSection("SWD Mask", self._build_swd_group(), collapsed=True))
+        root.addWidget(CollapsibleSection(
+            "Annotation Mask", self._build_annotation_group(), collapsed=True
+        ))
+        root.addWidget(CollapsibleSection(
+            "Compute Hours", self._build_hour_window_group(), collapsed=True
+        ))
+
+    def _build_states_group(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(8, 4, 8, 8)
         hint = QLabel(
             "Select one or more state groups. A separate PSD is computed for each "
             "checked group; lumped groups combine their underlying epochs."
@@ -241,11 +262,12 @@ class MaskParamsWidget(QWidget):
             r, c = divmod(idx, 3)
             grid.addWidget(cb, r, c)
         v.addLayout(grid)
-        return gb
+        return w
 
-    def _build_sd_group(self) -> QGroupBox:
-        gb = QGroupBox("Standard Deviation Mask: Applied Only To Wake")
-        form = QFormLayout(gb)
+    def _build_sd_group(self) -> QWidget:
+        w = QWidget()
+        form = QFormLayout(w)
+        form.setContentsMargins(8, 4, 8, 8)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         self.spin_window = QSpinBox()
@@ -270,11 +292,12 @@ class MaskParamsWidget(QWidget):
         form.addRow("Window:", self.spin_window)
         form.addRow("Radius:", self.dspin_radius)
         form.addRow("Z-threshold:", self.dspin_z)
-        return gb
+        return w
 
-    def _build_spindle_group(self) -> QGroupBox:
-        gb = QGroupBox("Spindle Noise Mask: Applied To All States")
-        form = QFormLayout(gb)
+    def _build_spindle_group(self) -> QWidget:
+        w = QWidget()
+        form = QFormLayout(w)
+        form.setContentsMargins(8, 4, 8, 8)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         self.dspin_noise = QDoubleSpinBox()
         self.dspin_noise.setDecimals(2)
@@ -282,11 +305,12 @@ class MaskParamsWidget(QWidget):
         self.dspin_noise.setSingleStep(0.05)
         self.dspin_noise.setValue(_DEFAULT_NOISE_THRESH)
         form.addRow("Spindle Noise Threshold:", self.dspin_noise)
-        return gb
+        return w
 
-    def _build_swd_group(self) -> QGroupBox:
-        gb = QGroupBox("SWD Mask")
-        v = QVBoxLayout(gb)
+    def _build_swd_group(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(8, 4, 8, 8)
         self._swd_grp = QButtonGroup(self)
         self._radio_swd_none = QRadioButton("No SWD mask")
         self._radio_swd_none.setChecked(True)
@@ -313,11 +337,12 @@ class MaskParamsWidget(QWidget):
         hint.setWordWrap(True)
         hint.setStyleSheet("font-size: 10px; color: #777; padding-left: 4px;")
         v.addWidget(hint)
-        return gb
+        return w
 
-    def _build_annotation_group(self) -> QGroupBox:
-        gb = QGroupBox("Annotation Mask")
-        v = QVBoxLayout(gb)
+    def _build_annotation_group(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(8, 4, 8, 8)
         self.chk_ann = QCheckBox("Apply annotation mask")
         v.addWidget(self.chk_ann)
 
@@ -374,11 +399,12 @@ class MaskParamsWidget(QWidget):
         body.addLayout(pad_form)
 
         v.addWidget(self._ann_body)
-        return gb
+        return w
 
-    def _build_hour_window_group(self) -> QGroupBox:
-        gb = QGroupBox("Compute Hours")
-        v = QVBoxLayout(gb)
+    def _build_hour_window_group(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(8, 4, 8, 8)
         self.chk_hour_window = QCheckBox("Restrict to clock-time window")
         v.addWidget(self.chk_hour_window)
 
@@ -434,11 +460,12 @@ class MaskParamsWidget(QWidget):
         body.addLayout(day_row)
 
         v.addWidget(self._hw_body)
-        return gb
+        return w
 
-    def _build_drink_group(self) -> QGroupBox:
-        gb = QGroupBox("Drink Mask")
-        v = QVBoxLayout(gb)
+    def _build_drink_group(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(8, 4, 8, 8)
         self.chk_use_drink = QCheckBox("Apply drink mask when available")
         self.chk_use_drink.setChecked(True)
         v.addWidget(self.chk_use_drink)
@@ -470,7 +497,7 @@ class MaskParamsWidget(QWidget):
         v.addWidget(hint)
 
         self._refresh_offset_csv_label()
-        return gb
+        return w
 
     # ------------------------------------------------------------------
     # Wiring
