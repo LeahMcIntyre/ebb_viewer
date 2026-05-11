@@ -150,3 +150,26 @@ def test_swd_availability_detection(qapp, tmp_path: Path):
 def test_swd_unavailable_when_no_mat_files(qapp, tmp_path: Path):
     page = _make_page(qapp, tmp_path)
     assert not page.mask_widget._radio_swd_mask.isEnabled()
+
+
+def test_load_from_psd_run_refreshes_section_subtitles(qapp, tmp_path: Path):
+    """Regression: header summaries must update on Load from PSD run.
+
+    Earlier the page wrapped from_params in blockSignals(True), which
+    also blocked the widget's internal `changed` signal — preventing
+    _refresh_subtitles from running.
+    """
+    psd_params.save(
+        tmp_path,
+        "run_a",
+        {
+            "hw_enabled": True,
+            "hour_windows": [[6.0, 18.0]],
+            "selected_days": [0, 1, 2],
+            "noise_thresh": 0.75,
+        },
+    )
+    page = _make_page(qapp, tmp_path)
+    page._apply_loaded_params(psd_params.load(tmp_path, "run_a"), "run_a")
+    assert page.mask_widget._sections["hour_window"].subtitle() == "6–18h, days 0,1,2"
+    assert page.mask_widget._sections["spindle"].subtitle() == "0.75"

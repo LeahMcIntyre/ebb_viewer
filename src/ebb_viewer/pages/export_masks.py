@@ -376,13 +376,12 @@ class ExportMasksPage(QWidget):
         self._apply_loaded_params(params, f"export:{name}")
 
     def _apply_loaded_params(self, params: dict[str, Any], run_name: str) -> None:
-        # The widget's from_params handles missing keys by leaving defaults
-        # and emits one `changed` signal at the end (filtered out by snapshot).
-        self.mask_widget.blockSignals(True)
-        try:
-            self.mask_widget.from_params(params)
-        finally:
-            self.mask_widget.blockSignals(False)
+        # Don't blockSignals the widget here — that also blocks its internal
+        # `changed` signal, which is what triggers the section-header
+        # subtitle refresh. Instead, let `changed` fire normally; we update
+        # the modified-snapshot + clear lbl_modified at the end so any
+        # transient "Modified" flash from _check_modified is neutralized.
+        self.mask_widget.from_params(params)
 
         self._loaded_run_name = run_name
         self._loaded_snapshot = self._snapshot_widget_values()
