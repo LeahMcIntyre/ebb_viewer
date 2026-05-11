@@ -1,3 +1,11 @@
+"""Rerun queue page — re-generate spindle EDFs with a different channel combo.
+
+Animals flagged ``needs_rerun`` in Sleep QC appear here. The user picks rows,
+clicks Run, and the page writes new spindle EDFs for the rerun_combo and
+offers to upload them to SleepyRat. Rows reappear if upload/download was
+cancelled or failed, so the user can re-trigger.
+"""
+
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
@@ -32,7 +40,7 @@ from ebb_viewer.pipeline.manifest import (
 from ebb_viewer.widgets.table_helpers import make_cell
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
-# Maps channel combo name → channel indices (EMG index 3 always included)
+# Channel indices per channel combo (EMG = index 3 is always included).
 _COMBO_CHANNELS: dict[str, list[int]] = {
     "LFC_RSC": [0, 1, 3],
     "LFC_LSC": [0, 2, 3],
@@ -48,18 +56,9 @@ _GREEN = QColor("#d4edda")
 _RED = QColor("#f8d7da")
 
 
-def _combo_to_channels(combo: str) -> list[int]:
-    if combo in _COMBO_CHANNELS:
-        return _COMBO_CHANNELS[combo]
-    # Fallback: parse from combo name
-    mapping = {"LFC": 0, "RSC": 1, "LSC": 2}
-    parts = combo.split("_")
-    indices = sorted({mapping[p] for p in parts if p in mapping})
-    indices.append(3)  # EMG always
-    return indices
-
-
 class RerunPage(QWidget):
+    """Sidebar page #5 — drives the rerun queue for `needs_rerun` animals."""
+
     manifest_changed = pyqtSignal()
     navigate_to = pyqtSignal(str)
 
@@ -132,7 +131,7 @@ class RerunPage(QWidget):
         hint_layout = QHBoxLayout(self._hint_frame)
         hint_layout.setContentsMargins(10, 6, 10, 6)
         hint_lbl = QLabel(
-            "✓ Spindle EDFs written, uploaded to SleepyRate, and downloaded. "
+            "✓ Spindle EDFs written, uploaded to SleepyRat, and downloaded. "
             "Go to Sleep QC to review the new results."
         )
         hint_lbl.setWordWrap(True)
@@ -220,6 +219,9 @@ class RerunPage(QWidget):
             QMessageBox.information(self, "No Selection", "Select at least one row to run.")
             return
 
+        # Disable the run button while spindle EDF writes are in flight.
+        # Re-enabled in `_offer_upload` (after dialogs) or in the error path.
+        self.btn_run.setEnabled(False)
         manifest = Manifest.load(self.project_root)
         items = [self._row_data[r] for r in selected_rows if r < len(self._row_data)]
 
@@ -250,7 +252,7 @@ class RerunPage(QWidget):
                 continue
 
             try:
-                channels = _combo_to_channels(rerun_combo)
+                channels = _COMBO_CHANNELS[rerun_combo]
                 target_dir = spindle_edf_dir(rerun_combo, self.project_root)
                 already_written = target_dir.is_dir() and any(
                     target_dir.glob(f"{entry.animal_id}*.edf")
@@ -283,12 +285,34 @@ class RerunPage(QWidget):
             self._refresh()
             self.manifest_changed.emit()
             self._offer_upload(written_combos, written_files)
+        else:
+            # Nothing to upload — re-enable for the user to retry.
+            self.btn_run.setEnabled(True)
+
+    def _on_sr_finished(self) -> None:
+        self._hint_frame.setVisible(True)
+        self.btn_run.setEnabled(True)
+
+    def _on_sr_error(self, msg: str) -> None:
+        self._log(f"ERROR: {msg}")
+        self.btn_run.setEnabled(True)
+        QMessageBox.critical(self, "SleepyRat Error", msg)
 
     def _offer_upload(
         self, written_combos: set[tuple[str, str]], written_files: dict[str, list[Path]]
     ) -> None:
-        """For each unique rerun combo written, offer SleepyRat upload using saved config."""
+        """For each unique rerun combo written, offer SleepyRat upload using saved config.
+
+        Each accepted dialog spawns its own SleepyRatWorker on its own QThread.
+        We overwrite `self._sr_thread` / `self._sr_worker` in the loop, which
+        means earlier-spawned workers lose their `self` reference — but
+        `launch_worker` wires `finished → deleteLater` on both worker and
+        thread, so Qt's parent-child lifecycle keeps them alive long enough
+        to complete and then frees them. The `self` slots are only used to
+        keep the LAST worker accessible for debugging.
+        """
         seen_rerun_combos: set[str] = set()
+        any_started = False
 
         for orig_combo, rerun_combo in written_combos:
             if rerun_combo in seen_rerun_combos:
@@ -328,12 +352,15 @@ class RerunPage(QWidget):
             launch_worker(
                 self._sr_thread,
                 self._sr_worker,
-                on_finished=lambda: self._hint_frame.setVisible(True),
-                on_error=lambda msg: (
-                    self._log(f"ERROR: {msg}"),
-                    QMessageBox.critical(self, "SleepyRat Error", msg),
-                ),
+                on_finished=self._on_sr_finished,
+                on_error=self._on_sr_error,
             )
+            any_started = True
+
+        # If the user cancelled every upload dialog, no worker will re-enable
+        # the run button. Do it here.
+        if not any_started:
+            self.btn_run.setEnabled(True)
 
     def _color_row(self, row: int, color: QColor) -> None:
         for col in range(self.table.columnCount()):

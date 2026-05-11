@@ -132,7 +132,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [ ] Session 2: execute refactor
 
 ### 3d. Rerun + PSDs (1,890 lines combined)
-- [ ] `rerun.py` (355)
+- [x] `rerun.py` — module + class docstrings; fixed "SleepyRate" → "SleepyRat" typo; extracted `_on_sr_finished`/`_on_sr_error` from inline lambdas; disabled `btn_run` during a run + re-enabled in finish/error/cancel paths (prevents double-trigger); dropped unused `_combo_to_channels` fallback (`_COMBO_CHANNELS` is exhaustive); added inline comment on the multi-worker reassignment in `_offer_upload`; +TODO for consolidating multi-combo upload dialogs
 - [ ] `psds.py` (1,535) **— own session, possibly 2**
 
 ### 3e. PSD review + finalize

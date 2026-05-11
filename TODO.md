@@ -2,6 +2,13 @@
 
 ## P2 — Moderate Value, Moderate Effort
 
+### rerun: Consolidate multi-combo upload dialogs
+`RerunPage._offer_upload` shows one `_UploadDialog` per distinct rerun combo
+written (sequential, modal). With ~2 combos this is fine; for more it gets
+jarring. Consider replacing the per-combo dialog loop with a single dialog
+showing one row per combo (project + remote folder editable inline) and
+launching all uploads at once on confirmation.
+
 ### preprocess: "Rescan" button + initial-state wording
 Today the EDF duration scan runs only on the first `showEvent`. If the user
 adds or removes EDFs in the project root after the page has been opened,
