@@ -656,137 +656,7 @@ class HomePage(QWidget):
         psd_runs = _psd_params.list_runs(self.project_root)
         self.table.setRowCount(len(rows))
         for row_idx, (entry, combo, run) in enumerate(rows):
-            spindle_edf_ok = bool(combo) and _any_file_for_animal(
-                self.project_root, "spindle_edfs", combo, entry.animal_id
-            )
-            spindle_out_ok = bool(combo) and _any_file_for_animal(
-                self.project_root, "spindle_outputs", combo, entry.animal_id
-            )
-            psd_file_ok = bool(combo) and any(
-                psd_path(combo, self.project_root, rn).is_file() for rn in psd_runs
-            )
-
-            sleep_qc = run.sleep_qc if run else None
-            psd_status_dict = run.psd_status if run else {}
-            # Display the *analysis-readiest* status across PSD runs:
-            #   drink_mask_applied > ok > needs_drink_mask
-            # The pending-work signal still surfaces via the attention
-            # card (Manifest.all_needs_drink_mask) and per-run PSD Review,
-            # so the column being "best-wins" doesn't hide outstanding work.
-            if any(v == "drink_mask_applied" for v in psd_status_dict.values()):
-                psd_status = "drink_mask_applied"
-            elif any(v == "ok" for v in psd_status_dict.values()):
-                psd_status = "ok"
-            elif any(v == "needs_drink_mask" for v in psd_status_dict.values()):
-                psd_status = "needs_drink_mask"
-            else:
-                psd_status = None
-
-            # 0: Animal
-            self.table.setItem(row_idx, 0, make_cell(entry.animal_id))
-
-            # 1: Runs
-            n_runs = len(entry.runs)
-            self.table.setItem(
-                row_idx,
-                1,
-                make_cell(
-                    str(n_runs),
-                    _MULTIRUN_COLOR if n_runs > 1 else None,
-                ),
-            )
-
-            # 2: Preprocessed EDF (filename only)
-            pre = Path(entry.preprocessed_edf).name if entry.preprocessed_edf else "—"
-            self.table.setItem(row_idx, 2, make_cell(pre))
-
-            # 3: Channels
-            combo_bg = _COMBO_BG.get(combo)
-            self.table.setItem(
-                row_idx,
-                3,
-                make_cell(
-                    combo or "—",
-                    bg=combo_bg,
-                    fg=_COMBO_FG if combo_bg else None,
-                ),
-            )
-
-            # 4: Spindle EDF
-            self.table.setItem(
-                row_idx,
-                4,
-                make_cell(
-                    "✓" if spindle_edf_ok else "—",
-                    _EXISTS_COLOR if spindle_edf_ok else None,
-                ),
-            )
-
-            # 5: Spindle Output
-            self.table.setItem(
-                row_idx,
-                5,
-                make_cell(
-                    "✓" if spindle_out_ok else "—",
-                    _EXISTS_COLOR if spindle_out_ok else None,
-                ),
-            )
-
-            # 6: Sleep QC
-            edit_hint = False
-            if sleep_qc is None:
-                txt = "pending" if spindle_out_ok else "—"
-                bg = _PENDING_COLOR if spindle_out_ok else None
-            elif sleep_qc == "needs_rerun" and run.rerun_combo:
-                rerun_run = entry.runs.get(run.rerun_combo)
-                if rerun_run and rerun_run.sleep_qc == "ok":
-                    txt = "rerun done ✓"
-                    bg = _RERUN_DONE_COLOR
-                else:
-                    edf_written = _any_file_for_animal(
-                        self.project_root, "spindle_edfs", run.rerun_combo, entry.animal_id
-                    )
-                    txt = f"rerun → {run.rerun_combo}" + ("" if edf_written else "  ✎")
-                    bg = _STATUS_COLOR.get("needs_rerun")
-                    edit_hint = not edf_written
-            else:
-                txt = _SLEEP_QC_LABEL.get(sleep_qc, sleep_qc)
-                bg = _STATUS_COLOR.get(sleep_qc)
-            cell_6 = make_cell(txt, bg)
-            if edit_hint:
-                cell_6.setToolTip("Double-click to change rerun combo")
-            self.table.setItem(row_idx, 6, cell_6)
-
-            # 7: PSD File
-            self.table.setItem(
-                row_idx,
-                7,
-                make_cell(
-                    "✓" if psd_file_ok else "—",
-                    _EXISTS_COLOR if psd_file_ok else None,
-                ),
-            )
-
-            # 8: PSD Status
-            has_drink_mask = (
-                run is not None
-                and psd_status == "needs_drink_mask"
-                and (self.project_root / drink_mask_rel(entry.animal_id)).is_file()
-            )
-            if psd_status == "drink_mask_applied":
-                txt, bg = "drink mask applied", _STATUS_COLOR["drink_mask_applied"]
-            elif psd_status == "needs_drink_mask":
-                if has_drink_mask:
-                    txt, bg = "drink mask ready", _STATUS_COLOR["needs_drink_mask"]
-                else:
-                    txt, bg = "needs drink mask", _STATUS_COLOR["needs_drink_mask"]
-            elif psd_status == "ok":
-                txt, bg = "ok", _EXISTS_COLOR
-            elif psd_file_ok:
-                txt, bg = "pending", _PENDING_COLOR
-            else:
-                txt, bg = "—", None
-            self.table.setItem(row_idx, 8, make_cell(txt, bg))
+            self._build_table_row(row_idx, entry, combo, run, psd_runs=psd_runs)
 
         self.table.resizeRowsToContents()
 
@@ -798,6 +668,188 @@ class HomePage(QWidget):
         self._refresh_attention_zone(manifest)
         # Reuse psd_runs from above; saves a second scan of project/psd/.
         self._refresh_pipeline_guide(manifest, psd_runs=psd_runs)
+
+    def _build_table_row(
+        self,
+        row_idx: int,
+        entry: ManifestEntry,
+        combo: str,
+        run: RunEntry | None,
+        *,
+        psd_runs: list[str],
+    ) -> None:
+        """Populate one row in the pipeline summary table.
+
+        Pulled out of ``_refresh`` so the cell-by-cell rendering logic
+        is isolated and testable. Mutates ``self.table`` in place at the
+        given ``row_idx``.
+
+        Args:
+            row_idx: Zero-based row index to fill.
+            entry: Animal entry for this row.
+            combo: Channel combo string; empty for placeholder rows where
+                the animal has no runs yet.
+            run: The ``RunEntry`` for ``(entry, combo)``, or ``None`` for
+                placeholder rows.
+            psd_runs: Pre-fetched list of PSD run names. Passed in so a
+                single ``_refresh`` doesn't scan ``project/psd/`` once
+                per row.
+        """
+        spindle_edf_ok = bool(combo) and _any_file_for_animal(
+            self.project_root, "spindle_edfs", combo, entry.animal_id
+        )
+        spindle_out_ok = bool(combo) and _any_file_for_animal(
+            self.project_root, "spindle_outputs", combo, entry.animal_id
+        )
+        psd_file_ok = bool(combo) and any(
+            psd_path(combo, self.project_root, rn).is_file() for rn in psd_runs
+        )
+
+        sleep_qc = run.sleep_qc if run else None
+        psd_status_dict = run.psd_status if run else {}
+        # Display the *analysis-readiest* status across PSD runs:
+        #   drink_mask_applied > ok > needs_drink_mask
+        # The pending-work signal still surfaces via the attention card
+        # (Manifest.all_needs_drink_mask) and per-run PSD Review, so the
+        # column being "best-wins" doesn't hide outstanding work.
+        if any(v == "drink_mask_applied" for v in psd_status_dict.values()):
+            psd_status = "drink_mask_applied"
+        elif any(v == "ok" for v in psd_status_dict.values()):
+            psd_status = "ok"
+        elif any(v == "needs_drink_mask" for v in psd_status_dict.values()):
+            psd_status = "needs_drink_mask"
+        else:
+            psd_status = None
+
+        # 0: Animal
+        self.table.setItem(row_idx, 0, make_cell(entry.animal_id))
+
+        # 1: Runs
+        n_runs = len(entry.runs)
+        self.table.setItem(
+            row_idx,
+            1,
+            make_cell(str(n_runs), _MULTIRUN_COLOR if n_runs > 1 else None),
+        )
+
+        # 2: Preprocessed EDF (filename only)
+        pre = Path(entry.preprocessed_edf).name if entry.preprocessed_edf else "—"
+        self.table.setItem(row_idx, 2, make_cell(pre))
+
+        # 3: Channels
+        combo_bg = _COMBO_BG.get(combo)
+        self.table.setItem(
+            row_idx,
+            3,
+            make_cell(
+                combo or "—",
+                bg=combo_bg,
+                fg=_COMBO_FG if combo_bg else None,
+            ),
+        )
+
+        # 4: Spindle EDF
+        self.table.setItem(
+            row_idx,
+            4,
+            make_cell(
+                "✓" if spindle_edf_ok else "—",
+                _EXISTS_COLOR if spindle_edf_ok else None,
+            ),
+        )
+
+        # 5: Spindle Output
+        self.table.setItem(
+            row_idx,
+            5,
+            make_cell(
+                "✓" if spindle_out_ok else "—",
+                _EXISTS_COLOR if spindle_out_ok else None,
+            ),
+        )
+
+        # 6: Sleep QC
+        self.table.setItem(
+            row_idx, _COL_SLEEP_QC, self._build_sleep_qc_cell(entry, run, sleep_qc, spindle_out_ok)
+        )
+
+        # 7: PSD File
+        self.table.setItem(
+            row_idx,
+            7,
+            make_cell(
+                "✓" if psd_file_ok else "—",
+                _EXISTS_COLOR if psd_file_ok else None,
+            ),
+        )
+
+        # 8: PSD Status
+        self.table.setItem(
+            row_idx, 8, self._build_psd_status_cell(entry, run, psd_status, psd_file_ok)
+        )
+
+    def _build_sleep_qc_cell(
+        self,
+        entry: ManifestEntry,
+        run: RunEntry | None,
+        sleep_qc: str | None,
+        spindle_out_ok: bool,
+    ):
+        """Build the Sleep QC column cell (handles rerun → done / pending /
+        needs_review / needs_rerun branches with the edit-hint tooltip)."""
+        edit_hint = False
+        if sleep_qc is None:
+            txt = "pending" if spindle_out_ok else "—"
+            bg = _PENDING_COLOR if spindle_out_ok else None
+        elif sleep_qc == "needs_rerun" and run is not None and run.rerun_combo:
+            rerun_run = entry.runs.get(run.rerun_combo)
+            if rerun_run and rerun_run.sleep_qc == "ok":
+                txt = "rerun done ✓"
+                bg = _RERUN_DONE_COLOR
+            else:
+                edf_written = _any_file_for_animal(
+                    self.project_root, "spindle_edfs", run.rerun_combo, entry.animal_id
+                )
+                txt = f"rerun → {run.rerun_combo}" + ("" if edf_written else "  ✎")
+                bg = _STATUS_COLOR.get("needs_rerun")
+                edit_hint = not edf_written
+        else:
+            txt = _SLEEP_QC_LABEL.get(sleep_qc, sleep_qc)
+            bg = _STATUS_COLOR.get(sleep_qc)
+        cell = make_cell(txt, bg)
+        if edit_hint:
+            cell.setToolTip("Double-click to change rerun combo")
+        return cell
+
+    def _build_psd_status_cell(
+        self,
+        entry: ManifestEntry,
+        run: RunEntry | None,
+        psd_status: str | None,
+        psd_file_ok: bool,
+    ):
+        """Build the PSD Status column cell. See ``_build_table_row`` for
+        the best-wins precedence used to collapse the per-run status dict
+        down to a single display value."""
+        has_drink_mask = (
+            run is not None
+            and psd_status == "needs_drink_mask"
+            and (self.project_root / drink_mask_rel(entry.animal_id)).is_file()
+        )
+        if psd_status == "drink_mask_applied":
+            txt, bg = "drink mask applied", _STATUS_COLOR["drink_mask_applied"]
+        elif psd_status == "needs_drink_mask":
+            if has_drink_mask:
+                txt, bg = "drink mask ready", _STATUS_COLOR["needs_drink_mask"]
+            else:
+                txt, bg = "needs drink mask", _STATUS_COLOR["needs_drink_mask"]
+        elif psd_status == "ok":
+            txt, bg = "ok", _EXISTS_COLOR
+        elif psd_file_ok:
+            txt, bg = "pending", _PENDING_COLOR
+        else:
+            txt, bg = "—", None
+        return make_cell(txt, bg)
 
     # ---------------------------------------------------------------
     # Needs Attention zone

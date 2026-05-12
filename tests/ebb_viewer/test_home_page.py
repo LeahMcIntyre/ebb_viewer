@@ -248,6 +248,76 @@ def test_b1_on_window_closed_handles_unknown_window(qapp, tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Row-builder Sleep QC cell — covers the rerun → done / pending / needs_rerun
+# branches that previously lived inline in _refresh.
+# ---------------------------------------------------------------------------
+
+
+def _sleep_qc_cell(page) -> str:
+    """Read the Sleep QC column text for the first row (column index 6)."""
+    item = page.table.item(0, 6)
+    return item.text() if item is not None else ""
+
+
+def test_sleep_qc_cell_pending_when_spindle_out_exists(qapp, tmp_path: Path):
+    """sleep_qc is None and the spindle output CSV exists on disk → 'pending'."""
+    (tmp_path / "spindle_outputs" / "LFC_RSC").mkdir(parents=True)
+    (tmp_path / "spindle_outputs" / "LFC_RSC" / "AM001_LFC_RSC.csv").write_text("")
+    _seed_manifest(tmp_path, psd_status={}, sleep_qc=None)
+    page = _make_page(qapp, tmp_path)
+    assert _sleep_qc_cell(page) == "pending"
+
+
+def test_sleep_qc_cell_dash_when_no_spindle_output(qapp, tmp_path: Path):
+    """sleep_qc is None and no spindle output → '—'."""
+    _seed_manifest(tmp_path, psd_status={}, sleep_qc=None)
+    page = _make_page(qapp, tmp_path)
+    assert _sleep_qc_cell(page) == "—"
+
+
+def test_sleep_qc_cell_rerun_done_when_target_ok(qapp, tmp_path: Path):
+    """A needs_rerun row whose rerun target is ok → 'rerun done ✓'."""
+    from ebb_viewer.pipeline.manifest import (
+        Manifest,
+        ManifestEntry,
+        RunEntry,
+    )
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        runs={
+            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC_RSC"),
+            "LSC_RSC": RunEntry(sleep_qc="ok"),
+        },
+    )
+    m.save()
+    page = _make_page(qapp, tmp_path)
+    # First row in the table is whichever combo iterates first (LFC_RSC).
+    assert _sleep_qc_cell(page) == "rerun done ✓"
+
+
+def test_sleep_qc_cell_rerun_pending_with_edit_hint(qapp, tmp_path: Path):
+    """needs_rerun + rerun_combo, no rerun EDF written yet → 'rerun → X  ✎'
+    with the double-click-to-change tooltip."""
+    from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        runs={"LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC_RSC")},
+    )
+    m.save()
+    page = _make_page(qapp, tmp_path)
+    text = _sleep_qc_cell(page)
+    assert "rerun → LSC_RSC" in text
+    assert "✎" in text
+    assert page.table.item(0, 6).toolTip().startswith("Double-click")
+
+
 def test_b4_double_click_uses_cached_rendered_rows(qapp, tmp_path: Path):
     """After ``_refresh`` renders the table, ``self._table_rows`` reflects
     exactly what was drawn. If the manifest is modified afterward,
