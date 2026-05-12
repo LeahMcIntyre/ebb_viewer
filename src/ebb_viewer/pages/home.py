@@ -1,7 +1,18 @@
+"""Home page — pipeline dashboard, attention zone, and animal/run summary.
+
+Hosts the top-level pipeline-step guide (8 steps fed by
+``compute_pipeline_status``), a "Needs Attention" zone surfacing per-animal
+work (review-EDF / rerun-pending / rerun-ready / drink-mask), a per-run
+summary table, and the project file tree. Manifest mutations triggered from
+attention-card buttons persist via ``Manifest.flag_sleep_qc``'s internal
+``save()``.
+"""
+
+import contextlib
 from pathlib import Path
 from typing import Literal, NamedTuple
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -18,6 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ebb_viewer.edf_viewer.eeg_viewer import launch_edf_window
 from ebb_viewer.pipeline import psd_params as _psd_params
 from ebb_viewer.pipeline.manifest import (
     Manifest,
@@ -45,6 +57,7 @@ _COLUMNS = [
     "PSD File",
     "PSD Status",
 ]
+_COL_SLEEP_QC = _COLUMNS.index("Sleep QC")
 
 _MULTIRUN_COLOR = QColor("#dce8f7")  # light blue = animal has multiple runs
 
@@ -105,9 +118,31 @@ _GUIDE_ICON_COLOR = {
 }
 _GUIDE_ROW_HIGHLIGHT = "#eef4fc"
 
+# Attention-zone layout — keep in sync with _make_card_frame.setMaximumHeight
+# and _attn_layout.setSpacing.
+_ATTN_CARD_HEIGHT_PX = 42
+_ATTN_CARD_STRIDE_PX = 48  # card + per-card layout overhead
 
-# TODO: Should this be centrilized somewhere else?
-def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[StepStatus]:
+
+def compute_pipeline_status(
+    project_root: Path,
+    manifest: Manifest,
+    *,
+    psd_runs: list[str] | None = None,
+) -> list[StepStatus]:
+    """Derive the 8 pipeline-step statuses driving the home-page guide.
+
+    Pure logic (no Qt). Reads ``manifest`` plus filesystem state under
+    ``project_root`` (``standard/``, ``spindle_edfs/``, ``spindle_outputs/``,
+    ``psd/``). Returns the steps in pipeline order — preprocess → drink mask.
+
+    Args:
+        psd_runs: Optional pre-computed result of ``psd_params.list_runs``.
+            When omitted, scanned here. Threaded by ``HomePage._refresh``
+            so a single page refresh doesn't scan ``psd/`` twice.
+
+    Tests live in ``tests/ebb_viewer/test_compute_pipeline_status.py``.
+    """
     root = Path(project_root)
 
     # --- filesystem facts ---
@@ -119,13 +154,15 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     # Step 2 done: spindle edfs dir exist and contains at least 1 dir with at least 1 edf
     spindle_edfs_dir = root / "spindle_edfs"
     step2_done = spindle_edfs_dir.is_dir() and any(
-        True for sd in spindle_edfs_dir.iterdir() if sd.is_dir() and any(sd.glob("*.edf"))
+        sd.is_dir() and any(sd.glob("*.edf"))
+        for sd in spindle_edfs_dir.iterdir()
     )
 
     # Step 3 done: spindle outputs dir exists and contains at least 1 dir with at least 1 csv
     spindle_outputs_dir = root / "spindle_outputs"
     step3_done = spindle_outputs_dir.is_dir() and any(
-        True for sd in spindle_outputs_dir.iterdir() if sd.is_dir() and any(sd.glob("*.csv"))
+        sd.is_dir() and any(sd.glob("*.csv"))
+        for sd in spindle_outputs_dir.iterdir()
     )
 
     # --- manifest facts ---
@@ -133,7 +170,7 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
     n_pending_qc = len(manifest.pending_sleep_qc())
     n_ok = sum(1 for e in manifest if any(r.sleep_qc == "ok" for r in e.runs.values()))
     n_rerun = len(manifest.needs_rerun())
-    n_animals = sum(1 for _ in manifest)
+    n_animals = len(manifest)
     n_ready_psd = len(manifest.ready_for_psd())
     n_rerun_pend = len(manifest.needs_rerun_pending())
     n_rerun_ready = len(manifest.pending_rerun_review())
@@ -178,7 +215,6 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
         s4 = StepStatus("blocked", "Requires step 3")
 
     # --- Step 5: Spindle Rerun ---
-    # TODO: Do I want the ready to review to be in this part?
     qc_complete = step3_done and n_pending_qc == 0 and n_ok > 0
     if n_rerun_pend > 0 or n_rerun_ready > 0:
         parts = []
@@ -188,16 +224,28 @@ def compute_pipeline_status(project_root: Path, manifest: Manifest) -> list[Step
             parts.append(f"{n_rerun_ready} ready to review")
         s5 = StepStatus("attention", ", ".join(parts))
     elif n_rerun > 0 and n_rerun_pend == 0 and n_rerun_ready == 0:
-        s5 = StepStatus("done", f"{n_rerun} rerun{'s' if n_rerun != 1 else ''} accepted")
+        # "needs_rerun" rows hang around even after the rerun target was
+        # decided — verify the target combo's sleep_qc is actually "ok",
+        # not "rejected", before claiming the rerun was accepted.
+        rerun_resolved_ok = all(
+            (target := entry.runs.get(run.rerun_combo)) is not None
+            and target.sleep_qc == "ok"
+            for entry, combo in manifest.needs_rerun()
+            for run in [entry.runs[combo]]
+            if run.rerun_combo
+        )
+        if rerun_resolved_ok:
+            s5 = StepStatus("done", f"{n_rerun} rerun{'s' if n_rerun != 1 else ''} accepted")
+        else:
+            s5 = StepStatus("blocked", "Requires step 4 completion")
     elif qc_complete and n_review == 0:
         s5 = StepStatus("done", "No reruns needed")
     else:
         s5 = StepStatus("blocked", "Requires step 4 completion")
 
     # --- Step 6: PSD Computation ---
-
-    # --- Step 6: PSD Computation ---
-    psd_runs = _psd_params.list_runs(root)
+    if psd_runs is None:
+        psd_runs = _psd_params.list_runs(root)
     any_merged_pkl = (
         any(merged_psd_path(root, rn).exists() for rn in psd_runs) if psd_runs else False
     )
@@ -278,7 +326,13 @@ class HomePage(QWidget):
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
         self.project_root = Path(project_root)
-        self._open_windows: list = []
+        # Holds live EDF viewer windows opened from attention cards so they
+        # aren't garbage-collected while the user is interacting with them.
+        self._open_windows: list[QWidget] = []
+        # Snapshot of rows rendered into the summary table. Read by
+        # _on_cell_double_clicked so the row index always resolves against
+        # what the user actually sees, not a freshly-reloaded manifest.
+        self._table_rows: list[tuple[ManifestEntry, str, RunEntry | None]] = []
         self._build_ui()
         self._refresh()
 
@@ -338,6 +392,9 @@ class HomePage(QWidget):
         lbl_attn.setStyleSheet("font-weight: bold; font-size: 13px;")
         root_layout.addWidget(lbl_attn)
 
+        # Cached count of currently-rendered attention cards. Set by
+        # _refresh_attention_zone; read by _update_attn_max_height from
+        # both that refresh and resizeEvent.
         self._attn_card_count = 0
 
         self._attn_container = QWidget()
@@ -415,7 +472,8 @@ class HomePage(QWidget):
         self._build_pipeline_guide()
 
     def _build_pipeline_guide(self) -> None:
-        """Build 7 step rows and store (icon_lbl, name_lbl, desc_lbl, btn) refs."""
+        """Build one step row per ``_STEP_LABELS`` and store the (icon_lbl,
+        name_lbl, desc_lbl, btn) refs for ``_refresh_pipeline_guide``."""
         self._guide_row_refs: list[tuple[QLabel, QLabel, QLabel, QPushButton]] = []
         for i, label in enumerate(_STEP_LABELS):
             row_w = QWidget()
@@ -449,14 +507,18 @@ class HomePage(QWidget):
         self.btn_guide_toggle.setText("▼  Pipeline Steps" if checked else "►  Pipeline Steps")
         self._guide_container.setVisible(checked)
 
-    def _refresh_pipeline_guide(self, manifest: Manifest) -> None:
-        statuses = compute_pipeline_status(self.project_root, manifest)
+    def _refresh_pipeline_guide(
+        self, manifest: Manifest, psd_runs: list[str] | None = None
+    ) -> None:
+        statuses = compute_pipeline_status(
+            self.project_root, manifest, psd_runs=psd_runs
+        )
         next_idx: int | None = next(
             (i for i, s in enumerate(statuses) if s.kind in ("active", "attention")),
             None,
         )
         for i, (st, (icon_lbl, name_lbl, desc_lbl, btn)) in enumerate(
-            zip(statuses, self._guide_row_refs)
+            zip(statuses, self._guide_row_refs, strict=True)
         ):
             color = _GUIDE_ICON_COLOR[st.kind]
             icon_lbl.setText(_GUIDE_ICON[st.kind])
@@ -491,7 +553,7 @@ class HomePage(QWidget):
             self._attn_scroll.setMinimumHeight(0)
             self._attn_scroll.setMaximumHeight(40)
         else:
-            content_h = 48 * n + 12  # ~48 px per card + layout overhead
+            content_h = _ATTN_CARD_STRIDE_PX * n + 12
             cap = max(160, self.height() // 2)
             clamped = min(content_h, cap)
             self._attn_scroll.setMinimumHeight(min(80, clamped))
@@ -511,23 +573,13 @@ class HomePage(QWidget):
     # Allows rerun channel combo to be more editable.
     def _on_cell_double_clicked(self, row: int, col: int) -> None:
         """Allow changing the rerun combo on a needs_rerun row if no EDF written yet."""
-        if col != 6:
+        if col != _COL_SLEEP_QC:
             return
-        manifest = Manifest.load(self.project_root)
-        hide_rejected = self.btn_hide_rejected.isChecked()
-        rows: list[tuple[ManifestEntry, str, RunEntry]] = []
-        for entry in manifest:
-            if entry.runs:
-                for combo, run in entry.runs.items():
-                    if hide_rejected and run.sleep_qc == "rejected":
-                        continue
-                    rows.append((entry, combo, run))
-            else:
-                rows.append((entry, "", None))
-
-        if row >= len(rows):
+        # Resolve against the rendered row cache so the index always points
+        # to what the user sees, even if the manifest has changed since.
+        if row >= len(self._table_rows):
             return
-        entry, combo, run = rows[row]
+        entry, combo, run = self._table_rows[row]
         if run is None or run.sleep_qc != "needs_rerun" or not run.rerun_combo:
             return
 
@@ -552,6 +604,8 @@ class HomePage(QWidget):
         if not ok or new_combo == run.rerun_combo:
             return
 
+        # Fresh load for the mutation — flag_sleep_qc saves internally.
+        manifest = Manifest.load(self.project_root)
         manifest.flag_sleep_qc(entry.animal_id, combo, "needs_rerun", rerun_combo=new_combo)
         self._refresh()
         self.manifest_changed.emit()
@@ -561,17 +615,19 @@ class HomePage(QWidget):
         self._do_import()
 
     def _do_import(self, show_zero: bool = False) -> None:
-        before = sum(1 for _ in Manifest.load(self.project_root))
-        Manifest.build_from_standard(self.project_root)
-        after = sum(1 for _ in Manifest.load(self.project_root))
-        n_new = after - before
+        before = len(Manifest.load(self.project_root))
+        after_manifest = Manifest.build_from_standard(self.project_root)
+        n_new = len(after_manifest) - before
         self._refresh()
         if n_new > 0:
             self._import_lbl.setText(f"✓ {n_new} new animal{'s' if n_new != 1 else ''} imported")
             self._import_lbl.setVisible(True)
+            # Auto-hide so a future navigation doesn't show stale state.
+            QTimer.singleShot(3000, lambda: self._import_lbl.setVisible(False))
         elif show_zero:
             self._import_lbl.setText("No new animals found")
             self._import_lbl.setVisible(True)
+            QTimer.singleShot(3000, lambda: self._import_lbl.setVisible(False))
         else:
             self._import_lbl.setVisible(False)
 
@@ -583,7 +639,7 @@ class HomePage(QWidget):
 
         # Build one row per (animal, run) pair
         hide_rejected = self.btn_hide_rejected.isChecked()
-        rows: list[tuple[ManifestEntry, str, RunEntry]] = []
+        rows: list[tuple[ManifestEntry, str, RunEntry | None]] = []
         for entry in manifest:
             if entry.runs:
                 for combo, run in entry.runs.items():
@@ -593,6 +649,9 @@ class HomePage(QWidget):
             else:
                 # Animal exists but no runs yet — show a placeholder row
                 rows.append((entry, "", None))
+        # Cache so _on_cell_double_clicked resolves row indices against the
+        # exact rendered list rather than a stale fresh-load.
+        self._table_rows = rows
 
         psd_runs = _psd_params.list_runs(self.project_root)
         self.table.setRowCount(len(rows))
@@ -609,13 +668,17 @@ class HomePage(QWidget):
 
             sleep_qc = run.sleep_qc if run else None
             psd_status_dict = run.psd_status if run else {}
-            # Derive a single display status across all runs
-            if any(v == "needs_drink_mask" for v in psd_status_dict.values()):
-                psd_status = "needs_drink_mask"
-            elif any(v == "drink_mask_applied" for v in psd_status_dict.values()):
+            # Display the *analysis-readiest* status across PSD runs:
+            #   drink_mask_applied > ok > needs_drink_mask
+            # The pending-work signal still surfaces via the attention
+            # card (Manifest.all_needs_drink_mask) and per-run PSD Review,
+            # so the column being "best-wins" doesn't hide outstanding work.
+            if any(v == "drink_mask_applied" for v in psd_status_dict.values()):
                 psd_status = "drink_mask_applied"
             elif any(v == "ok" for v in psd_status_dict.values()):
                 psd_status = "ok"
+            elif any(v == "needs_drink_mask" for v in psd_status_dict.values()):
+                psd_status = "needs_drink_mask"
             else:
                 psd_status = None
 
@@ -733,7 +796,8 @@ class HomePage(QWidget):
             total_h += self.table.rowHeight(r)
         self.table.setMaximumHeight(total_h + 4)
         self._refresh_attention_zone(manifest)
-        self._refresh_pipeline_guide(manifest)
+        # Reuse psd_runs from above; saves a second scan of project/psd/.
+        self._refresh_pipeline_guide(manifest, psd_runs=psd_runs)
 
     # ---------------------------------------------------------------
     # Needs Attention zone
@@ -743,7 +807,9 @@ class HomePage(QWidget):
             item = self._attn_layout.takeAt(0)
             w = item.widget()
             if w:
-                w.setParent(None)
+                # deleteLater frees the underlying C++ object once Qt has
+                # processed pending events; setParent(None) only orphans.
+                w.deleteLater()
 
         reviewing = manifest.needs_review()
         rerunning = manifest.needs_rerun_pending()
@@ -772,7 +838,7 @@ class HomePage(QWidget):
         """Create an attention card frame. Returns (widget, layout)."""
         row_w = QWidget()
         row_w.setObjectName("attnRow")
-        row_w.setMaximumHeight(42)
+        row_w.setMaximumHeight(_ATTN_CARD_HEIGHT_PX)
         row_w.setStyleSheet(
             f"QWidget#attnRow {{ background-color: {bg_color}; border-radius: 3px; }}"
         )
@@ -814,7 +880,9 @@ class HomePage(QWidget):
             if c == channels or c in ok_combos:
                 continue
             run_for_c = entry.runs.get(c)
-            # "ok" already excluded via ok_combos above; only suppress "rejected" and None
+            # "ok" already excluded above. Show a tag for non-clean states
+            # (needs_review / needs_rerun) so the user sees the combo isn't
+            # a clean target; "rejected" and None show as the bare combo.
             if run_for_c and run_for_c.sleep_qc not in (None, "rejected"):
                 label = f"{c} ({_SLEEP_QC_LABEL.get(run_for_c.sleep_qc, run_for_c.sleep_qc)})"
             else:
@@ -837,78 +905,89 @@ class HomePage(QWidget):
 
         return row_w
 
+    def _make_simple_attention_card(
+        self,
+        entry: ManifestEntry,
+        channels_text: str,
+        *,
+        bg: str,
+        accent: str,
+        type_label: str,
+        nav_dest: str,
+        nav_text: str,
+    ) -> QWidget:
+        """Build a one-line attention card with a navigate-to-page link.
+
+        Used by the rerun-pending, rerun-ready, and drink-mask cards — each
+        differs only in colors, labels, and the destination page. The
+        review card is structurally distinct (has multiple action buttons)
+        and stays as its own builder.
+        """
+        row_w, h = self._make_card_frame(bg)
+        h.addWidget(QLabel(f"<b>{entry.animal_id}</b>"))
+        lbl_ch = QLabel(channels_text)
+        lbl_ch.setStyleSheet("color: #555;")
+        h.addWidget(lbl_ch)
+        lbl_type = QLabel(type_label)
+        lbl_type.setStyleSheet(f"color: {accent}; font-style: italic;")
+        h.addWidget(lbl_type)
+        h.addStretch(1)
+        btn_hint = QPushButton(nav_text)
+        btn_hint.setStyleSheet(
+            f"color: {accent}; border: none; padding: 0; text-decoration: underline;"
+        )
+        btn_hint.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_hint.setFlat(True)
+        btn_hint.clicked.connect(lambda: self.navigate_to.emit(nav_dest))
+        h.addWidget(btn_hint)
+        return row_w
+
     def _make_rerun_pending_card(self, entry: ManifestEntry, channels: str) -> QWidget:
         run = entry.runs.get(channels)
         rerun_combo = run.rerun_combo if run else "?"
-
-        row_w, h = self._make_card_frame("#fde8ce")
-        h.addWidget(QLabel(f"<b>{entry.animal_id}</b>"))
-        lbl = QLabel(f"[{channels}] → [{rerun_combo}]")
-        lbl.setStyleSheet("color: #555;")
-        h.addWidget(lbl)
-        lbl_type = QLabel("Spindle rerun queued")
-        lbl_type.setStyleSheet("color: #7a4400; font-style: italic;")
-        h.addWidget(lbl_type)
-        h.addStretch(1)
-        btn_hint = QPushButton("→ Spindle Rerun page")
-        btn_hint.setStyleSheet(
-            "color: #7a4400; border: none; padding: 0; text-decoration: underline;"
+        return self._make_simple_attention_card(
+            entry,
+            f"[{channels}] → [{rerun_combo}]",
+            bg="#fde8ce",
+            accent="#7a4400",
+            type_label="Spindle rerun queued",
+            nav_dest="rerun",
+            nav_text="→ Spindle Rerun page",
         )
-        btn_hint.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_hint.setFlat(True)
-        btn_hint.clicked.connect(lambda: self.navigate_to.emit("rerun"))
-        h.addWidget(btn_hint)
-
-        return row_w
 
     def _make_rerun_ready_card(self, entry: ManifestEntry, channels: str) -> QWidget:
-        row_w, h = self._make_card_frame("#d9ecf7")
-        h.addWidget(QLabel(f"<b>{entry.animal_id}</b>"))
-        lbl = QLabel(f"[{channels}]")
-        lbl.setStyleSheet("color: #555;")
-        h.addWidget(lbl)
-        lbl_type = QLabel("Rerun ready for review")
-        lbl_type.setStyleSheet("color: #005a7a; font-style: italic;")
-        h.addWidget(lbl_type)
-        h.addStretch(1)
-        btn_hint = QPushButton("→ Sleep QC page")
-        btn_hint.setStyleSheet(
-            "color: #005a7a; border: none; padding: 0; text-decoration: underline;"
+        return self._make_simple_attention_card(
+            entry,
+            f"[{channels}]",
+            bg="#d9ecf7",
+            accent="#005a7a",
+            type_label="Rerun ready for review",
+            nav_dest="sleep_qc",
+            nav_text="→ Sleep QC page",
         )
-        btn_hint.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_hint.setFlat(True)
-        btn_hint.clicked.connect(lambda: self.navigate_to.emit("sleep_qc"))
-        h.addWidget(btn_hint)
-
-        return row_w
 
     def _make_drink_mask_card(self, entry: ManifestEntry, channels: str) -> QWidget:
-        row_w, h = self._make_card_frame("#f0e6ff")
-        h.addWidget(QLabel(f"<b>{entry.animal_id}</b>"))
-        lbl_ch = QLabel(f"[{channels}]")
-        lbl_ch.setStyleSheet("color: #555;")
-        h.addWidget(lbl_ch)
-        lbl_type = QLabel("Drink mask needed")
-        lbl_type.setStyleSheet("color: #5a1d6b; font-style: italic;")
-        h.addWidget(lbl_type)
-        h.addStretch(1)
-        btn_hint = QPushButton("→ Drink Mask page")
-        btn_hint.setStyleSheet(
-            "color: #5a1d6b; border: none; padding: 0; text-decoration: underline;"
+        return self._make_simple_attention_card(
+            entry,
+            f"[{channels}]",
+            bg="#f0e6ff",
+            accent="#5a1d6b",
+            type_label="Drink mask needed",
+            nav_dest="drink_mask",
+            nav_text="→ Drink Mask page",
         )
-        btn_hint.setCursor(Qt.CursorShape.PointingHandCursor)
-        btn_hint.setFlat(True)
-        btn_hint.clicked.connect(lambda: self.navigate_to.emit("drink_mask"))
-        h.addWidget(btn_hint)
-        return row_w
 
     def _queue_flag_ok(self, animal_id: str, channels: str) -> None:
-        Manifest.load(self.project_root).flag_sleep_qc(animal_id, channels, "ok")
+        # flag_sleep_qc saves the manifest internally; binding the manifest
+        # to a name makes the persistence boundary visible to readers.
+        manifest = Manifest.load(self.project_root)
+        manifest.flag_sleep_qc(animal_id, channels, "ok")
         self._refresh()
         self.manifest_changed.emit()
 
     def _queue_flag_rerun(self, animal_id: str, channels: str, rerun_combo: str) -> None:
-        Manifest.load(self.project_root).flag_sleep_qc(
+        manifest = Manifest.load(self.project_root)
+        manifest.flag_sleep_qc(
             animal_id, channels, "needs_rerun", rerun_combo=rerun_combo
         )
         self._refresh()
@@ -926,8 +1005,6 @@ class HomePage(QWidget):
         csv_path = self._find_spindle_csv(entry.animal_id, channels)
         manifest = Manifest.load(self.project_root)
 
-        from ebb_viewer.edf_viewer.eeg_viewer import launch_edf_window
-
         try:
             win = launch_edf_window(
                 edf_path=edf_path,
@@ -937,16 +1014,29 @@ class HomePage(QWidget):
                 run_channels=channels,
                 initial_dir=str(self.project_root),
             )
-            win.resize(1200, 800)
-            win.show()
-            self._open_windows.append(win)
-        except Exception as e:
+        except (OSError, ValueError) as e:
             QMessageBox.critical(self, "Error opening EDF", f"{type(e).__name__}: {e}")
+            return
+        win.resize(1200, 800)
+        win.show()
+        # Prune from _open_windows when the user closes the viewer; otherwise
+        # the recording arrays stay pinned in memory for the page's lifetime.
+        win.destroyed.connect(lambda _, w=win: self._on_window_closed(w))
+        self._open_windows.append(win)
+
+    def _on_window_closed(self, win: QWidget) -> None:
+        with contextlib.suppress(ValueError):
+            self._open_windows.remove(win)
 
     def _find_spindle_csv(self, animal_id: str, channels: str) -> Path | None:
+        """Return the first ``*labels.csv`` for this (animal, combo), or None.
+
+        Returns None on missing directory / unreadable filesystem rather than
+        propagating — the EDF viewer renders fine with ``csv_path=None``.
+        """
         try:
             d = spindle_output_dir(channels, self.project_root)
             hits = sorted(d.glob(f"{animal_id}*labels.csv"))
-            return hits[0] if hits else None
-        except Exception:
+        except OSError:
             return None
+        return hits[0] if hits else None

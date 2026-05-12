@@ -120,7 +120,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 ## Phase 3 — `pages/` (largely untested, riskiest)
 
 ### 3a. Setup pages
-- [ ] `home.py` (886)
+- [x] `home.py` — **Stage A + advisor pass complete.** **Bugs fixed:** B1 `_open_windows` list grew unbounded — never pruned when user closed an EDF viewer, pinning recording arrays in memory; now connects `win.destroyed` to a new `_on_window_closed` slot that removes the entry; B3 step 5 "N reruns accepted" fired even when rerun targets were rejected (not OK'd) — now verifies each `needs_rerun` original's `rerun_combo` target has `sleep_qc == "ok"` before claiming done; B4 `_on_cell_double_clicked` reloaded the manifest independently of `_refresh`'s render, allowing a stale row index if a write landed between — now caches `self._table_rows` in `_refresh` and resolves indices against the cached snapshot; B5 `_do_import` did three manifest loads — now uses `build_from_standard`'s return value + `len(manifest)`; B6 misleading comment in `_make_review_card`'s rerun-combo filter; **PSD-status column precedence switched** from "worst-wins" (`needs_drink_mask` > `drink_mask_applied` > `ok`) to "best-wins" (`drink_mask_applied` > `ok` > `needs_drink_mask`) — user-confirmed change so the column reflects analysis-readiness rather than pending work (which is already surfaced via the attention card + per-run PSD Review). Bare `except Exception` narrowed to `OSError` in `_find_spindle_csv` and to `(OSError, ValueError)` in `_open_edf_for_animal`. Misleading manifest mutation idiom `Manifest.load(...).flag_sleep_qc(...)` split into `m = Manifest.load(...); m.flag_sleep_qc(...)`. **Refactor:** R2 threaded `psd_runs` through `compute_pipeline_status` so a single `_refresh` doesn't scan `project/psd/` twice; R3 named magic layout constants (`_ATTN_CARD_HEIGHT_PX`, `_ATTN_CARD_STRIDE_PX`); R4 collapsed three near-identical attention-card builders (rerun-pending, rerun-ready, drink-mask) into `_make_simple_attention_card`; R5 `_build_pipeline_guide` docstring corrected (8 steps, not 7); R6 duplicate `# --- Step 6: PSD Computation ---` comment removed; R7 `zip(strict=True)` on the statuses↔row-refs zip; `sum(1 for _ in manifest)` → `len(manifest)`; `any(True for x in ...)` → `any(... for x in ...)` at 2 sites. **UX:** UX1 `_import_lbl` "✓ N imported" / "No new animals found" now auto-clears after 3s via `QTimer.singleShot`. **Cleanup:** module docstring; `_open_windows` typed `list[QWidget]`; `_refresh_attention_zone` uses `w.deleteLater()` over `setParent(None)`; magic column index `6` in `_on_cell_double_clicked` replaced with `_COL_SLEEP_QC = _COLUMNS.index("Sleep QC")`; removed stale TODOs (centralize `compute_pipeline_status`, rerun-ready in step 5); inline import of `launch_edf_window` hoisted to module top. **+11 tests** in `tests/ebb_viewer/test_home_page.py` covering smoke construction, B4 PSD-status precedence (5 cases), B3 step-5 done/blocked decision (2 cases), B1 `_open_windows` pruning + safe slot, B4 `_table_rows` cache. **Deferred to Phase 5:** R1 extract `_build_table_row` from 160-line `_refresh`; UX2 visually distinguish "rerun done ✓" rows; UX3 double-click discoverability; B2 step-4 unreachable-active-branch edge case.
 - [x] `preprocess.py` — module + class docstrings; removed dead target-dir fallback in `_run_clicked` + stale "Not Relevant Now…" comment; localized `_min_duration_hrs`; narrowed bare-except in `_scan_edfs` and surfaced unreadable-file count in the scan label; extracted `_on_preprocess_error` from inline lambda; +TODO for rescan button + initial-state wording
 
 ### 3b. Spindle pipeline
@@ -148,8 +148,9 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [x] `scripts/smoke_export.py` — renamed `_read_csv_head` → `_read_file_head` (it's also used for `meta.json`); tightened docstring to "text file" rather than "CSV"
 
 ### Phase 3 closeout
-- [ ] All tests pass; smoke-test the GUI end-to-end
-- [ ] Merge `cleanup/phase3-pages` → `dev`
+- [x] All tests pass — **481 passing**, ruff clean on every touched file
+- [ ] Smoke-test the GUI end-to-end (user)
+- [ ] Merge `cleanup/phase3-pages` → `dev` (after user GUI confirmation)
 
 ---
 
@@ -164,6 +165,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 ## Phase 5 — Cross-cutting
 - [ ] **psds.py Stage B** — unify `MaskingSettingsDialog` body with shared `MaskParamsWidget`. Requires porting the dialog's richer hour-window preview (per-window status badges, total-hours-per-animal estimate, day-availability check), SWD status text, and annotation file count to the widget. Own session, advisor required.
 - [ ] **sleep_qc_visualizer.py legend extraction** — `_update_legend_group` and `_update_legend_animal` share ~60 LOC of OK/Review/Reset button construction logic. Factor a `_build_flag_buttons(animal, combo, status, run, row_l, *, mode)` helper. Also: outlier-set caching (B5) — `_get_spindle_outlier_animals` recomputed once per render + once per legend rebuild; cache invalidates with `_data_cache`.
+- [ ] **home.py `_refresh` row-builder extraction** — `_refresh` is ~160 LOC building 9 cells per row inline. Extract `_build_table_row(row_idx, entry, combo, run, spindle_edf_ok, spindle_out_ok, psd_file_ok)` so the cell-by-cell logic is testable in isolation. Defer also: visually distinguish "rerun done ✓" rows from active rerun rows (UX2); double-click discoverability on Sleep QC column (UX3).
 - [ ] Consistency sweep (naming, error handling, fs handling)
 - [ ] Audit/consolidate `HANDOFF.md`, `PIPELINE_AUDIT.md`, `PLAN.md`, `TODO.md`
 - [ ] README upgrade
