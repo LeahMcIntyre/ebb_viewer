@@ -9,6 +9,26 @@ jarring. Consider replacing the per-combo dialog loop with a single dialog
 showing one row per combo (project + remote folder editable inline) and
 launching all uploads at once on confirmation.
 
+### home: Surface per-PSD-run granularity in the Pipeline Summary table
+Today the table's PSD File / PSD Status columns collapse across PSD
+runs (best-wins precedence: `drink_mask_applied > ok > needs_drink_mask`).
+With multiple named runs per project (e.g. `default` + `dark_phase`),
+the user can see the aggregate state but not which run is in which
+state, and can't act on a specific run from Home. PSD Compute, PSD
+Review (Visualizer), and Drink Mask pages each already have their own
+run-name selector — Home is the only aggregate-only surface.
+
+**Recommended approach:** add a run-name dropdown above the summary
+table. Default is "All runs (best)" (current behavior). Selecting a
+specific run filters PSD File / PSD Status cells to that run's state.
+Matches the rest of the UI and scales to N runs without row explosion.
+
+Alternatives considered: tooltip on PSD Status with per-run breakdown
+(zero new controls but hover-only / not discoverable); per-run sub-rows
+inside each cell (everything visible but row heights vary, harder to
+scan when N>2). Both viable, but the dropdown matches the codebase
+convention.
+
 ### psd: Unify mask controls UI with Export Masks page
 The PSD page has two different config/expand patterns for masking knobs —
 a "Configure…" modal (SWD / annotation / hour windows) and an inline
