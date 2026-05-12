@@ -77,3 +77,33 @@ The low-level HTTP calls live in `ebb/io/sleepyrat.py`.
 - `ch_names = ("LFC", "RSC", "LSC", "EMG")`
 - EDF stem format: `AnimalID_..._PREPROCESSED.edf` — animal ID is the first `_`-delimited token
 - Channel combo strings (e.g. `"LFC_RSC"`) are used as directory names and dict keys throughout
+
+## Working conventions
+
+### No legacy compatibility code
+Delete migration shims, deprecated parameter aliases, and back-compat
+branches rather than tidy them. This codebase has one user and one
+deployment — old saved files can always be re-generated. When you find
+"if 'old_key' in params: ..." or similar, delete it.
+
+### Branch off `dev`, never `main`
+All feature and cleanup branches branch off `dev` and merge back to
+`dev` via `--no-ff` to preserve the work-unit boundary in history.
+`main` is the release branch.
+
+### Sweep progress lives in `REVIEW_PROGRESS.md`
+The repo is mid-way through a multi-phase code cleanup sweep. State of
+record is `REVIEW_PROGRESS.md` at the repo root — read it first when
+resuming work. `TODO.md` holds deferred items + product-level ideas.
+
+## Non-obvious design intents
+
+### Sleep QC review mode: ✓ Accept on the *original* combo is intentional
+In `pages/sleep_qc_visualizer.py` `_update_legend_animal`, when review
+mode is on, every combo in `drawn_combos` (including the non-rerun
+original where `run.source_combo is None`) gets a `✓ Accept` button.
+This *looks* like a bug because clicking Accept on the original
+cascade-rejects the rerun the user just waited for — but it's the
+intended affordance. After seeing the rerun's metrics, the user may
+decide the original was fine and choose to keep it. Don't gate this
+button on `source_combo is not None`.
