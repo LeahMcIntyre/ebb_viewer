@@ -274,15 +274,18 @@ class MaskParamsWidget(QWidget):
             "states": CollapsibleSection(
                 "States to Compute", self._build_states_group(), collapsed=False
             ),
+            # SD + Spindle Noise start collapsed: their full state is
+            # visible in the section subtitle (e.g. "180s · 0.5s · 5σ"),
+            # so most users don't need the form rows visible run-to-run.
             "sd": CollapsibleSection(
                 "Standard Deviation Mask (applied only to wake)",
                 self._build_sd_group(),
-                collapsed=False,
+                collapsed=True,
             ),
             "spindle": CollapsibleSection(
                 "Spindle Noise Mask (applied to all states)",
                 self._build_spindle_group(),
-                collapsed=False,
+                collapsed=True,
             ),
             "drink": CollapsibleSection(
                 "Drink Mask", self._build_drink_group(), collapsed=False
