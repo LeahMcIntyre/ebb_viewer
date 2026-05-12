@@ -29,6 +29,32 @@ inside each cell (everything visible but row heights vary, harder to
 scan when N>2). Both viable, but the dropdown matches the codebase
 convention.
 
+### psd: Reflow page around user intent (Setup / What to compute / Filters / Run)
+After Stage B-2 the PSD page reads as a flat list of equally-weighted
+sections (Folder Selection, Combos table, 6 mask collapsibles, PSD Output
+Settings, Run button) — no visual hierarchy distinguishes setup steps
+from configurable knobs from the action. Consider restructuring into
+four functional zones:
+
+1. **Setup** — Folder Selection, Run name (collapsible once filled)
+2. **What to compute** — States (still in mask widget) + channels + fs
+   grouped together since they're all "what does this run produce"
+3. **Filters & masks** — SD, Spindle Noise, SWD, Annotation, Hour
+   Windows (optional knobs, second-tier)
+4. **Run** — pipeline button + log + post-run hint
+
+Two viable implementations:
+- Keep MaskParamsWidget unchanged; wrap (widget + channels + fs block)
+  in a single "What to Compute & Filter" page-level QGroupBox so they
+  read as one functional unit. Lightest touch.
+- Pull the States section out of MaskParamsWidget and render it on the
+  page next to channels + fs. Cleaner conceptually but regresses Stage
+  B-2's "one widget owns all mask params" goal — needs care.
+
+**Decide after a few real PSD compute sessions** to confirm whether the
+flat layout is genuinely confusing in workflow or just unfamiliar on
+first look.
+
 ### ~~psd: Unify mask controls UI with Export Masks page~~
 **DONE** (Phase 5, Stage B-1 + B-2). PSD page now uses the shared
 `MaskParamsWidget` inline with `show_drink_mask=False`. The dialog and
