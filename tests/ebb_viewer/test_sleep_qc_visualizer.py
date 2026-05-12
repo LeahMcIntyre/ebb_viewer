@@ -306,6 +306,110 @@ def test_outlier_cache_returns_same_set_on_repeat_calls(qapp, tmp_path: Path):
     assert "AM005" in first
 
 
+def test_confirm_review_returns_true_when_no_entry(qapp, tmp_path: Path):
+    """Calling the confirm helper for an unknown animal short-circuits to True."""
+    page = _make_page(qapp, tmp_path)
+    assert page._confirm_review_flip("UNKNOWN", "LFC_RSC") is True
+
+
+def test_confirm_review_returns_true_when_no_sibling_ok(qapp, tmp_path: Path):
+    """No sibling combo is OK → no dialog needed; returns True."""
+    _seed_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry(sleep_qc=None)}})
+    page = _make_page(qapp, tmp_path)
+    assert page._confirm_review_flip("AM001", "LFC_RSC") is True
+
+
+def test_confirm_review_yes_proceeds(qapp, tmp_path: Path):
+    """User confirms → helper returns True."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    _seed_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="ok"),
+                "LSC_RSC": RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
+            }
+        },
+    )
+    page = _make_page(qapp, tmp_path)
+    with patch.object(
+        QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
+    ):
+        assert page._confirm_review_flip("AM001", "LSC_RSC") is True
+
+
+def test_confirm_review_cancel_blocks(qapp, tmp_path: Path):
+    """User cancels → helper returns False; manifest unchanged."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    _seed_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="ok"),
+                "LSC_RSC": RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
+            }
+        },
+    )
+    page = _make_page(qapp, tmp_path)
+    with patch.object(
+        QMessageBox, "question", return_value=QMessageBox.StandardButton.Cancel
+    ):
+        assert page._confirm_review_flip("AM001", "LSC_RSC") is False
+
+
+def test_group_review_clicked_cancel_does_not_change_manifest(qapp, tmp_path: Path):
+    """Group-mode wrapper: cancel keeps the manifest in its prior state."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    _seed_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="ok"),
+                "LSC_RSC": RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
+            }
+        },
+    )
+    page = _make_page(qapp, tmp_path)
+    page.cmb_combo.addItem("LSC_RSC")
+    page.cmb_combo.setCurrentText("LSC_RSC")
+    with patch.object(
+        QMessageBox, "question", return_value=QMessageBox.StandardButton.Cancel
+    ):
+        page._group_review_clicked("AM001", "LSC_RSC", checked=True)
+    run = page._manifest.get_run("AM001", "LSC_RSC")
+    assert run is not None
+    assert run.sleep_qc == "rejected"  # unchanged
+
+
+def test_group_review_clicked_yes_flips_to_needs_review(qapp, tmp_path: Path):
+    """Group-mode wrapper: yes proceeds with the flag flip."""
+    from PyQt6.QtWidgets import QMessageBox
+
+    _seed_manifest(
+        tmp_path,
+        {
+            "AM001": {
+                "LFC_RSC": RunEntry(sleep_qc="ok"),
+                "LSC_RSC": RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
+            }
+        },
+    )
+    page = _make_page(qapp, tmp_path)
+    page.cmb_combo.addItem("LSC_RSC")
+    page.cmb_combo.setCurrentText("LSC_RSC")
+    with patch.object(
+        QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
+    ):
+        page._group_review_clicked("AM001", "LSC_RSC", checked=True)
+    # Manifest reloaded inside _apply_sleep_qc → re-read from page.
+    run = page._manifest.get_run("AM001", "LSC_RSC")
+    assert run is not None
+    assert run.sleep_qc == "needs_review"
+
+
 def test_outlier_cache_invalidated_when_data_cache_repopulated(qapp, tmp_path: Path):
     """_load_combo drops the outlier cache for the loaded combo so a
     re-download with different data doesn't surface stale outliers."""

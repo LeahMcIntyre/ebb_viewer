@@ -1175,9 +1175,7 @@ class SleepQCGridPage(QWidget):
                     lambda checked, m=mid: self._flag_sleep_qc(m, "ok" if checked else None)
                 ),
                 on_review_toggled=(
-                    lambda checked, m=mid: self._flag_sleep_qc(
-                        m, "needs_review" if checked else None
-                    )
+                    lambda checked, m=mid, c=combo: self._group_review_clicked(m, c, checked)
                 ),
                 on_reset=lambda m=mid, c=combo: self._reset_sleep_qc_group(m, c),
             )
@@ -1246,7 +1244,7 @@ class SleepQCGridPage(QWidget):
                         lambda checked, c=combo: self._flag_animal_ok(c, checked)
                     ),
                     on_review_toggled=(
-                        lambda checked, c=combo: self._flag_animal_review(c, checked)
+                        lambda checked, c=combo: self._animal_review_clicked(c, checked)
                     ),
                     on_reset=(
                         lambda a=animal, c=combo: self._reset_sleep_qc_animal(a, c)
@@ -1340,6 +1338,62 @@ class SleepQCGridPage(QWidget):
                 grid.addWidget(pct_lbl, row_i, col)
 
         return frame
+
+    # ------------------------------------------------------------------
+    # Review-flag confirmation when a sibling is already OK
+    # ------------------------------------------------------------------
+    def _confirm_review_flip(self, animal: str, combo: str) -> bool:
+        """Ask before flagging a row for review when a sibling combo is OK.
+
+        ``flag_sleep_qc("needs_review")`` on a cascade-rejected row clears
+        the manifest's ``rejected_by`` link, so the relationship "this row
+        was rejected because LFC_RSC is OK" is lost after the flip. The
+        Home table can't undo the click easily, so we confirm at the
+        Sleep QC page where the action originates.
+
+        Returns True if the user confirmed (or no confirmation needed),
+        False if cancelled.
+        """
+        entry = self._manifest.get(animal)
+        if entry is None:
+            return True
+        sibling_ok = next(
+            (c for c, r in entry.runs.items() if c != combo and r.sleep_qc == "ok"),
+            None,
+        )
+        if not sibling_ok:
+            return True
+        reply = QMessageBox.question(
+            self,
+            "Already Resolved",
+            f"{animal} already has {sibling_ok} marked OK.\n\n"
+            f"Flagging {combo} as 'Needs Review' won't change that — "
+            f"{sibling_ok} stays the OK combo. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    def _group_review_clicked(self, mid: str, combo: str, checked: bool) -> None:
+        """Group-mode legend Review-button click — confirms when needed."""
+        if checked and not self._confirm_review_flip(mid, combo):
+            # User cancelled — rebuild the legend so the button visually
+            # reverts to its pre-click state (QPushButton.clicked fires
+            # *after* the toggle, so the button is currently `checked`
+            # but the manifest didn't change).
+            mice = self._get_page_mice()
+            self._update_legend_group(mice, self._build_mouse_color_map(mice))
+            return
+        self._flag_sleep_qc(mid, "needs_review" if checked else None)
+
+    def _animal_review_clicked(self, combo: str, checked: bool) -> None:
+        """Animal-mode legend Review-button click — confirms when needed."""
+        animal = self.cmb_animal.currentText()
+        if checked and not self._confirm_review_flip(animal, combo):
+            # Rebuild legend so the button reverts visually.
+            self._update_all_plots()
+            return
+        self._flag_animal_review(combo, checked)
 
     # ------------------------------------------------------------------
     # Reset helpers (manually-rejected runs with no cascade history)
