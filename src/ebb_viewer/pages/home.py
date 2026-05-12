@@ -770,7 +770,9 @@ class HomePage(QWidget):
 
         # 6: Sleep QC
         self.table.setItem(
-            row_idx, _COL_SLEEP_QC, self._build_sleep_qc_cell(entry, run, sleep_qc, spindle_out_ok)
+            row_idx,
+            _COL_SLEEP_QC,
+            self._build_sleep_qc_cell(entry, run, sleep_qc, spindle_out_ok, combo),
         )
 
         # 7: PSD File
@@ -794,10 +796,20 @@ class HomePage(QWidget):
         run: RunEntry | None,
         sleep_qc: str | None,
         spindle_out_ok: bool,
+        combo: str,
     ):
         """Build the Sleep QC column cell (handles rerun → done / pending /
-        needs_review / needs_rerun branches with the edit-hint tooltip)."""
+        needs_review / needs_rerun branches with the edit-hint tooltip).
+
+        When the row is ``needs_review`` and a *sibling* combo for the same
+        animal is already marked ``ok``, the cell appends an inline
+        ``(LFC_RSC ok)`` hint + tooltip so the relationship is visible
+        from the summary table. (The manifest clears ``rejected_by`` on
+        the rejected → needs_review transition, so the cell has to scan
+        siblings rather than reading it directly.)
+        """
         edit_hint = False
+        tooltip = ""
         if sleep_qc is None:
             txt = "pending" if spindle_out_ok else "—"
             bg = _PENDING_COLOR if spindle_out_ok else None
@@ -814,11 +826,26 @@ class HomePage(QWidget):
                 bg = _STATUS_COLOR.get("needs_rerun")
                 edit_hint = not edf_written
         else:
-            txt = _SLEEP_QC_LABEL.get(sleep_qc, sleep_qc)
+            label = _SLEEP_QC_LABEL.get(sleep_qc, sleep_qc)
             bg = _STATUS_COLOR.get(sleep_qc)
+            sibling_ok = next(
+                (c for c, r in entry.runs.items() if c != combo and r.sleep_qc == "ok"),
+                None,
+            )
+            if sibling_ok and sleep_qc == "needs_review":
+                txt = f"{label} ({sibling_ok} ok)"
+                tooltip = (
+                    f"{entry.animal_id} already has {sibling_ok} marked OK. "
+                    "This row is queued for re-examination but does not change "
+                    f"that — clicking OK here would swap to {combo} instead."
+                )
+            else:
+                txt = label
         cell = make_cell(txt, bg)
         if edit_hint:
             cell.setToolTip("Double-click to change rerun combo")
+        elif tooltip:
+            cell.setToolTip(tooltip)
         return cell
 
     def _build_psd_status_cell(

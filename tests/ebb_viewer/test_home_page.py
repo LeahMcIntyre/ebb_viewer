@@ -276,6 +276,67 @@ def test_sleep_qc_cell_dash_when_no_spindle_output(qapp, tmp_path: Path):
     assert _sleep_qc_cell(page) == "—"
 
 
+def test_sleep_qc_cell_needs_review_shows_sibling_ok_hint(qapp, tmp_path: Path):
+    """A needs_review row whose sibling combo is OK should surface the
+    relationship inline: e.g. 'Review EDF (LFC_RSC ok)' + a tooltip.
+
+    Background: when the user clicks Review on a cascade-rejected sibling,
+    the manifest transitions it to 'needs_review' and *clears* the
+    rejected_by metadata. Without a hint in the cell, the summary table
+    looks like there are two competing flags for one animal.
+    """
+    from ebb_viewer.pipeline.manifest import (
+        Manifest,
+        ManifestEntry,
+        RunEntry,
+    )
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        runs={
+            "LFC_RSC": RunEntry(sleep_qc="ok"),
+            "LSC_RSC": RunEntry(sleep_qc="needs_review"),
+        },
+    )
+    m.save()
+    page = _make_page(qapp, tmp_path)
+
+    # Find the LSC_RSC row in the rendered table (order depends on dict
+    # insertion order, but both rows are rendered when hide_rejected
+    # filters nothing).
+    lsc_row = next(
+        i for i, (_e, c, _r) in enumerate(page._table_rows) if c == "LSC_RSC"
+    )
+    cell = page.table.item(lsc_row, 6)
+    assert "Review EDF" in cell.text()
+    assert "LFC_RSC ok" in cell.text()
+    assert "LFC_RSC" in cell.toolTip()
+
+
+def test_sleep_qc_cell_needs_review_without_sibling_ok_is_terse(qapp, tmp_path: Path):
+    """If no sibling is OK, the cell stays terse — just 'Review EDF'."""
+    from ebb_viewer.pipeline.manifest import (
+        Manifest,
+        ManifestEntry,
+        RunEntry,
+    )
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        runs={"LSC_RSC": RunEntry(sleep_qc="needs_review")},
+    )
+    m.save()
+    page = _make_page(qapp, tmp_path)
+
+    cell = page.table.item(0, 6)
+    assert cell.text() == "Review EDF"
+    assert cell.toolTip() == ""
+
+
 def test_sleep_qc_cell_rerun_done_when_target_ok(qapp, tmp_path: Path):
     """A needs_rerun row whose rerun target is ok → 'rerun done ✓'."""
     from ebb_viewer.pipeline.manifest import (
