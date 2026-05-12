@@ -155,10 +155,10 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 ---
 
 ## Phase 4 — Top-level glue
-- [ ] `main_window.py` (225)
-- [ ] `__main__.py`
-- [ ] `_patches.py` (51)
-- [ ] All `__init__.py` files
+- [x] `main_window.py` — module docstring; hoisted `_NAV`, `_BADGE_ROWS`, `_PAGE_ROWS` to module-level constants (was function-local; reading order was broken — `_page_rows` used at L147 before being defined at L151, worked only via lazy closure capture); **renamed** `sleep_combine_page` → `sleep_qc_page` (matched the class `SleepQCGridPage` + sidebar label "Sleep QC"); **centralized 9 identical** `lambda name: self.pagelist.setCurrentRow(_page_rows[name])` navigate_to wiring into a single `_navigate_to(name)` method + a for-loop over the pages that emit; **centralized** the 5 `manifest_changed.connect(self._refresh_badges)` wirings into a for-loop; narrowed bare `except Exception` in `_refresh_badges` to `(OSError, ValueError)`; fixed stale comment about row 9 PSD Computation in `_badge_rows` (actually row 10 = PSD Visualizer, row 11 = Drink Mask). **+2 tests** in `tests/ebb_viewer/test_main_window.py` (smoke construct + navigate_to signal routing).
+- [x] `__main__.py` — module docstring; dropped stale filename comment (`# ebb_viewer/__main__.py`) + path comment (`# whatever your path is`); typed `main() -> None`; collapsed two-step `project_root = Path(project_dir); win = MainWindow(project_root=...)` to inline.
+- [~] `_patches.py` — reviewed clean. Already has module + function docstrings + upstream issue citation + idempotency guard.
+- [~] All `__init__.py` files — reviewed clean. `src/ebb/__init__.py` intentionally side-effects via `_apply_patches()` (documented); `src/ebb/masking/__init__.py` and `src/ebb/preprocess/__init__.py` are well-formed re-export shims.
 
 ---
 

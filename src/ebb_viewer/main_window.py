@@ -1,3 +1,15 @@
+"""Top-level Qt main window for the ebb_viewer GUI.
+
+Hosts the sidebar navigation (11 pipeline pages + separators), the
+``QStackedLayout`` showing the active page, and the periodic poll timer
+that refreshes sidebar badges and the currently-visible page every 10 s.
+
+Each page is constructed once at startup with ``project_root`` and added
+to the stack. Pages emit ``navigate_to(<page-name>)`` for post-action
+routing; the window translates that into a sidebar row change via
+``_PAGE_ROWS``.
+"""
+
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
@@ -26,8 +38,60 @@ from ebb_viewer.pages.spindle import SpindleWritePage
 from ebb_viewer.pages.spindle_upload import SpindleUploadPage
 from ebb_viewer.pipeline.manifest import Manifest
 
+# ---------------------------------------------------------------------------
+# Sidebar layout — list-row index → (label, stack index) or None for separator.
+# Row indices feed _BADGE_ROWS (pending-work counts) and _PAGE_ROWS (navigate_to
+# destinations), so reordering here must update both maps below.
+# ---------------------------------------------------------------------------
+_NAV: list[tuple[str, int] | None] = [
+    ("Home", 0),
+    None,
+    ("1. Preprocess", 1),
+    ("2. Spindle EDFs", 2),
+    ("3. Spindle Upload", 3),
+    None,
+    ("4. Sleep QC", 4),
+    ("5. Spindle Rerun", 5),
+    None,
+    ("6. PSD Computation", 6),
+    ("7. PSD Visualizer", 7),
+    ("8. Drink Mask", 8),
+    ("9. Finalize", 9),
+    ("10. Export Masks", 10),
+]
+
+# Sidebar rows that carry pending-work badges → manifest method name.
+# Row 0: Home — animals flagged for EDF review.
+# Row 6: Sleep QC — animals with a downloaded rerun awaiting decision.
+# Row 7: Spindle Rerun — animals with rerun queued but EDF not yet written.
+# Row 10: PSD Visualizer — PSDs flagged for review (incl. drink verification).
+# Row 11: Drink Mask — animals flagged needs_drink_mask.
+_BADGE_ROWS: dict[int, str] = {
+    0: "needs_review",
+    6: "pending_rerun_review",
+    7: "needs_rerun_pending",
+    10: "pending_psd_review",
+    11: "needs_drink_mask",
+}
+
+# Page-name keys emitted via navigate_to → sidebar row index.
+_PAGE_ROWS: dict[str, int] = {
+    "home": 0,
+    "preprocess": 2,
+    "spindle_write": 3,
+    "spindle_upload": 4,
+    "sleep_qc": 6,
+    "rerun": 7,
+    "psd_compute": 9,
+    "psd_review": 10,
+    "drink_mask": 11,
+    "finalize": 12,
+}
+
 
 class MainWindow(QMainWindow):
+    """Main application window — sidebar + stacked page area + poll timer."""
+
     def __init__(self, project_root: Path, parent=None):
         super().__init__(parent)
         self.project_root = project_root
@@ -52,7 +116,6 @@ class MainWindow(QMainWindow):
         pagelayout.addLayout(self.stacklayout, 1)
 
         # ----- Sidebar
-
         self.lbl_project = QLabel(f"Project: {self.project_root}")
         self.lbl_project.setObjectName("projectPathLabel")
         self.lbl_project.setWordWrap(True)
@@ -65,12 +128,12 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.pagelist)
         sidebar_layout.addStretch(1)
 
-        # ----- Pages (stack order must match _ROW_TO_STACK mapping below)
+        # ----- Pages (stack order must match _NAV's stack indices)
         self.home_page = HomePage(parent=self, project_root=self.project_root)
         self.preprocess_page = PreprocessPage(parent=self, project_root=self.project_root)
         self.spindle_write_page = SpindleWritePage(parent=self, project_root=self.project_root)
         self.spindle_upload_page = SpindleUploadPage(parent=self, project_root=self.project_root)
-        self.sleep_combine_page = SleepQCGridPage(parent=self, project_root=self.project_root)
+        self.sleep_qc_page = SleepQCGridPage(parent=self, project_root=self.project_root)
         self.rerun_page = RerunPage(parent=self, project_root=self.project_root)
         self.psd_page = PSDPage(parent=self, project_root=self.project_root)
         self.psd_visualizer_page = PSDVisualizer(parent=self, project_root=self.project_root)
@@ -78,39 +141,24 @@ class MainWindow(QMainWindow):
         self.finalize_page = FinalizePage(parent=self, project_root=self.project_root)
         self.export_masks_page = ExportMasksPage(project_root=self.project_root, parent=self)
 
-        for w in (
+        # Pages in stack order. Index matches _NAV's stack-index column.
+        pages_in_stack_order = (
             self.home_page,
             self.preprocess_page,
             self.spindle_write_page,
             self.spindle_upload_page,
-            self.sleep_combine_page,
+            self.sleep_qc_page,
             self.rerun_page,
             self.psd_page,
             self.psd_visualizer_page,
             self.drink_mask_page,
             self.finalize_page,
             self.export_masks_page,
-        ):
+        )
+        for w in pages_in_stack_order:
             self.stacklayout.addWidget(w)
 
-        # Build sidebar with separators.
-        # _ROW_TO_STACK maps list-row index → stack index (None = separator row).
-        _NAV = [
-            ("Home", 0),
-            None,
-            ("1. Preprocess", 1),
-            ("2. Spindle EDFs", 2),
-            ("3. Spindle Upload", 3),
-            None,
-            ("4. Sleep QC", 4),
-            ("5. Spindle Rerun", 5),
-            None,
-            ("6. PSD Computation", 6),
-            ("7. PSD Visualizer", 7),
-            ("8. Drink Mask", 8),
-            ("9. Finalize", 9),
-            ("10. Export Masks", 10),
-        ]
+        # Build the sidebar list (rows + separators) from _NAV.
         self._row_to_stack: dict[int, int] = {}
         self._row_base_label: dict[int, str] = {}
         for row, entry in enumerate(_NAV):
@@ -125,70 +173,32 @@ class MainWindow(QMainWindow):
                 self._row_to_stack[row] = stack_idx
                 self._row_base_label[row] = label
 
-        # Rows that carry pending-work badges (row index → manifest method name)
-        # Home=0: needs_review queue; Sleep QC=6: pending rerun decisions; Rerun=7: needs_rerun
-        # PSD Computation=9: combos with CSVs but no PKL (computed separately)
-        # PSD Review=10: pending_psd_review (gated on psds_channel_merged.pkl)
-        self._badge_rows: dict[int, str] = {
-            0: "needs_review",
-            6: "pending_rerun_review",
-            7: "needs_rerun_pending",
-            10: "pending_psd_review",
-            11: "needs_drink_mask",
-        }
+        # Pages that emit manifest_changed → refresh sidebar badges.
+        for page in (
+            self.home_page,
+            self.sleep_qc_page,
+            self.rerun_page,
+            self.psd_page,
+            self.drink_mask_page,
+        ):
+            page.manifest_changed.connect(self._refresh_badges)
 
-        # Connect manifest_changed signals for immediate badge refresh
-        self.home_page.manifest_changed.connect(self._refresh_badges)
-        self.sleep_combine_page.manifest_changed.connect(self._refresh_badges)
-        self.rerun_page.manifest_changed.connect(self._refresh_badges)
-        self.psd_page.manifest_changed.connect(self._refresh_badges)
-        self.drink_mask_page.manifest_changed.connect(self._refresh_badges)
-        self.drink_mask_page.navigate_to.connect(
-            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
-        )
+        # Pages that emit navigate_to(name) → move sidebar selection.
+        for page in (
+            self.home_page,
+            self.preprocess_page,
+            self.spindle_write_page,
+            self.spindle_upload_page,
+            self.sleep_qc_page,
+            self.rerun_page,
+            self.psd_page,
+            self.psd_visualizer_page,
+            self.drink_mask_page,
+            self.finalize_page,
+        ):
+            page.navigate_to.connect(self._navigate_to)
 
-        # Navigation hints — pages that emit navigate_to for post-action routing
-        _page_rows = {
-            "home": 0,
-            "preprocess": 2,
-            "spindle_write": 3,
-            "spindle_upload": 4,
-            "sleep_qc": 6,
-            "rerun": 7,
-            "psd_compute": 9,
-            "psd_review": 10,
-            "drink_mask": 11,
-            "finalize": 12,
-        }
-        self.home_page.navigate_to.connect(
-            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
-        )
-        self.rerun_page.navigate_to.connect(
-            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
-        )
-        self.preprocess_page.navigate_to.connect(
-            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
-        )
-        self.spindle_write_page.navigate_to.connect(
-            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
-        )
-        self.spindle_upload_page.navigate_to.connect(
-            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
-        )
-        self.sleep_combine_page.navigate_to.connect(
-            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
-        )
-        self.psd_page.navigate_to.connect(
-            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
-        )
-        self.psd_visualizer_page.navigate_to.connect(
-            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
-        )
-        self.finalize_page.navigate_to.connect(
-            lambda name: self.pagelist.setCurrentRow(_page_rows[name])
-        )
-
-        # Periodic poll: refresh badges + currently-visible page every 10 s
+        # Periodic poll: refresh badges + currently-visible page every 10 s.
         self._poll_timer = QTimer(self)
         self._poll_timer.setInterval(10_000)
         self._poll_timer.timeout.connect(self._poll)
@@ -204,11 +214,17 @@ class MainWindow(QMainWindow):
         wrapper.setLayout(pagelayout)
         self.setCentralWidget(wrapper)
 
-    def display(self, i: int):
+    def display(self, i: int) -> None:
         stack_idx = self._row_to_stack.get(i)
         if stack_idx is not None:
             self.stacklayout.setCurrentIndex(stack_idx)
             self._refresh_badges()
+
+    def _navigate_to(self, name: str) -> None:
+        """Move sidebar selection to the row mapped from ``name``."""
+        row = _PAGE_ROWS.get(name)
+        if row is not None:
+            self.pagelist.setCurrentRow(row)
 
     def _poll(self) -> None:
         """Called every 10 s: refresh badges and the currently-visible page."""
@@ -221,7 +237,7 @@ class MainWindow(QMainWindow):
         """Update sidebar item labels with pending-work counts."""
         try:
             manifest = Manifest.load(self.project_root)
-        except Exception:
+        except (OSError, ValueError):
             return
 
         counts = {
@@ -232,7 +248,7 @@ class MainWindow(QMainWindow):
             + len(manifest.all_pending_drink_verification()),
             "needs_drink_mask": len(manifest.all_needs_drink_mask()),
         }
-        for row, method in self._badge_rows.items():
+        for row, method in _BADGE_ROWS.items():
             item = self.pagelist.item(row)
             if item is None:
                 continue
