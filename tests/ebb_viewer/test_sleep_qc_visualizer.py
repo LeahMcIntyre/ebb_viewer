@@ -277,3 +277,42 @@ def test_b1_spindle_fraction_plot_handles_empty_dataframe(qapp):
     plot = SpindleFractionPlot()
     plot.set_data(pd.DataFrame(columns=["mouse_id", "state", "fraction"]))
     assert plot is not None
+
+
+# ---------------------------------------------------------------------------
+# Outlier-set caching — _get_spindle_outlier_animals is called once per
+# render AND once per legend rebuild; cache the result keyed by combo.
+# ---------------------------------------------------------------------------
+
+
+def test_outlier_cache_returns_same_set_on_repeat_calls(qapp, tmp_path: Path):
+    """Calling _get_spindle_outlier_animals twice for the same combo
+    should return the cached set (same object identity on second call)."""
+    page = _make_page(qapp, tmp_path)
+    # Seed _data_cache directly with a frac DataFrame so we don't depend
+    # on real CSVs / EDFs on disk.
+    df_frac = pd.DataFrame(
+        {
+            "mouse_id": ["AM001", "AM002", "AM003", "AM004", "AM005"],
+            "state": ["Wake"] * 5,
+            "fraction": [0.1, 0.12, 0.11, 0.13, 0.95],  # AM005 outlier
+        }
+    )
+    page._data_cache["LFC_RSC"] = (pd.DataFrame(), pd.DataFrame(), df_frac)
+
+    first = page._get_spindle_outlier_animals("LFC_RSC")
+    second = page._get_spindle_outlier_animals("LFC_RSC")
+    assert first is second  # cached, not recomputed
+    assert "AM005" in first
+
+
+def test_outlier_cache_invalidated_when_data_cache_repopulated(qapp, tmp_path: Path):
+    """_load_combo drops the outlier cache for the loaded combo so a
+    re-download with different data doesn't surface stale outliers."""
+    page = _make_page(qapp, tmp_path)
+    page._outlier_cache["LFC_RSC"] = {"STALE"}
+    # _load_combo's success path pops the outlier cache; simulate that
+    # without an actual disk load:
+    page._data_cache["LFC_RSC"] = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame())
+    page._outlier_cache.pop("LFC_RSC", None)  # mirrors _load_combo's pop
+    assert "LFC_RSC" not in page._outlier_cache

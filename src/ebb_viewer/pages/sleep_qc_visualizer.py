@@ -104,6 +104,10 @@ class SleepQCGridPage(QWidget):
         self._highlighted_animal: str | None = None
         self._show_ref_median: bool = False
         self._pending_rerun_ids: set[str] = set()
+        # IQR-outlier set per combo, lazily computed by
+        # _get_spindle_outlier_animals. Invalidated wherever _data_cache
+        # is evicted or repopulated for a combo (same lifecycle).
+        self._outlier_cache: dict[str, set[str]] = {}
 
         self._plots: dict[tuple[str, str], pg.PlotItem] = {}
 
@@ -135,6 +139,7 @@ class SleepQCGridPage(QWidget):
         if not self._review_mode:
             for _, combo in self._manifest.pending_rerun_review():
                 self._data_cache.pop(combo, None)
+                self._outlier_cache.pop(combo, None)
         # Refresh the combo dropdown if new spindle_outputs directories have appeared
         # (e.g. a download completed while this page was already visible).
         if self._discover_combos() != self._available_combos:
@@ -148,6 +153,7 @@ class SleepQCGridPage(QWidget):
         # downloaded since the last time this combo was loaded.
         for _, combo in self._manifest.pending_rerun_review():
             self._data_cache.pop(combo, None)
+            self._outlier_cache.pop(combo, None)
         self._highlighted_animal = None
         self._update_reruns_badge()
         self._refresh_combos()
@@ -524,6 +530,7 @@ class SleepQCGridPage(QWidget):
         new_combos = self._discover_combos()
         for _, combo in self._manifest.pending_rerun_review():
             self._data_cache.pop(combo, None)
+            self._outlier_cache.pop(combo, None)
         self._available_combos = new_combos
         self._ensure_all_combos_loaded()
         # Always show sleep data in review mode, not the spindle fraction plot.
@@ -594,6 +601,8 @@ class SleepQCGridPage(QWidget):
             )
             return False
         self._data_cache[combo] = (df, df_offset, df_frac)
+        # Fresh fraction data → drop any cached outlier set for this combo.
+        self._outlier_cache.pop(combo, None)
         return True
 
     def _ensure_all_combos_loaded(self) -> None:
@@ -785,11 +794,18 @@ class SleepQCGridPage(QWidget):
             self._plots[(bottom_metric, state)].getAxis("bottom").setTicks(None)
 
     def _get_spindle_outlier_animals(self, combo: str) -> set:
-        """Return animal IDs that are IQR × 1.5 outliers in any state of the spindle fraction data."""
+        """Return animal IDs that are IQR × 1.5 outliers in any state of the spindle fraction data.
+
+        Cached per combo to avoid recomputing on every legend rebuild +
+        every render pass. Invalidated by ``_load_combo`` (when fresh
+        data lands) and by the three sites that evict ``_data_cache``.
+        """
+        if combo in self._outlier_cache:
+            return self._outlier_cache[combo]
         df_frac = self._get_frac_df(combo)
         if df_frac is None or df_frac.empty:
             return set()
-        outliers: set = set()
+        outliers: set[str] = set()
         for state in df_frac["state"].unique():
             sdf = df_frac[df_frac["state"] == state].dropna(subset=["fraction"])
             if len(sdf) < 4:
@@ -800,6 +816,7 @@ class SleepQCGridPage(QWidget):
             lo, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
             mask = (fracs < lo) | (fracs > hi)
             outliers.update(sdf["mouse_id"].to_numpy()[mask])
+        self._outlier_cache[combo] = outliers
         return outliers
 
     def _apply_hour_of_day_ticks(self, x_vals) -> None:
@@ -1043,6 +1060,77 @@ class SleepQCGridPage(QWidget):
         cmap = mpl.colormaps["tab10"] if n <= 10 else mpl.colormaps["tab20"]
         return {mid: tuple(int(255 * c) for c in cmap(i)[:3]) for i, mid in enumerate(mice)}
 
+    def _build_flag_buttons(
+        self,
+        row_l: QHBoxLayout,
+        *,
+        status: str | None,
+        rerun_combo_display: str | None,
+        rejected_by: str | None,
+        on_ok_toggled,
+        on_review_toggled,
+        on_reset,
+    ) -> None:
+        """Build the OK + Review + (optional) Reset trio for one legend row.
+
+        Shared by ``_update_legend_group`` (group mode) and the
+        non-review branch of ``_update_legend_animal`` (animal mode).
+        Click handlers are passed in as callables so the helper stays
+        agnostic to which manifest method to invoke.
+
+        Args:
+            row_l: Horizontal layout to append the buttons into.
+            status: Current sleep_qc status for the (animal, combo) pair.
+            rerun_combo_display: Target combo shown in the "Rerun Queued"
+                tooltip when status == "needs_rerun".
+            rejected_by: Manifest's ``rejected_by`` field. Drives whether
+                to show a Reset button (no rejected_by) or attach a
+                tooltip to OK/Review (rejected_by set).
+            on_ok_toggled: ``Callable[[bool], None]`` invoked with the
+                new checked state when OK is clicked.
+            on_review_toggled: Same shape; only wired when status is not
+                "needs_rerun".
+            on_reset: ``Callable[[], None]`` invoked when Reset is
+                clicked (only present when status == "rejected" without
+                a ``rejected_by``).
+        """
+        btn_ok = QPushButton("OK")
+        btn_ok.setFixedHeight(22)
+        btn_ok.setCheckable(True)
+        btn_ok.setChecked(status == "ok")
+        btn_ok.clicked.connect(on_ok_toggled)
+        row_l.addWidget(btn_ok)
+
+        btn_review = QPushButton("Review")
+        btn_review.setFixedHeight(22)
+        btn_review.setCheckable(True)
+        btn_review.setChecked(status in ("needs_review", "needs_rerun"))
+        if status == "needs_rerun":
+            btn_review.setText("Rerun Queued")
+            btn_review.setEnabled(False)
+            btn_review.setToolTip(
+                f"Rerun queued as {rerun_combo_display or '?'}. "
+                "Change target from the Home page."
+            )
+        else:
+            btn_review.clicked.connect(on_review_toggled)
+        row_l.addWidget(btn_review)
+
+        if status == "rejected":
+            if rejected_by:
+                tip = (
+                    f"Rejected because {rejected_by} is OK.\n"
+                    "Click OK here to switch, or click Review to re-examine."
+                )
+                btn_ok.setToolTip(tip)
+                btn_review.setToolTip(tip)
+            else:
+                btn_reset = QPushButton("Reset")
+                btn_reset.setFixedHeight(22)
+                btn_reset.setToolTip("Reset to unreviewed")
+                btn_reset.clicked.connect(lambda _checked=False: on_reset())
+                row_l.addWidget(btn_reset)
+
     def _update_legend_group(
         self, mice: list[str], mouse_colors: dict, ref_combo: str | None = None
     ) -> None:
@@ -1078,46 +1166,21 @@ class SleepQCGridPage(QWidget):
                 row_l.addWidget(outlier_lbl)
 
             row_l.addStretch(1)
-            btn_ok = QPushButton("OK")
-            btn_ok.setFixedHeight(22)
-            btn_ok.setCheckable(True)
-            btn_ok.setChecked(status == "ok")
-            btn_ok.clicked.connect(
-                lambda checked, m=mid: self._flag_sleep_qc(m, "ok" if checked else None)
-            )
-            row_l.addWidget(btn_ok)
-
-            btn_review = QPushButton("Review")
-            btn_review.setFixedHeight(22)
-            btn_review.setCheckable(True)
-            btn_review.setChecked(status in ("needs_review", "needs_rerun"))
-            if status == "needs_rerun":
-                btn_review.setText("Rerun Queued")
-                btn_review.setEnabled(False)
-                btn_review.setToolTip(
-                    f"Rerun queued as {run.rerun_combo or '?'}. Change target from the Home page."
-                )
-            else:
-                btn_review.clicked.connect(
+            self._build_flag_buttons(
+                row_l,
+                status=status,
+                rerun_combo_display=(run.rerun_combo if run else None),
+                rejected_by=rejected_by,
+                on_ok_toggled=(
+                    lambda checked, m=mid: self._flag_sleep_qc(m, "ok" if checked else None)
+                ),
+                on_review_toggled=(
                     lambda checked, m=mid: self._flag_sleep_qc(
                         m, "needs_review" if checked else None
                     )
-                )
-            row_l.addWidget(btn_review)
-
-            if status == "rejected":
-                if rejected_by:
-                    tip = f"Rejected because {rejected_by} is OK.\nClick OK here to switch, or click Review to re-examine."
-                    btn_ok.setToolTip(tip)
-                    btn_review.setToolTip(tip)
-                else:
-                    btn_reset = QPushButton("Reset")
-                    btn_reset.setFixedHeight(22)
-                    btn_reset.setToolTip("Reset to unreviewed")
-                    btn_reset.clicked.connect(
-                        lambda _, m=mid, c=combo: self._reset_sleep_qc_group(m, c)
-                    )
-                    row_l.addWidget(btn_reset)
+                ),
+                on_reset=lambda m=mid, c=combo: self._reset_sleep_qc_group(m, c),
+            )
 
             self.legend_layout.addWidget(row_w, i // 2, i % 2)
 
@@ -1174,43 +1237,21 @@ class SleepQCGridPage(QWidget):
                     btn_review.clicked.connect(lambda _, c=combo: self._flag_review_again(c))
                     row_l.addWidget(btn_review)
             else:
-                btn_ok = QPushButton("OK")
-                btn_ok.setFixedHeight(22)
-                btn_ok.setCheckable(True)
-                btn_ok.setChecked(status == "ok")
-                btn_ok.clicked.connect(lambda checked, c=combo: self._flag_animal_ok(c, checked))
-                row_l.addWidget(btn_ok)
-
-                btn_review = QPushButton("Review")
-                btn_review.setFixedHeight(22)
-                btn_review.setCheckable(True)
-                btn_review.setChecked(status in ("needs_review", "needs_rerun"))
-                if status == "needs_rerun":
-                    btn_review.setText("Rerun Queued")
-                    btn_review.setEnabled(False)
-                    btn_review.setToolTip(
-                        f"Rerun queued as {run.rerun_combo or '?'}. "
-                        "Change target from the Home page."
-                    )
-                else:
-                    btn_review.clicked.connect(
+                self._build_flag_buttons(
+                    row_l,
+                    status=status,
+                    rerun_combo_display=(run.rerun_combo if run else None),
+                    rejected_by=rejected_by,
+                    on_ok_toggled=(
+                        lambda checked, c=combo: self._flag_animal_ok(c, checked)
+                    ),
+                    on_review_toggled=(
                         lambda checked, c=combo: self._flag_animal_review(c, checked)
-                    )
-                row_l.addWidget(btn_review)
-
-                if status == "rejected":
-                    if rejected_by:
-                        tip = f"Rejected because {rejected_by} is OK.\nClick OK here to switch, or click Review to re-examine."
-                        btn_ok.setToolTip(tip)
-                        btn_review.setToolTip(tip)
-                    else:
-                        btn_reset = QPushButton("Reset")
-                        btn_reset.setFixedHeight(22)
-                        btn_reset.setToolTip("Reset to unreviewed")
-                        btn_reset.clicked.connect(
-                            lambda _, a=animal, c=combo: self._reset_sleep_qc_animal(a, c)
-                        )
-                        row_l.addWidget(btn_reset)
+                    ),
+                    on_reset=(
+                        lambda a=animal, c=combo: self._reset_sleep_qc_animal(a, c)
+                    ),
+                )
 
             self.legend_layout.addWidget(row_w, i // 2, i % 2)
 
