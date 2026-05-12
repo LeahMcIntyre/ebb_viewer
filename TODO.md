@@ -1,5 +1,29 @@
 # TODO
 
+## Post-Sweep Polish (deferred from Phase 5)
+
+### docs: README.md
+Repo has no `README.md`. Should cover: project purpose + one-paragraph
+domain context (EEG sleep/PSD pipeline), install in editable mode,
+`ebb-viewer` entry point, where the docs live (CLAUDE.md, PITFALLS.md,
+REVIEW_PROGRESS.md, TODO.md). Keep terse — the deeper docs already
+exist.
+
+### release: Tag a release commit (v0.2.0 or similar)
+After the README lands and any final smoke tests, tag a release on
+`main` (after merging `dev` → `main`). The post-sweep state is
+substantially cleaner than the pre-sweep baseline and worth a named
+checkpoint.
+
+### consistency: Open-ended naming / error-handling / fs sweep
+The per-phase advisor passes already caught the high-value
+consistency issues (bare excepts narrowed, `sum(1 for _ in m)` →
+`len(m)`, `zip(strict=True)`, magic numbers named, fs hardcoding
+documented). A wholesale re-pass would likely surface low-value items.
+Skip unless a specific inconsistency becomes painful in real use.
+
+---
+
 ## P2 — Moderate Value, Moderate Effort
 
 ### rerun: Consolidate multi-combo upload dialogs

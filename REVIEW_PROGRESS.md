@@ -8,6 +8,23 @@
 
 ---
 
+## Sweep Complete ✅
+
+All 5 phases closed on 2026-05-12. Final state: **511 tests passing**,
+ruff clean on every cleaned file, `dev` synced with `origin/dev`.
+
+Headline outcomes:
+- **~25 real bugs fixed across Phase 3** (the riskiest surface) — param-flow defects in `psds.py`, review-mode entry race in `sleep_qc_visualizer.py`, `_open_windows` leak in `home.py`, and many smaller correctness items, each with regression tests.
+- **MaskParamsWidget unification (Phase 5 Stage B)** consolidated mask params across PSD Compute and Export Masks pages; net codebase reduction of ~477 LOC with one shared editor.
+- **Test coverage** grew from 257 (pre-sweep baseline) → 511 (post-sweep). All new tests are regression tests for real defects or specific structural extractions.
+- **Doc surface** consolidated from 7 root markdown files to 5: dropped pre-sweep historical docs, captured lasting-value content in `PITFALLS.md`.
+
+Polish items deferred to `TODO.md` (post-sweep): README, consistency
+sweep, release tag, GUI-level UX iterations from the Phase 5 user-test
+sessions.
+
+---
+
 ## Phase 0 — Foundation
 
 - [x] Run `pytest` and capture baseline — **257 passing on `dev`**, **317 passing post-merge**
@@ -67,7 +84,7 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 
 ### Phase 1 closeout
 - [x] All `ebb/` tests pass — **319 passing**
-- [ ] Merge `cleanup/phase1-ebb` → `dev`
+- [x] Merge `cleanup/phase1-ebb` → `dev`
 
 ---
 
@@ -149,8 +166,8 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 
 ### Phase 3 closeout
 - [x] All tests pass — **481 passing**, ruff clean on every touched file
-- [ ] Smoke-test the GUI end-to-end (user)
-- [ ] Merge `cleanup/phase3-pages` → `dev` (after user GUI confirmation)
+- [x] Smoke-test the GUI end-to-end (user confirmed before Phase 3 merge)
+- [x] Merge `cleanup/phase3-pages` → `dev`
 
 ---
 
@@ -166,11 +183,15 @@ Run `ruff check src/ tests/ scripts/` at any point to see the remaining list.
 - [x] **psds.py Stage B** — DONE. Stage B-1: ported the dialog's preview features (SWD file count, annotation file availability count, hour-window coverage estimate with per-window status badges) plus the state-overlap warning into `MaskParamsWidget`; added `show_drink_mask: bool = True` flag. Stage B-2: deleted `MaskingSettingsDialog` (-560 LOC), replaced inline States/SD/Spindle blocks + modal dialog + "Advanced PSD Settings" collapsible with a single `MaskParamsWidget(show_drink_mask=False)`. PSD page dropped from 1,677 → 848 LOC; widget grew from 742 → 1,094 LOC; net codebase reduction 477 LOC. Updated 9 tests in `test_psds_page.py` to route through `mask_widget.to_params()`; dropped 3 dialog-only tests (equivalent coverage exists in `test_mask_params_widget.py`); added 3 page→widget integration smoke tests + 14 widget-feature tests. Export Masks page picked up the preview features automatically. 497 tests passing.
 - [x] **sleep_qc_visualizer.py legend extraction** — DONE. Factored `_build_flag_buttons(row_l, *, status, rerun_combo_display, rejected_by, on_ok_toggled, on_review_toggled, on_reset)` from the duplicated OK/Review/(optional Reset) blocks in `_update_legend_group` + `_update_legend_animal` (non-review branch). Click handlers are passed as callables — group mode wires to `_flag_sleep_qc` / `_reset_sleep_qc_group`; animal mode wires to `_flag_animal_ok` / `_flag_animal_review` / `_reset_sleep_qc_animal`. The animal mode review-mode branch (Accept + optional Review-again) stays inline since it has its own button shape. **Outlier-set caching (B5)** also DONE: added `_outlier_cache: dict[str, set[str]]` keyed by combo; `_get_spindle_outlier_animals` checks the cache before recomputing. Invalidated at the 4 sites that mutate `_data_cache` for a combo: `_poll`, `showEvent`, `_enter_review_mode`, and `_load_combo` (after a successful load). +2 tests covering cache reuse + invalidation.
 - [x] **home.py `_refresh` row-builder extraction** — DONE. Pulled the per-row body out of the 160-LOC ``_refresh`` into ``_build_table_row(row_idx, entry, combo, run, *, psd_runs)``; further split the two most complex cells into ``_build_sleep_qc_cell`` and ``_build_psd_status_cell`` so the rerun-target / drink-mask precedence branches are independently inspectable. ``_refresh`` is now ~30 LOC. Pure mechanical extraction (no behavior change); added 4 regression tests for the Sleep QC cell branches (pending / dash / rerun-done / rerun-pending-with-edit-hint). Still deferred (UX2 distinguish "rerun done ✓" rows visually, UX3 double-click discoverability).
-- [ ] Consistency sweep (naming, error handling, fs handling)
-- [ ] Audit/consolidate `HANDOFF.md`, `PIPELINE_AUDIT.md`, `PLAN.md`, `TODO.md`
-- [ ] README upgrade
-- [ ] Final end-to-end smoke test
-- [ ] Tag a `v0.2.0` (or similar) release commit
+- [x] **Doc consolidation** — DONE. Audited `HANDOFF.md` / `PIPELINE_AUDIT.md` / `PLAN.md` against current code: PLAN was 100% implemented; HANDOFF was mostly narrative history with one section ("What Didn't Work") of lasting value; PIPELINE_AUDIT had several items already addressed during Phase 3. Deleted all three (-726 LOC). Extracted HANDOFF's gotchas + Key Design Decisions into new `PITFALLS.md` (167 LOC) and pointer in CLAUDE.md. Surviving audit items folded into `TODO.md` under "Carried from PIPELINE_AUDIT.md" heading. Root .md count: 7 → 5.
+- [x] **PSD page Stage B GUI verification** — User confirmed the layout reads correctly after Stage B-1 + B-2. Follow-on UX tweaks landed during user test: default-collapse SD + Spindle Noise sections (subtitles convey state); cell-context hint on Home for needs_review rows with sibling OK; confirmation dialog when clicking Review on a cascade-rejected row.
+
+### Deferred to `TODO.md` (not blocking sweep close)
+
+- [ ] **Consistency sweep** (naming, error handling, fs handling) — open-ended pass. Skip-able; the per-phase advisor passes already caught the high-value items.
+- [ ] **README upgrade** — repo has no README. To be done in a focused future session.
+- [ ] **Tag a `v0.2.0` (or similar) release commit** — sensible after the README lands.
+- [ ] Other deferred items listed in `TODO.md` (PSD page intent-based reflow, home table per-PSD-run granularity, drink_masks one-offset-CSV convention unification, several Phase-3 advisor-deferred refactors that have since landed, and the PIPELINE_AUDIT survivors).
 
 ---
 
