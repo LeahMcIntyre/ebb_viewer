@@ -44,6 +44,8 @@ from ebb.process.state_presets import (
     DEFAULT_STATES,
     PRESET_DESCRIPTIONS,
     PRESET_DISPLAY,
+    RAW_CODE_DISPLAY,
+    overlap_groups,
 )
 from ebb_viewer.widgets.collapsible_section import CollapsibleSection
 from ebb_viewer.widgets.no_scroll_spinbox import NoScrollDoubleSpinBox, NoScrollSpinBox
@@ -113,6 +115,7 @@ class MaskParamsWidget(QWidget):
         # coverage) so the user sees current project state on first paint.
         self._refresh_swd_status()
         self._refresh_ann_status()
+        self._refresh_state_overlap_hint()
 
     # ------------------------------------------------------------------
     # Public API
@@ -218,6 +221,7 @@ class MaskParamsWidget(QWidget):
         self._refresh_swd_status()
         self._refresh_ann_status()
         self._refresh_hour_window_preview()
+        self._refresh_state_overlap_hint()
         self.changed.emit()
 
     def set_swd_available(self, available: bool) -> None:
@@ -323,6 +327,18 @@ class MaskParamsWidget(QWidget):
             r, c = divmod(idx, 3)
             grid.addWidget(cb, r, c)
         v.addLayout(grid)
+
+        # Overlap warning — visible when selected groups share underlying
+        # raw state codes (e.g. picking both ``sleep`` and ``nrem`` makes
+        # NREM epochs feed both groups). Intentional in some workflows.
+        self._state_overlap_lbl = QLabel()
+        self._state_overlap_lbl.setWordWrap(True)
+        self._state_overlap_lbl.setStyleSheet(
+            "color: #8a5a00; background: #fff6e0; border: 1px solid #e5c07b;"
+            " border-radius: 3px; padding: 4px 6px; font-size: 11px;"
+        )
+        self._state_overlap_lbl.setVisible(False)
+        v.addWidget(self._state_overlap_lbl)
         return w
 
     def _build_sd_group(self) -> QWidget:
@@ -579,6 +595,7 @@ class MaskParamsWidget(QWidget):
 
     def _wire(self) -> None:
         for cb in self._state_boxes.values():
+            cb.toggled.connect(self._refresh_state_overlap_hint)
             cb.toggled.connect(self._emit_changed)
         for spin in (
             self.spin_window,
@@ -738,6 +755,25 @@ class MaskParamsWidget(QWidget):
     # hour-window coverage per recording. All best-effort: missing or
     # unreadable files render as empty/neutral status, not as errors.
     # ------------------------------------------------------------------
+
+    def _refresh_state_overlap_hint(self) -> None:
+        """Show a banner when selected groups share raw state codes."""
+        selected = [k for k, cb in self._state_boxes.items() if cb.isChecked()]
+        overlaps = overlap_groups(selected)
+        if not overlaps:
+            self._state_overlap_lbl.setVisible(False)
+            return
+        parts: list[str] = []
+        for code, groups in overlaps.items():
+            name = RAW_CODE_DISPLAY.get(code, code)
+            group_names = " + ".join(PRESET_DISPLAY[g] for g in groups)
+            parts.append(f"{name} epochs feed into {group_names}")
+        self._state_overlap_lbl.setText(
+            "Overlap: "
+            + "; ".join(parts)
+            + ". Same epochs, different averages — intentional if that's what you want."
+        )
+        self._state_overlap_lbl.setVisible(True)
 
     def _refresh_swd_status(self) -> None:
         """Show "✓ N .mat files in swd/" / "⚠ count mismatch" / hint text."""

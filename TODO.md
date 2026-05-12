@@ -29,18 +29,14 @@ inside each cell (everything visible but row heights vary, harder to
 scan when N>2). Both viable, but the dropdown matches the codebase
 convention.
 
-### psd: Unify mask controls UI with Export Masks page
-The PSD page has two different config/expand patterns for masking knobs —
-a "Configure…" modal (SWD / annotation / hour windows) and an inline
-"Advanced PSD Settings" collapsible (SD mask + spindle noise). Things get
-lost between the two surfaces, and the Export Masks page already has a
-cleaner inline-collapsibles layout via `MaskParamsWidget`. Swap the
-modal's body for `MaskParamsWidget` (rendered inline rather than as a
-dialog) so both pages look and behave the same. This is the work tracked
-in Phase 5 as "psds.py Stage B" — porting the dialog's richer hour-window
-preview (per-window badges, total-hours estimate, day-availability check),
-SWD status text, and annotation file count into the widget is required
-before this swap.
+### ~~psd: Unify mask controls UI with Export Masks page~~
+**DONE** (Phase 5, Stage B-1 + B-2). PSD page now uses the shared
+`MaskParamsWidget` inline with `show_drink_mask=False`. The dialog and
+the "Advanced PSD Settings" collapsible are gone; mask params live in
+one place across PSD Compute and Export Masks. The widget gained the
+dialog's preview features (SWD file count, annotation file availability,
+hour-window coverage estimate with per-window badges) and the
+state-overlap warning banner.
 
 ### preprocess: "Rescan" button + initial-state wording
 Today the EDF duration scan runs only on the first `showEvent`. If the user
