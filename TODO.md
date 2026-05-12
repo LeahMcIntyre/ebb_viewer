@@ -126,6 +126,69 @@ The saved psd_params JSON currently mixes UI affordances (`swd_mode`, `ann_enabl
 
 ---
 
+## Carried from `PIPELINE_AUDIT.md`
+
+These were flagged in a pre-sweep audit; verified still applicable
+after the Phase 3 + 5 cleanups. Items the audit listed that have since
+been addressed (`add_run` ok-protection, `DrinkMaskPage._on_done`
+swallowed exceptions, SleepQC stale manifest, home step 9, step 5
+"resolved" labelling) were dropped during consolidation.
+
+### manifest: `pending_psd_review` returns `[]` when merged PKL is missing
+`Manifest.pending_psd_review(run_name)` short-circuits to `[]` when
+`psds_channel_merged.pkl` doesn't exist for that run. Finalize logic
+that counts pending = 0 to enable the button can then enable without
+any review having occurred. Verify in `FinalizePage`: ensure the
+finalize button is gated on **both** `pending_psd_review() == 0` AND
+`merged_psd_path(run).exists()`. (Risk: silent finalization of an
+incomplete run.)
+
+### psd: `batch_estimate` writes an empty PKL when no EDFs match state CSVs
+`batch_estimate` writes `savepath` unconditionally — when no EDFs
+match the state CSV animal IDs, the result is a pickled empty list.
+Downstream `build_final_pkl` opens the empty PKL and silently skips
+that combo. Fix: emit a warning / return early when `paired` is empty,
+or assert non-empty before write.
+
+### drink mask: stale records after `psds_channel_merged.pkl` rebuild
+`psds_drink.pkl` records persist by animal ID. Rebuilding the merged
+PKL (e.g. after dropping an animal) leaves the stale drink record
+overlay-able onto a base that no longer contains that animal. Result:
+the regenerated `psds_channel_merged_drink.pkl` includes an animal
+that's no longer in the project. Fix: filter `psds_drink.pkl` records
+against the active manifest animal-set when regenerating the overlay.
+
+### home: step 7 "finalized" stays after re-flagging needs_drink_mask
+After Finalize writes `psds_final.pkl`, re-flagging an animal as
+`needs_drink_mask` in the PSD Visualizer doesn't change step 7's
+display because `pending_psd_review()` only counts `psd_status is
+None` runs, not `needs_drink_mask`. Step 7 reads "finalized" while
+the data is actually stale. Fix: when `_check_finalize_hint` /
+`compute_pipeline_status` sees `psds_final.pkl` exists, also
+verify `all_needs_drink_mask()` is empty before marking step 7 done.
+
+### manifest: sibling `psd_status` not cleared on un-ok restore
+`flag_sleep_qc` un-okaying a run restores cascade-rejected siblings'
+`sleep_qc` from `prev_sleep_qc`. If a sibling had `psd_status` set
+before being cascade-rejected, the restore keeps that stale value —
+the PSD review should be re-done since the underlying compute might
+have changed. Fix: clear `psd_status` and `drink_mask` on every
+restored sibling (mirroring what un-okaying does to the run itself).
+
+### Testing gaps (worth writing eventually)
+- `_refresh_combo_table` correctly excludes `psds_channel_merged.pkl`,
+  `psds_channel_merged_drink.pkl`, and `psds_final.pkl` from compute
+  targets.
+- Manifest orphaned-`rejected_by` clearing leaves the run saveable +
+  re-actionable (not stuck).
+- `pending_drink_verification` + `pending_psd_review` are mutually
+  exclusive by design — verify they never double-count.
+- `needs_rerun_pending()` dead-zone: a `needs_rerun` row with a CSV
+  on disk but `source_combo=None` is invisible to all queues. Document
+  and add a test.
+
+---
+
 ## Additional Suggestions
 
 - **EDF format validation on import**: When `build_from_standard` encounters a file that doesn't match `AnimalID_anything_YYYY_MM_DD_HH_MM_SS.edf`, emit a non-blocking warning rather than silently skipping or crashing later.

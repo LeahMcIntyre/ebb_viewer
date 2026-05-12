@@ -96,6 +96,14 @@ The repo is mid-way through a multi-phase code cleanup sweep. State of
 record is `REVIEW_PROGRESS.md` at the repo root — read it first when
 resuming work. `TODO.md` holds deferred items + product-level ideas.
 
+### Past gotchas live in `PITFALLS.md`
+A curated list of patterns that bit before — worker/threading traps,
+manifest invariant edges, PSD compute / drink mask pitfalls, Qt
+styling quirks. Read the relevant section before touching `pages/`,
+`pipeline/manifest.py`, or `ebb/process/psd_compute.py`. Skim it before
+running auto-formatters or aggressive simplifications — there are
+several seams that linters love to delete.
+
 ## Non-obvious design intents
 
 ### Sleep QC review mode: ✓ Accept on the *original* combo is intentional
