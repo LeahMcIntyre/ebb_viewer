@@ -14,8 +14,8 @@ from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
     QDialogButtonBox,
-    QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -66,6 +66,11 @@ class RerunPage(QWidget):
         super().__init__(parent)
         self.project_root = Path(project_root)
         self._row_data: list[tuple[ManifestEntry, str]] = []
+        # Active SleepyRat workers + threads. We keep references so neither is
+        # Python-garbage-collected before its event-loop slot fires; otherwise
+        # only the last worker in a parallel launch loop would actually run.
+        self._sr_threads: list[QThread] = []
+        self._sr_workers: list[SleepyRatWorker] = []
         self._build_ui()
 
     # ------------------------------------------------------------------ UI
@@ -301,66 +306,63 @@ class RerunPage(QWidget):
     def _offer_upload(
         self, written_combos: set[tuple[str, str]], written_files: dict[str, list[Path]]
     ) -> None:
-        """For each unique rerun combo written, offer SleepyRat upload using saved config.
+        """Show one dialog with a row per rerun combo; launch all accepted uploads in parallel.
 
-        Each accepted dialog spawns its own SleepyRatWorker on its own QThread.
-        We overwrite `self._sr_thread` / `self._sr_worker` in the loop, which
-        means earlier-spawned workers lose their `self` reference — but
-        `launch_worker` wires `finished → deleteLater` on both worker and
-        thread, so Qt's parent-child lifecycle keeps them alive long enough
-        to complete and then frees them. The `self` slots are only used to
-        keep the LAST worker accessible for debugging.
+        Workers and threads are appended to ``self._sr_workers`` / ``self._sr_threads`` so
+        Python doesn't garbage-collect earlier ones before their event-loop slots fire.
+        ``SleepyRatWorker`` has no Qt parent, so overwriting a single attribute slot would
+        destroy the earlier worker before ``thread.started → worker.run`` could dispatch.
         """
-        seen_rerun_combos: set[str] = set()
-        any_started = False
-
-        for orig_combo, rerun_combo in written_combos:
-            if rerun_combo in seen_rerun_combos:
+        # Build per-rerun-combo defaults, deduplicated and ordered.
+        rows: list[tuple[str, str, str]] = []
+        seen: set[str] = set()
+        for orig_combo, rerun_combo in sorted(written_combos):
+            if rerun_combo in seen:
                 continue
-            seen_rerun_combos.add(rerun_combo)
-
+            seen.add(rerun_combo)
             saved = sleepyrat_config.get_combo(self.project_root, orig_combo)
             project = saved["project"] if saved else ""
-            default_folder = f"{self.project_root.stem}_{rerun_combo}"
+            folder = f"{self.project_root.stem}_{rerun_combo}"
+            rows.append((rerun_combo, project, folder))
 
-            dlg = _UploadDialog(
-                self,
-                rerun_combo=rerun_combo,
-                project=project,
-                remote_folder=default_folder,
-            )
-            if dlg.exec() != QDialog.DialogCode.Accepted:
-                continue
+        if not rows:
+            self.btn_run.setEnabled(True)
+            return
 
-            project_name = dlg.project_edit.text().strip()
-            remote_folder = dlg.folder_edit.text().strip()
+        dlg = _UploadDialog(self, rows=rows)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            self.btn_run.setEnabled(True)
+            return
+
+        # Reset refs from any previous run — prior workers have finished by the
+        # time the user is initiating a new rerun batch.
+        self._sr_workers = []
+        self._sr_threads = []
+
+        for rerun_combo, project_name, remote_folder in dlg.entries():
             out_dir = self.project_root / "spindle_outputs" / rerun_combo
 
-            self._sr_thread = QThread(self)
-            self._sr_worker = SleepyRatWorker(
+            thread = QThread(self)
+            worker = SleepyRatWorker(
                 project_name,
                 remote_folder,
                 out_dir,
                 files=written_files.get(rerun_combo),
             )
-            self._sr_worker.log.connect(self._log)
-            self._sr_worker.finished.connect(
+            worker.log.connect(self._log)
+            worker.finished.connect(
                 lambda p=project_name, f=remote_folder, rc=rerun_combo: sleepyrat_config.save_combo(
                     self.project_root, rc, p, f
                 )
             )
+            self._sr_threads.append(thread)
+            self._sr_workers.append(worker)
             launch_worker(
-                self._sr_thread,
-                self._sr_worker,
+                thread,
+                worker,
                 on_finished=self._on_sr_finished,
                 on_error=self._on_sr_error,
             )
-            any_started = True
-
-        # If the user cancelled every upload dialog, no worker will re-enable
-        # the run button. Do it here.
-        if not any_started:
-            self.btn_run.setEnabled(True)
 
     def _color_row(self, row: int, color: QColor) -> None:
         for col in range(self.table.columnCount()):
@@ -370,33 +372,75 @@ class RerunPage(QWidget):
 
 
 class _UploadDialog(QDialog):
-    """Confirm SleepyRat upload settings for a rerun combo."""
+    """Confirm SleepyRat upload settings for one or more rerun combos.
 
-    def __init__(self, parent, *, rerun_combo: str, project: str, remote_folder: str):
+    Shows a grid with one row per rerun combo. Editable project and folder
+    fields per row. ``entries()`` returns the user-confirmed values after
+    accept.
+    """
+
+    def __init__(self, parent, *, rows: list[tuple[str, str, str]]):
         super().__init__(parent)
-        self.setWindowTitle(f"Upload Rerun: {rerun_combo}")
-        self.setMinimumWidth(400)
+        n = len(rows)
+        self.setWindowTitle("Upload Reruns" if n != 1 else f"Upload Rerun: {rows[0][0]}")
+        self.setMinimumWidth(520)
 
         layout = QVBoxLayout(self)
 
-        lbl = QLabel(
-            f"Spindle EDFs for <b>{rerun_combo}</b> have been written.<br>Upload to SleepyRat now?"
-        )
+        if n == 1:
+            header = (
+                f"Spindle EDFs for <b>{rows[0][0]}</b> have been written.<br>"
+                "Confirm upload destination:"
+            )
+        else:
+            header = (
+                f"Spindle EDFs for <b>{n}</b> rerun combos have been written.<br>"
+                "Confirm upload destinations:"
+            )
+        lbl = QLabel(header)
         lbl.setTextFormat(Qt.TextFormat.RichText)
         lbl.setWordWrap(True)
         layout.addWidget(lbl)
 
-        form = QFormLayout()
-        self.project_edit = QLineEdit(project)
-        self.folder_edit = QLineEdit(remote_folder)
-        form.addRow("SleepyRat project:", self.project_edit)
-        form.addRow("Remote folder name:", self.folder_edit)
-        layout.addLayout(form)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+
+        for col, text in enumerate(("Combo", "SleepyRat project", "Remote folder")):
+            hdr = QLabel(f"<b>{text}</b>")
+            hdr.setTextFormat(Qt.TextFormat.RichText)
+            grid.addWidget(hdr, 0, col)
+
+        # column stretches: combo fixed, project + folder share remaining space
+        grid.setColumnStretch(0, 0)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
+
+        self._rows: list[tuple[str, QLineEdit, QLineEdit]] = []
+        for i, (rerun_combo, project, folder) in enumerate(rows, start=1):
+            combo_lbl = QLabel(rerun_combo)
+            combo_lbl.setStyleSheet("font-family: monospace;")
+            project_edit = QLineEdit(project)
+            folder_edit = QLineEdit(folder)
+            grid.addWidget(combo_lbl, i, 0)
+            grid.addWidget(project_edit, i, 1)
+            grid.addWidget(folder_edit, i, 2)
+            self._rows.append((rerun_combo, project_edit, folder_edit))
+
+        layout.addLayout(grid)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Upload & Download")
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText(
+            "Upload All" if n != 1 else "Upload & Download"
+        )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def entries(self) -> list[tuple[str, str, str]]:
+        """Return [(rerun_combo, project, remote_folder), ...] as edited by the user."""
+        return [
+            (combo, p.text().strip(), f.text().strip()) for combo, p, f in self._rows
+        ]

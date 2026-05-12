@@ -98,11 +98,22 @@ class PreprocessPage(QWidget):
         self.target_name_edit.setStyleSheet("QLineEdit { padding-top: 0px; padding-bottom: 0px; }")
         self.target_name_edit.setReadOnly(True)
 
-        self._scan_label = QLabel("Scanning…")
+        self._scan_label = QLabel("(EDF scan pending)")
         self._scan_label.setStyleSheet(self._STYLE_NORMAL + " padding-top: 0px;")
 
+        self.btn_rescan = QPushButton("Rescan")
+        self.btn_rescan.setToolTip("Re-scan the project folder for EDF files")
+        self.btn_rescan.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+
+        scan_row = QWidget()
+        scan_row_l = QHBoxLayout(scan_row)
+        scan_row_l.setContentsMargins(0, 0, 0, 0)
+        scan_row_l.setSpacing(8)
+        scan_row_l.addWidget(self._scan_label, 1)
+        scan_row_l.addWidget(self.btn_rescan)
+
         top_form.addRow("Project:", self.lbl_root)
-        top_form.addRow("", self._scan_label)
+        top_form.addRow("", scan_row)
         top_form.addRow("Target Directory:", self.target_name_edit)
 
         fmt_lbl = QLabel(
@@ -217,6 +228,7 @@ class PreprocessPage(QWidget):
     # ------------- Wiring / Signals -------------
     def _wire(self):
         self.btn_run.clicked.connect(self._run_clicked)
+        self.btn_rescan.clicked.connect(self._scan_edfs)
         self.fs_original.valueChanged.connect(self._update_hz_label)
         self.downsample.valueChanged.connect(self._update_hz_label)
         self._update_hz_label()
@@ -239,6 +251,7 @@ class PreprocessPage(QWidget):
             self._scan_label.setText("No EDF files found")
             self._scan_label.setStyleSheet(self._STYLE_ERROR)
             self._durations_hrs = []
+            self._trim_hint_label.setText("")
             return
 
         durations: list[float] = []
@@ -261,6 +274,7 @@ class PreprocessPage(QWidget):
                 f"Found {n} file{'s' if n != 1 else ''} · could not read any durations"
             )
             self._scan_label.setStyleSheet(self._STYLE_ERROR)
+            self._trim_hint_label.setText("")
             return
 
         min_hrs = min(durations)

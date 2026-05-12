@@ -1,5 +1,26 @@
 # TODO
 
+## In progress: UX polish mode (P2)
+
+Working through the P2 UX polish items below in order. Done this round:
+preprocess Rescan + wording (✓), rerun multi-combo upload dialog
+consolidation (✓), preprocess/spindle "Next →" hint structural part (✓).
+
+**Next two on deck, in order:**
+1. `home: Remove editable channel combo from pipeline summary table` — quick;
+   needs a check that the yellow card really is the only place a user sets
+   the rerun combo before deleting the column.
+2. `home: Surface per-PSD-run granularity in the Pipeline Summary table` —
+   medium; recommended approach is a run-name dropdown above the table
+   ("All runs (best)" default).
+
+Deferred until more real PSD compute sessions:
+`psd: Reflow page around user intent` — wait-and-see per the entry itself.
+
+Skipped this session (pick up here):
+`preprocess / spindle write: Route batch_preprocess console output into
+the log box` — see entry below for the sketch.
+
 ## Post-Sweep Polish (deferred from Phase 5)
 
 ### docs: README.md
@@ -26,12 +47,13 @@ Skip unless a specific inconsistency becomes painful in real use.
 
 ## P2 — Moderate Value, Moderate Effort
 
-### rerun: Consolidate multi-combo upload dialogs
-`RerunPage._offer_upload` shows one `_UploadDialog` per distinct rerun combo
-written (sequential, modal). With ~2 combos this is fine; for more it gets
-jarring. Consider replacing the per-combo dialog loop with a single dialog
-showing one row per combo (project + remote folder editable inline) and
-launching all uploads at once on confirmation.
+### ~~rerun: Consolidate multi-combo upload dialogs~~
+**DONE** — `_UploadDialog` now takes a list of rows and shows one grid
+(Combo | SleepyRat project | Remote folder) instead of N sequential
+modals. Surfaced and fixed a latent Python-GC + Qt-threading bug along
+the way (workers in a loop now go into `self._sr_workers` / `self._sr_threads`
+lists so none are destroyed before their event-loop slot fires).
+Recorded in `PITFALLS.md` under Worker / threading.
 
 ### home: Surface per-PSD-run granularity in the Pipeline Summary table
 Today the table's PSD File / PSD Status columns collapse across PSD
@@ -88,21 +110,27 @@ dialog's preview features (SWD file count, annotation file availability,
 hour-window coverage estimate with per-window badges) and the
 state-overlap warning banner.
 
-### preprocess: "Rescan" button + initial-state wording
-Today the EDF duration scan runs only on the first `showEvent`. If the user
-adds or removes EDFs in the project root after the page has been opened,
-the scan label is stale until the page is closed + reopened. Add an
-explicit "Rescan" button that re-runs `_scan_edfs()` and re-renders the
-trim-hint summary. Also: the placeholder text "Scanning…" is shown before
-`showEvent` fires (i.e. before the scan actually starts). Replace with
-something like "(EDF scan pending)" or leave the label empty until the
-first scan completes.
+### ~~preprocess: "Rescan" button + initial-state wording~~
+**DONE** — `_scan_label` initial text is now `"(EDF scan pending)"` and
+a Rescan button sits inline with it inside Folder Selection. `_scan_edfs`
+also clears `_trim_hint_label` on empty/unreadable exit paths so a
+healthy→empty rescan doesn't leave stale trim counts.
 
 ### home: Remove editable channel combo from pipeline summary table (if redundant)
 The rerun combo is already settable from the yellow card in Needs Attention. A second editable combo in the pipeline table is a duplicate code path with no extra clarity. Evaluate and remove if nothing is lost.
 
-### preprocess / spindle write: Add "Next →" navigation hint when done
-Consistent with the Rerun page pattern. After preprocessing: `"✓ Done. → Go to Spindle Write"`. After spindle write: `"✓ Done. → Go to Spindle Upload"`. Use `navigate_to` signal. Add logs with the outputs that are currently being printed to console. 
+### preprocess / spindle write: Route `batch_preprocess` console output into the log box
+Structural part (`✓ Done` hint frame + Next → button) already in place
+on both pages. Remaining sub-task: capture `verbose=True` stdout from
+`ebb.preprocess.edf.batch(...)` and emit it into each worker's `log`
+signal so the GUI log box shows what currently only goes to the terminal
+("Running 'standard' on N files using K cores.", "Saved N files to ...").
+Sketch: add a small `LineEmittingStream` helper to
+`widgets/worker_helpers.py` (file-like, calls `on_line(line)` per
+complete line); wrap the `batch_preprocess` call in each worker with
+`contextlib.redirect_stdout(stream)`. Only captures parent-process
+prints; multiprocessing pool children keep their inherited stdout (fine
+for our use). Skipped this session — pick up here when resuming. 
 
 ### psd: Make compute → merge two-step flow clearer in UI
 ~~The "compute per-combo PSDs" and "Build Final PKL" steps are logically distinct but visually run together. Label them as Step 1 / Step 2 with a separator, and show which combos will be included in the merge.~~

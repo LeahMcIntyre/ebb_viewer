@@ -39,6 +39,21 @@ new run). The animal should re-appear in the rerun queue on next
 refresh — verified by the CSV-presence gate above. Don't try to "undo"
 the half-state at the manifest level.
 
+### Launching multiple SleepyRatWorkers in a loop — keep ALL refs alive
+`SleepyRatWorker` has no Qt parent. If you spawn several in a tight
+Python loop and only stash the latest in a single `self._sr_worker`
+attribute, the earlier workers get Python-GC'd before
+`thread.started → worker.run` can dispatch — only the last worker
+actually runs. The original Rerun-page code looked like a single-slot
+attribute but worked because each iteration was bracketed by a
+modal `dlg.exec()` that spun the event loop. When the per-combo
+dialog was consolidated into one bulk dialog, the modal break went
+away and the bug surfaced. **Fix:** append each worker + thread to
+`list` attributes on the page so all live workers stay reachable
+from Python. Mirror this pattern any time a page may launch >1 worker
+in the same call. The threads themselves usually survive because they
+have a Qt parent (the page), but the workers don't.
+
 ---
 
 ## Manifest semantics
