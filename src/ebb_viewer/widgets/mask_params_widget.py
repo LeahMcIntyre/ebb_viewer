@@ -44,6 +44,8 @@ from ebb.process.state_presets import (
     DEFAULT_STATES,
     PRESET_DESCRIPTIONS,
     PRESET_DISPLAY,
+    RAW_CODE_DISPLAY,
+    overlap_groups,
 )
 from ebb_viewer.widgets.collapsible_section import CollapsibleSection
 from ebb_viewer.widgets.no_scroll_spinbox import NoScrollDoubleSpinBox, NoScrollSpinBox
@@ -57,16 +59,31 @@ _DEFAULT_NSTD = 5.0
 _DEFAULT_DRINK_PAD_S = 2
 _DEFAULT_SWD_PAD_S = 0
 
+# Project sampling rate hardcoded across the codebase; used by the
+# hour-window coverage preview to convert sample counts → seconds.
+_DEFAULT_FS = 250
+# Tolerance (seconds) below which a window counts as "clipped" rather than
+# "complete" — gives a small grace band so a window cut by 5–10 s at the
+# recording boundary still reads as ✓ complete.
+_HW_CLIP_TOLERANCE_S = 30
+
 
 class MaskParamsWidget(QWidget):
     """Self-contained editor for mask + filter parameters.
 
     Args:
-        project_root: Used for "Browse…" dialogs to start in a sensible
-            location. May be None when the widget is constructed before a
-            project is selected; setters use the cwd in that case.
+        project_root: Used for "Browse…" dialogs and for live previews
+            (SWD file count, annotation file availability, hour-window
+            coverage). May be None when constructed before a project is
+            selected; previews degrade gracefully.
         swd_available: If False, the SWD "Mask out SWDs" radio is disabled
             and the section shows a hint about how to enable it.
+        show_drink_mask: If False, hides the Drink Mask section. Used by
+            consumers (the PSD compute page) that don't apply drink masks
+            during the initial PSD pass — drink masks are added later via
+            the Drink Mask page. Widget state still tracks the drink
+            params (returned by ``to_params``) so saved configs round-trip
+            unchanged.
     """
 
     changed = pyqtSignal()
@@ -77,17 +94,28 @@ class MaskParamsWidget(QWidget):
         parent: QWidget | None = None,
         *,
         swd_available: bool = False,
+        show_drink_mask: bool = True,
     ):
         super().__init__(parent)
         self._project_root = Path(project_root) if project_root else None
         self._swd_available = swd_available
+        self._show_drink_mask = show_drink_mask
         self._ann_dir: Path | None = None
+        # Cached EDF (rec_start, n_samples) tuples for the hour-window
+        # preview. Lazy-populated on first preview refresh; reset when
+        # set_project_root is called.
+        self._hw_recordings: list[tuple] | None = None
 
         self._build_ui()
         self._wire()
         # Seed each section's header summary; live updates wired below.
         self.changed.connect(self._refresh_subtitles)
         self._refresh_subtitles()
+        # Seed the live preview labels (SWD/annotation counts, hour-window
+        # coverage) so the user sees current project state on first paint.
+        self._refresh_swd_status()
+        self._refresh_ann_status()
+        self._refresh_state_overlap_hint()
 
     # ------------------------------------------------------------------
     # Public API
@@ -188,6 +216,12 @@ class MaskParamsWidget(QWidget):
             self.spin_drink_pad.setValue(int(params.get("drink_pad", _DEFAULT_DRINK_PAD_S)))
             self._refresh_offset_csv_label()
 
+        # Refresh live previews after the bulk update so labels reflect
+        # the loaded state rather than the pre-load state.
+        self._refresh_swd_status()
+        self._refresh_ann_status()
+        self._refresh_hour_window_preview()
+        self._refresh_state_overlap_hint()
         self.changed.emit()
 
     def set_swd_available(self, available: bool) -> None:
@@ -196,11 +230,18 @@ class MaskParamsWidget(QWidget):
         self._radio_swd_mask.setEnabled(available)
         if not available and self._radio_swd_mask.isChecked():
             self._radio_swd_none.setChecked(True)
+        self._refresh_swd_status()
 
     def set_project_root(self, project_root: Path | None) -> None:
-        """Update project_root after construction; refreshes auto-detected drink offset CSV."""
+        """Update project_root after construction; refresh all previews + the
+        auto-detected drink offset CSV. Invalidates the cached EDF headers
+        so the hour-window preview re-reads on next render."""
         self._project_root = Path(project_root) if project_root else None
+        self._hw_recordings = None
         self._refresh_offset_csv_label()
+        self._refresh_swd_status()
+        self._refresh_ann_status()
+        self._refresh_hour_window_preview()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -233,15 +274,18 @@ class MaskParamsWidget(QWidget):
             "states": CollapsibleSection(
                 "States to Compute", self._build_states_group(), collapsed=False
             ),
+            # SD + Spindle Noise start collapsed: their full state is
+            # visible in the section subtitle (e.g. "180s · 0.5s · 5σ"),
+            # so most users don't need the form rows visible run-to-run.
             "sd": CollapsibleSection(
                 "Standard Deviation Mask (applied only to wake)",
                 self._build_sd_group(),
-                collapsed=False,
+                collapsed=True,
             ),
             "spindle": CollapsibleSection(
                 "Spindle Noise Mask (applied to all states)",
                 self._build_spindle_group(),
-                collapsed=False,
+                collapsed=True,
             ),
             "drink": CollapsibleSection(
                 "Drink Mask", self._build_drink_group(), collapsed=False
@@ -256,6 +300,10 @@ class MaskParamsWidget(QWidget):
         }
         for section in self._sections.values():
             root.addWidget(section)
+        if not self._show_drink_mask:
+            # Hide rather than skip-build so to_params / from_params still
+            # round-trip drink keys against unchanged widget defaults.
+            self._sections["drink"].setVisible(False)
 
     def _build_states_group(self) -> QWidget:
         w = QWidget()
@@ -282,6 +330,18 @@ class MaskParamsWidget(QWidget):
             r, c = divmod(idx, 3)
             grid.addWidget(cb, r, c)
         v.addLayout(grid)
+
+        # Overlap warning — visible when selected groups share underlying
+        # raw state codes (e.g. picking both ``sleep`` and ``nrem`` makes
+        # NREM epochs feed both groups). Intentional in some workflows.
+        self._state_overlap_lbl = QLabel()
+        self._state_overlap_lbl.setWordWrap(True)
+        self._state_overlap_lbl.setStyleSheet(
+            "color: #8a5a00; background: #fff6e0; border: 1px solid #e5c07b;"
+            " border-radius: 3px; padding: 4px 6px; font-size: 11px;"
+        )
+        self._state_overlap_lbl.setVisible(False)
+        v.addWidget(self._state_overlap_lbl)
         return w
 
     def _build_sd_group(self) -> QWidget:
@@ -357,6 +417,10 @@ class MaskParamsWidget(QWidget):
         hint.setWordWrap(True)
         hint.setStyleSheet("font-size: 10px; color: #777; padding-left: 4px;")
         v.addWidget(hint)
+
+        self._lbl_swd_status = QLabel("")
+        self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px;")
+        v.addWidget(self._lbl_swd_status)
         return w
 
     def _build_annotation_group(self) -> QWidget:
@@ -381,6 +445,10 @@ class MaskParamsWidget(QWidget):
         dir_row.addWidget(self.lbl_ann_dir, 1)
         dir_row.addWidget(self.btn_ann_dir)
         body.addLayout(dir_row)
+
+        self._lbl_ann_status = QLabel("")
+        self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px;")
+        body.addWidget(self._lbl_ann_status)
 
         kw_form = QFormLayout()
         kw_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
@@ -479,6 +547,11 @@ class MaskParamsWidget(QWidget):
         day_row.addWidget(self._hw_days_edit, 1)
         body.addLayout(day_row)
 
+        # Live coverage preview — updated by _refresh_hour_window_preview.
+        self._hw_partial_label = QLabel("")
+        self._hw_partial_label.setWordWrap(True)
+        body.addWidget(self._hw_partial_label)
+
         v.addWidget(self._hw_body)
         return w
 
@@ -525,6 +598,7 @@ class MaskParamsWidget(QWidget):
 
     def _wire(self) -> None:
         for cb in self._state_boxes.values():
+            cb.toggled.connect(self._refresh_state_overlap_hint)
             cb.toggled.connect(self._emit_changed)
         for spin in (
             self.spin_window,
@@ -542,17 +616,21 @@ class MaskParamsWidget(QWidget):
         self._radio_swd_mask.toggled.connect(self._emit_changed)
 
         self.chk_ann.toggled.connect(lambda checked: self._ann_body.setEnabled(checked))
+        self.chk_ann.toggled.connect(self._refresh_ann_status)
         self.chk_ann.toggled.connect(self._emit_changed)
         self.btn_ann_dir.clicked.connect(self._choose_ann_dir)
         self._ann_keyword_edit.textChanged.connect(self._emit_changed)
         self._radio_ann_contains.toggled.connect(self._emit_changed)
 
         self.chk_hour_window.toggled.connect(lambda checked: self._hw_body.setEnabled(checked))
+        self.chk_hour_window.toggled.connect(self._refresh_hour_window_preview)
         self.chk_hour_window.toggled.connect(self._emit_changed)
         self._radio_hw_all.toggled.connect(
             lambda checked: self._hw_days_edit.setEnabled(not checked)
         )
+        self._radio_hw_all.toggled.connect(self._refresh_hour_window_preview)
         self._radio_hw_all.toggled.connect(self._emit_changed)
+        self._hw_days_edit.textChanged.connect(self._refresh_hour_window_preview)
         self._hw_days_edit.textChanged.connect(self._emit_changed)
         self.btn_add_window.clicked.connect(self._on_add_window_clicked)
 
@@ -596,6 +674,7 @@ class MaskParamsWidget(QWidget):
         if chosen:
             self._ann_dir = Path(chosen)
             self.lbl_ann_dir.setText(str(self._ann_dir))
+            self._refresh_ann_status()
             self.changed.emit()
 
     # ------------------------------------------------------------------
@@ -614,11 +693,18 @@ class MaskParamsWidget(QWidget):
         hl.setContentsMargins(0, 0, 0, 0)
         hl.addWidget(QLabel(f"{int(hour_start)} h – {int(hour_end)} h"))
         hl.addStretch()
+        # Per-window coverage badge ("✓ complete", "⚠ clipped", "✗ no data").
+        # Populated by _refresh_hour_window_preview.
+        status_lbl = QLabel("")
+        status_lbl.setStyleSheet("font-size: 10px;")
+        row.setProperty("status_label", status_lbl)
+        hl.addWidget(status_lbl)
         btn = QPushButton("×")
         btn.setFixedWidth(24)
         btn.clicked.connect(lambda: self._remove_window_row(row))
         hl.addWidget(btn)
         self._hw_windows_layout.addWidget(row)
+        self._refresh_hour_window_preview()
 
     def _remove_window_row(self, row: QWidget) -> None:
         self._hw_windows_layout.removeWidget(row)
@@ -666,6 +752,275 @@ class MaskParamsWidget(QWidget):
             return None
         matches = sorted(drink_dir.glob("*.csv"))
         return matches[0] if len(matches) == 1 else None
+
+    # ------------------------------------------------------------------
+    # Live previews — SWD file count, annotation file count per animal,
+    # hour-window coverage per recording. All best-effort: missing or
+    # unreadable files render as empty/neutral status, not as errors.
+    # ------------------------------------------------------------------
+
+    def _refresh_state_overlap_hint(self) -> None:
+        """Show a banner when selected groups share raw state codes."""
+        selected = [k for k, cb in self._state_boxes.items() if cb.isChecked()]
+        overlaps = overlap_groups(selected)
+        if not overlaps:
+            self._state_overlap_lbl.setVisible(False)
+            return
+        parts: list[str] = []
+        for code, groups in overlaps.items():
+            name = RAW_CODE_DISPLAY.get(code, code)
+            group_names = " + ".join(PRESET_DISPLAY[g] for g in groups)
+            parts.append(f"{name} epochs feed into {group_names}")
+        self._state_overlap_lbl.setText(
+            "Overlap: "
+            + "; ".join(parts)
+            + ". Same epochs, different averages — intentional if that's what you want."
+        )
+        self._state_overlap_lbl.setVisible(True)
+
+    def _refresh_swd_status(self) -> None:
+        """Show "✓ N .mat files in swd/" / "⚠ count mismatch" / hint text."""
+        if self._project_root is None:
+            self._lbl_swd_status.setText("")
+            return
+        swd_dir = self._project_root / "swd"
+        if not swd_dir.is_dir():
+            self._lbl_swd_status.setText("swd/ not found in project root")
+            return
+        mat_count = sum(1 for _ in swd_dir.glob("*.mat"))
+        if mat_count == 0:
+            self._lbl_swd_status.setText("swd/ found — no .mat files")
+            return
+        manifest = self._safe_load_manifest()
+        n_animals = len(manifest) if manifest is not None else 0
+        suffix = "file" if mat_count == 1 else "files"
+        if n_animals > 0 and mat_count != n_animals:
+            self._lbl_swd_status.setText(
+                f"⚠ {mat_count} .mat {suffix} in swd/ (expected {n_animals})"
+            )
+        else:
+            self._lbl_swd_status.setText(f"✓ {mat_count} .mat {suffix} in swd/")
+
+    def _refresh_ann_status(self) -> None:
+        """Show how many animals have an annotation file in the chosen dir."""
+        if not self.chk_ann.isChecked() or self._ann_dir is None:
+            self._lbl_ann_status.setText("")
+            return
+        if not self._ann_dir.is_dir():
+            self._lbl_ann_status.setText("Directory not found")
+            self._lbl_ann_status.setStyleSheet(
+                "font-size: 11px; padding-left: 4px; color: #c0392b;"
+            )
+            return
+        manifest = self._safe_load_manifest()
+        if manifest is None:
+            self._lbl_ann_status.setText("")
+            return
+        animal_ids = [e.animal_id for e in manifest]
+        n_animals = len(animal_ids)
+        n_found = sum(
+            1
+            for aid in animal_ids
+            if any(self._ann_dir.glob(f"{aid}*.txt")) or any(self._ann_dir.glob(f"{aid}*.csv"))
+        )
+        if n_animals == 0:
+            self._lbl_ann_status.setText("No animals in manifest")
+            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #888;")
+        elif n_found == n_animals:
+            self._lbl_ann_status.setText(
+                f"✓ {n_found} of {n_animals} animals have annotation files"
+            )
+            self._lbl_ann_status.setStyleSheet(
+                "font-size: 11px; padding-left: 4px; color: #2a7a2a;"
+            )
+        elif n_found == 0:
+            self._lbl_ann_status.setText(
+                f"No annotation files found for any of the {n_animals} animals"
+            )
+            self._lbl_ann_status.setStyleSheet(
+                "font-size: 11px; padding-left: 4px; color: #c0392b;"
+            )
+        else:
+            self._lbl_ann_status.setText(
+                f"⚠ {n_found} of {n_animals} animals have annotation files"
+            )
+            self._lbl_ann_status.setStyleSheet(
+                "font-size: 11px; padding-left: 4px; color: #c77800;"
+            )
+
+    def _refresh_hour_window_preview(self) -> None:
+        """Per-window badges + total-hours-per-animal summary.
+
+        Lazily reads EDF headers from ``standard/`` on first invocation.
+        Skips silently if there are no recordings or no defined windows.
+        """
+        # Clear all row badges first so stale text doesn't linger.
+        for i in range(self._hw_windows_layout.count()):
+            row = self._hw_windows_layout.itemAt(i).widget()
+            if row is not None:
+                lbl = row.property("status_label")
+                if lbl is not None:
+                    lbl.setText("")
+
+        if not self.chk_hour_window.isChecked():
+            self._hw_partial_label.setText("")
+            return
+        hour_windows = self._get_defined_windows()
+        if not hour_windows:
+            self._hw_partial_label.setText("")
+            return
+        if self._hw_recordings is None:
+            self._read_edf_headers()
+        if not self._hw_recordings:
+            self._hw_partial_label.setText("")
+            return
+
+        selected_days: list[int] | None = None
+        if self._radio_hw_sel.isChecked():
+            parsed = self._parse_days_field()
+            if parsed is None:
+                self._hw_partial_label.setText("")
+                return
+            selected_days = parsed
+
+        # Import inside the method to avoid pulling openseize/ebb at module
+        # import time — the preview is rarely needed in headless test runs.
+        from ebb.masking import hour_window_mask
+
+        n_animals = len(self._hw_recordings)
+        win_full = [0] * len(hour_windows)
+        win_partial = [0] * len(hour_windows)
+        win_secs = [0.0] * len(hour_windows)
+        days_with_windows: set[int] = set()
+        total_secs = 0.0
+
+        for idx, (hs, he) in enumerate(hour_windows):
+            full_s = ((he - hs) % 24 or 24) * 3600
+            for rec_start, n_samples in self._hw_recordings:
+                _, used = hour_window_mask(
+                    rec_start, n_samples, _DEFAULT_FS, [(hs, he)], selected_days
+                )
+                if not used:
+                    continue
+                animal_clipped = False
+                for ws, we in used:
+                    days_with_windows.add((ws.date() - rec_start.date()).days)
+                    dur_s = (we - ws).total_seconds()
+                    win_secs[idx] += dur_s
+                    total_secs += dur_s
+                    if dur_s < full_s - _HW_CLIP_TOLERANCE_S:
+                        animal_clipped = True
+                if animal_clipped:
+                    win_partial[idx] += 1
+                else:
+                    win_full[idx] += 1
+
+        # Per-row badges.
+        rows = [
+            self._hw_windows_layout.itemAt(i).widget()
+            for i in range(self._hw_windows_layout.count())
+        ]
+        rows = [r for r in rows if r is not None]
+        for idx, row in enumerate(rows):
+            lbl = row.property("status_label")
+            if lbl is None:
+                continue
+            full = win_full[idx]
+            partial = win_partial[idx]
+            total = full + partial
+            if total == 0:
+                lbl.setText("✗ no data")
+                lbl.setStyleSheet("font-size: 10px; color: #c0392b;")
+            elif partial > 0:
+                lbl.setText(f"⚠ clipped for {partial}/{n_animals} animals")
+                lbl.setStyleSheet("font-size: 10px; color: #c77800;")
+            else:
+                lbl.setText(f"✓ complete for {full}/{n_animals} animals")
+                lbl.setStyleSheet("font-size: 10px; color: #2a7a2a;")
+
+        # Summary line.
+        any_windows = total_secs > 0
+        has_partial = any(p > 0 for p in win_partial)
+        msgs: list[str] = []
+        if selected_days is not None:
+            missing = sorted(d for d in selected_days if d not in days_with_windows)
+            if missing:
+                days_str = ", ".join(str(d) for d in missing)
+                msgs.append(
+                    f"⚠ Day{'s' if len(missing) != 1 else ''} {days_str} not found in recording"
+                )
+
+        if not any_windows:
+            self._hw_partial_label.setText("No windows overlap any recording.")
+            self._hw_partial_label.setStyleSheet("color: #c0392b; font-size: 11px;")
+        else:
+            per_animal_h = (total_secs / n_animals) / 3600
+            summary = f"~{per_animal_h:.1f} h / animal"
+            if has_partial:
+                msgs.insert(0, f"⚠ {summary} (some windows clipped at recording boundary)")
+                self._hw_partial_label.setText("\n".join(msgs))
+                self._hw_partial_label.setStyleSheet("color: #c77800; font-size: 11px;")
+            elif msgs:
+                msgs.insert(0, f"✓ {summary}")
+                self._hw_partial_label.setText("\n".join(msgs))
+                self._hw_partial_label.setStyleSheet("color: #c77800; font-size: 11px;")
+            else:
+                self._hw_partial_label.setText(f"✓ {summary}")
+                self._hw_partial_label.setStyleSheet("color: #2a7a2a; font-size: 11px;")
+
+    def _read_edf_headers(self) -> None:
+        """Cache (rec_start, n_samples) tuples for every standard EDF.
+
+        Best-effort: corrupt or unreadable files are skipped without
+        propagating — the preview is informational, not a gate.
+        """
+        if self._project_root is None:
+            self._hw_recordings = []
+            return
+        standard_dir = self._project_root / "standard"
+        if not standard_dir.is_dir():
+            self._hw_recordings = []
+            return
+        edfs = sorted(standard_dir.glob("*PROCESSED.edf"))
+        if not edfs:
+            self._hw_recordings = []
+            return
+        # Local imports — pyqtgraph / openseize aren't needed at module
+        # import time for headless tests of the widget.
+        import warnings
+        from datetime import datetime
+
+        from openseize.file_io import edf as edf_io
+
+        recordings: list[tuple] = []
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=ResourceWarning)
+            for edf_path in edfs:
+                try:
+                    with edf_io.Reader(str(edf_path)) as r:
+                        rec_start = datetime.strptime(
+                            f"{r.header.start_date} {r.header.start_time}",
+                            "%d.%m.%y %H.%M.%S",
+                        )
+                        recordings.append((rec_start, r.shape[-1]))
+                except (OSError, ValueError):
+                    continue
+        self._hw_recordings = recordings
+
+    def _safe_load_manifest(self):
+        """Return the project manifest, or None if it can't be loaded.
+
+        Imported locally so the widget itself doesn't depend on
+        ``ebb_viewer.pipeline`` at module import time.
+        """
+        if self._project_root is None:
+            return None
+        from ebb_viewer.pipeline.manifest import Manifest
+
+        try:
+            return Manifest.load(self._project_root)
+        except (OSError, ValueError):
+            return None
 
 
 class _block_signals:

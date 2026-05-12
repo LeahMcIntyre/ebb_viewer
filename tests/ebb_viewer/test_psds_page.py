@@ -4,6 +4,14 @@ These tests focus on the parameter plumbing from the page UI and saved
 ``psd_params.json`` files into ``BatchEstimateWorker`` and ultimately
 ``batch_estimate``. The scientific compute is stubbed so we can verify the
 exact kwargs that would have been forwarded.
+
+After Stage B-2 the page delegates state-group, SD-mask, spindle-noise,
+SWD, annotation, and hour-window params to the shared
+``MaskParamsWidget`` (``page.mask_widget``); the page itself only owns
+channels + fs. Tests that previously inspected ``page._masking_params``
+now route through ``page.mask_widget.to_params()``. The dialog-specific
+tests (``test_b3_dialog_*``) are dropped — equivalent coverage exists in
+``test_mask_params_widget.py``.
 """
 
 from __future__ import annotations
@@ -23,16 +31,6 @@ def _make_page(qapp, tmp_path: Path):
     from ebb_viewer.pages.psds import PSDPage
 
     return PSDPage(project_root=tmp_path)
-
-
-def _make_dialog(qapp, tmp_path: Path, *, swd_available: bool = True):
-    from ebb_viewer.pages.psds import MaskingSettingsDialog
-
-    return MaskingSettingsDialog(
-        swd_available=swd_available,
-        swd_status_text="",
-        project_root=tmp_path,
-    )
 
 
 def _run_worker_capturing_batch_estimate(
@@ -82,11 +80,11 @@ def _run_worker_capturing_batch_estimate(
 
 def test_b1_ann_pad_after_default_is_zero_when_missing(qapp, tmp_path: Path):
     """When saved psd_params.json predates ann_pad_after being saved, the
-    page should fall back to 0.0 (matching the dialog spinbox default), not
-    10.0. The 10.0 fallback silently injects unintended padding."""
+    widget should fall back to 0.0 — not the legacy 10.0 silently injected
+    by the pre-Stage-A page."""
     psd_params.save(tmp_path, "default", {"fs": 250, "states": ["wake"]})
     page = _make_page(qapp, tmp_path)
-    assert page._masking_params["ann_pad_after"] == 0.0
+    assert page.mask_widget.to_params()["ann_pad_after"] == 0.0
 
 
 def test_b1_ann_pad_after_roundtrips_explicit_value(qapp, tmp_path: Path):
@@ -95,13 +93,12 @@ def test_b1_ann_pad_after_roundtrips_explicit_value(qapp, tmp_path: Path):
         tmp_path, "default", {"fs": 250, "states": ["wake"], "ann_pad_after": 7.5}
     )
     page = _make_page(qapp, tmp_path)
-    assert page._masking_params["ann_pad_after"] == 7.5
+    assert page.mask_widget.to_params()["ann_pad_after"] == 7.5
 
 
 def test_b1_ann_pad_after_default_zero_in_pipeline(qapp, tmp_path: Path):
-    """Run the pipeline after loading params without ann_pad_after; the
-    forwarded ann_params dict (if ann is enabled) must use 0.0, not 10.0."""
-    # Save params that enable annotation but omit pad_after.
+    """When the page builds ann_params for the worker, ann_pad_after must
+    default to 0.0 (not silently injected as 10.0)."""
     ann_dir = tmp_path / "annotations"
     ann_dir.mkdir()
     psd_params.save(
@@ -116,43 +113,16 @@ def test_b1_ann_pad_after_default_zero_in_pipeline(qapp, tmp_path: Path):
         },
     )
     page = _make_page(qapp, tmp_path)
-    # Replicate the page's own pipeline-build logic without touching disk:
-    mp = page._masking_params
+    # Replicate _run_pipeline_clicked's ann_params build from widget params.
+    wp = page.mask_widget.to_params()
     ann_params = {
-        "ann_dir": mp["ann_dir"],
-        "keywords": [k.strip() for k in mp.get("ann_keywords", "").split(",") if k.strip()],
-        "match_mode": mp.get("ann_match_mode", "contains"),
-        "pad_before_sec": mp.get("ann_pad_before", 0.0),
-        "pad_after_sec": mp.get("ann_pad_after", 0.0),
+        "ann_dir": Path(wp["ann_dir"]),
+        "keywords": [k.strip() for k in (wp.get("ann_keywords") or "").split(",") if k.strip()],
+        "match_mode": wp.get("ann_match_mode", "contains"),
+        "pad_before_sec": float(wp.get("ann_pad_before", 0.0)),
+        "pad_after_sec": float(wp.get("ann_pad_after", 0.0)),
     }
     assert ann_params["pad_after_sec"] == 0.0
-
-
-# ---------------------------------------------------------------------------
-# B3 — dialog.load_params tolerates both swd_mode and use_swd_mask
-# ---------------------------------------------------------------------------
-
-
-def test_b3_dialog_load_params_accepts_legacy_swd_mode(qapp, tmp_path: Path):
-    """Legacy psd_params.json shape: ``swd_mode: 'mask_out'``."""
-    dlg = _make_dialog(qapp, tmp_path, swd_available=True)
-    dlg.load_params({"swd_mode": "mask_out"})
-    assert dlg._radio_swd_mask.isChecked()
-
-
-def test_b3_dialog_load_params_accepts_widget_use_swd_mask(qapp, tmp_path: Path):
-    """Newer export-config shape: ``use_swd_mask: True``."""
-    dlg = _make_dialog(qapp, tmp_path, swd_available=True)
-    dlg.load_params({"use_swd_mask": True})
-    assert dlg._radio_swd_mask.isChecked()
-
-
-def test_b3_dialog_load_params_swd_unavailable_forces_none(qapp, tmp_path: Path):
-    """When SWD isn't available, neither key form should enable the mask."""
-    dlg = _make_dialog(qapp, tmp_path, swd_available=False)
-    dlg.load_params({"swd_mode": "mask_out"})
-    assert dlg._radio_swd_none.isChecked()
-    assert not dlg._radio_swd_mask.isChecked()
 
 
 # ---------------------------------------------------------------------------
@@ -219,13 +189,13 @@ def test_worker_forwards_ann_params(tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Save → reload round-trip (psd_params.json ↔ page._masking_params)
+# Save → reload round-trip via the shared widget
 # ---------------------------------------------------------------------------
 
 
 def test_full_masking_roundtrip_psd_params_json(qapp, tmp_path: Path):
     """A psd_params.json written with the full masking suite should reload
-    into ``_masking_params`` with no field loss."""
+    into the widget with no field loss across the (re)serialization."""
     written = {
         "fs": 250,
         "channels": [0, 1, 2],
@@ -246,24 +216,32 @@ def test_full_masking_roundtrip_psd_params_json(qapp, tmp_path: Path):
         "selected_days": [0, 1, 2],
     }
     (tmp_path / "annotations").mkdir()
+    # SWD section needs swd_available=True for the radio to engage; place
+    # a stub .mat file so the page's _refresh_swd_status enables it.
+    (tmp_path / "swd").mkdir()
+    (tmp_path / "swd" / "AM001.mat").write_text("")
     psd_params.save(tmp_path, "default", written)
 
     page = _make_page(qapp, tmp_path)
-    mp = page._masking_params
-    assert mp["swd_mode"] == "mask_out"
-    assert mp["ann_enabled"] is True
-    assert mp["ann_dir"] == tmp_path / "annotations"
-    assert mp["ann_keywords"] == "drink, artifact"
-    assert mp["ann_match_mode"] == "exact"
-    assert mp["ann_pad_before"] == 0.5
-    assert mp["ann_pad_after"] == 1.5
-    assert mp["hw_enabled"] is True
-    assert mp["hour_windows"] == [[6.0, 18.0]]
-    assert mp["selected_days"] == [0, 1, 2]
+    wp = page.mask_widget.to_params()
+    # swd_mode is the legacy key; widget exposes the boolean shadow.
+    assert wp["use_swd_mask"] is True
+    assert wp["ann_enabled"] is True
+    assert wp["ann_dir"] == str(tmp_path / "annotations")
+    assert wp["ann_keywords"] == "drink, artifact"
+    assert wp["ann_match_mode"] == "exact"
+    assert wp["ann_pad_before"] == 0.5
+    assert wp["ann_pad_after"] == 1.5
+    assert wp["hw_enabled"] is True
+    assert wp["hour_windows"] == [(6.0, 18.0)]
+    assert wp["selected_days"] == [0, 1, 2]
+    # And the page-local channels + fs both reloaded.
+    assert page.spin_fs.value() == 250
+    assert page.selected_channels() == [0, 1, 2]
 
 
 # ---------------------------------------------------------------------------
-# Gating + advanced-settings precision
+# Gating + radius precision
 # ---------------------------------------------------------------------------
 
 
@@ -273,12 +251,6 @@ def test_empty_channel_selection_disables_run_button(qapp, tmp_path: Path):
     Background: ``estimate_psd``'s ``channels=None`` default only kicks in
     when channels is ``None``, not ``[]`` — so an empty list would either
     crash the compute or silently produce nothing.
-
-    Other gates may also fail in the empty project (no standard/ folder,
-    no manifest, etc.), but the button-disabled assertion below is what
-    actually protects the compute. We additionally verify the channel
-    gate is reached by toggling channels on/off and checking the gate
-    label changes when channels are the *only* unsatisfied check.
     """
     page = _make_page(qapp, tmp_path)
     for cb in page._channel_boxes:
@@ -296,12 +268,10 @@ def test_empty_channel_selection_disables_run_button(qapp, tmp_path: Path):
 def test_channel_gate_label_when_channels_are_sole_failure(qapp, tmp_path: Path):
     """When every other gate passes, the empty-channels gate must surface
     its dedicated label so the user understands why Run is disabled."""
-    # Set up just enough state to satisfy every earlier gate.
     (tmp_path / "standard").mkdir()
     spindle = tmp_path / "spindle_outputs" / "LFC_RSC"
     spindle.mkdir(parents=True)
     (spindle / "AM001_LFC_RSC.csv").write_text("rawstate\n")
-    # Manifest with one animal whose LFC_RSC run is ok.
     from ebb_viewer.pipeline.manifest import (
         Manifest,
         ManifestEntry,
@@ -325,15 +295,14 @@ def test_channel_gate_label_when_channels_are_sole_failure(qapp, tmp_path: Path)
 
 
 def test_radius_two_decimals_no_rounding(qapp, tmp_path: Path):
-    """Saved ``radius=0.75`` must reload as 0.75, not round to 0.8.
+    """Saved ``radius=0.75`` must reload as 0.75 via the widget's spinbox.
 
-    The SD-mask radius spinbox previously had ``decimals=1`` which silently
-    rounded any value with a 0.05 step down on display + re-save. The
-    Export Masks widget has used 2 decimals + 0.05 step for the same reason.
+    The MaskParamsWidget's SD-mask radius spinbox uses 2 decimals + 0.05
+    step specifically to prevent silent rounding of saved values.
     """
     psd_params.save(tmp_path, "default", {"fs": 250, "states": ["wake"], "radius": 0.75})
     page = _make_page(qapp, tmp_path)
-    assert page.dspin_radius.value() == 0.75
+    assert page.mask_widget.dspin_radius.value() == 0.75
 
 
 def test_pipeline_save_format_includes_all_masking_keys(tmp_path: Path):
@@ -366,19 +335,73 @@ def test_pipeline_save_format_includes_all_masking_keys(tmp_path: Path):
     saved_path = tmp_path / "psd" / "default" / "psd_params.json"
     assert saved_path.exists()
     saved = json.loads(saved_path.read_text())
-    # Compute keys preserved
     for k in ("fs", "channels", "winsize", "radius", "nstd", "noise_thresh", "states"):
         assert saved[k] == params[k]
-    # Hour-window keys preserved
     assert saved["hw_enabled"] is True
-    assert saved["hour_windows"] == [[6.0, 18.0]]  # JSON tuple → list
+    assert saved["hour_windows"] == [[6.0, 18.0]]
     assert saved["selected_days"] == [0]
-    # SWD recorded as legacy swd_mode
     assert saved["swd_mode"] == "mask_out"
-    # Annotation keys all flattened
     assert saved["ann_enabled"] is True
     assert saved["ann_dir"] == str(ann_dir)
     assert saved["ann_keywords"] == "drink"
     assert saved["ann_match_mode"] == "contains"
     assert saved["ann_pad_before"] == 0.0
     assert saved["ann_pad_after"] == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Stage B-2 — page → widget integration smoke
+# ---------------------------------------------------------------------------
+
+
+def test_page_has_mask_widget_with_drink_hidden(qapp, tmp_path: Path):
+    """PSD page constructs the shared widget with show_drink_mask=False
+    (PSD initial compute never applies drink masks)."""
+    page = _make_page(qapp, tmp_path)
+    assert page.mask_widget is not None
+    assert page.mask_widget._sections["drink"].isHidden()
+
+
+def test_page_validate_uses_widget_states(qapp, tmp_path: Path):
+    """``_validate`` reads selected states from the widget, not from any
+    page-local state-checkbox list."""
+    page = _make_page(qapp, tmp_path)
+    # Uncheck all state boxes via the widget.
+    for cb in page.mask_widget._state_boxes.values():
+        cb.setChecked(False)
+    page._validate()
+    assert not page.btn_run_pipeline.isEnabled()
+
+
+def test_page_widget_changed_propagates_to_gate_label(qapp, tmp_path: Path):
+    """Toggling a widget state checkbox re-renders the page gate.
+
+    Set up just enough state for the states-gate to be the sole unmet
+    requirement, then uncheck every state via the widget and assert the
+    gate label flips to the dedicated "select a state" message.
+    """
+    (tmp_path / "standard").mkdir()
+    spindle = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle.mkdir(parents=True)
+    (spindle / "AM001_LFC_RSC.csv").write_text("rawstate\n")
+    from ebb_viewer.pipeline.manifest import (
+        Manifest,
+        ManifestEntry,
+        RunEntry,
+    )
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        runs={"LFC_RSC": RunEntry(sleep_qc="ok")},
+    )
+    m.save()
+
+    page = _make_page(qapp, tmp_path)
+    for cb in page.mask_widget._state_boxes.values():
+        cb.setChecked(False)
+    # The widget.changed → page._validate wiring should re-render the gate
+    # without us calling _validate explicitly.
+    assert "state" in page._gate_label.text().lower()
+    assert not page.btn_run_pipeline.isEnabled()

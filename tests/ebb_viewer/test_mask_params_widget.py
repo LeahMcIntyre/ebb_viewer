@@ -552,3 +552,148 @@ def test_subtitle_updates_after_from_params(qapp, tmp_path: Path):
     )
     assert w._sections["swd"].subtitle() == "mask out · 10s pad"
     assert w._sections["hour_window"].subtitle() == "6–18h, days 0"
+
+
+# ---------------------------------------------------------------------------
+# show_drink_mask flag — hides section but preserves param round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_show_drink_mask_false_hides_section(qapp, tmp_path: Path):
+    w = MaskParamsWidget(project_root=tmp_path, show_drink_mask=False)
+    assert not w._sections["drink"].isVisibleTo(w)
+
+
+def test_show_drink_mask_true_shows_section_by_default(qapp, tmp_path: Path):
+    w = MaskParamsWidget(project_root=tmp_path)
+    # CollapsibleSection is laid-out visible-by-default (parent isn't shown
+    # in tests so isVisible() can't be used; isHidden() is the explicit-hide
+    # check we set in the constructor).
+    assert not w._sections["drink"].isHidden()
+
+
+def test_show_drink_mask_false_still_round_trips_drink_params(qapp, tmp_path: Path):
+    """The drink widgets exist even when hidden, so saved configs that
+    include drink params reload + re-export without loss."""
+    w = MaskParamsWidget(project_root=tmp_path, show_drink_mask=False)
+    w.from_params({"use_drink_mask": False, "drink_pad": 7})
+    p = w.to_params()
+    assert p["use_drink_mask"] is False
+    assert p["drink_pad"] == 7
+
+
+# ---------------------------------------------------------------------------
+# SWD status preview
+# ---------------------------------------------------------------------------
+
+
+def test_swd_status_no_project_root(qapp):
+    w = MaskParamsWidget(project_root=None)
+    assert w._lbl_swd_status.text() == ""
+
+
+def test_swd_status_no_swd_dir(qapp, tmp_path: Path):
+    w = _make_widget(qapp, tmp_path)
+    assert "not found" in w._lbl_swd_status.text()
+
+
+def test_swd_status_empty_swd_dir(qapp, tmp_path: Path):
+    (tmp_path / "swd").mkdir()
+    w = _make_widget(qapp, tmp_path)
+    assert "no .mat files" in w._lbl_swd_status.text()
+
+
+def test_swd_status_count_matches_manifest(qapp, tmp_path: Path):
+    from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
+
+    (tmp_path / "swd").mkdir()
+    for aid in ("AM001", "AM002"):
+        (tmp_path / "swd" / f"{aid}.mat").write_text("")
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(animal_id="AM001", preprocessed_edf="", runs={})
+    m._entries["AM002"] = ManifestEntry(animal_id="AM002", preprocessed_edf="", runs={})
+    m.save()
+
+    w = _make_widget(qapp, tmp_path)
+    assert "✓ 2 .mat files in swd/" in w._lbl_swd_status.text()
+
+
+def test_swd_status_count_mismatch(qapp, tmp_path: Path):
+    from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
+
+    (tmp_path / "swd").mkdir()
+    (tmp_path / "swd" / "AM001.mat").write_text("")
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(animal_id="AM001", preprocessed_edf="", runs={})
+    m._entries["AM002"] = ManifestEntry(animal_id="AM002", preprocessed_edf="", runs={})
+    m.save()
+
+    w = _make_widget(qapp, tmp_path)
+    assert "⚠" in w._lbl_swd_status.text()
+    assert "(expected 2)" in w._lbl_swd_status.text()
+
+
+# ---------------------------------------------------------------------------
+# Annotation status preview
+# ---------------------------------------------------------------------------
+
+
+def test_ann_status_hidden_when_ann_disabled(qapp, tmp_path: Path):
+    w = _make_widget(qapp, tmp_path)
+    assert w._lbl_ann_status.text() == ""
+
+
+def test_ann_status_shows_count_when_enabled(qapp, tmp_path: Path):
+    from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
+
+    ann_dir = tmp_path / "annotations"
+    ann_dir.mkdir()
+    (ann_dir / "AM001_notes.txt").write_text("")
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(animal_id="AM001", preprocessed_edf="", runs={})
+    m._entries["AM002"] = ManifestEntry(animal_id="AM002", preprocessed_edf="", runs={})
+    m.save()
+
+    w = _make_widget(qapp, tmp_path)
+    w.from_params({"ann_enabled": True, "ann_dir": str(ann_dir)})
+    assert "1 of 2" in w._lbl_ann_status.text()
+
+
+def test_ann_status_clears_when_disabled(qapp, tmp_path: Path):
+    ann_dir = tmp_path / "annotations"
+    ann_dir.mkdir()
+    w = _make_widget(qapp, tmp_path)
+    w.from_params({"ann_enabled": True, "ann_dir": str(ann_dir)})
+    w.chk_ann.setChecked(False)
+    assert w._lbl_ann_status.text() == ""
+
+
+# ---------------------------------------------------------------------------
+# Hour-window preview
+# ---------------------------------------------------------------------------
+
+
+def test_hour_window_preview_empty_when_disabled(qapp, tmp_path: Path):
+    w = _make_widget(qapp, tmp_path)
+    assert w._hw_partial_label.text() == ""
+
+
+def test_hour_window_preview_empty_with_no_recordings(qapp, tmp_path: Path):
+    """Enabled with windows but no standard/ EDFs → preview stays empty
+    (best-effort: no recordings means no coverage estimate)."""
+    w = _make_widget(qapp, tmp_path)
+    w.from_params(
+        {
+            "hw_enabled": True,
+            "hour_windows": [[6.0, 18.0]],
+            "selected_days": None,
+        }
+    )
+    assert w._hw_partial_label.text() == ""
+
+
+def test_set_project_root_invalidates_edf_cache(qapp, tmp_path: Path):
+    w = _make_widget(qapp, tmp_path)
+    w._hw_recordings = [("sentinel", 0)]  # poison the cache
+    w.set_project_root(tmp_path)
+    assert w._hw_recordings is None

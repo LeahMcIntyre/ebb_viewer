@@ -29,18 +29,40 @@ inside each cell (everything visible but row heights vary, harder to
 scan when N>2). Both viable, but the dropdown matches the codebase
 convention.
 
-### psd: Unify mask controls UI with Export Masks page
-The PSD page has two different config/expand patterns for masking knobs —
-a "Configure…" modal (SWD / annotation / hour windows) and an inline
-"Advanced PSD Settings" collapsible (SD mask + spindle noise). Things get
-lost between the two surfaces, and the Export Masks page already has a
-cleaner inline-collapsibles layout via `MaskParamsWidget`. Swap the
-modal's body for `MaskParamsWidget` (rendered inline rather than as a
-dialog) so both pages look and behave the same. This is the work tracked
-in Phase 5 as "psds.py Stage B" — porting the dialog's richer hour-window
-preview (per-window badges, total-hours estimate, day-availability check),
-SWD status text, and annotation file count into the widget is required
-before this swap.
+### psd: Reflow page around user intent (Setup / What to compute / Filters / Run)
+After Stage B-2 the PSD page reads as a flat list of equally-weighted
+sections (Folder Selection, Combos table, 6 mask collapsibles, PSD Output
+Settings, Run button) — no visual hierarchy distinguishes setup steps
+from configurable knobs from the action. Consider restructuring into
+four functional zones:
+
+1. **Setup** — Folder Selection, Run name (collapsible once filled)
+2. **What to compute** — States (still in mask widget) + channels + fs
+   grouped together since they're all "what does this run produce"
+3. **Filters & masks** — SD, Spindle Noise, SWD, Annotation, Hour
+   Windows (optional knobs, second-tier)
+4. **Run** — pipeline button + log + post-run hint
+
+Two viable implementations:
+- Keep MaskParamsWidget unchanged; wrap (widget + channels + fs block)
+  in a single "What to Compute & Filter" page-level QGroupBox so they
+  read as one functional unit. Lightest touch.
+- Pull the States section out of MaskParamsWidget and render it on the
+  page next to channels + fs. Cleaner conceptually but regresses Stage
+  B-2's "one widget owns all mask params" goal — needs care.
+
+**Decide after a few real PSD compute sessions** to confirm whether the
+flat layout is genuinely confusing in workflow or just unfamiliar on
+first look.
+
+### ~~psd: Unify mask controls UI with Export Masks page~~
+**DONE** (Phase 5, Stage B-1 + B-2). PSD page now uses the shared
+`MaskParamsWidget` inline with `show_drink_mask=False`. The dialog and
+the "Advanced PSD Settings" collapsible are gone; mask params live in
+one place across PSD Compute and Export Masks. The widget gained the
+dialog's preview features (SWD file count, annotation file availability,
+hour-window coverage estimate with per-window badges) and the
+state-overlap warning banner.
 
 ### preprocess: "Rescan" button + initial-state wording
 Today the EDF duration scan runs only on the first `showEvent`. If the user

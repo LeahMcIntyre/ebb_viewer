@@ -4,35 +4,32 @@ Drives the initial PSD computation step of the pipeline. Each run produces
 one ``psds_<combo>.pkl`` per channel combination plus a merged
 ``psds_channel_merged.pkl`` consumed by the visualizer.
 
-Run-specific params (states, mask thresholds, SWD/annotation/hour-window
-selection) live in ``MaskingSettingsDialog`` (modal) and the inline
-"Advanced PSD Settings" section. They round-trip through
-``project/psd/<run_name>/psd_params.json`` and are passed to the worker
-verbatim — the worker also writes the params file alongside the PKLs after
-a successful run.
+The page is structured as:
 
-Drink masking is intentionally *not* applied here; the Drink Mask page
-re-applies it after PSD review. ``BatchEstimateWorker`` always forwards
-``drink_dir=None``.
+1. Folder selection + run name (PSD-specific)
+2. Spindle output combos table (read-only summary)
+3. ``MaskParamsWidget`` — shared editor for state-group selection,
+   SD/spindle/SWD/annotation/hour-window mask params (same widget the
+   Export Masks page uses, with ``show_drink_mask=False`` since the PSD
+   compute step doesn't apply drink masks)
+4. PSD output settings — channels + sampling frequency
+5. Run button + status log + post-run hint
+
+Run params (mask + filter knobs + states) round-trip through
+``project/psd/<run_name>/psd_params.json``. Drink masking is intentionally
+*not* applied here; the Drink Mask page re-applies it after PSD review.
 """
 
 from __future__ import annotations
 
 import dataclasses
 import pickle
-import warnings
-from datetime import datetime
 from pathlib import Path
 
-from openseize.file_io import edf as edf_io
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QButtonGroup,
     QCheckBox,
-    QDialog,
-    QDialogButtonBox,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -45,614 +42,39 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QRadioButton,
     QScrollArea,
     QSizePolicy,
     QSpinBox,
     QTableWidget,
     QTableWidgetItem,
-    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
 from ebb.core.naming import parse_animal_id
 from ebb.process.psd_compute import batch_estimate, build_final_pkl
-from ebb.process.state_presets import (
-    CANONICAL_ORDER,
-    DEFAULT_STATES,
-    PRESET_DESCRIPTIONS,
-    PRESET_DISPLAY,
-    RAW_CODE_DISPLAY,
-    STATE_PRESETS,
-    overlap_groups,
-)
 from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest, merged_psd_path
+from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
 DEFAULT_FS = 250
-DEFAULT_NOISE_THRESH = 0.5
-DEFAULT_WINSIZE = 180
-DEFAULT_RADIUS = 0.5
-DEFAULT_NSTD = 5.0
 CH_LABELS = ["LFC", "RSC", "LSC"]
-
-
-class MaskingSettingsDialog(QDialog):
-    """Modal dialog for configuring optional masking/filtering for PSD computation.
-
-    Edits a flat dict round-trippable to/from ``psd_params.json``. Three
-    masking subsystems live here: SWD mask (binary on/off; keyed as
-    ``swd_mode``), annotation mask (keyed under ``ann_*``), and the
-    hour-window filter (keyed under ``hw_enabled``/``hour_windows``/
-    ``selected_days``). The dialog also shows live previews — SWD file
-    counts, annotation file availability per animal, hour-window coverage
-    per recording.
-
-    The SD-mask, spindle-noise threshold, and state-group selection live
-    on the parent page rather than here; this dialog only owns the *optional*
-    masking/filtering knobs.
-    """
-
-    def __init__(
-        self, parent=None, *, swd_available: bool, swd_status_text: str, project_root: Path
-    ):
-        super().__init__(parent)
-        self.setWindowTitle("Masking & Filtering Settings")
-        self.setMinimumWidth(500)
-        self._project_root = project_root
-        self._swd_available = swd_available
-        self._swd_status_text = swd_status_text
-        self._ann_dir: Path | None = None
-        self._hw_recordings: list[tuple] | None = None  # cached [(rec_start, n_samples), ...]
-        self._build_ui()
-        self._wire()
-
-    def _build_ui(self):
-        root = QVBoxLayout(self)
-        root.setSpacing(10)
-
-        # ── SWD Mask ──────────────────────────────────────────────────────────
-        gb_swd = QGroupBox("SWD Masks")
-        swd_v = QVBoxLayout(gb_swd)
-        self._swd_grp = QButtonGroup(self)
-        self._radio_swd_none = QRadioButton("No SWD mask")
-        self._radio_swd_none.setChecked(True)
-        self._radio_swd_mask = QRadioButton("Mask out SWDs")
-        self._radio_swd_mask.setEnabled(self._swd_available)
-        self._swd_grp.addButton(self._radio_swd_none, 0)
-        self._swd_grp.addButton(self._radio_swd_mask, 1)
-        swd_v.addWidget(self._radio_swd_none)
-        swd_v.addWidget(self._radio_swd_mask)
-        swd_hint = QLabel(
-            "To use SWD masking, place one .mat file of SWD timestamps per animal "
-            "in a swd/ folder in the project root (e.g. project/swd/AnimalID_*.mat)."
-        )
-        swd_hint.setWordWrap(True)
-        swd_hint.setStyleSheet("font-size: 10px; color: #777; padding-left: 4px; padding-top: 2px;")
-        swd_v.addWidget(swd_hint)
-        self._lbl_swd_status = QLabel(self._swd_status_text)
-        self._lbl_swd_status.setStyleSheet("font-size: 11px; padding-left: 4px;")
-        swd_v.addWidget(self._lbl_swd_status)
-        root.addWidget(gb_swd)
-
-        # ── Annotation Mask ───────────────────────────────────────────────────
-        gb_ann = QGroupBox("Annotation Mask")
-        ann_v = QVBoxLayout(gb_ann)
-        self.chk_ann = QCheckBox("Apply annotation mask")
-        ann_v.addWidget(self.chk_ann)
-
-        self._ann_body = QWidget()
-        self._ann_body.setEnabled(False)
-        ann_body_v = QVBoxLayout(self._ann_body)
-        ann_body_v.setContentsMargins(0, 4, 0, 0)
-        ann_body_v.setSpacing(6)
-
-        ann_dir_form = QFormLayout()
-        ann_dir_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        ann_dir_row = QHBoxLayout()
-        self.lbl_ann_dir = QLineEdit()
-        self.lbl_ann_dir.setReadOnly(True)
-        self.lbl_ann_dir.setPlaceholderText("No directory selected")
-        self.btn_ann_dir = QPushButton("Browse…")
-        ann_dir_row.addWidget(self.lbl_ann_dir)
-        ann_dir_row.addWidget(self.btn_ann_dir)
-        ann_dir_form.addRow("Annotation directory:", ann_dir_row)
-        ann_body_v.addLayout(ann_dir_form)
-
-        self._lbl_ann_status = QLabel("")
-        self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px;")
-        ann_body_v.addWidget(self._lbl_ann_status)
-
-        ann_kw_form = QFormLayout()
-        ann_kw_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        self._ann_keyword_edit = QLineEdit()
-        self._ann_keyword_edit.setPlaceholderText("e.g.  drink, artifact")
-        ann_kw_form.addRow("Keywords:", self._ann_keyword_edit)
-        ann_body_v.addLayout(ann_kw_form)
-
-        kw_hint = QLabel(
-            "Comma-separated, case-insensitive. Annotations whose labels match will be masked."
-        )
-        kw_hint.setWordWrap(True)
-        kw_hint.setStyleSheet("font-size: 10px; color: #777; padding-left: 4px;")
-        ann_body_v.addWidget(kw_hint)
-
-        mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel("Match mode:"))
-        self._radio_ann_contains = QRadioButton("Contains")
-        self._radio_ann_exact = QRadioButton("Exact")
-        self._radio_ann_contains.setChecked(True)
-        self._radio_ann_contains.setToolTip("Match any label containing the keyword as a substring")
-        self._radio_ann_exact.setToolTip("Match only labels that equal the keyword exactly")
-        self._ann_mode_group = QButtonGroup(self)
-        self._ann_mode_group.addButton(self._radio_ann_contains, 0)
-        self._ann_mode_group.addButton(self._radio_ann_exact, 1)
-        mode_row.addWidget(self._radio_ann_contains)
-        mode_row.addWidget(self._radio_ann_exact)
-        mode_row.addStretch()
-        ann_body_v.addLayout(mode_row)
-
-        pad_form = QFormLayout()
-        pad_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        self._ann_pad_before = QDoubleSpinBox()
-        self._ann_pad_before.setRange(0.0, 3600.0)
-        self._ann_pad_before.setSingleStep(1.0)
-        self._ann_pad_before.setDecimals(1)
-        self._ann_pad_before.setSuffix(" s")
-        self._ann_pad_before.setValue(0.0)
-        self._ann_pad_after = QDoubleSpinBox()
-        self._ann_pad_after.setRange(0.0, 3600.0)
-        self._ann_pad_after.setSingleStep(1.0)
-        self._ann_pad_after.setDecimals(1)
-        self._ann_pad_after.setSuffix(" s")
-        self._ann_pad_after.setValue(0.0)
-        pad_form.addRow("Pad before:", self._ann_pad_before)
-        pad_form.addRow("Pad after:", self._ann_pad_after)
-        ann_body_v.addLayout(pad_form)
-
-        ann_v.addWidget(self._ann_body)
-        root.addWidget(gb_ann)
-
-        # ── Compute Hours ─────────────────────────────────────────────────────
-        gb_hw = QGroupBox("Compute Hours")
-        hw_v = QVBoxLayout(gb_hw)
-        self.chk_hour_window = QCheckBox("Restrict to clock-time window")
-        hw_v.addWidget(self.chk_hour_window)
-
-        self._hw_body = QWidget()
-        self._hw_body.setEnabled(False)
-        hw_body_v = QVBoxLayout(self._hw_body)
-        hw_body_v.setContentsMargins(0, 4, 0, 0)
-        hw_body_v.setSpacing(6)
-
-        # defined-windows list
-        self._hw_windows_widget = QWidget()
-        self._hw_windows_layout = QVBoxLayout(self._hw_windows_widget)
-        self._hw_windows_layout.setContentsMargins(0, 0, 0, 0)
-        self._hw_windows_layout.setSpacing(2)
-        hw_body_v.addWidget(self._hw_windows_widget)
-
-        # add-row
-        add_row = QHBoxLayout()
-        self.spin_add_start = QSpinBox()
-        self.spin_add_start.setRange(0, 23)
-        self.spin_add_start.setSuffix(" h")
-        self.spin_add_end = QSpinBox()
-        self.spin_add_end.setRange(0, 23)
-        self.spin_add_end.setSuffix(" h")
-        self.spin_add_end.setValue(1)
-        self.btn_add_window = QPushButton("Add")
-        self.btn_add_window.setFixedWidth(48)
-        add_row.addWidget(self.spin_add_start)
-        add_row.addWidget(QLabel("–"))
-        add_row.addWidget(self.spin_add_end)
-        add_row.addWidget(self.btn_add_window)
-        add_row.addStretch()
-        hw_body_v.addLayout(add_row)
-
-        wrap_hint = QLabel("If end < start the window wraps midnight (e.g. 20–6 = dark phase).")
-        wrap_hint.setWordWrap(True)
-        wrap_hint.setStyleSheet("font-size: 10px; color: #777; padding-left: 4px;")
-        hw_body_v.addWidget(wrap_hint)
-
-        day_mode_row = QHBoxLayout()
-        self._radio_hw_all = QRadioButton("All days")
-        self._radio_hw_all.setChecked(True)
-        self._radio_hw_sel = QRadioButton("Specific days:")
-        self._hw_day_group = QButtonGroup(self)
-        self._hw_day_group.addButton(self._radio_hw_all, 0)
-        self._hw_day_group.addButton(self._radio_hw_sel, 1)
-        self._hw_days_edit = QLineEdit()
-        self._hw_days_edit.setPlaceholderText("0,1,2  (0 = recording start date)")
-        self._hw_days_edit.setEnabled(False)
-        day_mode_row.addWidget(self._radio_hw_all)
-        day_mode_row.addWidget(self._radio_hw_sel)
-        day_mode_row.addWidget(self._hw_days_edit, 1)
-        hw_body_v.addLayout(day_mode_row)
-
-        self._hw_partial_label = QLabel("")
-        self._hw_partial_label.setWordWrap(True)
-        hw_body_v.addWidget(self._hw_partial_label)
-
-        hw_v.addWidget(self._hw_body)
-        root.addWidget(gb_hw)
-
-        # ── Buttons ───────────────────────────────────────────────────────────
-        btn_box = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        btn_box.accepted.connect(self._on_accept)
-        btn_box.rejected.connect(self.reject)
-        root.addWidget(btn_box)
-
-    def _wire(self):
-        self.chk_ann.toggled.connect(lambda checked: self._ann_body.setEnabled(checked))
-        self.chk_ann.toggled.connect(self._refresh_ann_status)
-        self.btn_ann_dir.clicked.connect(self._choose_ann_dir)
-        # Note: do NOT connect keyword textChanged → _refresh_ann_status —
-        # that helper loads the manifest and counts files per animal, which
-        # doesn't depend on the keyword text. The directory-choose handler
-        # calls it explicitly; the chk_ann.toggled signal covers enable/disable.
-        self.chk_hour_window.toggled.connect(self._on_hw_toggled)
-        self._radio_hw_all.toggled.connect(
-            lambda checked: self._hw_days_edit.setEnabled(not checked)
-        )
-        self.btn_add_window.clicked.connect(self._on_add_window_clicked)
-        self._hw_days_edit.textChanged.connect(self._refresh_hour_window_preview)
-
-    def _on_hw_toggled(self, checked: bool) -> None:
-        self._hw_body.setEnabled(checked)
-        if checked:
-            self._refresh_hour_window_preview()
-
-    def _get_defined_windows(self) -> list[tuple[float, float]]:
-        """Return (hour_start, hour_end) for every row in the windows list."""
-        windows = []
-        for i in range(self._hw_windows_layout.count()):
-            row = self._hw_windows_layout.itemAt(i).widget()
-            if row is not None:
-                windows.append((row.property("hw_start"), row.property("hw_end")))
-        return windows
-
-    def _add_window_row(self, hour_start: float, hour_end: float) -> None:
-        row = QWidget()
-        row.setProperty("hw_start", hour_start)
-        row.setProperty("hw_end", hour_end)
-        hl = QHBoxLayout(row)
-        hl.setContentsMargins(0, 0, 0, 0)
-        hl.addWidget(QLabel(f"{int(hour_start)} h – {int(hour_end)} h"))
-        hl.addStretch()
-        status_lbl = QLabel("")
-        status_lbl.setStyleSheet("font-size: 10px;")
-        row.setProperty("status_label", status_lbl)
-        hl.addWidget(status_lbl)
-        btn = QPushButton("×")
-        btn.setFixedWidth(24)
-        btn.clicked.connect(lambda: self._remove_window_row(row))
-        hl.addWidget(btn)
-        self._hw_windows_layout.addWidget(row)
-        self._refresh_hour_window_preview()
-
-    def _remove_window_row(self, row: QWidget) -> None:
-        self._hw_windows_layout.removeWidget(row)
-        row.deleteLater()
-        self._refresh_hour_window_preview()
-
-    def _on_add_window_clicked(self) -> None:
-        s = float(self.spin_add_start.value())
-        e = float(self.spin_add_end.value())
-        if s == e:
-            QMessageBox.warning(self, "Invalid Window", "Start and end hour must differ.")
-            return
-        existing = self._get_defined_windows()
-        for ws, we in existing:
-            if self._windows_overlap(s, e, ws, we):
-                QMessageBox.warning(
-                    self,
-                    "Overlapping Window",
-                    f"This window overlaps the existing window {int(ws)}–{int(we)} h.",
-                )
-                return
-        self._add_window_row(s, e)
-
-    @staticmethod
-    def _windows_overlap(s1: float, e1: float, s2: float, e2: float) -> bool:
-        """Return True if two hour windows share any covered hour-of-day."""
-
-        def covered(s, e):
-            s, e = int(s), int(e)
-            return set(range(s, 24)) | set(range(0, e)) if e < s else set(range(s, e))
-
-        return bool(covered(s1, e1) & covered(s2, e2))
-
-    def _refresh_hour_window_preview(self) -> None:
-        # Clear all row badges first
-        for i in range(self._hw_windows_layout.count()):
-            row = self._hw_windows_layout.itemAt(i).widget()
-            if row is not None:
-                lbl = row.property("status_label")
-                if lbl is not None:
-                    lbl.setText("")
-
-        if not self.chk_hour_window.isChecked():
-            self._hw_partial_label.setText("")
-            return
-        hour_windows = self._get_defined_windows()
-        if not hour_windows:
-            self._hw_partial_label.setText("")
-            return
-        if self._hw_recordings is None:
-            self._read_edf_headers()
-        if not self._hw_recordings:
-            self._hw_partial_label.setText("")
-            return
-
-        selected_days = None
-        if self._radio_hw_sel.isChecked():
-            raw = self._hw_days_edit.text().strip()
-            try:
-                selected_days = [int(x) for x in raw.split(",") if x.strip()]
-            except ValueError:
-                self._hw_partial_label.setText("")
-                return
-
-        from ebb.masking import hour_window_mask
-
-        n_animals = len(self._hw_recordings)
-
-        # Per-window stats: full_count, partial_count, total_seconds
-        # Computed by calling hour_window_mask once per window so chunks are unambiguous.
-        win_full = [0] * len(hour_windows)
-        win_partial = [0] * len(hour_windows)
-        win_secs = [0.0] * len(hour_windows)
-
-        days_with_windows: set = set()
-        total_secs = 0.0
-
-        for idx, (hs, he) in enumerate(hour_windows):
-            full_s = ((he - hs) % 24 or 24) * 3600
-            for rec_start, n_samples in self._hw_recordings:
-                _, used = hour_window_mask(
-                    rec_start, n_samples, DEFAULT_FS, [(hs, he)], selected_days
-                )
-                if not used:
-                    continue
-                animal_clipped = False
-                for ws, we in used:
-                    days_with_windows.add((ws.date() - rec_start.date()).days)
-                    dur_s = (we - ws).total_seconds()
-                    win_secs[idx] += dur_s
-                    total_secs += dur_s
-                    if dur_s < full_s - 30:
-                        animal_clipped = True
-                if animal_clipped:
-                    win_partial[idx] += 1
-                else:
-                    win_full[idx] += 1
-
-        # Update per-row badges
-        rows = [
-            self._hw_windows_layout.itemAt(i).widget()
-            for i in range(self._hw_windows_layout.count())
-        ]
-        rows = [r for r in rows if r is not None]
-        for idx, row in enumerate(rows):
-            lbl = row.property("status_label")
-            if lbl is None:
-                continue
-            full = win_full[idx]
-            partial = win_partial[idx]
-            total = full + partial
-            if total == 0:
-                lbl.setText("✗ no data")
-                lbl.setStyleSheet("font-size: 10px; color: #c0392b;")
-            elif partial > 0:
-                lbl.setText(f"⚠ clipped for {partial}/{n_animals} animals")
-                lbl.setStyleSheet("font-size: 10px; color: #c77800;")
-            else:
-                lbl.setText(f"✓ complete for {full}/{n_animals} animals")
-                lbl.setStyleSheet("font-size: 10px; color: #2a7a2a;")
-
-        # Summary line
-        any_windows = total_secs > 0
-        has_partial = any(p > 0 for p in win_partial)
-        msgs = []
-
-        if selected_days is not None:
-            missing = sorted(d for d in selected_days if d not in days_with_windows)
-            if missing:
-                days_str = ", ".join(str(d) for d in missing)
-                msgs.append(
-                    f"⚠ Day{'s' if len(missing) != 1 else ''} {days_str} not found in recording"
-                )
-
-        if not any_windows:
-            self._hw_partial_label.setText("No windows overlap any recording.")
-            self._hw_partial_label.setStyleSheet("color: #c0392b; font-size: 11px;")
-        else:
-            per_animal_h = (total_secs / n_animals) / 3600
-            summary = f"~{per_animal_h:.1f} h / animal"
-            if has_partial:
-                msgs.insert(0, f"⚠ {summary} (some windows clipped at recording boundary)")
-                self._hw_partial_label.setText("\n".join(msgs))
-                self._hw_partial_label.setStyleSheet("color: #c77800; font-size: 11px;")
-            elif msgs:
-                msgs.insert(0, f"✓ {summary}")
-                self._hw_partial_label.setText("\n".join(msgs))
-                self._hw_partial_label.setStyleSheet("color: #c77800; font-size: 11px;")
-            else:
-                self._hw_partial_label.setText(f"✓ {summary}")
-                self._hw_partial_label.setStyleSheet("color: #2a7a2a; font-size: 11px;")
-
-    def _read_edf_headers(self) -> None:
-        """Cache (rec_start, n_samples) for all standard EDFs.
-
-        Used by the hour-window preview to show per-window coverage. Errors
-        on individual EDFs (corrupt headers, missing files) are skipped
-        silently — the preview is best-effort and shouldn't fail the dialog.
-        """
-        standard_dir = self._project_root / "standard"
-        if not standard_dir.is_dir():
-            return
-        edfs = sorted(standard_dir.glob("*PROCESSED.edf"))
-        if not edfs:
-            return
-        recordings = []
-        with warnings.catch_warnings():
-            warnings.filterwarnings("ignore", category=ResourceWarning)
-            for edf_path in edfs:
-                try:
-                    with edf_io.Reader(str(edf_path)) as r:
-                        rec_start = datetime.strptime(
-                            f"{r.header.start_date} {r.header.start_time}", "%d.%m.%y %H.%M.%S"
-                        )
-                        recordings.append((rec_start, r.shape[-1]))
-                except (OSError, ValueError):
-                    continue
-        self._hw_recordings = recordings
-
-    def _on_accept(self):
-        if self.chk_hour_window.isChecked():
-            if not self._get_defined_windows():
-                QMessageBox.warning(self, "No Windows", "Add at least one hour window.")
-                return
-            if self._radio_hw_sel.isChecked():
-                raw = self._hw_days_edit.text().strip()
-                try:
-                    [int(x) for x in raw.split(",") if x.strip()]
-                except ValueError:
-                    QMessageBox.warning(
-                        self, "Invalid Days", "Day indices must be comma-separated integers."
-                    )
-                    return
-        self.accept()
-
-    def _choose_ann_dir(self) -> None:
-        path = QFileDialog.getExistingDirectory(
-            self, "Select Annotation Directory", str(self._project_root)
-        )
-        if not path:
-            return
-        self._ann_dir = Path(path)
-        self.lbl_ann_dir.setText(str(self._ann_dir))
-        self._refresh_ann_status()
-
-    def _refresh_ann_status(self) -> None:
-        if not self.chk_ann.isChecked() or self._ann_dir is None:
-            self._lbl_ann_status.setText("")
-            return
-        if not self._ann_dir.is_dir():
-            self._lbl_ann_status.setText("Directory not found")
-            self._lbl_ann_status.setStyleSheet(
-                "font-size: 11px; padding-left: 4px; color: #c0392b;"
-            )
-            return
-        manifest = Manifest.load(self._project_root)
-        animal_ids = [e.animal_id for e in manifest]
-        n_animals = len(animal_ids)
-        n_found = sum(
-            1
-            for aid in animal_ids
-            if any(self._ann_dir.glob(f"{aid}*.txt")) or any(self._ann_dir.glob(f"{aid}*.csv"))
-        )
-        if n_animals == 0:
-            self._lbl_ann_status.setText("No animals in manifest")
-            self._lbl_ann_status.setStyleSheet("font-size: 11px; padding-left: 4px; color: #888;")
-        elif n_found == n_animals:
-            self._lbl_ann_status.setText(
-                f"✓ {n_found} of {n_animals} animals have annotation files"
-            )
-            self._lbl_ann_status.setStyleSheet(
-                "font-size: 11px; padding-left: 4px; color: #2a7a2a;"
-            )
-        elif n_found == 0:
-            self._lbl_ann_status.setText(
-                f"No annotation files found for any of the {n_animals} animals"
-            )
-            self._lbl_ann_status.setStyleSheet(
-                "font-size: 11px; padding-left: 4px; color: #c0392b;"
-            )
-        else:
-            self._lbl_ann_status.setText(
-                f"⚠ {n_found} of {n_animals} animals have annotation files"
-            )
-            self._lbl_ann_status.setStyleSheet(
-                "font-size: 11px; padding-left: 4px; color: #c77800;"
-            )
-
-    def load_params(self, params: dict) -> None:
-        # Accept both the legacy ``swd_mode`` key (written by this page) and
-        # the widget-style ``use_swd_mask`` (written by the Export Masks
-        # page) so saved configs round-trip across both surfaces.
-        if "use_swd_mask" in params:
-            swd_on = bool(params["use_swd_mask"])
-        else:
-            swd_on = params.get("swd_mode") == "mask_out"
-        if swd_on and self._swd_available:
-            self._radio_swd_mask.setChecked(True)
-        else:
-            self._radio_swd_none.setChecked(True)
-        if params.get("ann_dir"):
-            p = Path(params["ann_dir"])
-            if p.is_dir():
-                self._ann_dir = p
-                self.lbl_ann_dir.setText(str(p))
-        if params.get("ann_keywords"):
-            self._ann_keyword_edit.setText(params["ann_keywords"])
-        if params.get("ann_match_mode") == "exact":
-            self._radio_ann_exact.setChecked(True)
-        if "ann_pad_before" in params:
-            self._ann_pad_before.setValue(params["ann_pad_before"])
-        if "ann_pad_after" in params:
-            self._ann_pad_after.setValue(params["ann_pad_after"])
-        if params.get("ann_enabled"):
-            # chk_ann.toggled is connected to _refresh_ann_status; setChecked
-            # below will fire the signal — no explicit call needed.
-            self.chk_ann.setChecked(True)
-        if params.get("hw_enabled"):
-            windows = params.get("hour_windows") or []
-            for hw in windows:
-                self._add_window_row(float(hw[0]), float(hw[1]))
-            if params.get("selected_days") is not None:
-                self._radio_hw_sel.setChecked(True)
-                self._hw_days_edit.setText(",".join(str(d) for d in params["selected_days"]))
-            self.chk_hour_window.setChecked(True)
-
-    def get_params(self) -> dict:
-        hw_enabled = self.chk_hour_window.isChecked()
-        params = {
-            "swd_mode": "mask_out" if self._radio_swd_mask.isChecked() else "none",
-            "ann_enabled": self.chk_ann.isChecked(),
-            "ann_dir": self._ann_dir,
-            "ann_keywords": self._ann_keyword_edit.text().strip(),
-            "ann_match_mode": "exact" if self._radio_ann_exact.isChecked() else "contains",
-            "ann_pad_before": self._ann_pad_before.value(),
-            "ann_pad_after": self._ann_pad_after.value(),
-            "hw_enabled": hw_enabled,
-            "hour_windows": self._get_defined_windows() if hw_enabled else None,
-            "selected_days": None,
-        }
-        if hw_enabled and self._radio_hw_sel.isChecked():
-            raw = self._hw_days_edit.text().strip()
-            params["selected_days"] = [int(x) for x in raw.split(",") if x.strip()]
-        return params
 
 
 class PSDPage(QWidget):
     """Sidebar page #6 — drives the PSD compute step of the pipeline.
 
     Owns: folder selection (standard EDFs + named run output dir), per-combo
-    status table, state-group checkboxes, masking dialog (modal),
-    advanced PSD settings (channels, fs, SD-mask, spindle-noise threshold),
-    and a worker thread that runs ``batch_estimate`` per combo and writes
-    one PKL + the shared ``psd_params.json`` per run.
+    status table, the shared ``MaskParamsWidget`` (states + SD + spindle +
+    SWD + annotation + hour-window params), channels + fs settings, and a
+    worker thread that runs ``batch_estimate`` per combo and writes one PKL
+    + the shared ``psd_params.json`` per run.
 
-    Run state lives in ``self._masking_params`` (mirrors the saved JSON
-    shape, including the legacy ``swd_mode`` key) and the individual
-    advanced-settings spinboxes. Initial values are loaded from the most
-    recently modified saved run when the page is constructed.
+    Run state lives in the mask widget (round-trippable to/from the saved
+    JSON via ``to_params``/``from_params``) plus the channels + fs
+    spinboxes on the page. Initial values are loaded from the most recently
+    modified saved run when the page is constructed.
     """
 
     manifest_changed = pyqtSignal()
@@ -663,13 +85,12 @@ class PSDPage(QWidget):
         self.project_root = Path(project_root)
         self.standard_folder: Path | None = None
         self._computing = False
-        self._masking_params: dict = {}
         self._swd_available: bool = False
-        self._swd_status_text: str = ""
+        self.psd_thread: QThread | None = None
+        self.psd_worker: BatchEstimateWorker | None = None
 
         self._build_ui()
         self._wire()
-        self._update_masking_summary()
         self._refresh_standard_folder()
         self._refresh_combo_table()
         self._refresh_swd_status()
@@ -684,7 +105,7 @@ class PSDPage(QWidget):
 
     # ---------------- UI ----------------
 
-    def _build_ui(self):
+    def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
 
@@ -708,7 +129,6 @@ class PSDPage(QWidget):
         )
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #555; font-size: 12px;")
-
         root.addWidget(lbl)
         root.addWidget(desc)
 
@@ -767,10 +187,8 @@ class PSDPage(QWidget):
         self.combo_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
         self.combo_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.combo_table.verticalHeader().setVisible(False)
-
         self.combo_table.setMaximumHeight(150)
         self.combo_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
-
         combo_v.addWidget(self.combo_table)
 
         self._merged_pkl_label = QLabel()
@@ -779,99 +197,20 @@ class PSDPage(QWidget):
 
         root.addWidget(self.combo_gb)
 
-        # ----- Group 3: State Selection -----
-        self.gb_states = QGroupBox("States to Compute")
-        self.gb_states.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        states_v = QVBoxLayout(self.gb_states)
-        states_hint = QLabel(
-            "Select one or more state groups. A separate PSD is computed for each "
-            "checked group; lumped groups (Sleep, All) combine their underlying "
-            "epochs into a single averaged PSD."
+        # ----- Group 3: Mask params (shared widget) -----
+        # show_drink_mask=False because PSD initial compute never applies
+        # drink masks — those are added later by the Drink Mask page.
+        self.mask_widget = MaskParamsWidget(
+            project_root=self.project_root,
+            swd_available=self._swd_available,
+            show_drink_mask=False,
         )
-        states_hint.setWordWrap(True)
-        states_hint.setStyleSheet("color: #555; font-size: 11px;")
-        states_v.addWidget(states_hint)
+        root.addWidget(self.mask_widget)
 
-        self._state_boxes: dict[str, QCheckBox] = {}
-        states_grid = QGridLayout()
-        states_grid.setContentsMargins(0, 4, 0, 0)
-        states_grid.setHorizontalSpacing(12)
-        states_grid.setVerticalSpacing(4)
-        for idx, key in enumerate(CANONICAL_ORDER):
-            cb = QCheckBox(PRESET_DISPLAY[key])
-            cb.setChecked(key in DEFAULT_STATES)
-            cb.setToolTip(PRESET_DESCRIPTIONS[key])
-            # Discard the toggled-bool — _validate signature accepts an
-            # optional manifest, which the bool would otherwise bind to.
-            cb.toggled.connect(lambda _checked: self._validate())
-            cb.toggled.connect(self._refresh_state_overlap_hint)
-            self._state_boxes[key] = cb
-            r, c = divmod(idx, 3)
-            states_grid.addWidget(cb, r, c)
-        states_v.addLayout(states_grid)
-
-        self._state_overlap_lbl = QLabel()
-        self._state_overlap_lbl.setWordWrap(True)
-        self._state_overlap_lbl.setStyleSheet(
-            "color: #8a5a00; background: #fff6e0; border: 1px solid #e5c07b;"
-            " border-radius: 3px; padding: 4px 6px; font-size: 11px;"
-        )
-        self._state_overlap_lbl.setVisible(False)
-        states_v.addWidget(self._state_overlap_lbl)
-        self._refresh_state_overlap_hint()
-
-        root.addWidget(self.gb_states)
-
-        # ----- Masking & Filtering summary bar -----
-        masking_bar = QFrame()
-        masking_bar.setFrameShape(QFrame.Shape.StyledPanel)
-        masking_bar.setStyleSheet(
-            "QFrame { background: #f7f7f7; border: 1px solid #d0d0d0; border-radius: 3px; }"
-        )
-        masking_bar.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        bar_layout = QHBoxLayout(masking_bar)
-        bar_layout.setContentsMargins(10, 6, 6, 6)
-
-        lbl_masking_hdr = QLabel("Masking & Filtering:")
-        lbl_masking_hdr.setStyleSheet("font-size: 11px; color: #444;")
-        bar_layout.addWidget(lbl_masking_hdr)
-
-        self._masking_summary_lbl = QLabel()
-        self._masking_summary_lbl.setStyleSheet("font-size: 11px;")
-        bar_layout.addWidget(self._masking_summary_lbl, 1)
-
-        self._btn_configure_masking = QPushButton("Configure…")
-        self._btn_configure_masking.setFixedWidth(90)
-        bar_layout.addWidget(self._btn_configure_masking)
-
-        root.addWidget(masking_bar)
-
-        # ----- Collapsible: Advanced PSD Settings -----
-        self._btn_adv = QToolButton()
-        self._btn_adv.setText("Advanced PSD Settings")
-        self._btn_adv.setCheckable(True)
-        self._btn_adv.setChecked(False)
-        self._btn_adv.setArrowType(Qt.ArrowType.RightArrow)
-        self._btn_adv.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        self._btn_adv.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self._btn_adv.setStyleSheet(
-            "QToolButton { border: 1px solid #ccc; border-radius: 3px;"
-            " padding: 3px 6px; background: #f5f5f5; color: #444; font-size: 11px; }"
-            "QToolButton:checked { background: #eaeaea; }"
-            "QToolButton:hover { background: #ebebeb; }"
-        )
-        root.addWidget(self._btn_adv)
-
-        self._adv_container = QWidget()
-        adv_v = QVBoxLayout(self._adv_container)
-        adv_v.setContentsMargins(0, 0, 0, 0)
-        adv_v.setSpacing(4)
-        self._adv_container.setVisible(False)
-
-        # ----- Group 4: PSD Settings -----
-        self.gb_psd = QGroupBox("PSD Settings")
-        self.gb_psd.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        psd_v = QVBoxLayout(self.gb_psd)
+        # ----- Group 4: PSD Output Settings (channels + sampling freq) -----
+        self.psd_settings_gb = QGroupBox("PSD Output Settings")
+        self.psd_settings_gb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        psd_v = QVBoxLayout(self.psd_settings_gb)
 
         ch_hdr = QHBoxLayout()
         ch_hdr.addWidget(QLabel("Channels:"))
@@ -881,22 +220,20 @@ class PSDPage(QWidget):
         ch_hdr.addWidget(self.chk_all)
         psd_v.addLayout(ch_hdr)
 
-        self._channels_container = QWidget()
-        self._channels_grid = QGridLayout(self._channels_container)
-        self._channels_grid.setContentsMargins(0, 0, 0, 0)
-        self._channels_grid.setHorizontalSpacing(12)
-        self._channels_grid.setVerticalSpacing(4)
-        psd_v.addWidget(self._channels_container)
+        channels_grid = QGridLayout()
+        channels_grid.setContentsMargins(0, 0, 0, 0)
+        channels_grid.setHorizontalSpacing(12)
+        channels_grid.setVerticalSpacing(4)
+        psd_v.addLayout(channels_grid)
 
-        self._channel_boxes = []
-        cols = 4
+        self._channel_boxes: list[QCheckBox] = []
         for i, label in enumerate(CH_LABELS):
             cb = QCheckBox(label)
             cb.setChecked(True)
             cb.toggled.connect(lambda _checked: self._validate())
             self._channel_boxes.append(cb)
-            r, c = divmod(i, cols)
-            self._channels_grid.addWidget(cb, r, c)
+            r, c = divmod(i, 4)
+            channels_grid.addWidget(cb, r, c)
 
         fs_form = QFormLayout()
         fs_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
@@ -907,55 +244,7 @@ class PSDPage(QWidget):
         fs_form.addRow("Sampling freq:", self.spin_fs)
         psd_v.addLayout(fs_form)
 
-        adv_v.addWidget(self.gb_psd)
-
-        # ----- Group 5: Spindle Noise Mask -----
-        self.gb_spindle = QGroupBox("Spindle Noise Mask: Applied To All States")
-        self.gb_spindle.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        spindle_form = QFormLayout()
-        spindle_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-
-        self.dspin_noise = QDoubleSpinBox()
-        self.dspin_noise.setDecimals(2)
-        self.dspin_noise.setRange(0.0, 1.0)
-        self.dspin_noise.setValue(DEFAULT_NOISE_THRESH)
-
-        spindle_form.addRow("Spindle Noise Threshold:", self.dspin_noise)
-        self.gb_spindle.setLayout(spindle_form)
-        adv_v.addWidget(self.gb_spindle)
-
-        # ----- Group 6: SD Mask -----
-        self.gb_mask = QGroupBox("Standard Deviation Mask: Applied Only To Wake")
-        self.gb_mask.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        mask_form = QFormLayout()
-        mask_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-
-        self.spin_window = QSpinBox()
-        self.spin_window.setRange(1, 6000)
-        self.spin_window.setSuffix(" s")
-        self.spin_window.setValue(DEFAULT_WINSIZE)
-
-        self.dspin_radius = QDoubleSpinBox()
-        # 2 decimals + 0.05 step so saved values like 0.75 don't silently
-        # round to 0.8 on display/re-save (matches MaskParamsWidget).
-        self.dspin_radius.setDecimals(2)
-        self.dspin_radius.setSingleStep(0.05)
-        self.dspin_radius.setRange(0.0, 60.0)
-        self.dspin_radius.setSuffix(" s")
-        self.dspin_radius.setValue(DEFAULT_RADIUS)
-
-        self.dspin_z = QDoubleSpinBox()
-        self.dspin_z.setDecimals(2)
-        self.dspin_z.setRange(1.0, 20.0)
-        self.dspin_z.setSuffix(" σ")
-        self.dspin_z.setValue(DEFAULT_NSTD)
-
-        mask_form.addRow("Window:", self.spin_window)
-        mask_form.addRow("Radius:", self.dspin_radius)
-        mask_form.addRow("Z-threshold:", self.dspin_z)
-        self.gb_mask.setLayout(mask_form)
-        adv_v.addWidget(self.gb_mask)
-        root.addWidget(self._adv_container)
+        root.addWidget(self.psd_settings_gb)
 
         # ----- Main Action Button -----
         btn_row2 = QHBoxLayout()
@@ -1001,35 +290,25 @@ class PSDPage(QWidget):
         # Styling
         self.folder_gb.setObjectName("folderBox")
         self.combo_gb.setObjectName("comboBox")
-        self.gb_states.setObjectName("statesBox")
-        self.gb_psd.setObjectName("psdBox")
-        self.gb_spindle.setObjectName("spindleBox")
-        self.gb_mask.setObjectName("maskBox")
+        self.psd_settings_gb.setObjectName("psdBox")
         self.setStyleSheet("""
-        QGroupBox#psdBox, QGroupBox#spindleBox, QGroupBox#maskBox,
-        QGroupBox#folderBox, QGroupBox#comboBox, QGroupBox#statesBox {
+        QGroupBox#folderBox, QGroupBox#comboBox, QGroupBox#psdBox {
             font: 550;
         }
-        QGroupBox#psdBox *, QGroupBox#spindleBox *, QGroupBox#maskBox *,
-        QGroupBox#folderBox *, QGroupBox#comboBox *, QGroupBox#statesBox * {
+        QGroupBox#folderBox *, QGroupBox#comboBox *, QGroupBox#psdBox * {
             font: 400;
         }
         """)
 
-    # ------------- Wiring / Signals -------------
-
-    def _wire(self):
+    def _wire(self) -> None:
         self.chk_all.toggled.connect(self._toggle_all_channels)
         self.btn_standard.clicked.connect(self._choose_standard_folder)
         self.btn_refresh_table.clicked.connect(self._refresh_combo_table)
         self.btn_run_pipeline.clicked.connect(self._run_pipeline_clicked)
-        self._btn_adv.clicked.connect(self._toggle_advanced)
-        self._btn_configure_masking.clicked.connect(self._open_masking_dialog)
         self._run_name_edit.textChanged.connect(self._on_run_name_changed)
-
-    def _toggle_advanced(self, checked: bool):
-        self._adv_container.setVisible(checked)
-        self._btn_adv.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
+        # Re-validate when any mask-widget knob changes (states, ann_dir,
+        # ann_keywords, etc. all affect the gate / summary).
+        self.mask_widget.changed.connect(self._validate)
 
     # ------------- Path / table refresh -------------
 
@@ -1062,7 +341,7 @@ class PSDPage(QWidget):
         else:
             self._run_name_hint.setText("")
 
-    def _refresh_standard_folder(self):
+    def _refresh_standard_folder(self) -> None:
         cand_std = self.project_root / "standard"
         if cand_std.exists() and cand_std.is_dir():
             self.standard_folder = cand_std
@@ -1075,82 +354,25 @@ class PSDPage(QWidget):
             )
         self.target_name_edit.setText(str(self.project_root / "psd" / self._run_name()))
 
-    def _refresh_swd_status(self):
+    def _refresh_swd_status(self) -> None:
+        """Update widget's SWD-available state from the project's swd/ dir."""
         swd_dir = self.project_root / "swd"
         manifest: Manifest | None = None
-        if not swd_dir.is_dir():
-            self._swd_available = False
-            self._swd_status_text = "swd/ not found in project root"
-        else:
+        if swd_dir.is_dir():
             mat_count = sum(1 for _ in swd_dir.glob("*.mat"))
-            if mat_count == 0:
-                self._swd_available = False
-                self._swd_status_text = "swd/ found — no .mat files"
-            else:
+            self._swd_available = mat_count > 0
+            if mat_count > 0:
                 manifest = Manifest.load(self.project_root)
-                n_animals = sum(1 for _ in manifest)
-                if n_animals > 0 and mat_count != n_animals:
-                    self._swd_status_text = (
-                        f"⚠ {mat_count} .mat {'file' if mat_count == 1 else 'files'} in swd/ "
-                        f"(expected {n_animals})"
-                    )
-                else:
-                    self._swd_status_text = (
-                        f"✓ {mat_count} .mat {'file' if mat_count == 1 else 'files'} in swd/"
-                    )
-                self._swd_available = True
-        # If SWD mask was selected but is no longer available, fall back to none.
-        # Surface this in the log so the user notices their saved choice has
-        # been overridden rather than silently dropping their masking intent.
-        if not self._swd_available and self._masking_params.get("swd_mode") == "mask_out":
-            self._masking_params["swd_mode"] = "none"
-            self._log(
-                "⚠ SWD masking was enabled in saved params but swd/ is unavailable "
-                f"({self._swd_status_text}) — SWD mask has been turned off."
-            )
-            self._update_masking_summary()
+        else:
+            self._swd_available = False
+        # The widget's own ``_refresh_swd_status`` shows the live count text
+        # in the SWD section; here we only need to update the
+        # ``swd_available`` flag controlling the radio's enabled state.
+        self.mask_widget.set_swd_available(self._swd_available)
         self._validate(manifest)
 
-    def _open_masking_dialog(self):
-        dlg = MaskingSettingsDialog(
-            self,
-            swd_available=self._swd_available,
-            swd_status_text=self._swd_status_text,
-            project_root=self.project_root,
-        )
-        dlg.load_params(self._masking_params)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._masking_params = dlg.get_params()
-            self._update_masking_summary()
-            self._validate()
-
-    def _update_masking_summary(self):
-        p = self._masking_params
-        parts = []
-
-        if p.get("swd_mode") == "mask_out":
-            parts.append('<span style="color:#1a6b1a">SWD: masked ✓</span>')
-        else:
-            parts.append('<span style="color:#888">SWD: off</span>')
-
-        if p.get("ann_enabled"):
-            kw = p.get("ann_keywords", "")
-            short = (kw[:14] + "…") if len(kw) > 14 else kw
-            parts.append(f'<span style="color:#1a6b1a">Annotation: &quot;{short}&quot; ✓</span>')
-        else:
-            parts.append('<span style="color:#888">Annotation: off</span>')
-
-        if p.get("hw_enabled"):
-            windows = p.get("hour_windows") or []
-            wins_str = ", ".join(f"{int(w[0])}–{int(w[1])}h" for w in windows) or "?"
-            parts.append(f'<span style="color:#1a5c8a">Hours: {wins_str} ✓</span>')
-        else:
-            parts.append('<span style="color:#888">Hours: off</span>')
-
-        self._masking_summary_lbl.setText("  ·  ".join(parts))
-
-    def _load_saved_params(self):
-        # Load from most recently modified run dir, falling back to "default"
+    def _load_saved_params(self) -> None:
+        """Load the most recently modified saved run into UI state."""
         runs = psd_params.list_runs(self.project_root)
         run_name = "default"
         if runs:
@@ -1161,16 +383,9 @@ class PSDPage(QWidget):
             return
         self._run_name_edit.setText(run_name)
         self._refresh_run_name_hint()
+        # PSD-only knobs (channels + fs) stay on the page.
         if "fs" in params:
             self.spin_fs.setValue(params["fs"])
-        if "winsize" in params:
-            self.spin_window.setValue(params["winsize"])
-        if "radius" in params:
-            self.dspin_radius.setValue(params["radius"])
-        if "nstd" in params:
-            self.dspin_z.setValue(params["nstd"])
-        if "noise_thresh" in params:
-            self.dspin_noise.setValue(params["noise_thresh"])
         if "channels" in params:
             for i, cb in enumerate(self._channel_boxes):
                 cb.setChecked(i in params["channels"])
@@ -1178,30 +393,10 @@ class PSDPage(QWidget):
             self.chk_all.blockSignals(True)
             self.chk_all.setChecked(all_checked)
             self.chk_all.blockSignals(False)
-        saved_states = params.get("states")
-        if saved_states:
-            valid = {k for k in saved_states if k in STATE_PRESETS}
-            for key, cb in self._state_boxes.items():
-                cb.blockSignals(True)
-                cb.setChecked(key in valid)
-                cb.blockSignals(False)
-            self._refresh_state_overlap_hint()
-        self._masking_params = {
-            "swd_mode": params.get("swd_mode", "none"),
-            "ann_enabled": bool(params.get("ann_enabled", False)),
-            "ann_dir": Path(params["ann_dir"]) if params.get("ann_dir") else None,
-            "ann_keywords": params.get("ann_keywords", ""),
-            "ann_match_mode": params.get("ann_match_mode", "contains"),
-            "ann_pad_before": params.get("ann_pad_before", 0.0),
-            "ann_pad_after": params.get("ann_pad_after", 0.0),
-            "hw_enabled": bool(params.get("hw_enabled", False)),
-            "hour_windows": params.get("hour_windows"),
-            "selected_days": params.get("selected_days"),
-        }
-        self._update_masking_summary()
+        # Everything else (states + mask params) lives in the widget.
+        self.mask_widget.from_params(params)
 
-    def _refresh_combo_table(self):
-
+    def _refresh_combo_table(self) -> None:
         spindle_root = self.project_root / "spindle_outputs"
         psd_dir = self.project_root / "psd"
         manifest = Manifest.load(self.project_root)
@@ -1227,7 +422,6 @@ class PSDPage(QWidget):
 
                 row = self.combo_table.rowCount()
                 self.combo_table.insertRow(row)
-
                 self.combo_table.setItem(row, 0, QTableWidgetItem(combo))
                 self.combo_table.setItem(row, 1, QTableWidgetItem(str(csv_count)))
 
@@ -1257,7 +451,7 @@ class PSDPage(QWidget):
 
     # ------------- Actions -------------
 
-    def _run_pipeline_clicked(self):
+    def _run_pipeline_clicked(self) -> None:
         if self.standard_folder is None or not self.standard_folder.exists():
             QMessageBox.critical(
                 self,
@@ -1275,7 +469,6 @@ class PSDPage(QWidget):
             if spindle_root.is_dir()
             else []
         )
-
         if not combos:
             QMessageBox.warning(
                 self, "No Combos Found", "No spindle output combos with CSVs found."
@@ -1299,9 +492,15 @@ class PSDPage(QWidget):
                     f" — {'this animal' if len(missing) == 1 else 'these animals'} will be skipped"
                 )
 
+        # Pull all mask + filter params from the widget; channels + fs stay
+        # on the page. The widget includes a few keys that the underlying
+        # estimator doesn't accept (e.g. use_swd_mask, use_drink_mask) —
+        # those are stripped by ``_UI_ONLY_KWARGS`` in ``psd_compute``.
+        widget_params = self.mask_widget.to_params()
+
         # Pre-flight: SWD mask — all ok animals must have a .mat file
         swd_dir: Path | None = None
-        if self._masking_params.get("swd_mode") == "mask_out":
+        if widget_params.get("use_swd_mask"):
             swd_dir = self.project_root / "swd"
             swd_animal_ids = {parse_animal_id(p) for p in swd_dir.glob("*.mat")}
             all_ok_animals = {
@@ -1315,7 +514,7 @@ class PSDPage(QWidget):
                     self,
                     "Missing SWD Files",
                     "The following animals have no SWD .mat file in swd/:\n\n"
-                    + "\n".join(f"  \u2022 {a}" for a in missing_swd)
+                    + "\n".join(f"  • {a}" for a in missing_swd)
                     + "\n\nProvide SWD files for all animals before running with SWD masking,"
                     " or switch to 'No SWD mask'.",
                 )
@@ -1347,39 +546,34 @@ class PSDPage(QWidget):
 
         psd_run_dir = self.project_root / "psd" / run_name
         psd_run_dir.mkdir(parents=True, exist_ok=True)
-
         pairs: list[tuple[Path, Path]] = [
             (spindle_root / combo, psd_run_dir / f"psds_{combo}.pkl") for combo in combos
         ]
 
+        # Compose params for the worker: widget params + page-owned
+        # channels + fs.
         params = {
+            **widget_params,
             "fs": int(self.spin_fs.value()),
             "channels": self.selected_channels(),
-            "winsize": int(self.spin_window.value()),
-            "radius": float(self.dspin_radius.value()),
-            "nstd": float(self.dspin_z.value()),
-            "noise_thresh": float(self.dspin_noise.value()),
-            "states": self._selected_states(),
         }
 
-        mp = self._masking_params
-        ann_params = None
-        if mp.get("ann_enabled") and mp.get("ann_dir") is not None:
-            ann_dir = mp["ann_dir"]
+        # Build the separate ann_params dict consumed by batch_estimate.
+        # The widget's flat ann_* keys map to the dict shape estimator
+        # expects (keywords list, pad_*_sec).
+        ann_params: dict | None = None
+        if widget_params.get("ann_enabled") and widget_params.get("ann_dir"):
             ann_params = {
-                "ann_dir": ann_dir,
-                "keywords": [k.strip() for k in mp.get("ann_keywords", "").split(",") if k.strip()],
-                "match_mode": mp.get("ann_match_mode", "contains"),
-                "pad_before_sec": mp.get("ann_pad_before", 0.0),
-                "pad_after_sec": mp.get("ann_pad_after", 0.0),
+                "ann_dir": Path(widget_params["ann_dir"]),
+                "keywords": [
+                    k.strip()
+                    for k in (widget_params.get("ann_keywords") or "").split(",")
+                    if k.strip()
+                ],
+                "match_mode": widget_params.get("ann_match_mode", "contains"),
+                "pad_before_sec": float(widget_params.get("ann_pad_before", 0.0)),
+                "pad_after_sec": float(widget_params.get("ann_pad_after", 0.0)),
             }
-
-        if mp.get("hw_enabled"):
-            params["hour_windows"] = mp.get("hour_windows")
-            params["selected_days"] = mp.get("selected_days")
-            params["hw_enabled"] = True
-        else:
-            params["hw_enabled"] = False
 
         # Clear stale PSD review flags for this run so the visualizer doesn't
         # show old decisions against freshly computed data. Reuse the manifest
@@ -1415,7 +609,7 @@ class PSDPage(QWidget):
             on_error=self._on_psd_error,
         )
 
-    def _build_final_pkl(self):
+    def _build_final_pkl(self) -> None:
         try:
             run_name = self._run_name()
             manifest = Manifest.load(self.project_root)
@@ -1433,7 +627,7 @@ class PSDPage(QWidget):
             self._hint_btn_viz.setVisible(True)
             self._hint_frame.setVisible(True)
             self._refresh_combo_table()
-        except Exception as e:
+        except (OSError, ValueError, RuntimeError) as e:
             self._log(f"ERROR building final PKL: {e}")
             QMessageBox.critical(self, "Build Final PKL Error", str(e))
 
@@ -1443,34 +637,13 @@ class PSDPage(QWidget):
         """Return indices of checked channel boxes (in CH_LABELS order)."""
         return [i for i, cb in enumerate(self._channel_boxes) if cb.isChecked()]
 
-    def _selected_states(self) -> list[str]:
-        """Return checked state preset keys in canonical order."""
-        return [k for k in CANONICAL_ORDER if self._state_boxes[k].isChecked()]
-
-    def _refresh_state_overlap_hint(self) -> None:
-        overlaps = overlap_groups(self._selected_states())
-        if not overlaps:
-            self._state_overlap_lbl.setVisible(False)
-            return
-        parts = []
-        for code, groups in overlaps.items():
-            name = RAW_CODE_DISPLAY.get(code, code)
-            group_names = " + ".join(PRESET_DISPLAY[g] for g in groups)
-            parts.append(f"{name} epochs feed into {group_names}")
-        self._state_overlap_lbl.setText(
-            "Overlap: "
-            + "; ".join(parts)
-            + ". Same epochs, different averages — intentional if that's what you want."
-        )
-        self._state_overlap_lbl.setVisible(True)
-
     # ---------- Internals ----------
 
-    def _toggle_all_channels(self, checked):
+    def _toggle_all_channels(self, checked: bool) -> None:
         for cb in self._channel_boxes:
             cb.setChecked(checked)
 
-    def _choose_standard_folder(self):
+    def _choose_standard_folder(self) -> None:
         folder = QFileDialog.getExistingDirectory(
             self, "Select Standard EDF Folder", str(self.project_root)
         )
@@ -1496,7 +669,7 @@ class PSDPage(QWidget):
 
         if manifest is None:
             manifest = Manifest.load(self.project_root)
-        n_animals = sum(1 for _ in manifest)
+        n_animals = len(manifest)
         n_ready = len(manifest.ready_for_psd())
         all_ready = n_animals > 0 and n_ready == n_animals
 
@@ -1505,18 +678,17 @@ class PSDPage(QWidget):
             sd.is_dir() and any(sd.glob("*.csv")) for sd in spindle_root.iterdir()
         )
 
-        # Annotation mask gate
+        # Annotation mask gate — same shape as the legacy dialog: if
+        # annotation masking is enabled, dir + keywords must be valid.
+        widget_params = self.mask_widget.to_params()
         ann_ok = True
-        if self._masking_params.get("ann_enabled"):
-            ann_dir = self._masking_params.get("ann_dir")
-            if (
-                ann_dir is None
-                or not Path(ann_dir).is_dir()
-                or not self._masking_params.get("ann_keywords", "").strip()
-            ):
+        if widget_params.get("ann_enabled"):
+            ann_dir = widget_params.get("ann_dir")
+            ann_keywords = (widget_params.get("ann_keywords") or "").strip()
+            if ann_dir is None or not Path(ann_dir).is_dir() or not ann_keywords:
                 ann_ok = False
 
-        states_ok = bool(self._selected_states())
+        states_ok = bool(widget_params.get("states"))
         channels_ok = bool(self.selected_channels())
 
         self.btn_run_pipeline.setEnabled(
@@ -1547,7 +719,7 @@ class PSDPage(QWidget):
             )
             self._summary_label.setText("")
         elif not ann_ok:
-            ann_dir = self._masking_params.get("ann_dir")
+            ann_dir = widget_params.get("ann_dir")
             if ann_dir is None or not Path(ann_dir).is_dir():
                 self._gate_label.setText(
                     "Annotation mask enabled — select a valid annotation directory"
@@ -1574,14 +746,14 @@ class PSDPage(QWidget):
             ]
             self._summary_label.setText(", ".join(parts) + " → psds_channel_merged.pkl")
 
-    def _on_psd_done(self):
+    def _on_psd_done(self) -> None:
         self._computing = False
         self._log("PSD computation finished.")
         self._refresh_combo_table()
         self._log("Building channel-merged PKL…")
         self._build_final_pkl()
 
-    def _on_psd_error(self, msg: str):
+    def _on_psd_error(self, msg: str) -> None:
         self._computing = False
         self._log(f"ERROR in batch_estimate: {msg}")
         QMessageBox.critical(self, "PSD Error", msg)
@@ -1630,7 +802,6 @@ class BatchEstimateWorker(QObject):
         self.ann_params = ann_params
 
     def run(self):
-
         try:
             for spindle_dir, savepath in self.combo_pairs:
                 self.progress.emit(f"Computing PSDs for combo: {spindle_dir.name}…")
