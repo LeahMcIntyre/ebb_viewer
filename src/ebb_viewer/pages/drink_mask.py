@@ -1,3 +1,18 @@
+"""Drink Mask Rerun page — re-compute PSDs for animals flagged needs_drink_mask.
+
+Workflow:
+- During PSD Visualizer Pass 1, the user flags animals with visible drinking
+  sidebands as ``needs_drink_mask``.
+- The user drops per-animal ``<animal_id>.npy`` mask files in
+  ``project_root/drink_masks/`` and (optionally) a single CSV with
+  ``Animal,Offset`` columns to align video timestamps to the EEG start.
+- This page validates inputs, then runs ``rerun_with_drink_masks`` off-thread
+  to regenerate ``psds_drink.pkl`` and ``psds_channel_merged_drink.pkl`` for
+  the selected PSD run. On success it flags each animal
+  ``drink_mask_applied`` in the manifest so Pass 2 review can pick them up.
+"""
+
+import csv as _csv
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -22,10 +37,18 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ebb.process.psd_compute import rerun_with_drink_masks
+from ebb.process.state_presets import PRESET_DISPLAY
+from ebb_viewer.pipeline import psd_params
+from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
-# Keys stored in psd_params.json that are UI/config only and must not be
-# forwarded to computation functions (rerun_with_drink_masks, estimate_psd).
+# Keys present in psd_params.json that are UI/config only and must be stripped
+# before forwarding to rerun_with_drink_masks / estimate_psd. List must mirror
+# what psds.py writes beyond the raw estimate_psd kwargs. New mask-widget keys
+# (drink_pad, use_drink_mask, use_swd_mask, swd_pad, etc.) are NOT written by
+# psds.py and therefore don't appear in psd_params.json — no need to strip them
+# until/unless psds.py is migrated to the shared MaskParamsWidget.
 _UI_ONLY_PARAM_KEYS = frozenset(
     {
         "swd_mode",
@@ -42,14 +65,20 @@ CH_LABELS = ["LFC", "RSC", "LSC"]
 
 
 class DrinkMaskPage(QWidget):
+    """Sidebar page #8 — drives the drink-mask rerun for a selected PSD run."""
+
     manifest_changed = pyqtSignal()
     navigate_to = pyqtSignal(str)
+
+    # Highlight color for rows whose .npy is missing.
+    _AMBER = QColor("#fff3cd")
 
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
         self.project_root = Path(project_root)
         self._computing = False
-        self._pending_animal_combos: dict = {}
+        self._pending_animal_combos: dict[str, str] = {}
+        self._pending_run_name: str = ""
 
         self._build_ui()
         self._wire()
@@ -113,11 +142,10 @@ class DrinkMaskPage(QWidget):
         offset_row_lbl.setToolTip(offset_tooltip)
         paths_form.addRow(offset_row_lbl, self.lbl_offset_csv)
 
-        self._lbl_offset_hint = QLabel(
-            "Place a CSV with 'Animal' and 'Offset' (seconds) columns in drink_masks/ to align video timestamps."
-        )
+        # Text + style filled in by _refresh_paths; start empty.
+        self._lbl_offset_hint = QLabel("")
         self._lbl_offset_hint.setWordWrap(True)
-        self._lbl_offset_hint.setStyleSheet("color: #666; font-size: 11px; padding-left: 2px;")
+        self._lbl_offset_hint.setStyleSheet("font-size: 11px; padding-left: 2px;")
 
         paths_form.addRow("", self._lbl_offset_hint)
         root.addWidget(self.gb_paths)
@@ -157,7 +185,7 @@ class DrinkMaskPage(QWidget):
         animals_v.addWidget(self._lbl_status)
 
         self._table = QTableWidget(0, 3)
-        self._table.setHorizontalHeaderLabels(["Animal (Combo)", "PSD Status", "Mask File"])
+        self._table.setHorizontalHeaderLabels(["Animal (Combo)", "PSD Status", "Mask"])
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self._table.setColumnWidth(1, 130)
@@ -194,12 +222,10 @@ class DrinkMaskPage(QWidget):
         )
         hint_layout = QHBoxLayout(self._hint_frame)
         hint_layout.setContentsMargins(10, 6, 10, 6)
-        hint_lbl = QLabel(
-            "✓ Drink masks applied. Review the updated PSDs in PSD Visualizer "
-            "(plot 'psds_channel_merged_drink.pkl')."
-        )
-        hint_lbl.setWordWrap(True)
-        hint_layout.addWidget(hint_lbl, 1)
+        # Text set dynamically in _on_done to include the run name + full path.
+        self._hint_lbl = QLabel("")
+        self._hint_lbl.setWordWrap(True)
+        hint_layout.addWidget(self._hint_lbl, 1)
         btn_go_psd = QPushButton("→ PSD Visualizer")
         btn_go_psd.clicked.connect(lambda: self.navigate_to.emit("psd_review"))
         hint_layout.addWidget(btn_go_psd)
@@ -227,8 +253,6 @@ class DrinkMaskPage(QWidget):
         return self.cmb_run.currentText() or "default"
 
     def _refresh_run_selector(self):
-        from ebb_viewer.pipeline import psd_params
-
         current = self.cmb_run.currentText()
         runs = psd_params.list_runs(self.project_root)
         self.cmb_run.blockSignals(True)
@@ -256,9 +280,33 @@ class DrinkMaskPage(QWidget):
         return self.project_root / "drink_masks"
 
     def _detect_offset_csv(self) -> Path | None:
+        """Return the unique offset CSV in drink_masks/, or None if 0 or >1 exist.
+
+        Multiple CSVs are an ambiguity error — caller surfaces a message
+        instructing the user to keep only one. This mirrors the policy
+        enforced by the Export Masks pipeline's resolve_paths.
+        """
         d = self._drink_masks_dir()
         csvs = sorted(d.glob("*.csv")) if d.is_dir() else []
-        return csvs[0] if csvs else None
+        return csvs[0] if len(csvs) == 1 else None
+
+    def _validate_offset_csv(self, csv: Path) -> tuple[bool, str]:
+        """Inspect the CSV header. Return ``(is_valid, message)`` for display."""
+        try:
+            with csv.open(newline="") as fh:
+                header = next(_csv.reader(fh))
+        except Exception:
+            return False, "Could not read CSV headers."
+        missing = {"Animal", "Offset"} - {c.strip() for c in header}
+        if missing:
+            return False, (
+                f"⚠ CSV is missing required column(s): {', '.join(sorted(missing))}. "
+                "Expected: 'Animal' (ID before first '_') and 'Offset' (seconds video starts after EEG)."
+            )
+        return True, (
+            "✓ CSV looks valid. 'Animal' = ID before first '_'; "
+            "'Offset' = seconds the video starts after the EEG recording begins."
+        )
 
     def _refresh_paths(self):
         d = self._drink_masks_dir()
@@ -275,48 +323,38 @@ class DrinkMaskPage(QWidget):
             self._lbl_mask_count.setText("Folder does not exist")
             self._lbl_mask_count.setStyleSheet("color: gray;")
 
-        csv = self._detect_offset_csv()
-        if csv is None:
+        csvs = sorted(d.glob("*.csv")) if d.is_dir() else []
+        if len(csvs) > 1:
+            self.lbl_offset_csv.setText(f"{len(csvs)} CSVs found — ambiguous")
+            self._lbl_offset_hint.setText(
+                f"⚠ Multiple CSV files in drink_masks/: {', '.join(c.name for c in csvs)}. "
+                "Keep only one so the page knows which offsets to use."
+            )
+            self._lbl_offset_hint.setStyleSheet(
+                "color: #c0392b; font-size: 11px; padding-left: 2px;"
+            )
+            return
+        if not csvs:
             self.lbl_offset_csv.setText("None")
             self._lbl_offset_hint.setText(
-                "Place a CSV with 'Animal' and 'Offset' (seconds) columns in drink_masks/ to align video timestamps."
+                "Place a CSV with 'Animal' and 'Offset' (seconds) columns in "
+                "drink_masks/ to align video timestamps."
             )
-            self._lbl_offset_hint.setStyleSheet("color: #666; font-size: 11px; padding-left: 2px;")
-        else:
-            self.lbl_offset_csv.setText(csv.name)
-            try:
-                import csv as _csv
+            self._lbl_offset_hint.setStyleSheet(
+                "color: #666; font-size: 11px; padding-left: 2px;"
+            )
+            return
 
-                with csv.open(newline="") as fh:
-                    header = next(_csv.reader(fh))
-                cols = {c.strip() for c in header}
-                missing = {"Animal", "Offset"} - cols
-                if missing:
-                    self._lbl_offset_hint.setText(
-                        f"⚠ CSV is missing required column(s): {', '.join(sorted(missing))}. "
-                        "Expected: 'Animal' (ID before first '_') and 'Offset' (seconds video starts after EEG)."
-                    )
-                    self._lbl_offset_hint.setStyleSheet(
-                        "color: #c0392b; font-size: 11px; padding-left: 2px;"
-                    )
-                else:
-                    self._lbl_offset_hint.setText(
-                        "✓ CSV looks valid. 'Animal' = ID before first '_'; "
-                        "'Offset' = seconds the video starts after the EEG recording begins."
-                    )
-                    self._lbl_offset_hint.setStyleSheet(
-                        "color: #1a5c1a; font-size: 11px; padding-left: 2px;"
-                    )
-            except Exception:
-                self._lbl_offset_hint.setText("Could not read CSV headers.")
-                self._lbl_offset_hint.setStyleSheet(
-                    "color: #c0392b; font-size: 11px; padding-left: 2px;"
-                )
+        csv_path = csvs[0]
+        self.lbl_offset_csv.setText(csv_path.name)
+        is_valid, msg = self._validate_offset_csv(csv_path)
+        self._lbl_offset_hint.setText(msg)
+        self._lbl_offset_hint.setStyleSheet(
+            ("color: #1a5c1a;" if is_valid else "color: #c0392b;")
+            + " font-size: 11px; padding-left: 2px;"
+        )
 
     def _refresh_params(self):
-        from ebb.process.state_presets import PRESET_DISPLAY
-        from ebb_viewer.pipeline import psd_params
-
         run_name = self._current_run_name()
         params = psd_params.load(self.project_root, run_name)
         if params is None:
@@ -352,8 +390,6 @@ class DrinkMaskPage(QWidget):
         self._lbl_states.setStyleSheet("color: #1a5c8a;")
 
     def _refresh_animals(self):
-        from ebb_viewer.pipeline.manifest import Manifest
-
         run_name = self._current_run_name()
         try:
             manifest = Manifest.load(self.project_root)
@@ -384,7 +420,6 @@ class DrinkMaskPage(QWidget):
         self._lbl_status.setText(f"{len(flagged)} animal(s) flagged — {', '.join(parts)}")
         self._lbl_status.setStyleSheet("color: #8a4400;" if n_missing else "color: #1a5c1a;")
 
-        _AMBER = QColor("#fff3cd")
         self._table.setRowCount(0)
         for entry, combo in flagged:
             is_ready = (entry.animal_id, combo) in ready_set
@@ -398,12 +433,10 @@ class DrinkMaskPage(QWidget):
             items[2].setForeground(QColor("#2a7a2a") if is_ready else QColor("#aa2222"))
             if not is_ready:
                 for item in items:
-                    item.setBackground(_AMBER)
+                    item.setBackground(self._AMBER)
             for col, item in enumerate(items):
                 self._table.setItem(row, col, item)
         self._table.setVisible(True)
-
-        from ebb_viewer.pipeline import psd_params
 
         has_params = psd_params.load(self.project_root, run_name) is not None
         self.btn_apply.setEnabled(n_ready > 0 and has_params and not self._computing)
@@ -417,9 +450,6 @@ class DrinkMaskPage(QWidget):
     # ------------- Apply action -------------
 
     def _apply_clicked(self):
-        from ebb_viewer.pipeline import psd_params
-        from ebb_viewer.pipeline.manifest import Manifest
-
         run_name = self._current_run_name()
         params = psd_params.load(self.project_root, run_name)
         if params is None:
@@ -440,7 +470,17 @@ class DrinkMaskPage(QWidget):
         if not to_rerun:
             return
 
-        animal_combos = {entry.animal_id: combo for entry, combo in to_rerun}
+        # Build animal_combos defensively: the one-ok invariant means each
+        # animal_id should appear at most once across `to_rerun`, but a manifest
+        # bug could violate that and silently halve the work if we used a dict
+        # comprehension. Assert loudly instead.
+        animal_combos: dict[str, str] = {}
+        for entry, combo in to_rerun:
+            assert entry.animal_id not in animal_combos, (
+                f"Animal {entry.animal_id!r} appears twice in needs_drink_mask_rerun — "
+                "one-ok invariant violated"
+            )
+            animal_combos[entry.animal_id] = combo
         self._pending_animal_combos = animal_combos
         self._pending_run_name = run_name
 
@@ -486,9 +526,10 @@ class DrinkMaskPage(QWidget):
         )
 
     def _on_done(self):
+        # rerun_with_drink_masks is all-or-nothing: it raises on any per-animal
+        # failure and we'd be in _on_error instead. Reaching here means every
+        # animal in _pending_animal_combos completed successfully.
         self._computing = False
-        from ebb_viewer.pipeline.manifest import Manifest
-
         manifest = Manifest.load(self.project_root)
         run_name = self._pending_run_name
         failed = []
@@ -511,6 +552,10 @@ class DrinkMaskPage(QWidget):
             "Drink mask rerun complete. psds_drink.pkl and psds_channel_merged_drink.pkl updated."
         )
         self.manifest_changed.emit()
+        self._hint_lbl.setText(
+            f"✓ Drink masks applied for run '{run_name}'. Review the updated PSDs in "
+            f"PSD Visualizer (plot psd/{run_name}/psds_channel_merged_drink.pkl)."
+        )
         self._hint_frame.setVisible(True)
         self._refresh()
 
@@ -527,6 +572,8 @@ class DrinkMaskPage(QWidget):
 
 
 class DrinkMaskRerunWorker(QObject):
+    """Off-thread driver for `rerun_with_drink_masks`; emits progress/finished/error."""
+
     progress = pyqtSignal(str)
     finished = pyqtSignal()
     error = pyqtSignal(str)
@@ -541,8 +588,8 @@ class DrinkMaskRerunWorker(QObject):
         offset_path,
         params: dict,
         run_name: str = "default",
-        swd_dir: Path = None,
-        ann_params: dict = None,
+        swd_dir: Path | None = None,
+        ann_params: dict | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -558,8 +605,6 @@ class DrinkMaskRerunWorker(QObject):
         self.ann_params = ann_params
 
     def run(self):
-        from ebb.process.psd_compute import rerun_with_drink_masks
-
         try:
             rerun_with_drink_masks(
                 psd_dir=self.psd_dir,

@@ -1,3 +1,12 @@
+"""Finalize page — seal completed PSD runs into psds_final.pkl.
+
+One card per PSD run; each shows pending-review counts and the source pkl
+that will be used. The Finalize button is enabled only when zero animals
+are pending review and a merged source pkl exists. Settings… opens a
+read-only summary of the run's saved psd_params.json.
+"""
+
+import pickle
 from datetime import datetime
 from pathlib import Path
 
@@ -95,8 +104,6 @@ class _RunSettingsDialog(QDialog):
         drink_pkl = self._run_dir / "psds_drink.pkl"
         if drink_pkl.exists():
             try:
-                import pickle
-
                 with open(drink_pkl, "rb") as f:
                     drink_records = pickle.load(f)
                 animal_ids = sorted({parse_animal_id(r["path"]) for r in drink_records})
@@ -186,9 +193,7 @@ class FinalizePage(QWidget):
 
         self._no_runs_lbl = QLabel("No PSD runs found. Run 'Compute PSDs' first.")
         self._no_runs_lbl.setStyleSheet("color: gray; font-size: 12px;")
-        self._no_runs_lbl.setAlignment(
-            __import__("PyQt6.QtCore", fromlist=["Qt"]).Qt.AlignmentFlag.AlignCenter
-        )
+        self._no_runs_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._no_runs_lbl.setVisible(False)
         root.addWidget(self._no_runs_lbl)
 
@@ -244,11 +249,12 @@ class FinalizePage(QWidget):
         # --- Status rows ---
         psd_dir = self.project_root / "psd" / run_name
 
-        # Pending counts
-        pending = 0
-        pending_text = "—"
-        pending_style = "color: gray;"
-        if manifest is not None:
+        # Pending counts. `pending` is the gate for enabling the Finalize button.
+        if manifest is None:
+            pending = 0
+            pending_text = "—"
+            pending_style = "color: gray;"
+        else:
             try:
                 n_review = len(manifest.pending_psd_review(run_name))
                 n_drink = len(manifest.needs_drink_mask(run_name))
@@ -268,6 +274,7 @@ class FinalizePage(QWidget):
                     pending_text = "⚠ " + ", ".join(parts)
                     pending_style = "color: #8a4400;"
             except Exception:
+                pending = 0
                 pending_text = "Could not read manifest"
                 pending_style = "color: gray;"
 

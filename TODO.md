@@ -2,6 +2,56 @@
 
 ## P2 — Moderate Value, Moderate Effort
 
+### rerun: Consolidate multi-combo upload dialogs
+`RerunPage._offer_upload` shows one `_UploadDialog` per distinct rerun combo
+written (sequential, modal). With ~2 combos this is fine; for more it gets
+jarring. Consider replacing the per-combo dialog loop with a single dialog
+showing one row per combo (project + remote folder editable inline) and
+launching all uploads at once on confirmation.
+
+### home: Surface per-PSD-run granularity in the Pipeline Summary table
+Today the table's PSD File / PSD Status columns collapse across PSD
+runs (best-wins precedence: `drink_mask_applied > ok > needs_drink_mask`).
+With multiple named runs per project (e.g. `default` + `dark_phase`),
+the user can see the aggregate state but not which run is in which
+state, and can't act on a specific run from Home. PSD Compute, PSD
+Review (Visualizer), and Drink Mask pages each already have their own
+run-name selector — Home is the only aggregate-only surface.
+
+**Recommended approach:** add a run-name dropdown above the summary
+table. Default is "All runs (best)" (current behavior). Selecting a
+specific run filters PSD File / PSD Status cells to that run's state.
+Matches the rest of the UI and scales to N runs without row explosion.
+
+Alternatives considered: tooltip on PSD Status with per-run breakdown
+(zero new controls but hover-only / not discoverable); per-run sub-rows
+inside each cell (everything visible but row heights vary, harder to
+scan when N>2). Both viable, but the dropdown matches the codebase
+convention.
+
+### psd: Unify mask controls UI with Export Masks page
+The PSD page has two different config/expand patterns for masking knobs —
+a "Configure…" modal (SWD / annotation / hour windows) and an inline
+"Advanced PSD Settings" collapsible (SD mask + spindle noise). Things get
+lost between the two surfaces, and the Export Masks page already has a
+cleaner inline-collapsibles layout via `MaskParamsWidget`. Swap the
+modal's body for `MaskParamsWidget` (rendered inline rather than as a
+dialog) so both pages look and behave the same. This is the work tracked
+in Phase 5 as "psds.py Stage B" — porting the dialog's richer hour-window
+preview (per-window badges, total-hours estimate, day-availability check),
+SWD status text, and annotation file count into the widget is required
+before this swap.
+
+### preprocess: "Rescan" button + initial-state wording
+Today the EDF duration scan runs only on the first `showEvent`. If the user
+adds or removes EDFs in the project root after the page has been opened,
+the scan label is stale until the page is closed + reopened. Add an
+explicit "Rescan" button that re-runs `_scan_edfs()` and re-renders the
+trim-hint summary. Also: the placeholder text "Scanning…" is shown before
+`showEvent` fires (i.e. before the scan actually starts). Replace with
+something like "(EDF scan pending)" or leave the label empty until the
+first scan completes.
+
 ### home: Remove editable channel combo from pipeline summary table (if redundant)
 The rerun combo is already settable from the yellow card in Needs Attention. A second editable combo in the pipeline table is a duplicate code path with no extra clarity. Evaluate and remove if nothing is lost.
 

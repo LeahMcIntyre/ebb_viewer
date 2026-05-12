@@ -1,3 +1,18 @@
+"""Sleep QC visualizer page — review per-animal sleep metrics + spindle masks.
+
+Drives the post-spindle-upload review step: a 3×3 grid of plots (states ×
+metrics) for batch comparison, plus a "Spindle Mask" box-and-strip view
+for masking-fraction outlier detection. Group mode shows a page of
+animals for one combo; animal mode overlays all combos for a single
+animal. Review mode (entered from the reruns-ready badge) filters the
+animal dropdown to pending-rerun candidates and surfaces the
+accept/review decision panel.
+
+State of record: ``self._manifest`` (in-memory ``Manifest``, refreshed
+on showEvent / poll / decisions) plus ``self._data_cache`` keyed by combo
+(a triple of dataframes: bins, bins_offset, spindle_fractions).
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -23,16 +38,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
-from ebb_viewer.pipeline.theme import COMBO_PLOT_RGB, STATUS_COLOR_HEX
-
-_SENTINEL = object()
-
 from ebb.process.sleep_compute import (
     compute_sleep_bins_df,
     compute_sleep_bins_df_offset,
     compute_spindle_fractions,
 )
+from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
+from ebb_viewer.pipeline.theme import COMBO_PLOT_RGB, STATUS_COLOR_HEX
 
 
 class SleepQCGridPage(QWidget):
@@ -74,6 +86,10 @@ class SleepQCGridPage(QWidget):
 
     _COMBO_COLORS = COMBO_PLOT_RGB
 
+    # Sentinel for ``_refresh_frac_plot``'s optional-but-distinct-from-None
+    # ``current_animal`` arg: "read from combo box" vs "clear to None".
+    _DEFAULT_ANIMAL = object()
+
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
         self.project_root = Path(project_root)
@@ -87,17 +103,31 @@ class SleepQCGridPage(QWidget):
         self._nav_hint_dest: str = ""
         self._highlighted_animal: str | None = None
         self._show_ref_median: bool = False
+        self._pending_rerun_ids: set[str] = set()
 
         self._plots: dict[tuple[str, str], pg.PlotItem] = {}
 
-        self._manifest = Manifest.load(project_root)
+        self._refresh_manifest()
 
         self._build_ui()
         self._wire()
 
+    def _refresh_manifest(self) -> None:
+        """Reload the manifest from disk and cache the pending-rerun set.
+
+        ``_pending_rerun_ids`` is the hot lookup used by ``_has_pending_rerun``
+        (called per animal in the dropdown sync path); caching it once per
+        manifest load avoids one ``glob()`` call per dropdown entry per
+        navigation event.
+        """
+        self._manifest = Manifest.load(self.project_root)
+        self._pending_rerun_ids = {
+            entry.animal_id for entry, _ in self._manifest.pending_rerun_review()
+        }
+
     def _poll(self):
         """Lightweight background refresh: reload manifest and update the reruns badge."""
-        self._manifest = Manifest.load(self.project_root)
+        self._refresh_manifest()
         # In review mode the user is actively navigating between animals using the
         # cached combo data. Evicting mid-review would cause combos to disappear for
         # the next animal without being reloaded.  Skip eviction here; the cache is
@@ -113,7 +143,7 @@ class SleepQCGridPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._manifest = Manifest.load(self.project_root)
+        self._refresh_manifest()
         # Evict any cached combo that has a pending rerun — new files may have been
         # downloaded since the last time this combo was loaded.
         for _, combo in self._manifest.pending_rerun_review():
@@ -429,10 +459,10 @@ class SleepQCGridPage(QWidget):
                 self._lbl_animal.setText("Animal:")
             self._set_mode(self._mode)
 
-    def _refresh_frac_plot(self, current_animal: str | None = _SENTINEL) -> None:
+    def _refresh_frac_plot(self, current_animal: str | None = _DEFAULT_ANIMAL) -> None:
         combo = self.cmb_combo.currentText()
         df_frac = self._get_frac_df(combo)
-        if current_animal is _SENTINEL:
+        if current_animal is self._DEFAULT_ANIMAL:
             current_animal = self.cmb_animal.currentText() or None
         self._frac_widget.set_data(df_frac, title=combo, current_animal=current_animal)
 
@@ -458,47 +488,64 @@ class SleepQCGridPage(QWidget):
         self._flag_sleep_qc(mouse_id, "needs_review")
 
     def _on_review_mode_toggled(self, checked: bool) -> None:
-        self._review_mode = checked
-        self.btn_group.setEnabled(not checked)
         if checked:
-            self.setStyleSheet("#sleepQcPage { background: #f0f4ff; }")
-            self._lbl_animal.setText("Animal (review):")
-            self._lbl_filter.setVisible(True)
+            self._enter_review_mode()
         else:
-            self.setStyleSheet("")
-            self._lbl_animal.setText("Animal:")
-            self._lbl_filter.setVisible(False)
+            self._exit_review_mode()
+
+    def _enter_review_mode(self) -> None:
+        """Enter review mode if there are pending reruns; otherwise no-op.
+
+        Pre-check the pending-reruns count before mutating any UI state.
+        Pre-fix this method changed the background, labels, and filter
+        visibility, then discovered the dropdown was empty and rolled back
+        the boolean — leaving the page in a visually inconsistent half-
+        review state.
+        """
+        self._refresh_manifest()
+        if not self._pending_rerun_ids:
+            # Nothing to review; bounce the toggle without mutating UI.
+            self.btn_reruns_ready.blockSignals(True)
+            self.btn_reruns_ready.setChecked(False)
+            self.btn_reruns_ready.blockSignals(False)
+            QMessageBox.information(
+                self, "No Pending Reruns", "No animals have pending rerun decisions."
+            )
+            return
+
+        self._review_mode = True
+        self.btn_group.setEnabled(False)
+        self.setStyleSheet("#sleepQcPage { background: #f0f4ff; }")
+        self._lbl_animal.setText("Animal (review):")
+        self._lbl_filter.setVisible(True)
         self._update_reruns_badge()
-        if checked:
-            self._manifest = Manifest.load(self.project_root)
-            # Re-discover combo dirs and evict stale cache for pending rerun combos.
-            new_combos = self._discover_combos()
-            for _, combo in self._manifest.pending_rerun_review():
-                self._data_cache.pop(combo, None)
-            self._available_combos = new_combos
-            self._ensure_all_combos_loaded()
-            # Always show sleep data in review mode, not the spindle fraction plot.
-            self._set_spindle_mask_mode(False)
-            if self._mode != "animal":
-                self._set_mode("animal")
-            else:
-                self._refresh_animal_combo()
-                self._update_all_plots()
-            if self.cmb_animal.count() == 0:
-                QMessageBox.information(
-                    self, "No Pending Reruns", "No animals have pending rerun decisions."
-                )
-                self.btn_reruns_ready.blockSignals(True)
-                self.btn_reruns_ready.setChecked(False)
-                self.btn_reruns_ready.blockSignals(False)
-                self._review_mode = False
-                self.btn_group.setEnabled(True)
-                self._update_reruns_badge()
+
+        # Re-discover combo dirs and evict stale cache for pending rerun combos.
+        new_combos = self._discover_combos()
+        for _, combo in self._manifest.pending_rerun_review():
+            self._data_cache.pop(combo, None)
+        self._available_combos = new_combos
+        self._ensure_all_combos_loaded()
+        # Always show sleep data in review mode, not the spindle fraction plot.
+        self._set_spindle_mask_mode(False)
+        if self._mode != "animal":
+            self._set_mode("animal")
         else:
-            self._available_combos = self._discover_combos()
-            self._ensure_all_combos_loaded()
             self._refresh_animal_combo()
             self._update_all_plots()
+
+    def _exit_review_mode(self) -> None:
+        """Restore non-review UI and refresh the combo list."""
+        self._review_mode = False
+        self.btn_group.setEnabled(True)
+        self.setStyleSheet("")
+        self._lbl_animal.setText("Animal:")
+        self._lbl_filter.setVisible(False)
+        self._update_reruns_badge()
+        self._available_combos = self._discover_combos()
+        self._ensure_all_combos_loaded()
+        self._refresh_animal_combo()
+        self._update_all_plots()
 
     # ------------------------------------------------------------------
     # Combo discovery + loading
@@ -633,33 +680,36 @@ class SleepQCGridPage(QWidget):
             self.cmb_animal.setCurrentIndex(i + 1)
 
     def _has_pending_rerun(self, mid: str) -> bool:
-        """True if this animal has a rerun run with outputs on disk awaiting review."""
-        entry = self._manifest.get(mid)
-        if entry is None:
-            return False
-        return any(
-            run.source_combo is not None
-            and run.sleep_qc is None
-            and any(spindle_output_dir(combo, self.project_root).glob(f"{mid}_*.csv"))
-            for combo, run in entry.runs.items()
-        )
+        """True if this animal has a rerun run with outputs on disk awaiting review.
 
-    def _on_next_rerun(self) -> None:
-        """Step forward to the next animal with a pending rerun."""
+        Backed by the ``_pending_rerun_ids`` cache populated in
+        ``_refresh_manifest``; lookup is O(1) per call rather than O(combos)
+        filesystem probes.
+        """
+        return mid in self._pending_rerun_ids
+
+    def _jump_to_next_rerun_animal(self) -> bool:
+        """Move the dropdown to the next animal with a pending rerun.
+
+        Returns True if a jump happened; False if no later entry has a
+        pending rerun. The dropdown's ``currentIndexChanged`` signal does
+        the post-jump refresh via ``_on_animal_changed``.
+        """
         current = self.cmb_animal.currentIndex()
         for i in range(current + 1, self.cmb_animal.count()):
             if self._has_pending_rerun(self.cmb_animal.itemText(i)):
                 self.cmb_animal.setCurrentIndex(i)
-                return
+                return True
+        return False
+
+    def _on_next_rerun(self) -> None:
+        """Step forward to the next animal with a pending rerun."""
+        self._jump_to_next_rerun_animal()
 
     def _advance_to_next_rerun(self) -> None:
         """After resolving a rerun, jump to the next pending one or stay and refresh."""
-        current = self.cmb_animal.currentIndex()
-        for i in range(current + 1, self.cmb_animal.count()):
-            if self._has_pending_rerun(self.cmb_animal.itemText(i)):
-                self.cmb_animal.setCurrentIndex(i)  # triggers _on_animal_changed
-                return
-        self._update_all_plots()
+        if not self._jump_to_next_rerun_animal():
+            self._update_all_plots()
 
     # ------------------------------------------------------------------
     # Pagination (group mode)
@@ -781,7 +831,6 @@ class SleepQCGridPage(QWidget):
 
         df, x_col = self._ensure_x_col(df)
         mouse_colors = self._build_mouse_color_map(mice)
-        spindle_outliers = self._get_spindle_outlier_animals(combo)
 
         for state in self.STATE_ORDER:
             for metric, _ in self.METRIC_ORDER:
@@ -830,6 +879,7 @@ class SleepQCGridPage(QWidget):
             return
 
         drawn_combos = []
+        all_x_vals: list[np.ndarray] = []
         for combo in self._available_combos:
             df = self._get_df(combo)
             if df is None or df.empty:
@@ -838,6 +888,7 @@ class SleepQCGridPage(QWidget):
             adf = df[df["mouse_id"] == animal]
             if adf.empty:
                 continue
+            all_x_vals.append(adf[x_col].to_numpy())
             color = self._COMBO_COLORS.get(combo, (100, 100, 100))
             run = self._manifest.get_run(animal, combo)
             is_rerun = run is not None and run.source_combo is not None
@@ -866,11 +917,11 @@ class SleepQCGridPage(QWidget):
         if ref_combo is not None:
             self._draw_ref_median(ref_combo)
 
-        if self.btn_offset.isChecked() and drawn_combos:
-            last_df = self._get_df(drawn_combos[-1])
-            if last_df is not None and not last_df.empty:
-                last_df, x_col = self._ensure_x_col(last_df)
-                self._apply_hour_of_day_ticks(last_df[x_col].unique())
+        if self.btn_offset.isChecked() and all_x_vals:
+            # Union of x values across every drawn combo — using just the
+            # last combo's x range can omit ticks when recordings differ in
+            # length (e.g. a short rerun missing the original's late bins).
+            self._apply_hour_of_day_ticks(np.unique(np.concatenate(all_x_vals)))
 
         self._update_legend_animal(drawn_combos, ref_combo)
 
@@ -882,15 +933,20 @@ class SleepQCGridPage(QWidget):
         self._update_all_plots()
 
     def _get_ref_combo(self) -> str | None:
-        """Return combo with most ok animals; prefer LFC_RSC."""
+        """Return combo with most ok animals; prefer LFC_RSC on ties.
+
+        Reference median is only meaningful over OK runs — counting any
+        run regardless of status (the pre-fix behavior) could pick a
+        combo where most animals failed QC.
+        """
         counts: dict[str, int] = {}
         for entry in self._manifest:
             for c, run in entry.runs.items():
-                if c in self._available_combos:
+                if c in self._available_combos and run.sleep_qc == "ok":
                     counts[c] = counts.get(c, 0) + 1
         if not counts:
             return None
-        return "LFC_RSC" if "LFC_RSC" in counts else max(counts, key=counts.__getitem__)
+        return "LFC_RSC" if "LFC_RSC" in counts else max(counts, key=counts.get)
 
     def _draw_ref_median(self, combo: str) -> None:
         """Draw group median reference as a dashed line on all plots."""
@@ -931,7 +987,7 @@ class SleepQCGridPage(QWidget):
 
     def _after_rerun_decision(self) -> None:
         """Called after any decision in review mode — advance or exit review."""
-        self._manifest = Manifest.load(self.project_root)
+        self._refresh_manifest()
         self._update_reruns_badge()
         if not self._manifest.pending_rerun_review():
             self._refresh_animal_combo()
@@ -965,15 +1021,12 @@ class SleepQCGridPage(QWidget):
         self, color: tuple, status: str | None
     ) -> tuple[QWidget, QHBoxLayout]:
         """Create a styled legend row with a color swatch. Returns (widget, layout)."""
-        from PyQt6.QtWidgets import QFrame
-        from PyQt6.QtWidgets import QHBoxLayout as _QHBoxLayout
-
         swatch = QFrame()
         swatch.setFixedSize(30, 4)
         swatch.setStyleSheet(f"background-color: rgb({color[0]}, {color[1]}, {color[2]});")
 
         row_w = QWidget()
-        row_l = _QHBoxLayout(row_w)
+        row_l = QHBoxLayout(row_w)
         row_l.setContentsMargins(4, 2, 4, 2)
         row_l.setSpacing(4)
         row_l.addWidget(swatch)
@@ -1094,6 +1147,9 @@ class SleepQCGridPage(QWidget):
             if source_combo:
                 combo_label.setStyleSheet("font-style: italic;")
             row_l.addWidget(combo_label)
+            # Stretch BEFORE action buttons so they right-align, matching
+            # the group-mode legend at L1027.
+            row_l.addStretch(1)
 
             if self._review_mode:
                 btn_accept = QPushButton("✓ Accept")
@@ -1156,7 +1212,6 @@ class SleepQCGridPage(QWidget):
                         )
                         row_l.addWidget(btn_reset)
 
-            row_l.addStretch(1)
             self.legend_layout.addWidget(row_w, i // 2, i % 2)
 
         # Reference line label
@@ -1182,7 +1237,7 @@ class SleepQCGridPage(QWidget):
         rows = df_frac[(df_frac["mouse_id"] == animal) & (df_frac["state"] != "Total")]
         if rows.empty:
             return None
-        return dict(zip(rows["state"], rows["fraction"]))
+        return dict(zip(rows["state"], rows["fraction"], strict=True))
 
     def _make_fraction_comparison_widget(self, animal: str, combos: list[str]) -> QWidget | None:
         """Build a compact spindle-fraction comparison table for review mode.
@@ -1203,11 +1258,6 @@ class SleepQCGridPage(QWidget):
 
         if len(rows) < 2:
             return None
-
-        # Build source → fracs lookup for delta colouring
-        source_fracs: dict[str, dict[str, float]] = {
-            combo: fracs for combo, source, fracs in rows if source is None
-        }
 
         frame = QFrame()
         frame.setStyleSheet(
@@ -1238,7 +1288,6 @@ class SleepQCGridPage(QWidget):
             )
             grid.addWidget(name_lbl, row_i, 0)
 
-            orig = source_fracs.get(source_combo or "") or source_fracs.get(combo)
             for col, state in enumerate(STATES, start=1):
                 val = fracs.get(state)
                 if val is None:
@@ -1247,17 +1296,6 @@ class SleepQCGridPage(QWidget):
                 pct_lbl = QLabel(f"{val:.0%}")
                 pct_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 pct_lbl.setStyleSheet("font-size: 10px;")
-                """if source_combo and orig:
-                    orig_val = orig.get(state)
-                    if orig_val is not None:
-                        if val < orig_val - 0.01:
-                            pct_lbl.setStyleSheet(
-                                "font-size: 10px; color: #2a7a2a; font-weight: bold;"
-                            )
-                        elif val > orig_val + 0.01:
-                            pct_lbl.setStyleSheet(
-                                "font-size: 10px; color: #c0392b; font-weight: bold;"
-                            )"""
                 grid.addWidget(pct_lbl, row_i, col)
 
         return frame
@@ -1266,67 +1304,78 @@ class SleepQCGridPage(QWidget):
     # Reset helpers (manually-rejected runs with no cascade history)
     # ------------------------------------------------------------------
     def _reset_sleep_qc_group(self, mid: str, combo: str) -> None:
-        self._manifest.reset_sleep_qc(mid, combo)
-        self.manifest_changed.emit()
-        self._update_reruns_badge()
-        mice = self._get_page_mice()
-        self._update_legend_group(mice, self._build_mouse_color_map(mice))
+        """Group-mode reset (manually-rejected runs without cascade)."""
+        self._apply_sleep_qc(mid, combo, None, after="legend_group")
 
     def _reset_sleep_qc_animal(self, animal: str, combo: str) -> None:
-        self._manifest.reset_sleep_qc(animal, combo)
-        self.manifest_changed.emit()
-        self._update_reruns_badge()
-        self._update_all_plots()
+        """Animal-mode reset (manually-rejected runs without cascade)."""
+        self._apply_sleep_qc(animal, combo, None)
 
     # ------------------------------------------------------------------
     # Manifest flagging — the manifest enforces the one-ok invariant
     # ------------------------------------------------------------------
-    def _flag_animal_ok(self, combo: str, checked: bool = True) -> None:
-        animal = self.cmb_animal.currentText()
-        if not animal or self._manifest.get(animal) is None:
+    def _apply_sleep_qc(
+        self,
+        animal: str,
+        combo: str,
+        status: str | None,
+        *,
+        after: str = "plots",
+    ) -> None:
+        """Shared flag/reset path for both group and animal modes.
+
+        Args:
+            animal: target animal ID; no-op if not in manifest.
+            combo: target combo; no-op if empty.
+            status: new ``sleep_qc`` value, or ``None`` to reset.
+            after: which refresh to run when done — ``"plots"`` (default),
+                ``"legend_group"`` (group-mode legend rebuild only), or
+                ``"advance_rerun"`` (jump to the next pending rerun, used
+                when an OK flag clears the current rerun decision).
+        """
+        if not combo or not animal or self._manifest.get(animal) is None:
             return
-        had_pending_rerun = checked and self._has_pending_rerun(animal)
-        if not checked:
+        if status is None:
             self._manifest.reset_sleep_qc(animal, combo)
         else:
             if self._manifest.get_run(animal, combo) is None:
                 self._manifest.add_run(animal, combo)
-            self._manifest.flag_sleep_qc(animal, combo, "ok")
+            self._manifest.flag_sleep_qc(animal, combo, status)
         self.manifest_changed.emit()
+        # Manifest state may have changed pending-rerun membership for this
+        # animal (e.g. an OK flag clears the cascade). Refresh the cache.
+        self._pending_rerun_ids = {
+            entry.animal_id for entry, _ in self._manifest.pending_rerun_review()
+        }
         self._update_reruns_badge()
-        if had_pending_rerun:
+        if after == "legend_group":
+            mice = self._get_page_mice()
+            self._update_legend_group(mice, self._build_mouse_color_map(mice))
+        elif after == "advance_rerun":
             self._advance_to_next_rerun()
         else:
             self._update_all_plots()
 
+    def _flag_animal_ok(self, combo: str, checked: bool = True) -> None:
+        animal = self.cmb_animal.currentText()
+        # OK on an animal with a pending rerun is the decision point — jump
+        # forward to the next rerun rather than re-rendering in place.
+        if checked and self._has_pending_rerun(animal):
+            self._apply_sleep_qc(animal, combo, "ok", after="advance_rerun")
+        else:
+            self._apply_sleep_qc(animal, combo, "ok" if checked else None)
+
     def _flag_animal_review(self, combo: str, checked: bool = True) -> None:
         animal = self.cmb_animal.currentText()
-        if not animal or self._manifest.get(animal) is None:
-            return
-        if not checked:
-            self._manifest.reset_sleep_qc(animal, combo)
-        else:
-            if self._manifest.get_run(animal, combo) is None:
-                self._manifest.add_run(animal, combo)
-            self._manifest.flag_sleep_qc(animal, combo, "needs_review")
-        self.manifest_changed.emit()
-        self._update_reruns_badge()
-        self._update_all_plots()
+        self._apply_sleep_qc(
+            animal, combo, "needs_review" if checked else None
+        )
 
     def _flag_sleep_qc(self, mid: str, status: str | None) -> None:
-        combo = self.cmb_combo.currentText()
-        if not combo or self._manifest.get(mid) is None:
-            return
-        if status is None:
-            self._manifest.reset_sleep_qc(mid, combo)
-        else:
-            if self._manifest.get_run(mid, combo) is None:
-                self._manifest.add_run(mid, combo)
-            self._manifest.flag_sleep_qc(mid, combo, status)
-        self.manifest_changed.emit()
-        self._update_reruns_badge()
-        mice = self._get_page_mice()
-        self._update_legend_group(mice, self._build_mouse_color_map(mice))
+        """Group-mode flag entry: combo comes from the top-bar dropdown."""
+        self._apply_sleep_qc(
+            mid, self.cmb_combo.currentText(), status, after="legend_group"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1421,7 +1470,10 @@ class SpindleFractionPlot(QWidget):
 
         for xi, state in enumerate(self.STATE_ORDER):
             sdf = df[df["state"] == state].dropna(subset=["fraction"])
-            if sdf.empty:
+            # Need ≥2 points for a meaningful box+whisker; the IQR math is
+            # degenerate at len 1 (q1 == q3, fences collapse onto the point)
+            # and downstream `fracs[fracs >= lo_fence].min()` is fragile.
+            if len(sdf) < 2:
                 continue
 
             fracs = sdf["fraction"].to_numpy(dtype=float)
@@ -1486,7 +1538,7 @@ class SpindleFractionPlot(QWidget):
                 )
                 sc.sigClicked.connect(self._on_dot_clicked)
                 pi.addItem(sc)
-                for x_pt, y_pt, mid in zip(xs[outl], fracs[outl], mids[outl]):
+                for x_pt, y_pt, mid in zip(xs[outl], fracs[outl], mids[outl], strict=True):
                     anchor = (0.5, 1.2) if y_pt > med else (0.5, -0.2)
                     lbl = pg.TextItem(mid, anchor=anchor, color=(180, 40, 20))
                     lbl.setFont(label_font)

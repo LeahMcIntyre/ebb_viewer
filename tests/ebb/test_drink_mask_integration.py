@@ -451,8 +451,6 @@ def test_rerun_accumulates_drink_pkl_across_sessions(tmp_path):
     final_records = [_make_psd_record("AM001"), _make_psd_record("AM002")]
     _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", final_records)
 
-    new_record = _make_psd_record("AM001")
-
     def run_rerun(animal_id):
         rec = _make_psd_record(animal_id)
         with (
@@ -963,14 +961,14 @@ def test_drink_mask_rerun_worker_calls_rerun(tmp_path):
 
     calls = []
 
-    import ebb.process.psd_compute as psd_mod
+    import ebb_viewer.pages.drink_mask as drink_mask_mod
 
-    orig = psd_mod.rerun_with_drink_masks
+    orig = drink_mask_mod.rerun_with_drink_masks
 
     def recording_rerun(**kw):
         calls.append(kw)
 
-    psd_mod.rerun_with_drink_masks = recording_rerun
+    drink_mask_mod.rerun_with_drink_masks = recording_rerun
     try:
         from ebb_viewer.pages.drink_mask import DrinkMaskRerunWorker
 
@@ -985,7 +983,7 @@ def test_drink_mask_rerun_worker_calls_rerun(tmp_path):
         )
         worker.run()
     finally:
-        psd_mod.rerun_with_drink_masks = orig
+        drink_mask_mod.rerun_with_drink_masks = orig
 
     assert len(calls) == 1
     c = calls[0]
@@ -1006,14 +1004,14 @@ def test_drink_mask_rerun_worker_injects_offset_path(tmp_path):
 
     calls = []
 
-    import ebb.process.psd_compute as psd_mod
+    import ebb_viewer.pages.drink_mask as drink_mask_mod
 
-    orig = psd_mod.rerun_with_drink_masks
+    orig = drink_mask_mod.rerun_with_drink_masks
 
     def recording_rerun(**kw):
         calls.append(kw)
 
-    psd_mod.rerun_with_drink_masks = recording_rerun
+    drink_mask_mod.rerun_with_drink_masks = recording_rerun
     try:
         from ebb_viewer.pages.drink_mask import DrinkMaskRerunWorker
 
@@ -1028,7 +1026,7 @@ def test_drink_mask_rerun_worker_injects_offset_path(tmp_path):
         )
         worker.run()
     finally:
-        psd_mod.rerun_with_drink_masks = orig
+        drink_mask_mod.rerun_with_drink_masks = orig
 
     assert calls[0].get("offset_path") == offset_csv
 
@@ -1042,10 +1040,10 @@ def test_drink_worker_passes_ann_params_to_rerun(tmp_path):
 
     calls = []
 
-    import ebb.process.psd_compute as psd_mod
+    import ebb_viewer.pages.drink_mask as drink_mask_mod
 
-    orig = psd_mod.rerun_with_drink_masks
-    psd_mod.rerun_with_drink_masks = lambda **kw: calls.append(kw)
+    orig = drink_mask_mod.rerun_with_drink_masks
+    drink_mask_mod.rerun_with_drink_masks = lambda **kw: calls.append(kw)
 
     try:
         from ebb_viewer.pages.drink_mask import DrinkMaskRerunWorker
@@ -1068,7 +1066,7 @@ def test_drink_worker_passes_ann_params_to_rerun(tmp_path):
         )
         worker.run()
     finally:
-        psd_mod.rerun_with_drink_masks = orig
+        drink_mask_mod.rerun_with_drink_masks = orig
 
     assert len(calls) == 1
     passed = calls[0].get("ann_params")
@@ -1086,10 +1084,10 @@ def test_drink_worker_passes_ann_params_none_when_not_provided(tmp_path):
 
     calls = []
 
-    import ebb.process.psd_compute as psd_mod
+    import ebb_viewer.pages.drink_mask as drink_mask_mod
 
-    orig = psd_mod.rerun_with_drink_masks
-    psd_mod.rerun_with_drink_masks = lambda **kw: calls.append(kw)
+    orig = drink_mask_mod.rerun_with_drink_masks
+    drink_mask_mod.rerun_with_drink_masks = lambda **kw: calls.append(kw)
 
     try:
         from ebb_viewer.pages.drink_mask import DrinkMaskRerunWorker
@@ -1105,17 +1103,17 @@ def test_drink_worker_passes_ann_params_none_when_not_provided(tmp_path):
         )
         worker.run()
     finally:
-        psd_mod.rerun_with_drink_masks = orig
+        drink_mask_mod.rerun_with_drink_masks = orig
 
     assert calls[0].get("ann_params") is None
 
 
 def test_drink_mask_rerun_worker_emits_error_on_exception(tmp_path):
     """Worker emits error signal when rerun_with_drink_masks raises."""
-    import ebb.process.psd_compute as psd_mod
+    import ebb_viewer.pages.drink_mask as drink_mask_mod
 
-    orig = psd_mod.rerun_with_drink_masks
-    psd_mod.rerun_with_drink_masks = MagicMock(side_effect=RuntimeError("boom"))
+    orig = drink_mask_mod.rerun_with_drink_masks
+    drink_mask_mod.rerun_with_drink_masks = MagicMock(side_effect=RuntimeError("boom"))
 
     errors = []
     try:
@@ -1133,7 +1131,7 @@ def test_drink_mask_rerun_worker_emits_error_on_exception(tmp_path):
         worker.error.connect(errors.append)
         worker.run()
     finally:
-        psd_mod.rerun_with_drink_masks = orig
+        drink_mask_mod.rerun_with_drink_masks = orig
 
     assert errors == ["boom"]
 
@@ -1183,11 +1181,23 @@ def test_detect_offset_csv_none_when_dir_empty(page):
     assert w._detect_offset_csv() is None
 
 
-def test_detect_offset_csv_returns_first_csv(page):
+def test_detect_offset_csv_returns_single_csv(page):
+    w, tmp_path = page
+    d = tmp_path / "drink_masks"
+    d.mkdir()
+    (d / "offsets.csv").touch()
+    assert w._detect_offset_csv() == d / "offsets.csv"
+
+
+def test_detect_offset_csv_returns_none_when_multiple(page):
+    """Convention is one offset CSV per project — ambiguity returns None.
+
+    _refresh_paths surfaces the "remove all but one" message separately based
+    on the count; this helper just signals "no unambiguous CSV available".
+    """
     w, tmp_path = page
     d = tmp_path / "drink_masks"
     d.mkdir()
     (d / "offsets.csv").touch()
     (d / "zoo.csv").touch()
-    result = w._detect_offset_csv()
-    assert result == d / "offsets.csv"
+    assert w._detect_offset_csv() is None
