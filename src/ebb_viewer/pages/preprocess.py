@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
 from ebb.preprocess.edf import batch as batch_preprocess
 from ebb.preprocess.edf import standard
 from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.pipeline.theme import apply_primary_button
 from ebb_viewer.widgets.trim_to_widget import TrimToWidget
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
@@ -185,6 +186,7 @@ class PreprocessPage(QWidget):
         root.addWidget(settings_gb)
 
         self.btn_run = QPushButton("Run preprocessing")
+        apply_primary_button(self.btn_run)
         root.addWidget(self.btn_run)
 
         # ----- Log -----

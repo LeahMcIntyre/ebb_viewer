@@ -37,6 +37,7 @@ from ebb_viewer.pipeline.manifest import (
     spindle_edf_dir,
     spindle_output_dir,
 )
+from ebb_viewer.pipeline.theme import apply_primary_button, apply_secondary_button
 from ebb_viewer.widgets.table_helpers import make_cell
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
@@ -119,10 +120,11 @@ class RerunPage(QWidget):
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
         self.btn_select_all = QPushButton("Select All")
+        apply_secondary_button(self.btn_select_all)
         self.btn_select_all.clicked.connect(self.table.selectAll)
         btn_row.addWidget(self.btn_select_all)
         self.btn_run = QPushButton("Run Selected")
-        self.btn_run.setStyleSheet("font-weight: bold;")
+        apply_primary_button(self.btn_run)
         self.btn_run.clicked.connect(self._run_selected)
         btn_row.addWidget(self.btn_run)
         layout.addLayout(btn_row)

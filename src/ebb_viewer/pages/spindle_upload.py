@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
 from ebb.io.sleepyrat import SleepyRatAPI
 from ebb_viewer.pipeline import sleepyrat_config
 from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.pipeline.theme import apply_primary_button
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
 
@@ -170,13 +171,7 @@ class SpindleUploadPage(QWidget):
         btn_row = QHBoxLayout()
         self.btn_upload_and_download = QPushButton("Upload && Download")
         self.btn_upload_and_download.setEnabled(False)
-        self.btn_upload_and_download.setMinimumHeight(36)
-        self.btn_upload_and_download.setStyleSheet(
-            "QPushButton { background: #1a5fa8; color: white; font-weight: bold; "
-            "padding: 8px 16px; border-radius: 4px; font-size: 13px; }"
-            "QPushButton:hover:!disabled { background: #154d8a; }"
-            "QPushButton:disabled { background: #c0c0c0; color: #f0f0f0; }"
-        )
+        apply_primary_button(self.btn_upload_and_download)
         btn_row.addWidget(self.btn_upload_and_download)
 
         form_layout.addRow(btn_row)

@@ -35,6 +35,7 @@ from PyQt6.QtWidgets import (
 from ebb.preprocess.edf import batch as batch_preprocess
 from ebb.preprocess.edf import spindle
 from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.pipeline.theme import apply_primary_button
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
 
@@ -171,6 +172,7 @@ class SpindleWritePage(QWidget):
         actions = QHBoxLayout()
         self.btn_apply = QPushButton("Run Spindle Preprocessor")
         self.btn_apply.setEnabled(False)
+        apply_primary_button(self.btn_apply)
         actions.addWidget(self.btn_apply)
 
         root.addWidget(folder_gb)

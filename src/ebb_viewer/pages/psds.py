@@ -55,6 +55,7 @@ from ebb.core.naming import parse_animal_id
 from ebb.process.psd_compute import batch_estimate, build_final_pkl
 from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest, merged_psd_path
+from ebb_viewer.pipeline.theme import apply_primary_button
 from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
@@ -251,6 +252,7 @@ class PSDPage(QWidget):
         btn_row2.setSpacing(8)
         self.btn_run_pipeline = QPushButton("Run PSD Pipeline")
         self.btn_run_pipeline.setEnabled(False)
+        apply_primary_button(self.btn_run_pipeline)
         self._gate_label = QLabel("")
         self._gate_label.setStyleSheet("color: #888; font-size: 10px;")
         btn_row2.addWidget(self.btn_run_pipeline)
