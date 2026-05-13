@@ -379,6 +379,137 @@ def test_sleep_qc_cell_rerun_pending_with_edit_hint(qapp, tmp_path: Path):
     assert page.table.item(0, 6).toolTip().startswith("Double-click")
 
 
+# ---------------------------------------------------------------------------
+# PSD-run filter dropdown — picking a specific run filters PSD File / PSD
+# Status cells to that run rather than aggregating with best-wins.
+# ---------------------------------------------------------------------------
+
+
+_PSD_FILE_COL = 7
+
+
+def _seed_two_run_project(tmp_path: Path, *, psd_status_by_run: dict[str, str]) -> None:
+    """Create a project with two named PSD runs registered on disk plus a
+    matching manifest entry. ``psd_status_by_run`` is written into the
+    single animal's ``RunEntry.psd_status``."""
+    import json
+
+    for run_name in ("default", "dark_phase"):
+        run_dir = tmp_path / "psd" / run_name
+        run_dir.mkdir(parents=True)
+        (run_dir / "psd_params.json").write_text(json.dumps({}))
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        runs={
+            "LFC_RSC": RunEntry(sleep_qc="ok", psd_status=psd_status_by_run),
+        },
+    )
+    m.save()
+
+
+def test_run_filter_hidden_when_fewer_than_two_runs(qapp, tmp_path: Path):
+    """0 or 1 PSD runs → dropdown stays hidden ("All runs (best)" and a single
+    run render identically, so the control would have no effect)."""
+    _seed_manifest(tmp_path, psd_status={"default": "ok"})
+    page = _make_page(qapp, tmp_path)
+    assert not page.cmb_run_filter.isVisible()
+    assert not page._run_filter_lbl.isVisible()
+
+
+def test_run_filter_visible_with_two_runs(qapp, tmp_path: Path):
+    _seed_two_run_project(
+        tmp_path,
+        psd_status_by_run={"default": "ok", "dark_phase": "needs_drink_mask"},
+    )
+    page = _make_page(qapp, tmp_path)
+    page.show()  # visibility flags require the parent to be shown
+    try:
+        # The dropdown should have "All runs (best)" + 2 run names.
+        assert page.cmb_run_filter.count() == 3
+        assert page.cmb_run_filter.itemText(0) == "All runs (best)"
+        assert page.cmb_run_filter.currentData() is None  # default
+    finally:
+        page.hide()
+
+
+def test_run_filter_default_uses_best_wins(qapp, tmp_path: Path):
+    """With "All runs (best)" selected (default), ok beats needs_drink_mask
+    — same as the existing aggregate behavior."""
+    _seed_two_run_project(
+        tmp_path,
+        psd_status_by_run={"default": "ok", "dark_phase": "needs_drink_mask"},
+    )
+    page = _make_page(qapp, tmp_path)
+    assert _psd_status_cell(page) == "ok"
+
+
+def test_run_filter_specific_run_overrides_best_wins(qapp, tmp_path: Path):
+    """Selecting "dark_phase" shows that run's status ("needs drink mask")
+    even though "default" is ok — this is exactly the visibility the
+    dropdown is meant to enable."""
+    _seed_two_run_project(
+        tmp_path,
+        psd_status_by_run={"default": "ok", "dark_phase": "needs_drink_mask"},
+    )
+    page = _make_page(qapp, tmp_path)
+    idx = page.cmb_run_filter.findData("dark_phase")
+    page.cmb_run_filter.setCurrentIndex(idx)
+    assert _psd_status_cell(page) == "needs drink mask"
+
+
+def test_run_filter_specific_run_with_no_entry_shows_dash(qapp, tmp_path: Path):
+    """If the chosen run has no psd_status for this (animal, combo) and the
+    on-disk pkl is missing, the cell shows "—" rather than the best-wins
+    state from other runs."""
+    _seed_two_run_project(
+        tmp_path,
+        psd_status_by_run={"default": "ok"},  # dark_phase has no entry
+    )
+    page = _make_page(qapp, tmp_path)
+    idx = page.cmb_run_filter.findData("dark_phase")
+    page.cmb_run_filter.setCurrentIndex(idx)
+    # No psd_status entry for "dark_phase" and no pkl on disk → "—".
+    assert _psd_status_cell(page) == "—"
+    # PSD File should also reflect the chosen run, not best-wins.
+    file_cell = page.table.item(0, _PSD_FILE_COL).text()
+    assert file_cell == "—"
+
+
+def test_run_filter_selection_preserved_across_refresh(qapp, tmp_path: Path):
+    """Refresh repopulates the dropdown but keeps the user's selection
+    when the chosen run still exists."""
+    _seed_two_run_project(
+        tmp_path,
+        psd_status_by_run={"default": "ok", "dark_phase": "needs_drink_mask"},
+    )
+    page = _make_page(qapp, tmp_path)
+    idx = page.cmb_run_filter.findData("dark_phase")
+    page.cmb_run_filter.setCurrentIndex(idx)
+    page._refresh()
+    assert page.cmb_run_filter.currentData() == "dark_phase"
+
+
+def test_run_filter_falls_back_when_selection_disappears(qapp, tmp_path: Path):
+    """If the selected run is removed from disk between refreshes, the
+    dropdown falls back to "All runs (best)"."""
+    import shutil
+
+    _seed_two_run_project(
+        tmp_path,
+        psd_status_by_run={"default": "ok", "dark_phase": "needs_drink_mask"},
+    )
+    page = _make_page(qapp, tmp_path)
+    idx = page.cmb_run_filter.findData("dark_phase")
+    page.cmb_run_filter.setCurrentIndex(idx)
+
+    shutil.rmtree(tmp_path / "psd" / "dark_phase")
+    page._refresh()
+    assert page.cmb_run_filter.currentData() is None
+
+
 def test_b4_double_click_uses_cached_rendered_rows(qapp, tmp_path: Path):
     """After ``_refresh`` renders the table, ``self._table_rows`` reflects
     exactly what was drawn. If the manifest is modified afterward,
