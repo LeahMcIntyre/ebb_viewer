@@ -39,6 +39,7 @@ from ebb_viewer.pipeline.mask_export import (
     default_pairs,
     export_run,
 )
+from ebb_viewer.pipeline.theme import apply_primary_button
 from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget
 
 # ---------------------------------------------------------------------------
@@ -233,7 +234,7 @@ class ExportMasksPage(QWidget):
         h = QHBoxLayout(f)
         h.setContentsMargins(0, 0, 0, 0)
         self.btn_export = QPushButton("Export")
-        self.btn_export.setStyleSheet("QPushButton { padding: 8px 16px; font-weight: 600; }")
+        apply_primary_button(self.btn_export)
         self.btn_export.clicked.connect(self._on_export_clicked)
         h.addWidget(self.btn_export)
         self.lbl_action_hint = QLabel("")

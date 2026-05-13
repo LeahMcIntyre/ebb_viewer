@@ -41,6 +41,7 @@ from ebb.process.psd_compute import rerun_with_drink_masks
 from ebb.process.state_presets import PRESET_DISPLAY
 from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.pipeline.theme import apply_primary_button
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
 # Keys present in psd_params.json that are UI/config only and must be stripped
@@ -201,7 +202,7 @@ class DrinkMaskPage(QWidget):
         btn_row.addStretch(1)
         self.btn_apply = QPushButton("Apply Drink Masks")
         self.btn_apply.setEnabled(False)
-        self.btn_apply.setStyleSheet("font-weight: bold;")
+        apply_primary_button(self.btn_apply)
         btn_row.addWidget(self.btn_apply)
         animals_v.addLayout(btn_row)
 
