@@ -519,7 +519,7 @@ def main():
     if not edf_path:
         return"""
     
-    initial_dir = "/media/matt/Data_A/leah/For Leah"
+    initial_dir = "/media/matt/Data_A/leah/SWD_Candidate_Testing"
 
     #edf_path = '/media/matt/Data_A/leah/Stxbp1 characterization/standard/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED.edf'
     #csv_path = '/media/matt/Data_A/leah/Stxbp1 characterization/spindle_outputs/LFC_RSC/Mice-1251_KO_15_53_5weeks-3dayEEG_2017-08-11_17_56_14_HK_PREPROCESSED_SPINDLE_labels.csv'
