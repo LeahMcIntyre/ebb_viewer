@@ -425,6 +425,22 @@ class HomePage(QWidget):
 
         summary_hdr.addStretch(1)
 
+        # PSD-run filter — visible only when 2+ runs exist (with 0 or 1 runs,
+        # "All runs (best)" and any single run would render identically).
+        self._run_filter_lbl = QLabel("PSD run:")
+        self._run_filter_lbl.setStyleSheet("color: #555;")
+        summary_hdr.addWidget(self._run_filter_lbl)
+        self.cmb_run_filter = QComboBox()
+        self.cmb_run_filter.setToolTip(
+            "Filter PSD File / PSD Status columns to a specific run. "
+            "Default 'All runs (best)' shows the analysis-readiest state across runs."
+        )
+        self.cmb_run_filter.currentIndexChanged.connect(self._on_run_filter_changed)
+        summary_hdr.addWidget(self.cmb_run_filter)
+        # Start hidden — visibility is set by _refresh_run_filter.
+        self._run_filter_lbl.setVisible(False)
+        self.cmb_run_filter.setVisible(False)
+
         self.btn_hide_rejected = QPushButton("Hide Rejected")
         self.btn_hide_rejected.setCheckable(True)
         self.btn_hide_rejected.setChecked(True)
@@ -654,9 +670,16 @@ class HomePage(QWidget):
         self._table_rows = rows
 
         psd_runs = _psd_params.list_runs(self.project_root)
+        self._refresh_run_filter(psd_runs)
+        # None → "All runs (best)" (best-wins precedence across runs); a string
+        # picks a single run and filters PSD File / PSD Status cells to it.
+        run_filter: str | None = self.cmb_run_filter.currentData()
+
         self.table.setRowCount(len(rows))
         for row_idx, (entry, combo, run) in enumerate(rows):
-            self._build_table_row(row_idx, entry, combo, run, psd_runs=psd_runs)
+            self._build_table_row(
+                row_idx, entry, combo, run, psd_runs=psd_runs, run_filter=run_filter
+            )
 
         self.table.resizeRowsToContents()
 
@@ -669,6 +692,34 @@ class HomePage(QWidget):
         # Reuse psd_runs from above; saves a second scan of project/psd/.
         self._refresh_pipeline_guide(manifest, psd_runs=psd_runs)
 
+    def _refresh_run_filter(self, psd_runs: list[str]) -> None:
+        """Repopulate the PSD-run filter dropdown, preserving the current selection.
+
+        Hidden when fewer than 2 runs exist — "All runs (best)" and a single
+        run render identically, so the control would have no effect.
+        """
+        # Preserve by userData (None for "All runs (best)", run-name otherwise).
+        prev = self.cmb_run_filter.currentData()
+        self.cmb_run_filter.blockSignals(True)
+        self.cmb_run_filter.clear()
+        self.cmb_run_filter.addItem("All runs (best)", None)
+        for run_name in psd_runs:
+            self.cmb_run_filter.addItem(run_name, run_name)
+        # Restore selection if still present; otherwise fall back to default.
+        if prev is not None and prev in psd_runs:
+            idx = self.cmb_run_filter.findData(prev)
+            self.cmb_run_filter.setCurrentIndex(idx if idx >= 0 else 0)
+        else:
+            self.cmb_run_filter.setCurrentIndex(0)
+        self.cmb_run_filter.blockSignals(False)
+
+        show = len(psd_runs) >= 2
+        self._run_filter_lbl.setVisible(show)
+        self.cmb_run_filter.setVisible(show)
+
+    def _on_run_filter_changed(self) -> None:
+        self._refresh()
+
     def _build_table_row(
         self,
         row_idx: int,
@@ -677,6 +728,7 @@ class HomePage(QWidget):
         run: RunEntry | None,
         *,
         psd_runs: list[str],
+        run_filter: str | None = None,
     ) -> None:
         """Populate one row in the pipeline summary table.
 
@@ -694,6 +746,11 @@ class HomePage(QWidget):
             psd_runs: Pre-fetched list of PSD run names. Passed in so a
                 single ``_refresh`` doesn't scan ``project/psd/`` once
                 per row.
+            run_filter: When ``None`` (the "All runs (best)" default), PSD
+                File / PSD Status cells use best-wins precedence across
+                ``psd_runs``. When set to a specific run name, both cells
+                reflect that run only — making "this run isn't computed
+                yet" or "this run still needs review" visible from Home.
         """
         spindle_edf_ok = bool(combo) and _any_file_for_animal(
             self.project_root, "spindle_edfs", combo, entry.animal_id
@@ -701,25 +758,31 @@ class HomePage(QWidget):
         spindle_out_ok = bool(combo) and _any_file_for_animal(
             self.project_root, "spindle_outputs", combo, entry.animal_id
         )
-        psd_file_ok = bool(combo) and any(
-            psd_path(combo, self.project_root, rn).is_file() for rn in psd_runs
-        )
-
         sleep_qc = run.sleep_qc if run else None
         psd_status_dict = run.psd_status if run else {}
-        # Display the *analysis-readiest* status across PSD runs:
-        #   drink_mask_applied > ok > needs_drink_mask
-        # The pending-work signal still surfaces via the attention card
-        # (Manifest.all_needs_drink_mask) and per-run PSD Review, so the
-        # column being "best-wins" doesn't hide outstanding work.
-        if any(v == "drink_mask_applied" for v in psd_status_dict.values()):
-            psd_status = "drink_mask_applied"
-        elif any(v == "ok" for v in psd_status_dict.values()):
-            psd_status = "ok"
-        elif any(v == "needs_drink_mask" for v in psd_status_dict.values()):
-            psd_status = "needs_drink_mask"
+
+        if run_filter is None:
+            psd_file_ok = bool(combo) and any(
+                psd_path(combo, self.project_root, rn).is_file() for rn in psd_runs
+            )
+            # Display the *analysis-readiest* status across PSD runs:
+            #   drink_mask_applied > ok > needs_drink_mask
+            # The pending-work signal still surfaces via the attention card
+            # (Manifest.all_needs_drink_mask) and per-run PSD Review, so the
+            # column being "best-wins" doesn't hide outstanding work.
+            if any(v == "drink_mask_applied" for v in psd_status_dict.values()):
+                psd_status = "drink_mask_applied"
+            elif any(v == "ok" for v in psd_status_dict.values()):
+                psd_status = "ok"
+            elif any(v == "needs_drink_mask" for v in psd_status_dict.values()):
+                psd_status = "needs_drink_mask"
+            else:
+                psd_status = None
         else:
-            psd_status = None
+            psd_file_ok = bool(combo) and psd_path(
+                combo, self.project_root, run_filter
+            ).is_file()
+            psd_status = psd_status_dict.get(run_filter)
 
         # 0: Animal
         self.table.setItem(row_idx, 0, make_cell(entry.animal_id))

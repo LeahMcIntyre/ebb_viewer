@@ -6,11 +6,8 @@ Working through the P2 UX polish items below in order. Done this round:
 preprocess Rescan + wording (✓), rerun multi-combo upload dialog
 consolidation (✓), preprocess/spindle "Next →" hint structural part (✓).
 
-**Next two on deck, in order:**
-1. `home: Remove editable channel combo from pipeline summary table` — quick;
-   needs a check that the yellow card really is the only place a user sets
-   the rerun combo before deleting the column.
-2. `home: Surface per-PSD-run granularity in the Pipeline Summary table` —
+**Next on deck:**
+1. `home: Surface per-PSD-run granularity in the Pipeline Summary table` —
    medium; recommended approach is a run-name dropdown above the table
    ("All runs (best)" default).
 
@@ -115,9 +112,6 @@ state-overlap warning banner.
 a Rescan button sits inline with it inside Folder Selection. `_scan_edfs`
 also clears `_trim_hint_label` on empty/unreadable exit paths so a
 healthy→empty rescan doesn't leave stale trim counts.
-
-### home: Remove editable channel combo from pipeline summary table (if redundant)
-The rerun combo is already settable from the yellow card in Needs Attention. A second editable combo in the pipeline table is a duplicate code path with no extra clarity. Evaluate and remove if nothing is lost.
 
 ### preprocess / spindle write: Route `batch_preprocess` console output into the log box
 Structural part (`✓ Done` hint frame + Next → button) already in place
