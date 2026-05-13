@@ -983,8 +983,9 @@ class SleepQCGridPage(QWidget):
                     )
             drawn_combos.append(combo)
 
-        # Group median reference overlay
-        ref_combo = self._get_ref_combo()
+        # Group median reference overlay — gated by the Median toggle so the
+        # button has consistent semantics across group / animal modes.
+        ref_combo = self._get_ref_combo() if self._show_ref_median else None
         if ref_combo is not None:
             self._draw_ref_median(ref_combo)
 
@@ -1004,16 +1005,18 @@ class SleepQCGridPage(QWidget):
         self._update_all_plots()
 
     def _get_ref_combo(self) -> str | None:
-        """Return combo with most ok animals; prefer LFC_RSC on ties.
+        """Return the combo to use for the group-median reference overlay.
 
-        Reference median is only meaningful over OK runs — counting any
-        run regardless of status (the pre-fix behavior) could pick a
-        combo where most animals failed QC.
+        Prefers LFC_RSC when it has data; otherwise the combo with the most
+        animals on disk. Status-agnostic — the median is a sanity-check
+        baseline used DURING initial QC, when most animals haven't yet been
+        flagged ok. Filtering to ok-only made the toggle a no-op on first
+        review pass.
         """
         counts: dict[str, int] = {}
         for entry in self._manifest:
             for c, run in entry.runs.items():
-                if c in self._available_combos and run.sleep_qc == "ok":
+                if c in self._available_combos and run.sleep_qc != "rejected":
                     counts[c] = counts.get(c, 0) + 1
         if not counts:
             return None

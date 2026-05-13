@@ -43,35 +43,51 @@ def _seed_manifest(tmp_path: Path, runs: dict[str, dict[str, RunEntry]]) -> Mani
 
 
 # ---------------------------------------------------------------------------
-# B4 — _get_ref_combo must count only "ok" runs, not all runs
+# _get_ref_combo — the group-median reference is a sanity-check baseline,
+# used during initial QC before any animal has been flagged OK. It includes
+# every non-rejected animal, with LFC_RSC preferred when present.
 # ---------------------------------------------------------------------------
 
 
-def test_b4_get_ref_combo_counts_only_ok_runs(qapp, tmp_path: Path):
-    """``_get_ref_combo`` claims (docstring) to return "the combo with most
-    ok animals". Before the fix it counted every run regardless of status,
-    so a combo with 10 ``needs_rerun`` runs could outrank a combo with 5
-    ``ok`` runs and become the median reference."""
+def test_get_ref_combo_includes_non_ok_runs(qapp, tmp_path: Path):
+    """The median is for visual comparison during initial review, so it must
+    include pending / needs_review / needs_rerun animals — otherwise the
+    Median toggle is a no-op on the first pass through QC."""
+    _seed_manifest(
+        tmp_path,
+        {
+            "AM001": {"LFC_RSC": RunEntry(sleep_qc="needs_rerun")},
+            "AM002": {"LFC_RSC": RunEntry(sleep_qc="needs_review")},
+            "AM003": {"LFC_RSC": RunEntry(sleep_qc=None)},
+        },
+    )
+    page = _make_page(qapp, tmp_path)
+    page._available_combos = ["LFC_RSC"]
+    # All three are non-rejected → ref combo resolves rather than None.
+    assert page._get_ref_combo() == "LFC_RSC"
+
+
+def test_get_ref_combo_excludes_rejected_runs(qapp, tmp_path: Path):
+    """Rejected animals are data the user has explicitly thrown away —
+    don't count them when picking the reference combo. (The median itself
+    is still computed over the cached df, so rejection only affects combo
+    selection.)"""
     _seed_manifest(
         tmp_path,
         {
             "AM001": {
-                "LFC_RSC": RunEntry(sleep_qc="needs_rerun"),
+                "LFC_RSC": RunEntry(sleep_qc="rejected"),
                 "LSC_RSC": RunEntry(sleep_qc="ok"),
             },
             "AM002": {
-                "LFC_RSC": RunEntry(sleep_qc="needs_rerun"),
-                "LSC_RSC": RunEntry(sleep_qc="ok"),
-            },
-            "AM003": {
-                "LFC_RSC": RunEntry(sleep_qc="needs_rerun"),
+                "LFC_RSC": RunEntry(sleep_qc="rejected"),
+                "LSC_RSC": RunEntry(sleep_qc="needs_review"),
             },
         },
     )
     page = _make_page(qapp, tmp_path)
     page._available_combos = ["LFC_RSC", "LSC_RSC"]
-    # LFC_RSC has 3 (all needs_rerun); LSC_RSC has 2 (both ok).
-    # Pre-fix: returned LFC_RSC (most total). Post-fix: returns LSC_RSC.
+    # LFC_RSC has only rejected runs (0 counted); LSC_RSC has 2.
     assert page._get_ref_combo() == "LSC_RSC"
 
 
@@ -91,11 +107,11 @@ def test_b4_get_ref_combo_prefers_lfc_rsc_when_tied(qapp, tmp_path: Path):
     assert page._get_ref_combo() == "LFC_RSC"
 
 
-def test_b4_get_ref_combo_returns_none_when_no_ok_runs(qapp, tmp_path: Path):
-    """No OK runs at all → no reference line."""
+def test_get_ref_combo_returns_none_when_all_rejected(qapp, tmp_path: Path):
+    """Every available run is rejected → no median to draw."""
     _seed_manifest(
         tmp_path,
-        {"AM001": {"LFC_RSC": RunEntry(sleep_qc="needs_rerun")}},
+        {"AM001": {"LFC_RSC": RunEntry(sleep_qc="rejected")}},
     )
     page = _make_page(qapp, tmp_path)
     page._available_combos = ["LFC_RSC"]
