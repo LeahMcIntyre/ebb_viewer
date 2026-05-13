@@ -22,8 +22,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
-    QLineEdit,
-    QListWidget,
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
@@ -87,7 +85,10 @@ class SpindleUploadPage(QWidget):
         return self.upload_combo.itemText(idx).strip()
 
     def _current_upload_dir(self) -> Path | None:
-        path_str = self.upload_dir_edit.text().strip()
+        idx = self.upload_combo.currentIndex()
+        if idx < 0:
+            return None
+        path_str = self.upload_combo.itemData(idx)
         return Path(path_str) if path_str else None
 
     def _current_output_dir(self) -> Path | None:
@@ -125,50 +126,28 @@ class SpindleUploadPage(QWidget):
         upload_row.addWidget(self.upload_combo, 1)
         upload_row.addWidget(self.btn_refresh_upload)
 
-        self.upload_dir_edit = QLineEdit()
-        self.upload_dir_edit.setReadOnly(True)
+        form_layout.addRow("Spindle EDF set:", upload_row)
 
-        form_layout.addRow("Spindle EDF set (subfolder of 'spindle_edfs'):", upload_row)
-        form_layout.addRow("Selected upload folder:", self.upload_dir_edit)
-
+        # Dual-purpose hint: when no combo is selected, shows the empty/error
+        # state for spindle_edfs/; once a combo is picked, shows a compact
+        # one-line summary of the source and output relative paths (full
+        # absolute paths land in the tooltip).
         self.upload_hint = QLabel("Looking for subfolders under project_root / 'spindle_edfs'.")
         self.upload_hint.setStyleSheet("color:#777; font-size:10px;")
         self.upload_hint.setWordWrap(True)
         form_layout.addRow("", self.upload_hint)
 
-        # --- Auto output folder (read-only) ---
-        self.output_dir_edit = QLineEdit()
-        self.output_dir_edit.setReadOnly(True)
-
-        out_hint = QLabel("Outputs will be written to project_root / 'spindle_outputs' / <combo>.")
-        out_hint.setStyleSheet("color:#777; font-size:10px;")
-        out_hint.setWordWrap(True)
-
-        form_layout.addRow("Labels output folder:", self.output_dir_edit)
-        form_layout.addRow("", out_hint)
-
-        # --- SleepyRat project list ---
-        proj_box = QGroupBox("SleepyRat Project")
-        proj_v = QVBoxLayout(proj_box)
-
-        proj_btn_row = QHBoxLayout()
+        # --- SleepyRat project (combo + Refresh / New inline) ---
+        proj_row = QHBoxLayout()
+        self.project_combo = QComboBox()
+        self.project_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.btn_refresh_projects = QPushButton("Refresh")
         self.btn_new_project = QPushButton("New…")
-        proj_btn_row.addWidget(self.btn_refresh_projects)
-        proj_btn_row.addWidget(self.btn_new_project)
-        proj_btn_row.addStretch(1)
+        proj_row.addWidget(self.project_combo, 1)
+        proj_row.addWidget(self.btn_refresh_projects)
+        proj_row.addWidget(self.btn_new_project)
 
-        self.project_list = QListWidget()
-        self.project_list.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
-
-        proj_v.addLayout(proj_btn_row)
-        proj_v.addWidget(self.project_list)
-        form_layout.addRow(proj_box)
-
-        proj_hint = QLabel("Select the SleepyRat project where this run should be stored.")
-        proj_hint.setStyleSheet("color:#777; font-size:10px;")
-        proj_hint.setWordWrap(True)
-        form_layout.addRow("", proj_hint)
+        form_layout.addRow("SleepyRat project:", proj_row)
 
         # --- SleepyRat remote folder name ---
         self.remote_folder_edit = QComboBox()
@@ -176,8 +155,7 @@ class SpindleUploadPage(QWidget):
         form_layout.addRow("Remote folder name:", self.remote_folder_edit)
 
         folder_desc = QLabel(
-            "Inside the selected SleepyRat project, edf files will be grouped "
-            "in this folder (e.g. PHP_6w_LFC_RSC)."
+            "Folder inside the SleepyRat project where edf files will be grouped (e.g. PHP_6w_LFC_RSC)."
         )
         folder_desc.setStyleSheet("color:#777; font-size:10px;")
         folder_desc.setWordWrap(True)
@@ -188,11 +166,17 @@ class SpindleUploadPage(QWidget):
         self.remote_folder_hint.setWordWrap(True)
         form_layout.addRow("", self.remote_folder_hint)
 
+        # --- Primary action: Upload & Download ---
         btn_row = QHBoxLayout()
         self.btn_upload_and_download = QPushButton("Upload && Download")
-
         self.btn_upload_and_download.setEnabled(False)
-
+        self.btn_upload_and_download.setMinimumHeight(36)
+        self.btn_upload_and_download.setStyleSheet(
+            "QPushButton { background: #1a5fa8; color: white; font-weight: bold; "
+            "padding: 8px 16px; border-radius: 4px; font-size: 13px; }"
+            "QPushButton:hover:!disabled { background: #154d8a; }"
+            "QPushButton:disabled { background: #c0c0c0; color: #f0f0f0; }"
+        )
         btn_row.addWidget(self.btn_upload_and_download)
 
         form_layout.addRow(btn_row)
@@ -235,10 +219,10 @@ class SpindleUploadPage(QWidget):
         self.btn_refresh_upload.clicked.connect(self._refresh_spindle_dirs)
         self.upload_combo.currentIndexChanged.connect(self._on_upload_combo_changed)
 
-        # SleepyRat project list
+        # SleepyRat project combo
         self.btn_refresh_projects.clicked.connect(self._refresh_projects_clicked)
         self.btn_new_project.clicked.connect(self._new_project_clicked)
-        self.project_list.currentItemChanged.connect(lambda *_: self._on_project_selected())
+        self.project_combo.currentIndexChanged.connect(self._on_project_selected)
 
         # Remote folder text
         self.remote_folder_edit.currentTextChanged.connect(self._on_remote_folder_changed)
@@ -272,7 +256,6 @@ class SpindleUploadPage(QWidget):
 
         self.upload_combo.blockSignals(True)
         self.upload_combo.clear()
-        self.upload_dir_edit.clear()
         self.upload_combo.blockSignals(False)
 
         if not root.exists() or not root.is_dir():
@@ -280,7 +263,7 @@ class SpindleUploadPage(QWidget):
                 f"No 'spindle_edfs' folder found under:\n{root}\n\n"
                 "Spindle EDFs need to be created before using this page."
             )
-            self.output_dir_edit.clear()
+            self.upload_hint.setToolTip("")
             return
 
         subdirs = sorted(p for p in root.iterdir() if p.is_dir())
@@ -290,12 +273,8 @@ class SpindleUploadPage(QWidget):
                 f"'spindle_edfs' exists but has no subfolders:\n{root}\n\n"
                 "Spindle EDFs need to be created before using this page."
             )
-            self.output_dir_edit.clear()
+            self.upload_hint.setToolTip("")
             return
-
-        self.upload_hint.setText(
-            f"Found {len(subdirs)} folder(s) under 'spindle_edfs'. Select one to upload its EDFs."
-        )
 
         self.upload_combo.blockSignals(True)
         for sub in subdirs:
@@ -310,21 +289,23 @@ class SpindleUploadPage(QWidget):
     def _on_upload_combo_changed(self, index: int):
         """
         When user picks a spindle_edfs subfolder from the combo:
-        - update upload_dir_edit
-        - update output_dir_edit (spindle_outputs/combo)
+        - rewrite the compact source/output hint (full paths in tooltip)
         - if remote folder is empty, default it to combo name
         """
         if index < 0:
-            self.upload_dir_edit.clear()
-            self.output_dir_edit.clear()
+            self.upload_hint.setText("Looking for subfolders under project_root / 'spindle_edfs'.")
+            self.upload_hint.setToolTip("")
         else:
-            path_str = self.upload_combo.itemData(index)
-            self.upload_dir_edit.setText(path_str or "")
-
-            out_dir = self._current_output_dir()
-            self.output_dir_edit.setText(str(out_dir) if out_dir else "")
-
             combo = self._current_combo_name()
+            upload_dir = self._current_upload_dir()
+            out_dir = self._current_output_dir()
+            self.upload_hint.setText(
+                f"Uploading from spindle_edfs/{combo}/ → labels land in spindle_outputs/{combo}/"
+            )
+            self.upload_hint.setToolTip(
+                f"Source:  {upload_dir}\nOutputs:  {out_dir}"
+            )
+
             if combo:
                 current = self.remote_folder_edit.currentText().strip()
                 auto_prefix = self.project_root.stem + "_"
@@ -335,12 +316,11 @@ class SpindleUploadPage(QWidget):
 
     def _on_project_selected(self):
         self._known_folders = None
-        item = self.project_list.currentItem()
-        if item is None:
+        project = self.project_combo.currentText().strip()
+        if not project:
             self._update_folder_hint()
             self._update_run_enabled()
             return
-        project = item.text().strip()
         current_text = self.remote_folder_edit.currentText()
         self.remote_folder_edit.blockSignals(True)
         self.remote_folder_edit.clear()
@@ -390,20 +370,20 @@ class SpindleUploadPage(QWidget):
     def _update_run_enabled(self):
         upload_dir = self._current_upload_dir()
         remote_folder = self.remote_folder_edit.currentText().strip()
+        project = self.project_combo.currentText().strip()
 
-        has_upload_dir = upload_dir is not None
-        has_remote_folder = bool(remote_folder)
+        # Surface the first missing piece in priority order so the user knows
+        # which control to fill in next.
+        missing: str | None = None
+        if upload_dir is None:
+            missing = "Select a Spindle EDF set to enable."
+        elif not project:
+            missing = "Select a SleepyRat project to enable."
+        elif not remote_folder:
+            missing = "Enter a remote folder name to enable."
 
-        item = self.project_list.currentItem()
-        has_remote_project = item is not None and bool(item.text().strip())
-
-        # Download-only just needs project + remote folder
-        can_download_only = has_remote_project and has_remote_folder
-
-        # Upload + download also needs a local upload_dir
-        can_upload_and_download = can_download_only and has_upload_dir
-
-        self.btn_upload_and_download.setEnabled(can_upload_and_download)
+        self.btn_upload_and_download.setEnabled(missing is None)
+        self.btn_upload_and_download.setToolTip(missing or "")
 
     # ------------- SleepyRat – project list -------------
     def _refresh_projects_clicked(self):
@@ -423,13 +403,23 @@ class SpindleUploadPage(QWidget):
         )
 
     def _on_projects_fetched(self, names: list[str]) -> None:
-        self.project_list.blockSignals(True)
-        self.project_list.clear()
+        # Preserve the prior selection across refreshes when still present;
+        # otherwise default to index 0 so the user always has *something*
+        # picked once projects exist.
+        prev = self.project_combo.currentText().strip()
+        self.project_combo.blockSignals(True)
+        self.project_combo.clear()
         for name in names:
-            self.project_list.addItem(name)
-        self.project_list.blockSignals(False)
-        if names and self.project_list.currentRow() < 0:
-            self.project_list.setCurrentRow(0)
+            self.project_combo.addItem(name)
+        if prev:
+            idx = self.project_combo.findText(prev)
+            if idx >= 0:
+                self.project_combo.setCurrentIndex(idx)
+        self.project_combo.blockSignals(False)
+        # Trigger selection handler once after repopulation so folder list
+        # refetches even when blockSignals suppressed the addItem cascade.
+        if self.project_combo.count() > 0:
+            self._on_project_selected()
         self._log(f"Loaded {len(names)} project(s) from SleepyRat.")
         self._update_run_enabled()
 
@@ -467,11 +457,9 @@ class SpindleUploadPage(QWidget):
 
         # Refresh list and select the new project
         self._refresh_projects_clicked()
-        for row in range(self.project_list.count()):
-            item = self.project_list.item(row)
-            if item and item.text() == name:
-                self.project_list.setCurrentRow(row)
-                break
+        idx = self.project_combo.findText(name)
+        if idx >= 0:
+            self.project_combo.setCurrentIndex(idx)
         self._log(f"Project '{name}' created and selected.")
 
     # ------------- Run action -------------
@@ -483,8 +471,7 @@ class SpindleUploadPage(QWidget):
         remote_folder = self.remote_folder_edit.currentText().strip()
 
         # SleepyRat project
-        item = self.project_list.currentItem()
-        project = item.text().strip() if item else ""
+        project = self.project_combo.currentText().strip()
 
         if not project:
             QMessageBox.critical(self, "No SleepyRat Project", "Please select a SleepyRat project.")
