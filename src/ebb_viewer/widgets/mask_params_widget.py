@@ -58,6 +58,11 @@ _DEFAULT_RADIUS_S = 0.5
 _DEFAULT_NSTD = 5.0
 _DEFAULT_DRINK_PAD_S = 2
 _DEFAULT_SWD_PAD_S = 0
+# Matches `_COMMUTATOR_VALUE_UV` in ``ebb.process.psd_compute``. Other
+# commutator params (radius / pad / min_to_pad) stay hardcoded in the
+# backend for now — see TODO entry "psd_compute: Commutator mask params
+# should scale with user-set fs".
+_DEFAULT_COMM_VALUE_UV = 2000
 
 # Project sampling rate hardcoded across the codebase; used by the
 # hour-window coverage preview to convert sample counts → seconds.
@@ -84,6 +89,17 @@ class MaskParamsWidget(QWidget):
             the Drink Mask page. Widget state still tracks the drink
             params (returned by ``to_params``) so saved configs round-trip
             unchanged.
+        expose_states_externally: If True, the States section is built but
+            NOT added to this widget's own layout — instead the host page
+            retrieves it via ``states_section()`` and places it in its
+            own layout (e.g., grouped with channel selection under a
+            "What to Compute" zone). State checkbox ownership stays here
+            so ``to_params`` / ``from_params`` continue to round-trip.
+        show_subzone_headers: If True, render small sub-headers ("ARTIFACT
+            MASKS" / "EVENT-BASED MASKS") between the relevant mask
+            sections. Off by default — pages that already provide their
+            own zone framing (e.g. PSD compute) can opt in to surface the
+            distinction.
     """
 
     changed = pyqtSignal()
@@ -95,11 +111,15 @@ class MaskParamsWidget(QWidget):
         *,
         swd_available: bool = False,
         show_drink_mask: bool = True,
+        expose_states_externally: bool = False,
+        show_subzone_headers: bool = False,
     ):
         super().__init__(parent)
         self._project_root = Path(project_root) if project_root else None
         self._swd_available = swd_available
         self._show_drink_mask = show_drink_mask
+        self._expose_states_externally = expose_states_externally
+        self._show_subzone_headers = show_subzone_headers
         self._ann_dir: Path | None = None
         # Cached EDF (rec_start, n_samples) tuples for the hour-window
         # preview. Lazy-populated on first preview refresh; reset when
@@ -128,6 +148,7 @@ class MaskParamsWidget(QWidget):
         days_specific = self._radio_hw_sel.isChecked()
         return {
             "states": states,
+            "comm_value": int(self.spin_comm_value.value()),
             "nstd": float(self.dspin_z.value()),
             "winsize": int(self.spin_window.value()),
             "radius": float(self.dspin_radius.value()),
@@ -157,6 +178,11 @@ class MaskParamsWidget(QWidget):
             saved_states = params.get("states") or list(DEFAULT_STATES)
             for key, cb in self._state_boxes.items():
                 cb.setChecked(key in saved_states)
+
+            # Commutator mask
+            self.spin_comm_value.setValue(
+                int(params.get("comm_value", _DEFAULT_COMM_VALUE_UV))
+            )
 
             # SD mask
             self.dspin_z.setValue(float(params.get("nstd", _DEFAULT_NSTD)))
@@ -254,7 +280,9 @@ class MaskParamsWidget(QWidget):
     def _refresh_subtitles(self) -> None:
         """Recompute each section's header summary from the current params."""
         p = self.to_params()
-        self._sections["states"].set_subtitle(_states_subtitle(p))
+        if "states" in self._sections:
+            self._sections["states"].set_subtitle(_states_subtitle(p))
+        self._sections["commutator"].set_subtitle(_commutator_subtitle(p))
         self._sections["sd"].set_subtitle(_sd_subtitle(p))
         self._sections["spindle"].set_subtitle(_spindle_subtitle(p))
         self._sections["swd"].set_subtitle(_swd_subtitle(p))
@@ -267,16 +295,37 @@ class MaskParamsWidget(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(6)
 
+        # Build the inner States content unconditionally so its checkboxes
+        # are always owned by this widget (to_params / from_params depend
+        # on them). Whether we wrap it in a CollapsibleSection here, or
+        # let a host page wrap it in its own container, depends on
+        # ``expose_states_externally``.
+        self._states_inner = self._build_states_group()
+        if self._expose_states_externally:
+            # Host adds its own outer padding (typically a QGroupBox with
+            # default-margin layout); zero the inner content's margins so
+            # the result matches adjacent boxes instead of looking doubly
+            # padded.
+            self._states_inner.layout().setContentsMargins(0, 0, 0, 0)
+
         # Build each section + wrap in a CollapsibleSection. Routine knobs
         # start expanded; optional sections (disabled bodies by default)
         # start collapsed to save scroll space.
-        self._sections: dict[str, CollapsibleSection] = {
-            "states": CollapsibleSection(
-                "States to Compute", self._build_states_group(), collapsed=False
+        self._sections: dict[str, CollapsibleSection] = {}
+        if not self._expose_states_externally:
+            self._sections["states"] = CollapsibleSection(
+                "States to Compute", self._states_inner, collapsed=False
+            )
+        self._sections.update({
+            # Commutator + SD + Spindle Noise start collapsed: their full
+            # state is visible in the section subtitle (e.g. "180s · 0.5s
+            # · 5σ"), so most users don't need the form rows visible
+            # run-to-run.
+            "commutator": CollapsibleSection(
+                "Commutator Mask (applied to all states)",
+                self._build_commutator_group(),
+                collapsed=True,
             ),
-            # SD + Spindle Noise start collapsed: their full state is
-            # visible in the section subtitle (e.g. "180s · 0.5s · 5σ"),
-            # so most users don't need the form rows visible run-to-run.
             "sd": CollapsibleSection(
                 "Standard Deviation Mask (applied only to wake)",
                 self._build_sd_group(),
@@ -297,13 +346,40 @@ class MaskParamsWidget(QWidget):
             "hour_window": CollapsibleSection(
                 "Compute Hours", self._build_hour_window_group(), collapsed=True
             ),
-        }
-        for section in self._sections.values():
+        })
+        # Sub-zone headers — opt-in. When the host page wraps the widget in
+        # a larger "FILTERS & MASKS" zone, surface the artifact-vs-event
+        # split so the two kinds of filter read as distinct groups.
+        # "ARTIFACT MASKS" sits above the first artifact section (commutator
+        # if present, else sd) and "EVENT-BASED MASKS" sits above the first
+        # event section (drink if visible, else swd).
+        _ARTIFACT_KEYS = ("commutator", "sd", "spindle")
+        _EVENT_KEYS = ("drink", "swd", "annotation", "hour_window")
+        first_artifact = next((k for k in _ARTIFACT_KEYS if k in self._sections), None)
+        first_event = next(
+            (k for k in _EVENT_KEYS if k in self._sections
+             and (k != "drink" or self._show_drink_mask)),
+            None,
+        )
+        for key, section in self._sections.items():
+            if self._show_subzone_headers and key == first_artifact:
+                root.addWidget(_subzone_header("ARTIFACT MASKS"))
+            if self._show_subzone_headers and key == first_event:
+                root.addWidget(_subzone_header("EVENT-BASED MASKS"))
             root.addWidget(section)
         if not self._show_drink_mask:
             # Hide rather than skip-build so to_params / from_params still
             # round-trip drink keys against unchanged widget defaults.
             self._sections["drink"].setVisible(False)
+
+    def states_inner_widget(self) -> QWidget:
+        """Return the bare States content (checkbox grid + hint + overlap
+        warning) for external placement — e.g. inside a plain QGroupBox on
+        the host page so it matches adjacent QGroupBox-style controls.
+
+        Only meaningful when ``expose_states_externally=True``.
+        """
+        return self._states_inner
 
     def _build_states_group(self) -> QWidget:
         w = QWidget()
@@ -344,16 +420,57 @@ class MaskParamsWidget(QWidget):
         v.addWidget(self._state_overlap_lbl)
         return w
 
+    def _build_commutator_group(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(8, 4, 8, 8)
+
+        hint = QLabel(
+            "Masks out large voltage spikes (commutator artifacts) plus a "
+            "~1s pad around each event longer than 10 samples. Applied to all states."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #555; font-size: 11px;")
+        v.addWidget(hint)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        self.spin_comm_value = NoScrollSpinBox()
+        self.spin_comm_value.setRange(0, 50_000)
+        self.spin_comm_value.setSuffix(" µV")
+        self.spin_comm_value.setValue(_DEFAULT_COMM_VALUE_UV)
+        self.spin_comm_value.setToolTip(
+            "Samples with |amplitude| above this are masked out."
+        )
+        form.addRow("Amplitude threshold:", self.spin_comm_value)
+        v.addLayout(form)
+        return w
+
     def _build_sd_group(self) -> QWidget:
         w = QWidget()
-        form = QFormLayout(w)
-        form.setContentsMargins(8, 4, 8, 8)
+        v = QVBoxLayout(w)
+        v.setContentsMargins(8, 4, 8, 8)
+
+        hint = QLabel(
+            "Masks wake samples whose amplitude exceeds N standard deviations "
+            "from the windowed mean. Catches outlier events not caught by the "
+            "commutator threshold. Applied to wake epochs only."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #555; font-size: 11px;")
+        v.addWidget(hint)
+
+        form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         self.spin_window = NoScrollSpinBox()
         self.spin_window.setRange(1, 6000)
         self.spin_window.setSuffix(" s")
         self.spin_window.setValue(_DEFAULT_WINSIZE_S)
+        self.spin_window.setToolTip(
+            "Length of the sliding window (s) used to compute the local "
+            "standard deviation."
+        )
 
         self.dspin_radius = NoScrollDoubleSpinBox()
         # 2 decimals so saved values like 0.75 don't silently round to 0.8.
@@ -362,40 +479,78 @@ class MaskParamsWidget(QWidget):
         self.dspin_radius.setRange(0.0, 60.0)
         self.dspin_radius.setSuffix(" s")
         self.dspin_radius.setValue(_DEFAULT_RADIUS_S)
+        self.dspin_radius.setToolTip(
+            "Maximum gap (s) between two artifacts before they're combined into one"
+            "continuous masked region" 
+        )
 
         self.dspin_z = NoScrollDoubleSpinBox()
         self.dspin_z.setDecimals(2)
         self.dspin_z.setRange(1.0, 20.0)
         self.dspin_z.setSuffix(" σ")
         self.dspin_z.setValue(_DEFAULT_NSTD)
+        self.dspin_z.setToolTip(
+            "Samples more than this many σ above/below the windowed mean "
+            "are flagged."
+        )
 
         form.addRow("Window:", self.spin_window)
         form.addRow("Radius:", self.dspin_radius)
         form.addRow("Z-threshold:", self.dspin_z)
+        v.addLayout(form)
         return w
 
     def _build_spindle_group(self) -> QWidget:
         w = QWidget()
-        form = QFormLayout(w)
-        form.setContentsMargins(8, 4, 8, 8)
+        v = QVBoxLayout(w)
+        v.setContentsMargins(8, 4, 8, 8)
+
+        hint = QLabel(
+            "Masks out epochs whose Spindle noise-probability score is "
+            "at or above the threshold. Applied to all states."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #555; font-size: 11px;")
+        v.addWidget(hint)
+
+        form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         self.dspin_noise = NoScrollDoubleSpinBox()
         self.dspin_noise.setDecimals(2)
         self.dspin_noise.setRange(0.0, 1.0)
         self.dspin_noise.setSingleStep(0.05)
         self.dspin_noise.setValue(_DEFAULT_NOISE_THRESH)
+        self.dspin_noise.setToolTip(
+            "Epochs with SleepyRat noise_probs ≥ this value are masked out. "
+            "Range 0–1; lower = stricter."
+        )
         form.addRow("Spindle Noise Threshold:", self.dspin_noise)
+        v.addLayout(form)
         return w
 
     def _build_swd_group(self) -> QWidget:
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(8, 4, 8, 8)
+
+        intro = QLabel(
+            "Masks out spike-wave discharge (SWD) events flagged in "
+            "per-animal .mat files. Useful when SWDs are present and "
+            "you want them excluded from PSD."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: #555; font-size: 11px;")
+        v.addWidget(intro)
+
         self._swd_grp = QButtonGroup(self)
         self._radio_swd_none = QRadioButton("No SWD mask")
         self._radio_swd_none.setChecked(True)
+        self._radio_swd_none.setToolTip("Do not use .mat files to exclude SWDs")
         self._radio_swd_mask = QRadioButton("Mask out SWDs")
         self._radio_swd_mask.setEnabled(self._swd_available)
+        self._radio_swd_mask.setToolTip(
+            "Exclude epochs flagged as SWDs (read from project/swd/AnimalID_*.mat)."
+        )
         self._swd_grp.addButton(self._radio_swd_none, 0)
         self._swd_grp.addButton(self._radio_swd_mask, 1)
         v.addWidget(self._radio_swd_none)
@@ -407,6 +562,9 @@ class MaskParamsWidget(QWidget):
         self.spin_swd_pad.setRange(0, 600)
         self.spin_swd_pad.setSuffix(" s")
         self.spin_swd_pad.setValue(_DEFAULT_SWD_PAD_S)
+        self.spin_swd_pad.setToolTip(
+            "Seconds added on each side of every SWD event to also exclude."
+        )
         pad_form.addRow("Pad each event:", self.spin_swd_pad)
         v.addLayout(pad_form)
 
@@ -427,7 +585,21 @@ class MaskParamsWidget(QWidget):
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(8, 4, 8, 8)
+
+        intro = QLabel(
+            "Masks out events from Pinnacle annotation files whose label "
+            "matches one of the keywords. Each animal needs its own "
+            "annotation file in the selected directory."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: #555; font-size: 11px;")
+        v.addWidget(intro)
+
         self.chk_ann = QCheckBox("Apply annotation mask")
+        self.chk_ann.setToolTip(
+            "Enable annotation-based masking. The remaining controls become "
+            "editable when checked."
+        )
         v.addWidget(self.chk_ann)
 
         self._ann_body = QWidget()
@@ -440,6 +612,10 @@ class MaskParamsWidget(QWidget):
         self.lbl_ann_dir = QLineEdit()
         self.lbl_ann_dir.setReadOnly(True)
         self.lbl_ann_dir.setPlaceholderText("No directory selected")
+        self.lbl_ann_dir.setToolTip(
+            "Directory containing per-animal annotation files (filename must "
+            "include the animal ID)."
+        )
         self.btn_ann_dir = QPushButton("Browse…")
         dir_row.addWidget(QLabel("Annotation directory:"))
         dir_row.addWidget(self.lbl_ann_dir, 1)
@@ -454,13 +630,23 @@ class MaskParamsWidget(QWidget):
         kw_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         self._ann_keyword_edit = QLineEdit()
         self._ann_keyword_edit.setPlaceholderText("e.g.  drink, artifact")
+        self._ann_keyword_edit.setToolTip(
+            "Comma-separated list of label keywords. Events whose label "
+            "matches any keyword are masked out."
+        )
         kw_form.addRow("Keywords:", self._ann_keyword_edit)
         body.addLayout(kw_form)
 
         mode_row = QHBoxLayout()
         mode_row.addWidget(QLabel("Match mode:"))
         self._radio_ann_contains = QRadioButton("Contains")
+        self._radio_ann_contains.setToolTip(
+            "Match if the event label CONTAINS any keyword (case-insensitive)."
+        )
         self._radio_ann_exact = QRadioButton("Exact")
+        self._radio_ann_exact.setToolTip(
+            "Match only if the event label exactly equals one of the keywords."
+        )
         self._radio_ann_contains.setChecked(True)
         self._ann_mode_grp = QButtonGroup(self)
         self._ann_mode_grp.addButton(self._radio_ann_contains, 0)
@@ -477,11 +663,17 @@ class MaskParamsWidget(QWidget):
         self._ann_pad_before.setSingleStep(1.0)
         self._ann_pad_before.setDecimals(1)
         self._ann_pad_before.setSuffix(" s")
+        self._ann_pad_before.setToolTip(
+            "Seconds added before each matched event to also exclude."
+        )
         self._ann_pad_after = NoScrollDoubleSpinBox()
         self._ann_pad_after.setRange(0.0, 3600.0)
         self._ann_pad_after.setSingleStep(1.0)
         self._ann_pad_after.setDecimals(1)
         self._ann_pad_after.setSuffix(" s")
+        self._ann_pad_after.setToolTip(
+            "Seconds added after each matched event to also exclude."
+        )
         pad_form.addRow("Pad before:", self._ann_pad_before)
         pad_form.addRow("Pad after:", self._ann_pad_after)
         body.addLayout(pad_form)
@@ -493,7 +685,20 @@ class MaskParamsWidget(QWidget):
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(8, 4, 8, 8)
+
+        intro = QLabel(
+            "Restricts PSD computation to specific clock-time windows "
+            "(e.g. 18–6 for dark phase). Useful for circadian analyses."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: #555; font-size: 11px;")
+        v.addWidget(intro)
+
         self.chk_hour_window = QCheckBox("Restrict to clock-time window")
+        self.chk_hour_window.setToolTip(
+            "Enable hour-of-day filtering. Only samples within the listed "
+            "windows are kept."
+        )
         v.addWidget(self.chk_hour_window)
 
         self._hw_body = QWidget()
@@ -512,12 +717,17 @@ class MaskParamsWidget(QWidget):
         self.spin_add_start = NoScrollSpinBox()
         self.spin_add_start.setRange(0, 23)
         self.spin_add_start.setSuffix(" h")
+        self.spin_add_start.setToolTip("Window start hour (0–23, local clock time).")
         self.spin_add_end = NoScrollSpinBox()
         self.spin_add_end.setRange(0, 23)
         self.spin_add_end.setSuffix(" h")
         self.spin_add_end.setValue(1)
+        self.spin_add_end.setToolTip(
+            "Window end hour (0–23). If end < start, the window wraps past midnight."
+        )
         self.btn_add_window = QPushButton("Add")
         self.btn_add_window.setFixedWidth(48)
+        self.btn_add_window.setToolTip("Add this window to the list.")
         add_row.addWidget(self.spin_add_start)
         add_row.addWidget(QLabel("–"))
         add_row.addWidget(self.spin_add_end)
@@ -535,13 +745,18 @@ class MaskParamsWidget(QWidget):
         day_row = QHBoxLayout()
         self._radio_hw_all = QRadioButton("All days")
         self._radio_hw_all.setChecked(True)
+        self._radio_hw_all.setToolTip("Apply windows across every recording day.")
         self._radio_hw_sel = QRadioButton("Specific days:")
+        self._radio_hw_sel.setToolTip(
+            "Apply windows only on the listed day indices (0 = recording start date)."
+        )
         self._hw_day_grp = QButtonGroup(self)
         self._hw_day_grp.addButton(self._radio_hw_all, 0)
         self._hw_day_grp.addButton(self._radio_hw_sel, 1)
         self._hw_days_edit = QLineEdit()
         self._hw_days_edit.setPlaceholderText("0,1,2  (0 = recording start date)")
         self._hw_days_edit.setEnabled(False)
+        self._hw_days_edit.setToolTip("Comma-separated day indices, e.g. 0,1,2.")
         day_row.addWidget(self._radio_hw_all)
         day_row.addWidget(self._radio_hw_sel)
         day_row.addWidget(self._hw_days_edit, 1)
@@ -601,6 +816,7 @@ class MaskParamsWidget(QWidget):
             cb.toggled.connect(self._refresh_state_overlap_hint)
             cb.toggled.connect(self._emit_changed)
         for spin in (
+            self.spin_comm_value,
             self.spin_window,
             self.dspin_radius,
             self.dspin_z,
@@ -642,6 +858,7 @@ class MaskParamsWidget(QWidget):
     def _all_signal_sources(self) -> list:
         """Widgets whose signals must be blocked during bulk from_params updates."""
         sources = list(self._state_boxes.values()) + [
+            self.spin_comm_value,
             self.spin_window,
             self.dspin_radius,
             self.dspin_z,
@@ -1055,6 +1272,10 @@ def _states_subtitle(p: dict) -> str:
     return f"{len(states)} selected"
 
 
+def _commutator_subtitle(p: dict) -> str:
+    return f"{p['comm_value']} µV"
+
+
 def _sd_subtitle(p: dict) -> str:
     return f"{p['winsize']}s · {p['radius']}s · {p['nstd']:g}σ"
 
@@ -1095,3 +1316,15 @@ def _drink_subtitle(p: dict) -> str:
     if not p.get("use_drink_mask"):
         return "off"
     return f"on · {p['drink_pad']}s pad"
+
+
+def _subzone_header(text: str) -> QLabel:
+    """Small italic uppercase label that prefixes a sub-zone of mask sections
+    (e.g. "ARTIFACT MASKS" / "EVENT-BASED MASKS") so the kind-of-filter
+    distinction is visible at a glance."""
+    lbl = QLabel(text)
+    lbl.setStyleSheet(
+        "color: #888; font-size: 10px; font-style: italic; "
+        "letter-spacing: 1px; padding: 6px 0 0 2px;"
+    )
+    return lbl

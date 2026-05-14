@@ -43,6 +43,7 @@ def test_to_params_returns_dict_with_expected_keys(qapp):
     params = w.to_params()
     expected_keys = {
         "states",
+        "comm_value",
         "nstd",
         "winsize",
         "radius",
@@ -299,6 +300,7 @@ def _full_params(tmp_path: Path) -> dict:
     ann_dir.mkdir()
     return {
         "states": ["wake", "sleep"],
+        "comm_value": 1500,
         "nstd": 4.0,
         "winsize": 240,
         "radius": 0.75,

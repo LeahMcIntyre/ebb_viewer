@@ -116,6 +116,7 @@ def estimate_psd(
     labels: dict[str, Sequence[str]] | None = None,
     verbose: bool = True,
     noise_thresh: float = 0.5,
+    comm_value: int = _COMMUTATOR_VALUE_UV,
     drink_pad: int = 2,
     s_prob: float | None = None,
     ann_keywords: list[str] | None = None,
@@ -234,10 +235,14 @@ def estimate_psd(
         else:
             wake_sub_mask = None
 
-        # Compute commutator artifact threshold mask
+        # Compute commutator artifact threshold mask. ``value`` (µV) is
+        # surfaced as a user-editable param; radius / pad / min_to_pad
+        # remain hardcoded — see TODO "psd_compute: Commutator mask
+        # params should scale with user-set fs" for the fs-coupling
+        # cleanup needed before exposing them.
         comm_mask = masking.commutator_threshold(
             pro,
-            value=_COMMUTATOR_VALUE_UV,
+            value=comm_value,
             radius=_COMMUTATOR_RADIUS_SAMPLES,
             pad=_COMMUTATOR_PAD_SAMPLES,
             min_to_pad=_COMMUTATOR_MIN_TO_PAD,

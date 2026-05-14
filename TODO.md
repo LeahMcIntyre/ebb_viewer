@@ -42,6 +42,22 @@ consistency issues (bare excepts narrowed, `sum(1 for _ in m)` →
 documented). A wholesale re-pass would likely surface low-value items.
 Skip unless a specific inconsistency becomes painful in real use.
 
+### psd_compute: Commutator mask params should scale with user-set fs
+`src/ebb/process/psd_compute.py` hardcodes `_COMMUTATOR_RADIUS_SAMPLES
+= 250` (and `_COMMUTATOR_PAD_SAMPLES = 250`) — explicitly tagged "1 s
+@ 250 Hz" in the source comments. But the PSD page exposes a Sampling
+Frequency SpinBox the user can change, so at any fs ≠ 250 Hz those
+constants silently lose their "1 second" semantics. The amplitude
+threshold (`_COMMUTATOR_VALUE_UV = 2000`) is fs-independent and stays.
+Fix: either (a) recompute the sample counts from the run's fs at the
+top of `estimate_psd` / `batch_estimate`, or (b) store the radius/pad
+in seconds in the params dict (matching the SD mask's pattern in
+`MaskParamsWidget`) and convert in the compute backend. Option (b)
+also enables surfacing the params in the UI later if needed. The
+broader pattern (sample-count constants silently assuming fs=250 Hz)
+was missed in the fs-hardcoding consistency pass — see memory
+`feedback_fs_coupled_constants.md`.
+
 ---
 
 ## P2 — Moderate Value, Moderate Effort
