@@ -75,3 +75,5 @@ def apply_secondary_button(btn) -> None:
     """Style ``btn`` as a secondary action paired with a primary action."""
     btn.setStyleSheet(SECONDARY_BUTTON_QSS)
     btn.setMinimumHeight(36)
+
+

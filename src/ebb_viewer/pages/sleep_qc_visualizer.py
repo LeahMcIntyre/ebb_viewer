@@ -176,7 +176,31 @@ class SleepQCGridPage(QWidget):
             self.btn_reruns_ready.setVisible(True)
         else:
             self.btn_reruns_ready.setVisible(False)
+        self._update_review_banner()
         self._update_nav_hint()
+
+    def _update_review_banner(self) -> None:
+        """Show / hide the review-mode banner and update its text to reflect
+        the currently-shown animal. Called on review mode transitions and on
+        every animal change in animal mode."""
+        if not self._review_mode:
+            self._review_banner.setVisible(False)
+            return
+        animal = self.cmb_animal.currentText() if self._mode == "animal" else ""
+        n_remaining = len(self._manifest.pending_rerun_review())
+        if animal:
+            self._review_banner_lbl.setText(
+                f"● Review Mode — comparing original vs rerun for "
+                f"<b>{animal}</b>. {n_remaining} animal"
+                f"{'s' if n_remaining != 1 else ''} pending."
+            )
+        else:
+            self._review_banner_lbl.setText(
+                f"● Review Mode — {n_remaining} animal"
+                f"{'s' if n_remaining != 1 else ''} pending review."
+            )
+        self._review_banner_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._review_banner.setVisible(True)
 
     def _update_nav_hint(self) -> None:
         if self._review_mode:
@@ -231,38 +255,74 @@ class SleepQCGridPage(QWidget):
         layout.addWidget(lbl)
         layout.addWidget(desc)
 
-        # --- top bar ---
-        top = QHBoxLayout()
+        # --- review-mode banner (visible only while in review mode) ---
+        # The page already tints its background when in review mode, but that
+        # cue is easy to miss on first glance. A coloured banner with the
+        # current animal makes the mode unmissable.
+        self._review_banner = QFrame()
+        self._review_banner.setStyleSheet(
+            "QFrame { background: #fde8ce; border: 1px solid #c96a00; "
+            "border-radius: 4px; }"
+        )
+        rb_layout = QHBoxLayout(self._review_banner)
+        rb_layout.setContentsMargins(10, 6, 10, 6)
+        self._review_banner_lbl = QLabel("● Review Mode")
+        self._review_banner_lbl.setStyleSheet(
+            "color: #7a4400; font-weight: bold; background: transparent; border: none;"
+        )
+        rb_layout.addWidget(self._review_banner_lbl, 1)
+        self._review_banner.setVisible(False)
+        layout.addWidget(self._review_banner)
 
+        # --- top bar ---
+        # Three logical clusters separated by stretches + small section labels:
+        # FILTER (which data) → VIEW (which top-level view) → status indicator.
+        # The DISPLAY cluster (Group / Animal / 6AM Start / Median) only
+        # appears in Sleep view and lives between FILTER and VIEW.
+        top = QHBoxLayout()
+        top.setSpacing(6)
+
+        # FILTER cluster
+        top.addWidget(_section_label("FILTER"))
         top.addWidget(QLabel("Combo:"))
         self.cmb_combo = QComboBox()
         self.cmb_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         self.cmb_combo.setMinimumWidth(100)
         top.addWidget(self.cmb_combo)
 
+        # DISPLAY cluster (sleep-view-only — wrapped so we can hide it whole)
         self._sleep_mode_controls = QWidget()
         smc = QHBoxLayout(self._sleep_mode_controls)
         smc.setContentsMargins(0, 0, 0, 0)
-        smc.setSpacing(top.spacing())
+        smc.setSpacing(6)
 
+        smc.addSpacing(12)
         smc.addWidget(_vsep(self))
+        smc.addSpacing(6)
+        smc.addWidget(_section_label("DISPLAY"))
 
+        # Group / Animal — radio-like; rendered as one "segmented control"
+        # by laying the two native buttons flush against each other so they
+        # read as a connected pill without overriding the system style.
         self.btn_group = QPushButton("Group")
         self.btn_group.setCheckable(True)
         self.btn_group.setChecked(True)
         self.btn_animal = QPushButton("Animal")
         self.btn_animal.setCheckable(True)
-        smc.addWidget(self.btn_group)
-        smc.addWidget(self.btn_animal)
+        mode_row = QHBoxLayout()
+        mode_row.setContentsMargins(0, 0, 0, 0)
+        mode_row.setSpacing(0)
+        mode_row.addWidget(self.btn_group)
+        mode_row.addWidget(self.btn_animal)
+        mode_wrap = QWidget()
+        mode_wrap.setLayout(mode_row)
+        smc.addWidget(mode_wrap)
 
-        smc.addWidget(_vsep(self))
-
+        # 6AM Start / Median — independent on/off toggles (native look)
         self.btn_offset = QPushButton("6AM Start")
         self.btn_offset.setCheckable(True)
         self.btn_offset.setChecked(True)
         smc.addWidget(self.btn_offset)
-
-        smc.addWidget(_vsep(self))
 
         self.btn_median = QPushButton("Median")
         self.btn_median.setCheckable(True)
@@ -273,19 +333,28 @@ class SleepQCGridPage(QWidget):
         top.addWidget(self._sleep_mode_controls)
         top.addStretch(1)
 
-        # --- view toggle (right-aligned) ---
-        top.addWidget(_vsep(self))
+        # VIEW cluster — same flush-pair treatment as Group/Animal.
+        top.addWidget(_section_label("VIEW"))
         self.btn_spindle = QPushButton("Spindle Mask")
         self.btn_spindle.setCheckable(True)
         self.btn_spindle.setChecked(True)
         self.btn_view_sleep = QPushButton("Sleep")
         self.btn_view_sleep.setCheckable(True)
         self.btn_view_sleep.setChecked(False)
-        top.addWidget(self.btn_spindle)
-        top.addWidget(self.btn_view_sleep)
+        view_row = QHBoxLayout()
+        view_row.setContentsMargins(0, 0, 0, 0)
+        view_row.setSpacing(0)
+        view_row.addWidget(self.btn_spindle)
+        view_row.addWidget(self.btn_view_sleep)
+        view_wrap = QWidget()
+        view_wrap.setLayout(view_row)
+        top.addWidget(view_wrap)
 
+        top.addSpacing(12)
         top.addWidget(_vsep(self))
+        top.addSpacing(6)
 
+        # Status indicator + Exit Review toggle (visible only when relevant)
         self.btn_reruns_ready = QPushButton()
         self.btn_reruns_ready.setCheckable(True)
         self.btn_reruns_ready.setStyleSheet(
@@ -331,11 +400,8 @@ class SleepQCGridPage(QWidget):
         ac.addWidget(self._lbl_filter)
         self.btn_prev_animal = QPushButton("◄ Prev")
         self.btn_next_animal = QPushButton("Next ►")
-        self.btn_next_rerun = QPushButton("Next Rerun ►")
-        self.btn_next_rerun.setEnabled(False)
         ac.addWidget(self.btn_prev_animal)
         ac.addWidget(self.btn_next_animal)
-        ac.addWidget(self.btn_next_rerun)
         ac.addStretch(1)
         self._animal_controls.setVisible(False)
         layout.addWidget(self._animal_controls)
@@ -417,7 +483,6 @@ class SleepQCGridPage(QWidget):
         self.cmb_animal.currentTextChanged.connect(self._on_animal_changed)
         self.btn_prev_animal.clicked.connect(self._on_prev_animal)
         self.btn_next_animal.clicked.connect(self._on_next_animal)
-        self.btn_next_rerun.clicked.connect(self._on_next_rerun)
 
     # ------------------------------------------------------------------
     # Mode switching
@@ -666,6 +731,7 @@ class SleepQCGridPage(QWidget):
 
     def _on_animal_changed(self, _: str) -> None:
         self._sync_animal_nav()
+        self._update_review_banner()
         self._update_all_plots()
 
     def _sync_animal_nav(self) -> None:
@@ -673,11 +739,6 @@ class SleepQCGridPage(QWidget):
         n = self.cmb_animal.count()
         self.btn_prev_animal.setEnabled(i > 0)
         self.btn_next_animal.setEnabled(i < n - 1)
-        has_next_rerun = any(
-            self._has_pending_rerun(self.cmb_animal.itemText(j)) for j in range(i + 1, n)
-        )
-        self.btn_next_rerun.setEnabled(has_next_rerun)
-
     def _on_prev_animal(self) -> None:
         i = self.cmb_animal.currentIndex()
         if i > 0:
@@ -710,10 +771,6 @@ class SleepQCGridPage(QWidget):
                 self.cmb_animal.setCurrentIndex(i)
                 return True
         return False
-
-    def _on_next_rerun(self) -> None:
-        """Step forward to the next animal with a pending rerun."""
-        self._jump_to_next_rerun_animal()
 
     def _advance_to_next_rerun(self) -> None:
         """After resolving a rerun, jump to the next pending one or stay and refresh."""
@@ -929,8 +986,9 @@ class SleepQCGridPage(QWidget):
                     )
             drawn_combos.append(combo)
 
-        # Group median reference overlay
-        ref_combo = self._get_ref_combo()
+        # Group median reference overlay — gated by the Median toggle so the
+        # button has consistent semantics across group / animal modes.
+        ref_combo = self._get_ref_combo() if self._show_ref_median else None
         if ref_combo is not None:
             self._draw_ref_median(ref_combo)
 
@@ -950,16 +1008,18 @@ class SleepQCGridPage(QWidget):
         self._update_all_plots()
 
     def _get_ref_combo(self) -> str | None:
-        """Return combo with most ok animals; prefer LFC_RSC on ties.
+        """Return the combo to use for the group-median reference overlay.
 
-        Reference median is only meaningful over OK runs — counting any
-        run regardless of status (the pre-fix behavior) could pick a
-        combo where most animals failed QC.
+        Prefers LFC_RSC when it has data; otherwise the combo with the most
+        animals on disk. Status-agnostic — the median is a sanity-check
+        baseline used DURING initial QC, when most animals haven't yet been
+        flagged ok. Filtering to ok-only made the toggle a no-op on first
+        review pass.
         """
         counts: dict[str, int] = {}
         for entry in self._manifest:
             for c, run in entry.runs.items():
-                if c in self._available_combos and run.sleep_qc == "ok":
+                if c in self._available_combos and run.sleep_qc != "rejected":
                     counts[c] = counts.get(c, 0) + 1
         if not counts:
             return None
@@ -1213,11 +1273,26 @@ class SleepQCGridPage(QWidget):
             row_l.addStretch(1)
 
             if self._review_mode:
-                btn_accept = QPushButton("✓ Accept")
+                # Label by role so the *consequence* is explicit. The original
+                # combo (source_combo is None) accepts as "Keep original";
+                # a rerun (source_combo set) accepts as "Use rerun". Both
+                # actions are functionally identical — flag_accept_combo on
+                # the chosen combo rejects all sibling combos for this animal.
+                if source_combo:
+                    accept_text = "✓ Use rerun"
+                    accept_tip = (
+                        f"Accept this rerun ({combo}) — rejects the original "
+                        f"({source_combo}) and any other combos for this animal."
+                    )
+                else:
+                    accept_text = "✓ Keep original"
+                    accept_tip = (
+                        f"Keep the original combo ({combo}) — rejects the "
+                        "rerun(s) and any other combos for this animal."
+                    )
+                btn_accept = QPushButton(accept_text)
                 btn_accept.setFixedHeight(22)
-                btn_accept.setToolTip(
-                    f"Accept {combo} as the final combo — rejects all others for this animal"
-                )
+                btn_accept.setToolTip(accept_tip)
                 btn_accept.clicked.connect(lambda _, c=combo: self._flag_accept_combo(c))
                 row_l.addWidget(btn_accept)
 
@@ -1715,3 +1790,14 @@ def _vsep(parent: QWidget) -> QFrame:
     f.setFrameShape(QFrame.Shape.VLine)
     f.setFrameShadow(QFrame.Shadow.Sunken)
     return f
+
+
+def _section_label(text: str) -> QLabel:
+    """Small italic uppercase label that prefixes a toolbar cluster (Filter,
+    View, etc.) so the controls within each cluster read as a group."""
+    lbl = QLabel(text)
+    lbl.setStyleSheet(
+        "color: #888; font-size: 10px; font-style: italic; "
+        "letter-spacing: 1px; padding-right: 2px;"
+    )
+    return lbl

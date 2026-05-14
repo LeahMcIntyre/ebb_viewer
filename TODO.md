@@ -2,14 +2,16 @@
 
 ## In progress: UX polish mode (P2)
 
-Working through the P2 UX polish items below in order. Done this round:
-preprocess Rescan + wording (✓), rerun multi-combo upload dialog
-consolidation (✓), preprocess/spindle "Next →" hint structural part (✓).
+Done across recent rounds: preprocess Rescan + wording (✓), rerun
+multi-combo upload dialog consolidation (✓), preprocess/spindle
+"Next →" hint structural part (✓), home per-PSD-run filter dropdown
+(✓), spindle_upload page polish (✓), cross-page primary-action
+button style (✓). See P2 entries below for per-item notes.
 
 **Next on deck:**
-1. `home: Surface per-PSD-run granularity in the Pipeline Summary table` —
-   medium; recommended approach is a run-name dropdown above the table
-   ("All runs (best)" default).
+- No active P2 item queued. P2 entries below are either DONE,
+  deferred, or carry their own scoping notes; pick the next one
+  based on which would be the cheapest win in real use.
 
 Deferred until more real PSD compute sessions:
 `psd: Reflow page around user intent` — wait-and-see per the entry itself.
@@ -52,25 +54,44 @@ the way (workers in a loop now go into `self._sr_workers` / `self._sr_threads`
 lists so none are destroyed before their event-loop slot fires).
 Recorded in `PITFALLS.md` under Worker / threading.
 
-### home: Surface per-PSD-run granularity in the Pipeline Summary table
-Today the table's PSD File / PSD Status columns collapse across PSD
-runs (best-wins precedence: `drink_mask_applied > ok > needs_drink_mask`).
-With multiple named runs per project (e.g. `default` + `dark_phase`),
-the user can see the aggregate state but not which run is in which
-state, and can't act on a specific run from Home. PSD Compute, PSD
-Review (Visualizer), and Drink Mask pages each already have their own
-run-name selector — Home is the only aggregate-only surface.
+### ~~spindle_upload: Page polish (paths, project picker, primary button)~~
+**DONE** — three coordinated cleanups on the Spindle Upload page:
+- Dropped the two read-only QLineEdits ("Selected upload folder",
+  "Labels output folder") and their hint. Replaced with one compact
+  relative-path summary line below the EDF-set combo; full absolute
+  paths land in the tooltip. `_current_upload_dir` reads from the
+  combo's userData instead of a separate line edit.
+- Replaced the SleepyRat project `QListWidget` (and its enclosing
+  group box) with an inline `QComboBox` + Refresh / New buttons in
+  one row, matching the EDF-set row above it. Selection is preserved
+  across refreshes.
+- Promoted the "Upload & Download" button to the shared primary-action
+  style; `_update_run_enabled` sets a tooltip reporting the first
+  missing input in priority order (EDF set → SleepyRat project →
+  remote folder).
 
-**Recommended approach:** add a run-name dropdown above the summary
-table. Default is "All runs (best)" (current behavior). Selecting a
-specific run filters PSD File / PSD Status cells to that run's state.
-Matches the rest of the UI and scales to N runs without row explosion.
+### ~~ui: Consistent primary-action button style across pipeline pages~~
+**DONE** — added `PRIMARY_BUTTON_QSS` + `apply_primary_button()` (and
+a paired `SECONDARY_BUTTON_QSS` + `apply_secondary_button()`) to
+`pipeline/theme.py`. Applied across preprocess, spindle (write),
+spindle_upload, rerun, psds, drink_mask, and export_masks so every
+"Run X" / "Apply X" / "Export" / "Upload & Download" button reads
+the same. Finalize keeps its existing minimal bold-only style for
+now since its primary button sits inside a per-run section header
+where the larger styled button would crowd the layout. Spindle
+Rerun's "Select All" picks up the outlined secondary style so it
+doesn't read as native-Qt afterthought next to "Run Selected".
 
-Alternatives considered: tooltip on PSD Status with per-run breakdown
-(zero new controls but hover-only / not discoverable); per-run sub-rows
-inside each cell (everything visible but row heights vary, harder to
-scan when N>2). Both viable, but the dropdown matches the codebase
-convention.
+### ~~home: Surface per-PSD-run granularity in the Pipeline Summary table~~
+**DONE** — "PSD run:" dropdown lives above the Pipeline Summary in the
+summary header row. Default "All runs (best)" preserves the prior
+best-wins behavior; selecting a specific run filters PSD File / PSD
+Status cells to that run only (animals where the chosen run isn't
+computed yet now show "—"). Hidden when fewer than 2 runs exist —
+"All runs (best)" and a single run would render identically.
+Selection is preserved across refreshes; falls back to default if
+the selected run is removed from disk. Covered by 7 new tests in
+`test_home_page.py`.
 
 ### psd: Reflow page around user intent (Setup / What to compute / Filters / Run)
 After Stage B-2 the PSD page reads as a flat list of equally-weighted
