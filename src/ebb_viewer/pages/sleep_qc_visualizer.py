@@ -301,14 +301,24 @@ class SleepQCGridPage(QWidget):
         smc.addSpacing(6)
         smc.addWidget(_section_label("DISPLAY"))
 
+        # Group / Animal — radio-like; rendered as one "segmented control"
+        # by laying the two native buttons flush against each other so they
+        # read as a connected pill without overriding the system style.
         self.btn_group = QPushButton("Group")
         self.btn_group.setCheckable(True)
         self.btn_group.setChecked(True)
         self.btn_animal = QPushButton("Animal")
         self.btn_animal.setCheckable(True)
-        smc.addWidget(self.btn_group)
-        smc.addWidget(self.btn_animal)
+        mode_row = QHBoxLayout()
+        mode_row.setContentsMargins(0, 0, 0, 0)
+        mode_row.setSpacing(0)
+        mode_row.addWidget(self.btn_group)
+        mode_row.addWidget(self.btn_animal)
+        mode_wrap = QWidget()
+        mode_wrap.setLayout(mode_row)
+        smc.addWidget(mode_wrap)
 
+        # 6AM Start / Median — independent on/off toggles (native look)
         self.btn_offset = QPushButton("6AM Start")
         self.btn_offset.setCheckable(True)
         self.btn_offset.setChecked(True)
@@ -323,7 +333,7 @@ class SleepQCGridPage(QWidget):
         top.addWidget(self._sleep_mode_controls)
         top.addStretch(1)
 
-        # VIEW cluster (top-level view toggle, right-aligned)
+        # VIEW cluster — same flush-pair treatment as Group/Animal.
         top.addWidget(_section_label("VIEW"))
         self.btn_spindle = QPushButton("Spindle Mask")
         self.btn_spindle.setCheckable(True)
@@ -331,8 +341,14 @@ class SleepQCGridPage(QWidget):
         self.btn_view_sleep = QPushButton("Sleep")
         self.btn_view_sleep.setCheckable(True)
         self.btn_view_sleep.setChecked(False)
-        top.addWidget(self.btn_spindle)
-        top.addWidget(self.btn_view_sleep)
+        view_row = QHBoxLayout()
+        view_row.setContentsMargins(0, 0, 0, 0)
+        view_row.setSpacing(0)
+        view_row.addWidget(self.btn_spindle)
+        view_row.addWidget(self.btn_view_sleep)
+        view_wrap = QWidget()
+        view_wrap.setLayout(view_row)
+        top.addWidget(view_wrap)
 
         top.addSpacing(12)
         top.addWidget(_vsep(self))
@@ -384,11 +400,8 @@ class SleepQCGridPage(QWidget):
         ac.addWidget(self._lbl_filter)
         self.btn_prev_animal = QPushButton("◄ Prev")
         self.btn_next_animal = QPushButton("Next ►")
-        self.btn_next_rerun = QPushButton("Next Rerun ►")
-        self.btn_next_rerun.setEnabled(False)
         ac.addWidget(self.btn_prev_animal)
         ac.addWidget(self.btn_next_animal)
-        ac.addWidget(self.btn_next_rerun)
         ac.addStretch(1)
         self._animal_controls.setVisible(False)
         layout.addWidget(self._animal_controls)
@@ -470,7 +483,6 @@ class SleepQCGridPage(QWidget):
         self.cmb_animal.currentTextChanged.connect(self._on_animal_changed)
         self.btn_prev_animal.clicked.connect(self._on_prev_animal)
         self.btn_next_animal.clicked.connect(self._on_next_animal)
-        self.btn_next_rerun.clicked.connect(self._on_next_rerun)
 
     # ------------------------------------------------------------------
     # Mode switching
@@ -727,11 +739,6 @@ class SleepQCGridPage(QWidget):
         n = self.cmb_animal.count()
         self.btn_prev_animal.setEnabled(i > 0)
         self.btn_next_animal.setEnabled(i < n - 1)
-        has_next_rerun = any(
-            self._has_pending_rerun(self.cmb_animal.itemText(j)) for j in range(i + 1, n)
-        )
-        self.btn_next_rerun.setEnabled(has_next_rerun)
-
     def _on_prev_animal(self) -> None:
         i = self.cmb_animal.currentIndex()
         if i > 0:
@@ -764,10 +771,6 @@ class SleepQCGridPage(QWidget):
                 self.cmb_animal.setCurrentIndex(i)
                 return True
         return False
-
-    def _on_next_rerun(self) -> None:
-        """Step forward to the next animal with a pending rerun."""
-        self._jump_to_next_rerun_animal()
 
     def _advance_to_next_rerun(self) -> None:
         """After resolving a rerun, jump to the next pending one or stay and refresh."""
