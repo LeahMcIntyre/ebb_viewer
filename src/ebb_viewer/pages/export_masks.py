@@ -14,7 +14,9 @@ from typing import Any
 from PyQt6.QtCore import Qt, QThread, QUrl, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
@@ -39,8 +41,19 @@ from ebb_viewer.pipeline.mask_export import (
     default_pairs,
     export_run,
 )
-from ebb_viewer.pipeline.theme import apply_primary_button
+from ebb.io.fs_detect import detect_fs_from_standard
+from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
 from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget
+from ebb_viewer.widgets.no_scroll_spinbox import NoScrollSpinBox
+
+# EEG channel labels in canonical order — same indices as the PSD page,
+# Finalize page, and ``ebb.io.combine``. Channel selection on this page
+# determines which channels each per-animal EDF reader emits, which
+# downstream feeds into the SD-threshold and other masks.
+CH_LABELS = ["LFC", "RSC", "LSC"]
+# Hardcoded default — overridden via the ↻ button (reads from first EDF
+# in standard/) or by loading params from a saved run.
+DEFAULT_FS = 250
 
 # ---------------------------------------------------------------------------
 # Worker thread
@@ -139,12 +152,92 @@ class ExportMasksPage(QWidget):
         subtitle.setWordWrap(True)
         root.addWidget(subtitle)
 
-        root.addWidget(self._build_output_section())
-        root.addWidget(self._build_params_section())
+        # ----- Zone 1: SETUP (collapsible) -----
+        # Same pattern as the PSD compute page — "set once" content sits
+        # behind a collapsible header so the rest of the page gets the
+        # vertical space once the user has picked an output name + loaded
+        # any prior params.
+        zone1_row = QHBoxLayout()
+        zone1_row.setContentsMargins(0, 0, 0, 0)
+        zone1_label = QLabel("1. SETUP")
+        zone1_label.setStyleSheet(zone_header_qss())
+        zone1_row.addWidget(zone1_label)
+        zone1_row.addStretch(1)
+        self._setup_summary_lbl = QLabel("")
+        self._setup_summary_lbl.setStyleSheet(
+            "color: #888; font-size: 11px; font-style: italic; padding-right: 8px;"
+        )
+        self._setup_summary_lbl.setVisible(False)
+        zone1_row.addWidget(self._setup_summary_lbl)
+        self._btn_setup_toggle = QPushButton("▼")
+        self._btn_setup_toggle.setCheckable(True)
+        self._btn_setup_toggle.setChecked(True)
+        self._btn_setup_toggle.setFixedSize(28, 22)
+        self._btn_setup_toggle.setToolTip("Collapse the Setup section")
+        self._btn_setup_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._btn_setup_toggle.clicked.connect(self._on_setup_toggled)
+        zone1_row.addWidget(self._btn_setup_toggle)
+        root.addLayout(zone1_row)
+
+        self._setup_container = QWidget()
+        setup_v = QVBoxLayout(self._setup_container)
+        setup_v.setContentsMargins(0, 0, 0, 0)
+        setup_v.setSpacing(4)
+        setup_v.addWidget(self._build_output_section())
+        setup_v.addWidget(self._build_load_section())
+        root.addWidget(self._setup_container)
+
+        # ----- Zone 2: WHAT TO EXPORT -----
+        zone2 = QLabel("2. WHAT TO EXPORT")
+        zone2.setStyleSheet(zone_header_qss())
+        root.addWidget(zone2)
+
+        # Build the mask widget early so its States section can be re-parented
+        # into Zone 2 below. expose_states_externally=True keeps state
+        # ownership inside the widget; show_subzone_headers=True renders the
+        # ARTIFACT / EVENT-BASED labels above the relevant mask sections.
+        swd_available = (self.project_root / "swd").is_dir() and any(
+            (self.project_root / "swd").glob("*.mat")
+        )
+        self.mask_widget = MaskParamsWidget(
+            project_root=self.project_root,
+            swd_available=swd_available,
+            expose_states_externally=True,
+            show_subzone_headers=True,
+        )
+        self.mask_widget.changed.connect(self._check_modified)
+
+        # States — wrapped in a plain QGroupBox so it matches the Animals
+        # box below it (no collapsible chevron / subtitle).
+        self.states_gb = QGroupBox("States to Export")
+        states_v = QVBoxLayout(self.states_gb)
+        states_v.addWidget(self.mask_widget.states_inner_widget())
+        root.addWidget(self.states_gb)
+
+        root.addWidget(self._build_channels_section())
         root.addWidget(self._build_animals_section())
+
+        # ----- Zone 3: FILTERS & MASKS -----
+        zone3 = QLabel("3. FILTERS & MASKS")
+        zone3.setStyleSheet(zone_header_qss())
+        root.addWidget(zone3)
+
+        # ``lbl_modified`` shows "loaded from X but you've edited the params"
+        # — sits right above the mask widget so the warning stays visible
+        # even when Setup (which holds the load buttons) is collapsed.
+        root.addWidget(self.lbl_modified)
+        root.addWidget(self.mask_widget)
+
+        # ----- Zone 4: RUN -----
+        zone4 = QLabel("4. RUN")
+        zone4.setStyleSheet(zone_header_qss())
+        root.addWidget(zone4)
+
         root.addWidget(self._build_action_section())
         root.addWidget(self._build_status_section())
         root.addStretch(1)
+
+        self._refresh_setup_summary()
 
     # ----- Output ------------------------------------------------------
 
@@ -167,11 +260,16 @@ class ExportMasksPage(QWidget):
 
     # ----- Params ------------------------------------------------------
 
-    def _build_params_section(self) -> QGroupBox:
-        gb = QGroupBox("Params")
+    def _build_load_section(self) -> QGroupBox:
+        """Setup-zone group: 'Load from…' buttons + the loaded-run label.
+
+        The matching ``lbl_modified`` ("loaded from X but you've edited
+        the params") lives directly above the mask widget in zone 3 so
+        it stays visible when Setup is collapsed.
+        """
+        gb = QGroupBox("Load params")
         v = QVBoxLayout(gb)
 
-        # Load-from-run row (optional; build manually otherwise).
         row = QHBoxLayout()
         self.btn_load_run = QPushButton("Load from PSD run…")
         self.btn_load_run.clicked.connect(self._on_load_from_run)
@@ -187,21 +285,106 @@ class ExportMasksPage(QWidget):
         row.addWidget(self.lbl_loaded, 1)
         v.addLayout(row)
 
+        # Create lbl_modified here so the field is initialized before the
+        # zone-2/3 layout code below references it. Actual placement (in
+        # zone 3 above the mask widget) happens in _build_ui.
         self.lbl_modified = QLabel("")
         self.lbl_modified.setStyleSheet("color: #b07000; font-size: 11px; font-style: italic;")
-        v.addWidget(self.lbl_modified)
 
-        # Full mask + filter editor.
-        swd_available = (self.project_root / "swd").is_dir() and any(
-            (self.project_root / "swd").glob("*.mat")
-        )
-        self.mask_widget = MaskParamsWidget(
-            project_root=self.project_root,
-            swd_available=swd_available,
-        )
-        self.mask_widget.changed.connect(self._check_modified)
-        v.addWidget(self.mask_widget)
         return gb
+
+    # ----- Channels ----------------------------------------------------
+
+    def _build_channels_section(self) -> QGroupBox:
+        """Channels + Sampling-freq box, mirroring the PSD page's pattern."""
+        # ``&&`` escapes the ampersand so Qt doesn't interpret it as an
+        # accelerator marker.
+        gb = QGroupBox("Channels && Sampling freq")
+        v = QVBoxLayout(gb)
+
+        hdr = QHBoxLayout()
+        hdr.addWidget(QLabel("Channels:"))
+        hdr.addStretch(1)
+        self.chk_channels_all = QCheckBox("Select all")
+        self.chk_channels_all.setChecked(True)
+        self.chk_channels_all.toggled.connect(self._toggle_all_channels)
+        hdr.addWidget(self.chk_channels_all)
+        v.addLayout(hdr)
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(4)
+        self._channel_boxes: list[QCheckBox] = []
+        for i, label in enumerate(CH_LABELS):
+            cb = QCheckBox(label)
+            cb.setChecked(True)
+            cb.toggled.connect(self._on_channel_box_toggled)
+            self._channel_boxes.append(cb)
+            r, c = divmod(i, 4)
+            grid.addWidget(cb, r, c)
+        v.addLayout(grid)
+
+        # Sampling-freq row with a ↻ detect button — same UI pattern as
+        # the PSD page so the two pages feel symmetric.
+        fs_row = QHBoxLayout()
+        fs_row.setContentsMargins(0, 0, 0, 0)
+        fs_row.addWidget(QLabel("Sampling freq:"))
+        self.spin_fs = NoScrollSpinBox()
+        self.spin_fs.setRange(1, 100_000)
+        self.spin_fs.setSuffix(" Hz")
+        self.spin_fs.setValue(DEFAULT_FS)
+        self.spin_fs.valueChanged.connect(self._on_fs_changed)
+        fs_row.addWidget(self.spin_fs)
+        self.btn_detect_fs = QPushButton("↻")
+        self.btn_detect_fs.setFixedSize(24, 22)
+        self.btn_detect_fs.setToolTip(
+            "Read sampling frequency from the first EDF in standard/"
+        )
+        self.btn_detect_fs.clicked.connect(self._on_detect_fs_clicked)
+        fs_row.addWidget(self.btn_detect_fs)
+        fs_row.addStretch(1)
+        v.addLayout(fs_row)
+        return gb
+
+    def _toggle_all_channels(self, checked: bool) -> None:
+        for cb in self._channel_boxes:
+            cb.blockSignals(True)
+            cb.setChecked(checked)
+            cb.blockSignals(False)
+        self._on_channel_box_toggled()
+
+    def _on_channel_box_toggled(self, *_args) -> None:
+        """Keep the 'Select all' state in sync with the underlying boxes
+        and trigger the page's modified / button-enabled refresh."""
+        all_checked = all(cb.isChecked() for cb in self._channel_boxes)
+        self.chk_channels_all.blockSignals(True)
+        self.chk_channels_all.setChecked(all_checked)
+        self.chk_channels_all.blockSignals(False)
+        # Treat channel changes as a param edit so the modified-from-loaded
+        # hint refreshes and the Export button reflects validity.
+        self._check_modified()
+        self._update_export_button()
+
+    def selected_channels(self) -> list[int]:
+        """Return indices of checked channel boxes in ``CH_LABELS`` order."""
+        return [i for i, cb in enumerate(self._channel_boxes) if cb.isChecked()]
+
+    def _on_fs_changed(self, _value: int) -> None:
+        """fs lives on the page but is part of the export config — treat
+        changes as a param edit so the modified-from-loaded hint refreshes."""
+        self._check_modified()
+
+    def _on_detect_fs_clicked(self) -> None:
+        """Fill the Sampling-freq SpinBox from the first EDF in standard/.
+        Silently no-ops when no readable EDF is found — the user's
+        existing SpinBox value is preserved.
+        """
+        detected = detect_fs_from_standard(self.project_root)
+        if detected is None:
+            # No log box on this page; the value just stays put.
+            return
+        self.spin_fs.setValue(detected)
 
     # ----- Animals -----------------------------------------------------
 
@@ -322,6 +505,25 @@ class ExportMasksPage(QWidget):
         self.lbl_animals_count.setText(f"{sel} of {total} selected")
 
     # ------------------------------------------------------------------
+    # Setup zone collapse
+    # ------------------------------------------------------------------
+
+    def _refresh_setup_summary(self) -> None:
+        """One-line summary shown next to the SETUP header when collapsed."""
+        name = self.le_dirname.text().strip() or "(unset)"
+        self._setup_summary_lbl.setText(f"{self.project_root.name} • out: {name}")
+
+    def _on_setup_toggled(self, checked: bool) -> None:
+        """Collapse / expand the Setup zone. The summary label only shows
+        when the body is hidden."""
+        self._setup_container.setVisible(checked)
+        self._setup_summary_lbl.setVisible(not checked)
+        self._btn_setup_toggle.setText("▼" if checked else "▶")
+        self._btn_setup_toggle.setToolTip(
+            "Collapse the Setup section" if checked else "Expand the Setup section"
+        )
+
+    # ------------------------------------------------------------------
     # Params: load from PSD run + modified detection
     # ------------------------------------------------------------------
 
@@ -387,6 +589,20 @@ class ExportMasksPage(QWidget):
         # transient "Modified" flash from _check_modified is neutralized.
         self.mask_widget.from_params(params)
 
+        # Channels + fs live on the page (not the widget); restore them too
+        # so the loaded snapshot truly reflects the saved run.
+        if "channels" in params:
+            saved = list(params["channels"])
+            for i, cb in enumerate(self._channel_boxes):
+                cb.blockSignals(True)
+                cb.setChecked(i in saved)
+                cb.blockSignals(False)
+            self._on_channel_box_toggled()
+        if "fs" in params:
+            self.spin_fs.blockSignals(True)
+            self.spin_fs.setValue(int(params["fs"]))
+            self.spin_fs.blockSignals(False)
+
         self._loaded_source = source
         self._loaded_run_name = run_name
         self._loaded_snapshot = self._snapshot_widget_values()
@@ -396,8 +612,17 @@ class ExportMasksPage(QWidget):
         self.lbl_modified.setText("")
 
     def _snapshot_widget_values(self) -> dict[str, Any]:
-        """Snapshot the widget's current params for modification detection."""
-        return self.mask_widget.to_params()
+        """Snapshot the widget's current params for modification detection.
+
+        Channels + fs live on the page (not the mask widget), but they're
+        part of the export config and must be in the snapshot so the
+        "modified" hint reacts to changes in either.
+        """
+        return {
+            **self.mask_widget.to_params(),
+            "channels": self.selected_channels(),
+            "fs": int(self.spin_fs.value()),
+        }
 
     def _check_modified(self, *_args) -> None:
         if self._loaded_snapshot is None:
@@ -416,6 +641,7 @@ class ExportMasksPage(QWidget):
 
     def _on_dirname_changed(self, _text: str) -> None:
         self._update_export_button()
+        self._refresh_setup_summary()
 
     def _validate_dirname(self) -> tuple[bool, str]:
         name = self.le_dirname.text().strip()
@@ -436,8 +662,18 @@ class ExportMasksPage(QWidget):
     # ------------------------------------------------------------------
 
     def _current_params(self) -> dict[str, Any]:
-        """Current params, ready to pass to the export pipeline."""
-        return self.mask_widget.to_params()
+        """Current params, ready to pass to the export pipeline.
+
+        Mask + filter params come from the shared widget; channel selection
+        and sampling frequency are page-owned and merged in here.
+        ``export_run`` reads ``channels`` (default ``[0, 1, 2]``) and
+        ``fs`` (default ``250``) from the params dict.
+        """
+        return {
+            **self.mask_widget.to_params(),
+            "channels": self.selected_channels(),
+            "fs": int(self.spin_fs.value()),
+        }
 
     def _update_export_button(self) -> None:
         ok_dir, msg_dir = self._validate_dirname()

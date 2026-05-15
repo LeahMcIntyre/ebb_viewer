@@ -44,7 +44,6 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -52,11 +51,13 @@ from PyQt6.QtWidgets import (
 )
 
 from ebb.core.naming import parse_animal_id
+from ebb.io.fs_detect import detect_fs_from_standard
 from ebb.process.psd_compute import batch_estimate, build_final_pkl
 from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest, merged_psd_path
 from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
 from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget
+from ebb_viewer.widgets.no_scroll_spinbox import NoScrollSpinBox
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
 DEFAULT_FS = 250
@@ -287,11 +288,26 @@ class PSDPage(QWidget):
 
         fs_form = QFormLayout()
         fs_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        self.spin_fs = QSpinBox()
+        # NoScrollSpinBox so a stray scroll-wheel inside the page doesn't
+        # accidentally change the value.
+        self.spin_fs = NoScrollSpinBox()
         self.spin_fs.setRange(1, 100_000)
         self.spin_fs.setSuffix(" Hz")
         self.spin_fs.setValue(DEFAULT_FS)
-        fs_form.addRow("Sampling freq:", self.spin_fs)
+        # ↻ button reads fs from the first EDF in ``standard/`` and fills
+        # in the spinbox. No-op (with a log line) when no EDF is found.
+        self.btn_detect_fs = QPushButton("↻")
+        self.btn_detect_fs.setFixedSize(24, 22)
+        self.btn_detect_fs.setToolTip(
+            "Read sampling frequency from the first EDF in standard/"
+        )
+        self.btn_detect_fs.clicked.connect(self._on_detect_fs_clicked)
+        fs_row = QHBoxLayout()
+        fs_row.setContentsMargins(0, 0, 0, 0)
+        fs_row.addWidget(self.spin_fs)
+        fs_row.addWidget(self.btn_detect_fs)
+        fs_row.addStretch(1)
+        fs_form.addRow("Sampling freq:", fs_row)
         psd_v.addLayout(fs_form)
 
         root.addWidget(self.psd_settings_gb)
@@ -408,6 +424,18 @@ class PSDPage(QWidget):
         out = self.project_root / "psd" / (self._run_name() or "default")
         self._run_name_edit.setToolTip(f"PSD output: {out}")
         self._refresh_setup_summary()
+
+    def _on_detect_fs_clicked(self) -> None:
+        """Fill the Sampling-freq SpinBox from the first EDF in standard/.
+        Silently no-ops (with a log line) when no readable EDF is found —
+        the user's existing SpinBox value is preserved.
+        """
+        detected = detect_fs_from_standard(self.project_root)
+        if detected is None:
+            self._log("No readable EDF found in standard/; leaving sampling freq unchanged.")
+            return
+        self.spin_fs.setValue(detected)
+        self._log(f"Detected sampling freq: {detected} Hz")
 
     def _refresh_setup_summary(self) -> None:
         """Update the collapsed-state summary shown next to the SETUP header."""

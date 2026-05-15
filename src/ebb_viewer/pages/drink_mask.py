@@ -15,7 +15,7 @@ Workflow:
 import csv as _csv
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QObject, QThread, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QApplication,
@@ -101,9 +101,19 @@ class DrinkMaskPage(QWidget):
         root.addLayout(hdr)
 
         desc = QLabel(
-            "Recompute PSDs for animals flagged 'needs_drink_mask' using their .npy mask files. "
+            "Recompute PSDs for animals flagged <b>'needs_drink_mask'</b> using "
+            "per-animal drink-event masks. Provide one <b>.npy</b> file per "
+            "animal at <b>project_root/drink_masks/&lt;AnimalID&gt;.npy</b> — a "
+            "<b>1 Hz boolean array</b> where True marks drinking-event samples. "
+            "(Animal ID is the part before the first <code>_</code> in the EDF "
+            "filename, e.g. <code>Mice-1234</code>.)<br><br>"
+            "If the video and EEG don't start at the same time, also place a "
+            "single CSV in <b>drink_masks/</b> with columns <b>Animal,Offset</b> "
+            "(Offset in seconds, positive = video starts later) to align them."
+            "<br><br>"
             "PSD params are loaded from the selected run (read-only)."
         )
+        desc.setTextFormat(Qt.TextFormat.RichText)
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #555; font-size: 12px;")
         root.addWidget(desc)

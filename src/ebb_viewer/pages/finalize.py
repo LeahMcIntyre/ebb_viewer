@@ -162,7 +162,7 @@ class FinalizePage(QWidget):
         root.setSpacing(10)
 
         hdr = QHBoxLayout()
-        lbl = QLabel("Finalize")
+        lbl = QLabel("Finalize PSD")
         lbl.setStyleSheet("font-weight: bold; font-size: 15px;")
         hdr.addWidget(lbl)
         hdr.addStretch(1)
