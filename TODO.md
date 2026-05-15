@@ -6,15 +6,16 @@ Done across recent rounds: preprocess Rescan + wording (✓), rerun
 multi-combo upload dialog consolidation (✓), preprocess/spindle
 "Next →" hint structural part (✓), home per-PSD-run filter dropdown
 (✓), spindle_upload page polish (✓), cross-page primary-action
-button style (✓). See P2 entries below for per-item notes.
+button style (✓), Sleep QC UX bundle (✓), PSD page 4-zone reflow
++ Commutator section + docs pass + Setup compaction (✓), Export Masks
+parity + channel selection + sampling-freq control (✓), sidebar
+separator + Finalize PSD rename (✓), Drink Mask description rewrite
+(✓). See P2 entries below for per-item notes.
 
 **Next on deck:**
 - No active P2 item queued. P2 entries below are either DONE,
   deferred, or carry their own scoping notes; pick the next one
   based on which would be the cheapest win in real use.
-
-Deferred until more real PSD compute sessions:
-`psd: Reflow page around user intent` — wait-and-see per the entry itself.
 
 Skipped this session (pick up here):
 `preprocess / spindle write: Route batch_preprocess console output into
@@ -109,31 +110,37 @@ Selection is preserved across refreshes; falls back to default if
 the selected run is removed from disk. Covered by 7 new tests in
 `test_home_page.py`.
 
-### psd: Reflow page around user intent (Setup / What to compute / Filters / Run)
-After Stage B-2 the PSD page reads as a flat list of equally-weighted
-sections (Folder Selection, Combos table, 6 mask collapsibles, PSD Output
-Settings, Run button) — no visual hierarchy distinguishes setup steps
-from configurable knobs from the action. Consider restructuring into
-four functional zones:
+### ~~psd: Reflow page around user intent (Setup / What to compute / Filters / Run)~~
+**DONE** — both the PSD compute page and the Export Masks page now use
+a four-zone framing (Setup / What to Compute / Filters & Masks / Run)
+with small blue uppercase section headers (`zone_header_qss` in
+`pipeline/theme.py`). The States section is pulled out of
+`MaskParamsWidget` via a new `expose_states_externally=True` flag and
+rendered alongside channels + sampling-freq in zone 2, so all "what
+gets produced" controls cluster together. Zone 3 picks up artifact-vs-
+event sub-zone headers via `show_subzone_headers=True`. Setup zone is
+collapsible with a one-line summary when collapsed (saves vertical
+space once project + run name are set).
 
-1. **Setup** — Folder Selection, Run name (collapsible once filled)
-2. **What to compute** — States (still in mask widget) + channels + fs
-   grouped together since they're all "what does this run produce"
-3. **Filters & masks** — SD, Spindle Noise, SWD, Annotation, Hour
-   Windows (optional knobs, second-tier)
-4. **Run** — pipeline button + log + post-run hint
+Related parity work landed at the same time:
+- Commutator mask section added to `MaskParamsWidget` (amplitude
+  threshold only; radius/pad stay hardcoded — see fs-scaling TODO).
+- Section descriptions + per-parameter tooltips added to every mask
+  section (States, Commutator, SD, Spindle Noise, SWD, Annotation,
+  Compute Hours).
+- Export Masks gained channel selection + sampling-freq control to
+  match PSD page. Both controls are page-owned and merged into
+  `_current_params` / `_snapshot_widget_values`.
+- `NoScrollSpinBox` on `spin_fs` for both pages so a stray scroll
+  doesn't change the value mid-config.
+- ↻ "Detect fs" button next to each sampling-freq SpinBox, backed by
+  `ebb.io.fs_detect.detect_fs_from_standard`.
+- Drop the redundant "PSD Output Root" row from PSD setup (derived
+  path lives in the Run-name tooltip instead).
+- Auto-fit the Spindle Output Combos table to its row count.
 
-Two viable implementations:
-- Keep MaskParamsWidget unchanged; wrap (widget + channels + fs block)
-  in a single "What to Compute & Filter" page-level QGroupBox so they
-  read as one functional unit. Lightest touch.
-- Pull the States section out of MaskParamsWidget and render it on the
-  page next to channels + fs. Cleaner conceptually but regresses Stage
-  B-2's "one widget owns all mask params" goal — needs care.
-
-**Decide after a few real PSD compute sessions** to confirm whether the
-flat layout is genuinely confusing in workflow or just unfamiliar on
-first look.
+Tests landed: 5 for `fs_detect`, 5 for page-level channels/fs
+plumbing (incl. `comm_value` survives `_UI_ONLY_KWARGS`). Total +10.
 
 ### ~~psd: Unify mask controls UI with Export Masks page~~
 **DONE** (Phase 5, Stage B-1 + B-2). PSD page now uses the shared
@@ -170,6 +177,30 @@ for our use). Skipped this session — pick up here when resuming.
 ---
 
 ## P3 — Larger or Needs More Context
+
+### psd_compute / mask_export: Per-file fs validation against EDF header
+The PSD compute and Mask Export pages both surface a Sampling-freq
+SpinBox whose value is forwarded to `estimate_psd` / `export_run` as
+`fs`, where it's used to compute mask window sizes (`winsize * fs`,
+`radius * fs`). Nothing currently checks the SpinBox value against the
+actual EDF. If a user types 500 Hz but files are 250 Hz, every mask
+runs over the wrong window and the user gets no error.
+
+Fix: at the top of each per-file `with edf.Reader(path)` block, read
+`int(reader.header.samples_per_record[0])` and raise a clear error
+when it disagrees with the params `fs`. The Explore agent identified
+the insertion points as line 208 in `src/ebb/process/psd_compute.py`
+(inside `estimate_psd`) and line 252 in
+`src/ebb_viewer/pipeline/mask_export.py` (inside `_build_masks`). The
+read pattern already exists in `ebb/io/fs_detect.py` and in
+`edf_viewer/eeg_viewer.py:56`.
+
+Once this lands, the PSD/Mask Export pages can also drop their default
+fs from a hardcoded 250 → auto-detect at page open (via `fs_detect`),
+since the runtime check makes "fs got out of sync with the files" a
+loud error rather than a silent miscalculation. Related TODO:
+`psd_compute: Commutator mask params should scale with user-set fs`
+(same family of bug — see memory `feedback_fs_coupled_constants.md`).
 
 ### ~~psd: Revisit SD-threshold rule for lumped state groups~~
 ~~With state-selection presets, a user can pick a lumped group like `all` (wake+nrem+rem) or `sleep` (nrem+rem). Today SD thresholding is applied only when the group is literally named `wake` (see `if 'wake' in combo_state` in `estimate_psd`). For `all`, which contains wake samples, SD probably should apply to the wake portion. For `sleep`, it should stay off. Decide the rule (likely: apply SD when the group's code list includes `"w"`), update `estimate_psd` and tests accordingly.~~
