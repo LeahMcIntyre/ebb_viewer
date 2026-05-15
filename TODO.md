@@ -178,7 +178,44 @@ for our use). Skipped this session — pick up here when resuming.
 
 ## P3 — Larger or Needs More Context
 
-### psd_compute / mask_export: Per-file fs validation against EDF header
+### preprocess / spindle write: Cancel button + skip-existing on restart
+Today the Preprocess page (and Spindle Write page) fires a
+`multiprocessing.Pool` via `batch_preprocess` with no way to stop
+mid-run. The user's only options are "close the window" or "kill the
+process" — both kill the pool children too, but leave behind a partial
+output file (whichever EDF a worker was mid-write on). The pool then
+needs manual cleanup before restart: identify the truncated
+`*_PREPROCESSED.edf` by size and delete it. Re-running overwrites
+every output (no skip-existing check at
+`src/ebb/preprocess/edf.py:99`), so a stopped batch of 20 files
+re-does all 20 from scratch.
+
+Two coordinated changes:
+
+1. **Cancel button on Preprocess + Spindle Write pages.** Sits next to
+   the Run button while a worker is active. Click sets a cancel flag
+   that the worker checks between per-file iterations; on the next
+   check the worker terminates the pool gracefully and emits a "Run
+   cancelled — N of M files completed" log line. Has to handle the
+   "pool worker mid-write" case — probably means the cancel only takes
+   effect after the currently-writing file finishes. Document that
+   trade-off in the button tooltip.
+
+2. **Skip-existing mode in `batch_preprocess`.** Add a
+   `skip_existing: bool = False` kwarg to
+   `ebb.preprocess.edf.batch` (and the wrapper called by the spindle
+   write page). When True, skip any input whose
+   `<stem>_PREPROCESSED.edf` already exists in target. Pages opt in
+   via a "Resume from where it stopped" checkbox or a follow-up "Some
+   files already processed — skip them?" dialog. Detect the partial
+   file (size noticeably below median) and offer to delete it as part
+   of the same dialog so the resume doesn't carry a corrupted output
+   forward.
+
+Related: real cause of "stalling" on HDD-backed projects is just disk
+I/O contention between pool workers. Add an explicit `workers=1`
+option for HDD users (multiprocessing actually hurts on a spindle
+because of seek thrashing).
 The PSD compute and Mask Export pages both surface a Sampling-freq
 SpinBox whose value is forwarded to `estimate_psd` / `export_run` as
 `fs`, where it's used to compute mask window sizes (`winsize * fs`,
