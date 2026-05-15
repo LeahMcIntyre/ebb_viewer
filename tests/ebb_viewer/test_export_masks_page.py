@@ -98,6 +98,67 @@ def test_modified_label_appears_after_editing_loaded_params(qapp, tmp_path: Path
     assert "run_a" in page.lbl_modified.text()
 
 
+# ---------------------------------------------------------------------------
+# Page-owned params (channels, fs) — these live on the page, not the mask
+# widget, so they need their own coverage to confirm they reach _current_params
+# (consumed by export_run) and round-trip through _apply_loaded_params.
+# ---------------------------------------------------------------------------
+
+
+def test_current_params_includes_channels_and_fs(qapp, tmp_path: Path):
+    """``_current_params`` merges page-owned channels + fs into the widget
+    params. A regression here would silently send ``[0, 1, 2]`` and 250 Hz
+    to ``export_run`` (its defaults) regardless of the page's UI state."""
+    page = _make_page(qapp, tmp_path)
+    # Untick LFC; bump fs.
+    page._channel_boxes[0].setChecked(False)
+    page.spin_fs.setValue(500)
+
+    p = page._current_params()
+    assert p["channels"] == [1, 2]
+    assert p["fs"] == 500
+
+
+def test_apply_loaded_params_restores_channels_and_fs(qapp, tmp_path: Path):
+    """Loading a saved run with non-default channels + fs must restore both
+    page-owned controls, not just the widget params."""
+    page = _make_page(qapp, tmp_path)
+    page._apply_loaded_params(
+        {"states": ["wake"], "channels": [0, 2], "fs": 1000},
+        source="psd",
+        run_name="run_a",
+    )
+    assert page.selected_channels() == [0, 2]
+    assert page.spin_fs.value() == 1000
+    # And the loaded snapshot includes them, so subsequent edits flag modified.
+    assert page._loaded_snapshot["channels"] == [0, 2]
+    assert page._loaded_snapshot["fs"] == 1000
+
+
+def test_modified_label_appears_after_editing_channels(qapp, tmp_path: Path):
+    """Channel-selection changes must trip the Modified state — channels
+    are part of the export config, so a drift from the loaded run should
+    surface to the user."""
+    page = _make_page(qapp, tmp_path)
+    page._apply_loaded_params(
+        {"states": ["wake"], "channels": [0, 1, 2]}, source="psd", run_name="run_a"
+    )
+    assert page.lbl_modified.text() == ""
+    page._channel_boxes[0].setChecked(False)
+    assert "Modified" in page.lbl_modified.text()
+
+
+def test_modified_label_appears_after_editing_fs(qapp, tmp_path: Path):
+    """Sampling-freq changes must also trip the Modified state."""
+    page = _make_page(qapp, tmp_path)
+    page._apply_loaded_params(
+        {"states": ["wake"], "fs": 250}, source="psd", run_name="run_a"
+    )
+    assert page.lbl_modified.text() == ""
+    page.spin_fs.setValue(500)
+    assert "Modified" in page.lbl_modified.text()
+
+
 def test_load_from_export_config_populates_widget(qapp, tmp_path: Path):
     """Export configs round-trip the full widget params dict."""
     saved = {

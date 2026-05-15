@@ -77,3 +77,17 @@ def apply_secondary_button(btn) -> None:
     btn.setMinimumHeight(36)
 
 
+# ---------------------------------------------------------------------------
+# Zone header — bigger sibling of a section label, used to break a vertical
+# page into named functional zones (e.g. "1. SETUP" / "2. WHAT TO COMPUTE")
+# without nesting more group boxes. Returns a QLabel so the caller can add
+# it to whatever layout it owns.
+# ---------------------------------------------------------------------------
+
+
+def zone_header_qss() -> str:
+    return (
+        "color: #1a5fa8; font-size: 11px; font-weight: bold; "
+        "letter-spacing: 1px; padding: 8px 0 2px 0; "
+        "border-bottom: 1px solid #d0d0d0;"
+    )

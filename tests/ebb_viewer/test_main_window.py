@@ -14,8 +14,8 @@ def test_main_window_constructs_on_empty_project(qapp, tmp_path: Path):
     from ebb_viewer.main_window import MainWindow
 
     win = MainWindow(project_root=tmp_path)
-    # Sidebar should contain 11 navigable rows + 3 separators = 14 items.
-    assert win.pagelist.count() == 14
+    # Sidebar should contain 11 navigable rows + 4 separators = 15 items.
+    assert win.pagelist.count() == 15
     # Initially showing the home page (stack index 0).
     assert win.stacklayout.currentIndex() == 0
     # All page attributes were created.

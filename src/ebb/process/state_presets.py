@@ -32,8 +32,8 @@ PRESET_DESCRIPTIONS: dict[str, str] = {
     "wake": "Wake epochs only",
     "nrem": "NREM epochs only",
     "rem": "REM epochs only",
-    "sleep": "NREM and REM epochs lumped into one PSD",
-    "all": "Wake, NREM, and REM epochs lumped into one PSD",
+    "sleep": "One PSD computed over NREM + REM epochs combined",
+    "all": "One PSD computed over Wake + NREM + REM epochs combined",
 }
 
 PRESET_DISPLAY: dict[str, str] = {

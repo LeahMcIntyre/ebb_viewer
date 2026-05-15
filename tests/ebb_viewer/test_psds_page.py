@@ -152,6 +152,29 @@ def test_worker_forwards_hour_windows_and_selected_days(tmp_path: Path):
     assert kw["hw_enabled"] is True
 
 
+def test_worker_forwards_comm_value(tmp_path: Path):
+    """``comm_value`` is a real ``estimate_psd`` kwarg (not UI-only), so the
+    worker must pass it through to batch_estimate. A regression here would
+    silently fall back to the hardcoded 2000 µV for every PSD."""
+    from ebb.process.psd_compute import _UI_ONLY_KWARGS
+
+    params = {
+        "fs": 250,
+        "channels": [0, 1, 2],
+        "comm_value": 1500,
+        "winsize": 180,
+        "radius": 0.5,
+        "nstd": 5.0,
+        "noise_thresh": 0.5,
+        "states": ["wake"],
+    }
+    calls = _run_worker_capturing_batch_estimate(tmp_path, params)
+    assert calls[0]["comm_value"] == 1500
+    # Lock in that comm_value is NOT stripped by _prepare_estimator_kwargs
+    # (which would silently re-default it to 2000 µV inside estimate_psd).
+    assert "comm_value" not in _UI_ONLY_KWARGS
+
+
 def test_worker_omits_hour_windows_when_disabled(tmp_path: Path):
     params = {
         "fs": 250,
