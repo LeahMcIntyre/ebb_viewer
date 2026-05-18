@@ -60,6 +60,7 @@ class _RunSettingsDialog(QDialog):
         f.addRow("Channels:", QLabel(", ".join(ch_names) if ch_names else "—"))
         f.addRow("States:", QLabel(state_names or "—"))
         f.addRow("Sampling freq:", QLabel(f"{params.get('fs', '—')} Hz"))
+        f.addRow("Commutator thr:", QLabel(f"{params.get('comm_value', '—')} µV"))
         f.addRow("SD window:", QLabel(f"{params.get('winsize', '—')} s"))
         f.addRow("SD radius:", QLabel(f"{params.get('radius', '—')} s"))
         f.addRow("SD z-threshold:", QLabel(str(params.get("nstd", "—"))))
