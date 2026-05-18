@@ -170,10 +170,12 @@ class DrinkMaskPage(QWidget):
         for key, display in [
             ("fs", "Sampling freq (Hz)"),
             ("channels", "Channels"),
+            ("comm_value", "Commutator threshold (µV)"),
             ("winsize", "SD window (s)"),
             ("radius", "SD radius (s)"),
             ("nstd", "SD z-threshold"),
             ("noise_thresh", "Spindle noise threshold"),
+            ("drink_pad", "Drink mask pad (s)"),
         ]:
             lbl_w = QLabel("—")
             self._param_labels[key] = lbl_w
@@ -184,6 +186,14 @@ class DrinkMaskPage(QWidget):
 
         self._lbl_states = QLabel("—")
         params_form.addRow("States:", self._lbl_states)
+
+        self._lbl_swd = QLabel("—")
+        self._lbl_swd.setWordWrap(True)
+        params_form.addRow("SWD mask:", self._lbl_swd)
+
+        self._lbl_ann = QLabel("—")
+        self._lbl_ann.setWordWrap(True)
+        params_form.addRow("Annotation mask:", self._lbl_ann)
 
         root.addWidget(self.gb_params)
 
@@ -372,10 +382,14 @@ class DrinkMaskPage(QWidget):
             for lbl in self._param_labels.values():
                 lbl.setText("— (run Compute PSDs first)")
                 lbl.setStyleSheet("color: gray;")
-            self._lbl_compute_hours.setText("— (run Compute PSDs first)")
-            self._lbl_compute_hours.setStyleSheet("color: gray;")
-            self._lbl_states.setText("— (run Compute PSDs first)")
-            self._lbl_states.setStyleSheet("color: gray;")
+            for lbl in (
+                self._lbl_compute_hours,
+                self._lbl_states,
+                self._lbl_swd,
+                self._lbl_ann,
+            ):
+                lbl.setText("— (run Compute PSDs first)")
+                lbl.setStyleSheet("color: gray;")
             return
         for key, lbl in self._param_labels.items():
             lbl.setStyleSheet("")
@@ -399,6 +413,30 @@ class DrinkMaskPage(QWidget):
         states = psd_params.states_from_params(params)
         self._lbl_states.setText(", ".join(PRESET_DISPLAY.get(s, s) for s in states))
         self._lbl_states.setStyleSheet("color: #1a5c8a;")
+
+        # SWD — accept either widget-shape ("use_swd_mask") or the post-processed
+        # form psds.py writes ("swd_mode") so the row works for either source.
+        swd_on = bool(params.get("use_swd_mask")) or params.get("swd_mode") == "mask_out"
+        if swd_on:
+            self._lbl_swd.setText(f"on (pad={params.get('swd_pad', '?')}s)")
+            self._lbl_swd.setStyleSheet("color: #1a5c8a; font-weight: bold;")
+        else:
+            self._lbl_swd.setText("off")
+            self._lbl_swd.setStyleSheet("color: gray;")
+
+        if params.get("ann_enabled") and params.get("ann_dir"):
+            kw = params.get("ann_keywords") or ""
+            mode = params.get("ann_match_mode", "contains")
+            pb = params.get("ann_pad_before", 0.0)
+            pa = params.get("ann_pad_after", 0.0)
+            self._lbl_ann.setText(
+                f"on — dir: {params['ann_dir']}\n"
+                f"keywords: {kw or '(none)'}  •  match: {mode}  •  pad: −{pb}s / +{pa}s"
+            )
+            self._lbl_ann.setStyleSheet("color: #1a5c8a; font-weight: bold;")
+        else:
+            self._lbl_ann.setText("off")
+            self._lbl_ann.setStyleSheet("color: gray;")
 
     def _refresh_animals(self):
         run_name = self._current_run_name()

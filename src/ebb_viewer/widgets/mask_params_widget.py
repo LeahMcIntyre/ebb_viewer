@@ -480,7 +480,7 @@ class MaskParamsWidget(QWidget):
         self.dspin_radius.setSuffix(" s")
         self.dspin_radius.setValue(_DEFAULT_RADIUS_S)
         self.dspin_radius.setToolTip(
-            "Maximum gap (s) between two artifacts before they're combined into one"
+            "Maximum gap (s) between two artifacts before they're combined into one "
             "continuous masked region" 
         )
 
