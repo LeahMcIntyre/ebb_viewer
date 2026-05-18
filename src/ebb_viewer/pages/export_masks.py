@@ -280,6 +280,14 @@ class ExportMasksPage(QWidget):
             "Load a previously-run export's params. Saved on every successful export."
         )
         row.addWidget(self.btn_load_export)
+        self.btn_restore_defaults = QPushButton("Restore defaults")
+        self.btn_restore_defaults.setToolTip(
+            "Reset states, SD, spindle noise, commutator, SWD, annotation, "
+            "drink-mask, and hour-window settings to their defaults. Output "
+            "directory, channels, and sampling freq are not affected."
+        )
+        self.btn_restore_defaults.clicked.connect(self._on_restore_defaults)
+        row.addWidget(self.btn_restore_defaults)
         self.lbl_loaded = QLabel("(no run loaded — defaults shown)")
         self.lbl_loaded.setStyleSheet("color: #666; font-size: 11px;")
         row.addWidget(self.lbl_loaded, 1)
@@ -526,6 +534,32 @@ class ExportMasksPage(QWidget):
     # ------------------------------------------------------------------
     # Params: load from PSD run + modified detection
     # ------------------------------------------------------------------
+
+    def _on_restore_defaults(self) -> None:
+        """Reset the shared mask widget back to its built-in defaults.
+
+        Output directory, channels, and sampling freq are page-owned and
+        intentionally preserved. Clears any "loaded from <run>" state so
+        the modified-hint stops comparing against the previous snapshot.
+        """
+        ret = QMessageBox.question(
+            self,
+            "Restore defaults?",
+            "Reset states, SD, spindle noise, commutator, SWD, annotation, "
+            "drink-mask, and hour-window settings to their defaults?\n\n"
+            "Output directory, channels, and sampling freq are not affected.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+        self.mask_widget.from_params({})
+        self._loaded_source = None
+        self._loaded_run_name = None
+        self._loaded_snapshot = None
+        self.lbl_loaded.setText("(no run loaded — defaults shown)")
+        self.lbl_loaded.setStyleSheet("color: #666; font-size: 11px;")
+        self.lbl_modified.setText("")
 
     def _on_load_from_run(self) -> None:
         runs = psd_params.list_runs(self.project_root)

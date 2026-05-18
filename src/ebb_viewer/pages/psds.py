@@ -313,9 +313,20 @@ class PSDPage(QWidget):
         root.addWidget(self.psd_settings_gb)
 
         # ----- Zone 3: FILTERS & MASKS -----
+        zone3_row = QHBoxLayout()
         zone3 = QLabel("3. FILTERS & MASKS")
         zone3.setStyleSheet(zone_header_qss())
-        root.addWidget(zone3)
+        zone3_row.addWidget(zone3)
+        zone3_row.addStretch(1)
+        self.btn_restore_defaults = QPushButton("Restore defaults")
+        self.btn_restore_defaults.setToolTip(
+            "Reset states, SD, spindle noise, commutator, SWD, annotation, "
+            "and hour-window settings to their defaults. Channels and sampling "
+            "freq are not affected."
+        )
+        self.btn_restore_defaults.clicked.connect(self._on_restore_defaults)
+        zone3_row.addWidget(self.btn_restore_defaults)
+        root.addLayout(zone3_row)
 
         # The mask widget renders its remaining filter sections (SD,
         # Spindle Noise, SWD, Annotation, Compute Hours) here. States was
@@ -424,6 +435,24 @@ class PSDPage(QWidget):
         out = self.project_root / "psd" / (self._run_name() or "default")
         self._run_name_edit.setToolTip(f"PSD output: {out}")
         self._refresh_setup_summary()
+
+    def _on_restore_defaults(self) -> None:
+        """Reset the shared mask widget back to its built-in defaults.
+
+        Channels and sampling freq are page-owned and intentionally
+        preserved — they're project-detected, not user prefs.
+        """
+        ret = QMessageBox.question(
+            self,
+            "Restore defaults?",
+            "Reset states, SD, spindle noise, commutator, SWD, annotation, "
+            "and hour-window settings to their defaults?\n\n"
+            "Channels and sampling frequency are not affected.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ret == QMessageBox.StandardButton.Yes:
+            self.mask_widget.from_params({})
 
     def _on_detect_fs_clicked(self) -> None:
         """Fill the Sampling-freq SpinBox from the first EDF in standard/.
