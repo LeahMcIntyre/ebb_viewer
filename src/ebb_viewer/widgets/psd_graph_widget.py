@@ -10,7 +10,7 @@ Used in two modes:
 
 import numpy as np
 import pyqtgraph as pg
-from fooof.utils import interpolate_spectrum
+from specparam.utils import interpolate_spectrum
 from PyQt6.QtCore import QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
