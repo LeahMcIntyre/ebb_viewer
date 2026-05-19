@@ -1,7 +1,7 @@
 """In-memory PSD store loaded from a per-run pkl file.
 
 Indexes one ``psds_*.pkl`` file as ``by_animal[animal][state][channel] -> (freqs, psd)``
-for the PSD review widgets to consume.
+for the PSD review widgets and exporters to consume.
 """
 
 import pickle
@@ -10,7 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ebb_viewer.pipeline.naming import parse_animal_id
+from ebb.core.naming import parse_animal_id
 
 
 def parse_animal_from_path_masks(rec: dict) -> str:
