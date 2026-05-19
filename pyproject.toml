@@ -13,6 +13,7 @@ dependencies = [
   "scipy",
   "pandas",
   "openseize",
+  "specparam",
 ]
 
 # Command-line entry points: pipeline GUI and standalone EEG viewer
