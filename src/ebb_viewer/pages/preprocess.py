@@ -163,15 +163,15 @@ class PreprocessPage(QWidget):
         ds_layout.addWidget(self._hz_label)
         ds_layout.addStretch()
 
-        # placeholder; real values set in _apply_state_to_ui()
         self.trim_to = TrimToWidget(values=DEFAULT_TRIM_TO)
 
         trim_lbl = QLabel("Trim To (hrs)")
         trim_lbl.setToolTip(
-            "Two fallback trim targets (hours).\n"
-            "Each EDF is trimmed to the longest value that is ≤ its duration.\n"
-            "Example: targets [48, 72] — a 60h recording trims to 48h; an 80h recording trims to 72h.\n"
-            "Recordings shorter than the smaller value will fail."
+            "1–4 fallback trim targets (hours).\n"
+            "Each EDF is trimmed to the longest target that is ≤ its duration.\n"
+            "Example with [48, 72]: a 60h recording trims to 48h; an 80h recording trims to 72h.\n"
+            "Add or remove targets with [+] / [−]. "
+            "Recordings shorter than the smallest target will fail."
         )
 
         self._trim_hint_label = QLabel()
@@ -294,7 +294,10 @@ class PreprocessPage(QWidget):
 
     def _update_trim_hint(self) -> None:
         trim_vals = sorted(self.trim_to.value())
-        trim_min, trim_max = trim_vals[0], trim_vals[1]
+        if not trim_vals:
+            # TrimToWidget enforces min_count >= 1, so this is defensive.
+            return
+        trim_min = trim_vals[0]
 
         if not self._durations_hrs:
             # No durations known yet — show the rule in plain English
@@ -306,20 +309,22 @@ class PreprocessPage(QWidget):
             self._scan_label.setStyleSheet(self._STYLE_NORMAL)
             return
 
-        counts: dict[int, int] = {trim_min: 0, trim_max: 0}
+        # Bucket each recording into the largest target ≤ its duration; any
+        # recording below trim_min is unprocessable.
+        counts: dict[int, int] = {v: 0 for v in trim_vals}
         n_error = 0
         for d in self._durations_hrs:
-            if d >= trim_max:
-                counts[trim_max] += 1
-            elif d >= trim_min:
-                counts[trim_min] += 1
-            else:
+            bucket = next((v for v in reversed(trim_vals) if d >= v), None)
+            if bucket is None:
                 n_error += 1
+            else:
+                counts[bucket] += 1
 
-        parts = []
-        for val in (trim_max, trim_min):
-            if counts[val]:
-                parts.append(f"{counts[val]} recording{'s' if counts[val] != 1 else ''} → {val}h")
+        parts = [
+            f"{counts[v]} recording{'s' if counts[v] != 1 else ''} → {v}h"
+            for v in reversed(trim_vals)
+            if counts[v]
+        ]
 
         if n_error:
             self._trim_hint_label.setText(

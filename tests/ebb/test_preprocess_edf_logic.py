@@ -41,3 +41,19 @@ def test_compute_trim_stop_no_trim_hours():
     n = int(50 * 3600 * fs)
     with pytest.raises(ValueError):
         compute_trim_stop_samples(n, fs, trim_to_hours=[])
+
+
+def test_compute_trim_stop_single_value():
+    fs = 100
+    # 50 hours recording, single trim target at 48h.
+    n = int(50 * 3600 * fs)
+    stop = compute_trim_stop_samples(n, fs, trim_to_hours=[48])
+    assert stop == int(48 * 3600 * fs)
+
+
+def test_compute_trim_stop_four_values_picks_largest_fit():
+    fs = 100
+    # 80 hours recording with 4 ascending targets — should pick 72.
+    n = int(80 * 3600 * fs)
+    stop = compute_trim_stop_samples(n, fs, trim_to_hours=[24, 48, 72, 96])
+    assert stop == int(72 * 3600 * fs)
