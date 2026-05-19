@@ -14,6 +14,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -242,6 +243,8 @@ class FinalizePage(QWidget):
 
         btn_settings = QPushButton("Settings…")
         hdr.addWidget(btn_settings)
+        btn_export = QPushButton("Export to Excel")
+        hdr.addWidget(btn_export)
         btn = QPushButton("Finalize")
         btn.setStyleSheet("font-weight: bold;")
         hdr.addWidget(btn)
@@ -306,9 +309,14 @@ class FinalizePage(QWidget):
             final_text = f"psds_final.pkl last written {ts}"
             final_style = "color: #333;"
             btn.setText("Re-finalize")
+            btn_export.setEnabled(True)
+            btn_export.clicked.connect(
+                lambda checked, rn=run_name, fp=final_pkl: self._on_export(rn, fp)
+            )
         else:
             final_text = "psds_final.pkl not yet written"
             final_style = "color: gray;"
+            btn_export.setEnabled(False)
         final_lbl = QLabel(final_text)
         final_lbl.setStyleSheet(final_style + " font-size: 11px;")
         layout.addWidget(final_lbl)
@@ -353,3 +361,26 @@ class FinalizePage(QWidget):
             f"psds_final.pkl written for run '{run_name}'.\n\n{out}",
         )
         self._refresh()
+
+    def _on_export(self, run_name: str, final_pkl: Path):
+        from ebb.io.psd_export import export_psds_to_xlsx
+
+        default_path = self.project_root / "psd" / run_name / f"psds_{run_name}.xlsx"
+        out_str, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export PSDs to Excel",
+            str(default_path),
+            "Excel Workbook (*.xlsx)",
+        )
+        if not out_str:
+            return
+        try:
+            written = export_psds_to_xlsx(final_pkl, out_str)
+        except Exception as e:
+            QMessageBox.critical(self, "Export Failed", str(e))
+            return
+        QMessageBox.information(
+            self,
+            "PSDs Exported",
+            f"Excel workbook written for run '{run_name}'.\n\n{written}",
+        )

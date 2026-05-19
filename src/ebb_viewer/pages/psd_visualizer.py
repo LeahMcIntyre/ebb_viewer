@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ebb_viewer.data_stores.psd_store import PSDStore
+from ebb.io.psd_store import PSDStore
 from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.widgets.psd_graph_widget import PSDGridPage

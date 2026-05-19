@@ -101,7 +101,7 @@ def gather_states_from_store(store) -> list[str]:
     Args:
         store: Any object exposing ``animals() -> Iterable[str]`` and
             ``states(animal) -> Iterable[str]`` (matches the
-            `ebb_viewer.data_stores.psd_store.PSDStore` interface).
+            `ebb.io.psd_store.PSDStore` interface).
 
     Returns:
         Sorted list of state names. Falls back to the three single-state
