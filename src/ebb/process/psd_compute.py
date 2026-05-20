@@ -280,7 +280,9 @@ def estimate_psd(
             offset = (
                 masking.get_offset(drink_path, offset_path) if offset_path is not None else None
             )
-            drink_mask = masking.drinking_mask(drink_path, offset, fs=fs, pad_sec=drink_pad)
+            drink_mask = masking.drinking_mask(
+                drink_path, offset, fs=fs, pad_sec=drink_pad, n_samples=pro.shape[-1]
+            )
         else:
             drink_mask = np.ones(pro.shape[-1], dtype=bool)
 
