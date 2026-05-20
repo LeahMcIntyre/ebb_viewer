@@ -199,9 +199,9 @@ class MainWindow(QMainWindow):
         ):
             page.navigate_to.connect(self._navigate_to)
 
-        # Periodic poll: refresh badges + currently-visible page every 10 s.
+        # Periodic poll: refresh badges + currently-visible page every 30 s.
         self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(10_000)
+        self._poll_timer.setInterval(30_000)
         self._poll_timer.timeout.connect(self._poll)
         self._poll_timer.start()
 
