@@ -151,6 +151,36 @@ def test_batch_estimate_unknown_state_raises(tmp_path):
             )
 
 
+def test_batch_estimate_empty_paired_skips_savepath_write(tmp_path):
+    """When match_paths yields nothing, batch_estimate must not write the
+    savepath — silently pickling an empty list there causes downstream
+    build_final_pkl to skip the combo with no clue why."""
+    standard = tmp_path / "standard"
+    standard.mkdir()
+    spindle_out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle_out.mkdir(parents=True)
+    savepath = tmp_path / "psds_LFC_RSC.pkl"
+
+    _, fake_partial = _capture_partial_kwargs()
+
+    with (
+        patch("ebb.process.psd_compute.match_paths", return_value=[]),
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+        patch("ebb.process.psd_compute.partial", side_effect=fake_partial),
+    ):
+        from ebb.process.psd_compute import batch_estimate
+
+        with pytest.warns(UserWarning, match="no EDF files"):
+            results = batch_estimate(
+                eeg_dir=standard,
+                state_dir=spindle_out,
+                savepath=savepath,
+            )
+
+    assert results == []
+    assert not savepath.exists()
+
+
 def test_batch_estimate_single_lumped_state(tmp_path):
     standard = tmp_path / "standard"
     standard.mkdir()
