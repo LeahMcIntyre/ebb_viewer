@@ -242,3 +242,45 @@ def test_load_from_psd_run_refreshes_section_subtitles(qapp, tmp_path: Path):
     )
     assert page.mask_widget._sections["hour_window"].subtitle() == "6–18h, days 0,1,2"
     assert page.mask_widget._sections["spindle"].subtitle() == "0.75"
+
+
+# ---------------------------------------------------------------------------
+# Sampling-frequency auto-detect on showEvent
+# ---------------------------------------------------------------------------
+
+
+def test_autodetect_fs_fills_when_spinbox_at_default(qapp, tmp_path: Path, monkeypatch):
+    """Same auto-detect rule as the PSD Compute page — fill on show only if
+    the SpinBox is still at the hardcoded DEFAULT_FS sentinel."""
+    import ebb_viewer.pages.export_masks as em_mod
+
+    page = _make_page(qapp, tmp_path)
+    assert page.spin_fs.value() == em_mod.DEFAULT_FS
+
+    monkeypatch.setattr(em_mod, "detect_fs_from_standard", lambda _root: 500)
+    page._maybe_autodetect_fs()
+
+    assert page.spin_fs.value() == 500
+
+
+def test_autodetect_fs_does_not_override_user_value(qapp, tmp_path: Path, monkeypatch):
+    import ebb_viewer.pages.export_masks as em_mod
+
+    page = _make_page(qapp, tmp_path)
+    page.spin_fs.setValue(1000)
+
+    monkeypatch.setattr(em_mod, "detect_fs_from_standard", lambda _root: 500)
+    page._maybe_autodetect_fs()
+
+    assert page.spin_fs.value() == 1000
+
+
+def test_autodetect_fs_noop_when_detect_returns_none(qapp, tmp_path: Path, monkeypatch):
+    import ebb_viewer.pages.export_masks as em_mod
+
+    page = _make_page(qapp, tmp_path)
+
+    monkeypatch.setattr(em_mod, "detect_fs_from_standard", lambda _root: None)
+    page._maybe_autodetect_fs()
+
+    assert page.spin_fs.value() == em_mod.DEFAULT_FS

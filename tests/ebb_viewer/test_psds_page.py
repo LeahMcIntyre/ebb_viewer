@@ -428,3 +428,48 @@ def test_page_widget_changed_propagates_to_gate_label(qapp, tmp_path: Path):
     # without us calling _validate explicitly.
     assert "state" in page._gate_label.text().lower()
     assert not page.btn_run_pipeline.isEnabled()
+
+
+# ---------------------------------------------------------------------------
+# Sampling-frequency auto-detect on showEvent
+# ---------------------------------------------------------------------------
+
+
+def test_autodetect_fs_fills_when_spinbox_at_default(qapp, tmp_path: Path, monkeypatch):
+    """On show, if spin_fs is still at the hardcoded DEFAULT_FS sentinel,
+    detect_fs_from_standard runs and the box gets the file's fs."""
+    import ebb_viewer.pages.psds as psds_mod
+
+    page = _make_page(qapp, tmp_path)
+    assert page.spin_fs.value() == psds_mod.DEFAULT_FS  # sanity
+
+    monkeypatch.setattr(psds_mod, "detect_fs_from_standard", lambda _root: 500)
+    page._maybe_autodetect_fs()
+
+    assert page.spin_fs.value() == 500
+
+
+def test_autodetect_fs_does_not_override_user_value(qapp, tmp_path: Path, monkeypatch):
+    """When the user (or saved params) has moved the SpinBox off the
+    default, the auto-detect must leave it alone."""
+    import ebb_viewer.pages.psds as psds_mod
+
+    page = _make_page(qapp, tmp_path)
+    page.spin_fs.setValue(1000)
+
+    monkeypatch.setattr(psds_mod, "detect_fs_from_standard", lambda _root: 500)
+    page._maybe_autodetect_fs()
+
+    assert page.spin_fs.value() == 1000
+
+
+def test_autodetect_fs_noop_when_detect_returns_none(qapp, tmp_path: Path, monkeypatch):
+    """No readable EDF (detect returns None) → SpinBox stays at default."""
+    import ebb_viewer.pages.psds as psds_mod
+
+    page = _make_page(qapp, tmp_path)
+
+    monkeypatch.setattr(psds_mod, "detect_fs_from_standard", lambda _root: None)
+    page._maybe_autodetect_fs()
+
+    assert page.spin_fs.value() == psds_mod.DEFAULT_FS

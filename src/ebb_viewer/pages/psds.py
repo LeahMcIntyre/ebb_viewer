@@ -104,6 +104,17 @@ class PSDPage(QWidget):
         self._refresh_combo_table()
         self._refresh_swd_status()
         self._refresh_run_name_hint()
+        self._maybe_autodetect_fs()
+
+    def _maybe_autodetect_fs(self) -> None:
+        """Fill the Sampling Frequency SpinBox from the first EDF in
+        standard/ when it's still at the hardcoded default. A user-set or
+        saved-params value is never overridden."""
+        if self.spin_fs.value() != DEFAULT_FS:
+            return
+        detected = detect_fs_from_standard(self.project_root)
+        if detected is not None:
+            self.spin_fs.setValue(detected)
 
     # ---------------- UI ----------------
 

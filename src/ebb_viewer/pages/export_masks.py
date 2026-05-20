@@ -859,6 +859,17 @@ class ExportMasksPage(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._refresh_animals()
+        self._maybe_autodetect_fs()
+
+    def _maybe_autodetect_fs(self) -> None:
+        """Fill the Sampling Frequency SpinBox from the first EDF in
+        standard/ when it's still at the hardcoded default. A user-set or
+        saved-params value is never overridden."""
+        if self.spin_fs.value() != DEFAULT_FS:
+            return
+        detected = detect_fs_from_standard(self.project_root)
+        if detected is not None:
+            self.spin_fs.setValue(detected)
 
     def _poll(self) -> None:
         # Match the convention used by other pages so the 10 s main-window timer
