@@ -510,6 +510,177 @@ def test_run_filter_falls_back_when_selection_disappears(qapp, tmp_path: Path):
     assert page.cmb_run_filter.currentData() is None
 
 
+# ---------------------------------------------------------------------------
+# Review card "Rerun as:" dropdown exclusions
+#
+# A run flagged needs_review should not be offered rerun targets that would
+# either violate the one-ok invariant or silently rewire another combo's
+# existing rerun chain (see flag_sleep_qc:612 in manifest.py).
+# ---------------------------------------------------------------------------
+
+
+def _rerun_combo_items(card) -> list[str]:
+    """Return userData for every item in the card's QComboBox (the rerun
+    target picker). Empty list if no QComboBox is present."""
+    from PyQt6.QtWidgets import QComboBox
+
+    combos = card.findChildren(QComboBox)
+    if not combos:
+        return []
+    cmb = combos[0]
+    return [cmb.itemData(i) for i in range(cmb.count())]
+
+
+def _no_targets_label(card) -> str | None:
+    """Return the 'No clean rerun targets' label text if present."""
+    from PyQt6.QtWidgets import QLabel
+
+    for lbl in card.findChildren(QLabel):
+        if "No clean rerun targets" in lbl.text():
+            return lbl.text()
+    return None
+
+
+def test_review_card_excludes_source_combo_from_rerun_dropdown(qapp, tmp_path: Path):
+    """The LSC card for AM0806 in the screenshot bug: when LSC is a rerun
+    sourced from LFC_RSC, LFC_RSC should not appear in the rerun dropdown."""
+    m = Manifest(tmp_path)
+    m._entries["AM0806"] = ManifestEntry(
+        animal_id="AM0806",
+        preprocessed_edf="AM0806_PREPROCESSED.edf",
+        runs={
+            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
+            "LSC": RunEntry(sleep_qc="needs_review", source_combo="LFC_RSC"),
+        },
+    )
+    m.save()
+
+    page = _make_page(qapp, tmp_path)
+    card = page._make_review_card(m._entries["AM0806"], "LSC")
+
+    items = _rerun_combo_items(card)
+    assert "LFC_RSC" not in items, "source_combo must not appear as a rerun target"
+
+
+def test_review_card_excludes_needs_rerun_siblings(qapp, tmp_path: Path):
+    """Combos already in needs_rerun state must be hidden — flag_sleep_qc
+    silently overwrites their chain if picked as a fresh target."""
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        runs={
+            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
+            "LSC": RunEntry(sleep_qc="needs_review", source_combo="LFC_RSC"),
+        },
+    )
+    m.save()
+
+    page = _make_page(qapp, tmp_path)
+    card = page._make_review_card(m._entries["AM001"], "LSC")
+
+    items = _rerun_combo_items(card)
+    assert "LFC_RSC" not in items  # source AND needs_rerun
+    # Clean targets remain
+    assert set(items).issubset({"LFC_LSC", "RSC_LSC", "LFC", "RSC"})
+
+
+def test_review_card_excludes_ok_siblings(qapp, tmp_path: Path):
+    """ok combos already exhausted the one-ok slot — not a valid rerun target."""
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        runs={
+            "LFC_RSC": RunEntry(sleep_qc="ok"),
+            "LSC": RunEntry(sleep_qc="needs_review"),
+        },
+    )
+    m.save()
+
+    page = _make_page(qapp, tmp_path)
+    card = page._make_review_card(m._entries["AM001"], "LSC")
+
+    assert "LFC_RSC" not in _rerun_combo_items(card)
+
+
+def test_review_card_shows_empty_state_label_when_no_targets(qapp, tmp_path: Path):
+    """When every other combo is excluded, render the placeholder label
+    instead of silently dropping the rerun controls."""
+    # All other combos are queued for rerun → nothing clean remains.
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        runs={
+            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
+            "LFC_LSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
+            "RSC_LSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
+            "LFC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
+            "RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
+            "LSC": RunEntry(sleep_qc="needs_review"),
+        },
+    )
+    m.save()
+
+    page = _make_page(qapp, tmp_path)
+    card = page._make_review_card(m._entries["AM001"], "LSC")
+
+    assert _rerun_combo_items(card) == []
+    assert _no_targets_label(card) == "No clean rerun targets"
+
+
+# ---------------------------------------------------------------------------
+# _on_cell_double_clicked picker — same exclusion rule as the review card
+# ---------------------------------------------------------------------------
+
+
+def test_double_click_picker_excludes_needs_rerun_siblings(
+    qapp, tmp_path: Path, monkeypatch
+):
+    """The Pipeline Summary cell double-click picker must apply the same
+    exclusion rule as the attention-card dropdown so both UI paths agree."""
+    from PyQt6.QtWidgets import QInputDialog
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        runs={
+            # Two needs_rerun siblings: picking either as the new target would
+            # silently rewire its chain via flag_sleep_qc:612.
+            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
+            "RSC_LSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
+        },
+    )
+    m.save()
+
+    page = _make_page(qapp, tmp_path)
+    # The double-click handler reads _table_rows, which is populated by
+    # _refresh in __init__.
+    rows = page._table_rows
+    row_idx = next(
+        i for i, (e, combo, _r) in enumerate(rows)
+        if e.animal_id == "AM001" and combo == "LFC_RSC"
+    )
+
+    captured: dict = {}
+
+    def fake_getItem(parent, title, label, items, current, editable):
+        captured["items"] = list(items)
+        # Cancel the dialog so the test doesn't try to mutate.
+        return "", False
+
+    monkeypatch.setattr(QInputDialog, "getItem", fake_getItem)
+
+    from ebb_viewer.pages.home import _COL_SLEEP_QC
+    page._on_cell_double_clicked(row_idx, _COL_SLEEP_QC)
+
+    items = captured["items"]
+    assert "LFC_RSC" not in items  # current row
+    assert "RSC_LSC" not in items  # other needs_rerun sibling
+
+
 def test_b4_double_click_uses_cached_rendered_rows(qapp, tmp_path: Path):
     """After ``_refresh`` renders the table, ``self._table_rows`` reflects
     exactly what was drawn. If the manifest is modified afterward,
