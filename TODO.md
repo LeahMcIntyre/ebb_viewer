@@ -232,14 +232,14 @@ message instead of silently driving mask windows at the wrong sample
 count. Covered by tests in `test_fs_detect.py`,
 `test_psd_compute_states.py`, and `test_mask_export_pipeline.py`.
 
-### psd / mask_export: auto-detect fs at page open instead of hardcoded 250
-Now that `assert_fs_matches` makes fs mismatches a loud error, the PSD
-Compute and Mask Export pages can drop their hardcoded `fs=250` default
-in favor of running `fs_detect.detect_fs_from_standard(project_root)`
-on `showEvent`. Users open the page and see the right value already
-filled in, with the ↻ button kept as the manual refresh path. Related:
-`psd_compute: Commutator mask params should scale with user-set fs` is
-the same family of bug — see memory `feedback_fs_coupled_constants.md`.
+### ~~psd / mask_export: auto-detect fs at page open instead of hardcoded 250~~
+**DONE** — Both pages now call `detect_fs_from_standard` on `showEvent`
+via a small `_maybe_autodetect_fs` helper that only fires when the
+SpinBox is still at the `DEFAULT_FS` sentinel. User-set values and
+saved-params values are never overridden; the ↻ button continues to
+work as the manual refresh path. Related (still open):
+`psd_compute: Commutator mask params should scale with user-set fs` —
+same family of bug, see memory `feedback_fs_coupled_constants.md`.
 
 ### ~~psd: Revisit SD-threshold rule for lumped state groups~~
 ~~With state-selection presets, a user can pick a lumped group like `all` (wake+nrem+rem) or `sleep` (nrem+rem). Today SD thresholding is applied only when the group is literally named `wake` (see `if 'wake' in combo_state` in `estimate_psd`). For `all`, which contains wake samples, SD probably should apply to the wake portion. For `sleep`, it should stay off. Decide the rule (likely: apply SD when the group's code list includes `"w"`), update `estimate_psd` and tests accordingly.~~
