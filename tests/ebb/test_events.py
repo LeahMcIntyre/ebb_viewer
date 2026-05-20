@@ -1,11 +1,14 @@
+import warnings
 from datetime import datetime
 from datetime import time as dtime
 from pathlib import Path
 
 import numpy as np
+import pytest
 from scipy.io import savemat
 
 from ebb.masking import hour_window_mask, swd, time_of_day_mask
+from ebb.masking.events import drinking_mask
 
 
 def test_swd_empty_mat_returns_all_true(tmp_path: Path):
@@ -412,3 +415,83 @@ def test_hw_selected_days_exact_sample_positions():
             assert mask[win_s:win_e].all(), "day 2 window should be all True"
         else:
             assert not mask[win_s:win_e].any(), f"day {day} window should be all False"
+
+
+# ---------------------------------------------------------------------------
+# drinking_mask — resize to n_samples
+# ---------------------------------------------------------------------------
+
+
+def _write_drink_npy(tmp_path: Path, n_seconds: int) -> Path:
+    """Write a 1Hz boolean .npy of length `n_seconds` with no drinking events."""
+    p = tmp_path / "drink.npy"
+    np.save(p, np.zeros(n_seconds, dtype=bool))
+    return p
+
+
+def test_drinking_mask_no_n_samples_unchanged(tmp_path: Path):
+    """Without n_samples the output is len(.npy) * fs as before."""
+    fs = 250
+    p = _write_drink_npy(tmp_path, n_seconds=100)
+    out = drinking_mask(p, fs=fs, pad_sec=0)
+    assert out.size == 100 * fs
+
+
+def test_drinking_mask_truncates_when_edf_shorter(tmp_path: Path):
+    """When n_samples < natural output, tail is sliced off; no warning within tolerance."""
+    fs = 250
+    p = _write_drink_npy(tmp_path, n_seconds=100)
+    target = 100 * fs - fs  # 1s shorter — inside 2s tolerance
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # any warning would fail
+        out = drinking_mask(p, fs=fs, pad_sec=0, n_samples=target)
+    assert out.size == target
+
+
+def test_drinking_mask_pads_when_edf_longer(tmp_path: Path):
+    """When n_samples > natural output, tail is padded with True (keep)."""
+    fs = 250
+    p = _write_drink_npy(tmp_path, n_seconds=100)
+    target = 100 * fs + fs  # 1s longer — inside 2s tolerance
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        out = drinking_mask(p, fs=fs, pad_sec=0, n_samples=target)
+    assert out.size == target
+    assert out[-fs:].all(), "padded tail should be True (keep)"
+
+
+def test_drinking_mask_warns_when_mismatch_exceeds_tolerance(tmp_path: Path):
+    """Mismatches larger than 2s emit a UserWarning but still resize."""
+    fs = 250
+    p = _write_drink_npy(tmp_path, n_seconds=100)
+    target = 100 * fs - 10 * fs  # 10s short
+    with pytest.warns(UserWarning, match="size mismatch"):
+        out = drinking_mask(p, fs=fs, pad_sec=0, n_samples=target)
+    assert out.size == target
+
+
+def test_drinking_mask_exact_match_no_warning(tmp_path: Path):
+    """When sizes already match, no warning and no resize."""
+    fs = 250
+    p = _write_drink_npy(tmp_path, n_seconds=100)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        out = drinking_mask(p, fs=fs, pad_sec=0, n_samples=100 * fs)
+    assert out.size == 100 * fs
+
+
+def test_drinking_mask_preserves_leading_offset_pad_when_trimming(tmp_path: Path):
+    """Offset's leading 'keep' pad is untouched when resize trims from the tail."""
+    fs = 250
+    # Make one drink event in the middle so the inverted mask has a real False span.
+    arr = np.zeros(100, dtype=bool)
+    arr[50] = True
+    p = tmp_path / "drink.npy"
+    np.save(p, arr)
+
+    offset_sec = 5.0
+    target = 100 * fs - fs  # trim 1s from tail
+    out = drinking_mask(p, offset_sec=offset_sec, fs=fs, pad_sec=0, n_samples=target)
+    assert out.size == target
+    # Leading `offset_sec * fs` samples are the offset's "keep" pad → all True.
+    assert out[: int(offset_sec * fs)].all()

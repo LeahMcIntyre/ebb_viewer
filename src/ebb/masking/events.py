@@ -4,6 +4,7 @@ time-of-day windows).
 Returned masks follow the project convention: True = keep, False = mask.
 """
 
+import warnings
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 from datetime import time as dtime
@@ -16,12 +17,18 @@ from scipy.io import loadmat
 
 from ebb.core.naming import parse_animal_id
 
+# Mask-vs-recording mismatches up to this many seconds are tolerated silently.
+# Anything larger almost certainly means the .npy belongs to a different
+# recording and is worth warning about.
+_DRINK_MASK_TOLERANCE_SEC = 2.0
+
 
 def drinking_mask(
     mask_path: str | Path,
     offset_sec: float | None = None,
     fs: int = 250,
     pad_sec: float = 2,
+    n_samples: int | None = None,
 ) -> npt.NDArray[np.bool_]:
     """
     Builds a drinking mask from a 1 Hz .npy file.
@@ -35,6 +42,13 @@ def drinking_mask(
             Target sampling rate for the output mask (samples/sec).
         pad_sec:
             Pad events by this many seconds on each side (at 1 Hz before upsampling).
+        n_samples:
+            If given, the returned mask is resized to exactly this length:
+            truncated from the tail when the .npy covers a longer span than
+            the EDF, or padded at the tail with True (keep) when shorter.
+            A UserWarning is emitted when the mismatch exceeds
+            ``_DRINK_MASK_TOLERANCE_SEC`` so wrong-animal files don't slip
+            through silently.
 
     Returns:
         A 1-D boolean array where drinking events and padding are False.
@@ -56,7 +70,26 @@ def drinking_mask(
         shift = int(round(offset_sec * fs))
         mask_samples = np.pad(mask_samples, (shift, 0), constant_values=False)[:-shift]
 
-    return ~mask_samples.astype(bool)
+    mask_samples = ~mask_samples.astype(bool)
+
+    if n_samples is not None and mask_samples.size != n_samples:
+        diff = mask_samples.size - n_samples
+        if abs(diff) > _DRINK_MASK_TOLERANCE_SEC * fs:
+            warnings.warn(
+                f"drinking_mask: size mismatch of {diff:+d} samples "
+                f"({diff / fs:+.2f}s) between {Path(mask_path).name} and "
+                f"recording (n_samples={n_samples}). Resizing — verify the "
+                ".npy belongs to this recording.",
+                stacklevel=2,
+            )
+        if diff > 0:
+            mask_samples = mask_samples[:n_samples]
+        else:
+            mask_samples = np.concatenate(
+                [mask_samples, np.ones(-diff, dtype=bool)]
+            )
+
+    return mask_samples
 
 
 def get_offset(mask_path: str | Path, offset_path: str | Path) -> float:

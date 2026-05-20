@@ -333,6 +333,7 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
                 offset,
                 fs=fs,
                 pad_sec=drink_pad,
+                n_samples=n_samples,
             )
         else:
             drink_mask = np.ones(n_samples, dtype=bool)
