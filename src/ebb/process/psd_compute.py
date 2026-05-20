@@ -591,6 +591,13 @@ def batch_estimate(
         estimate_psd, hour_windows=hour_windows, selected_days=selected_days, **kwargs
     )
     n = len(paired)
+    if n == 0:
+        warnings.warn(
+            f"batch_estimate: no EDF files in {eeg_dir} matched state CSVs in {state_dir}. "
+            "Skipping batch (no output pickle written).",
+            stacklevel=2,
+        )
+        return []
     t0 = time.perf_counter()
     if workers == 1:
         results_nested = []

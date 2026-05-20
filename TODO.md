@@ -291,15 +291,6 @@ been addressed (`add_run` ok-protection, `DrinkMaskPage._on_done`
 swallowed exceptions, SleepQC stale manifest, home step 9, step 5
 "resolved" labelling) were dropped during consolidation.
 
-### manifest: `pending_psd_review` returns `[]` when merged PKL is missing
-`Manifest.pending_psd_review(run_name)` short-circuits to `[]` when
-`psds_channel_merged.pkl` doesn't exist for that run. Finalize logic
-that counts pending = 0 to enable the button can then enable without
-any review having occurred. Verify in `FinalizePage`: ensure the
-finalize button is gated on **both** `pending_psd_review() == 0` AND
-`merged_psd_path(run).exists()`. (Risk: silent finalization of an
-incomplete run.)
-
 ### psd: `batch_estimate` writes an empty PKL when no EDFs match state CSVs
 `batch_estimate` writes `savepath` unconditionally — when no EDFs
 match the state CSV animal IDs, the result is a pickled empty list.
@@ -314,15 +305,6 @@ overlay-able onto a base that no longer contains that animal. Result:
 the regenerated `psds_channel_merged_drink.pkl` includes an animal
 that's no longer in the project. Fix: filter `psds_drink.pkl` records
 against the active manifest animal-set when regenerating the overlay.
-
-### home: step 7 "finalized" stays after re-flagging needs_drink_mask
-After Finalize writes `psds_final.pkl`, re-flagging an animal as
-`needs_drink_mask` in the PSD Visualizer doesn't change step 7's
-display because `pending_psd_review()` only counts `psd_status is
-None` runs, not `needs_drink_mask`. Step 7 reads "finalized" while
-the data is actually stale. Fix: when `_check_finalize_hint` /
-`compute_pipeline_status` sees `psds_final.pkl` exists, also
-verify `all_needs_drink_mask()` is empty before marking step 7 done.
 
 ### manifest: sibling `psd_status` not cleared on un-ok restore
 `flag_sleep_qc` un-okaying a run restores cascade-rejected siblings'
