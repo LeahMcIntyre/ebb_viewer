@@ -65,6 +65,7 @@ class PreprocessPage(QWidget):
         self.project_root = project_root
         self.default_target_dir = project_root / "standard"
         self._durations_hrs: list[float] | None = None  # None = not yet scanned
+        self._is_running = False
         self._build_ui()
         self._wire()
 
@@ -239,8 +240,20 @@ class PreprocessPage(QWidget):
     def _update_hz_label(self) -> None:
         fs = self.fs_original.value()
         ds = self.downsample.value()
-        hz = fs / ds if ds > 0 else 0
-        self._hz_label.setText(f"→ {hz:.0f} Hz output")
+        hz = fs / ds if ds > 0 else 0.0
+        if ds > 0 and hz.is_integer():
+            self._hz_label.setText(f"→ {int(hz)} Hz output")
+            self._hz_label.setStyleSheet("color: #555; font-size: 11px;")
+        else:
+            self._hz_label.setText(f"→ {hz:g} Hz output  ⚠ must be a whole number")
+            self._hz_label.setStyleSheet("color: #c0392b; font-size: 11px;")
+        self._sync_run_button()
+
+    def _sync_run_button(self) -> None:
+        fs = self.fs_original.value()
+        ds = self.downsample.value()
+        valid = ds > 0 and (fs / ds).is_integer()
+        self.btn_run.setEnabled(valid and not self._is_running)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -344,11 +357,13 @@ class PreprocessPage(QWidget):
 
     def _on_preprocess_done(self):
         Manifest.build_from_standard(self.project_root)
-        self.btn_run.setEnabled(True)
+        self._is_running = False
+        self._sync_run_button()
         self._hint_frame.setVisible(True)
 
     def _on_preprocess_error(self, msg: str) -> None:
-        self.btn_run.setEnabled(True)
+        self._is_running = False
+        self._sync_run_button()
         QMessageBox.critical(self, "Preprocess failed", msg)
 
     def _run_clicked(self):
@@ -372,7 +387,8 @@ class PreprocessPage(QWidget):
             if btn != QMessageBox.StandardButton.Yes:
                 return
 
-        self.btn_run.setEnabled(False)
+        self._is_running = True
+        self._sync_run_button()
         self._hint_frame.setVisible(False)
 
         self._preprocess_thread = QThread(self)
