@@ -275,18 +275,15 @@ class SpindleWritePage(QWidget):
         spindle_root = self.project_root / "spindle_edfs"
         target_dir = spindle_root / combo_name
 
-        # If the target already exists, ask before overwriting. Mirrors the
-        # confirm-and-proceed pattern used by the SleepyRat output folder check.
-        if target_dir.exists():
+        existing = list(target_dir.glob("*_SPINDLE.edf")) if target_dir.is_dir() else []
+        if existing:
             btn = QMessageBox.question(
                 self,
-                "Folder Already Exists",
-                f"The spindle output folder already exists:\n{target_dir}\n\n"
-                "Continuing will overwrite files with matching names. Proceed?",
-                QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Ok,
-                QMessageBox.StandardButton.Cancel,
+                "Files Already Exist",
+                f"{len(existing)} spindle EDF(s) already exist in:\n{target_dir}\n\n"
+                "Re-running will overwrite them. Continue?",
             )
-            if btn != QMessageBox.StandardButton.Ok:
+            if btn != QMessageBox.StandardButton.Yes:
                 return
 
         try:
