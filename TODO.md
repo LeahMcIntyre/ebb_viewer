@@ -10,7 +10,8 @@ button style (✓), Sleep QC UX bundle (✓), PSD page 4-zone reflow
 + Commutator section + docs pass + Setup compaction (✓), Export Masks
 parity + channel selection + sampling-freq control (✓), sidebar
 separator + Finalize PSD rename (✓), Drink Mask description rewrite
-(✓). See P2 entries below for per-item notes.
+(✓), spindle write overwrite-dialog parity with preprocess (✓).
+See P2 entries below for per-item notes.
 
 **Next on deck:**
 - No active P2 item queued. P2 entries below are either DONE,
@@ -179,6 +180,11 @@ for our use). Skipped this session — pick up here when resuming.
 ## P3 — Larger or Needs More Context
 
 ### preprocess / spindle write: Cancel button + skip-existing on restart
+Partial parity landed: Spindle Write's overwrite dialog now counts
+`*_SPINDLE.edf` in the target and only warns when count > 0, matching
+the Preprocess page's existing dialog. The larger Cancel + skip-existing
+work below is still open.
+
 Today the Preprocess page (and Spindle Write page) fires a
 `multiprocessing.Pool` via `batch_preprocess` with no way to stop
 mid-run. The user's only options are "close the window" or "kill the
