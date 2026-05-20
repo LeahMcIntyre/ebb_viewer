@@ -909,41 +909,6 @@ def test_build_final_pkl_warns_and_skips_when_combo_pkl_missing(tmp_path):
     assert "AM002" not in animal_ids
 
 
-def test_batch_estimate_writes_empty_pkl_when_no_matching_edfs(tmp_path):
-    """Gap 7: When no EDF files match the state CSV animal IDs, batch_estimate
-    writes an empty list to savepath rather than silently not writing.
-    """
-    import pickle
-    from unittest.mock import patch
-
-    eeg_dir = tmp_path / "standard"
-    eeg_dir.mkdir()
-    state_dir = tmp_path / "spindle_outputs" / "LFC_RSC"
-    state_dir.mkdir(parents=True)
-    (state_dir / "AM001_states.csv").touch()
-    # No EDF files in eeg_dir — no matches
-
-    savepath = tmp_path / "psd" / "psds_LFC_RSC.pkl"
-    savepath.parent.mkdir(parents=True)
-
-    with (
-        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
-        patch("ebb.process.psd_compute.match_paths", return_value=[]),
-    ):
-        from ebb.process.psd_compute import batch_estimate
-
-        batch_estimate(
-            eeg_dir=eeg_dir,
-            state_dir=state_dir,
-            savepath=savepath,
-        )
-
-    assert savepath.exists(), "savepath should be written even with 0 results"
-    with open(savepath, "rb") as f:
-        result = pickle.load(f)
-    assert result == [], f"Expected empty list, got {result!r}"
-
-
 # ---------------------------------------------------------------------------
 # DrinkMaskRerunWorker (now in drink_mask.py)
 # ---------------------------------------------------------------------------

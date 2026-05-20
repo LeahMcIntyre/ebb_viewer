@@ -34,6 +34,7 @@ from openseize.spectra import estimators
 from ebb import masking
 from ebb.core import concurrency, metastores
 from ebb.core.naming import parse_animal_id
+from ebb.io.fs_detect import assert_fs_matches
 from ebb.masking.annotations import keyword_mask
 from ebb.process.state_presets import labels_from_presets
 
@@ -206,6 +207,7 @@ def estimate_psd(
     if verbose:
         print(animal)
     with edf.Reader(path) as reader:
+        assert_fs_matches(reader, fs, path=path)
         # build a producer
         reader.channels = list(channels)
         pro = producer(reader, chunksize=chunksize, axis=-1)

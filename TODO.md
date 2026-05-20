@@ -222,28 +222,24 @@ Related: real cause of "stalling" on HDD-backed projects is just disk
 I/O contention between pool workers. Add an explicit `workers=1`
 option for HDD users (multiprocessing actually hurts on a spindle
 because of seek thrashing).
-The PSD compute and Mask Export pages both surface a Sampling-freq
-SpinBox whose value is forwarded to `estimate_psd` / `export_run` as
-`fs`, where it's used to compute mask window sizes (`winsize * fs`,
-`radius * fs`). Nothing currently checks the SpinBox value against the
-actual EDF. If a user types 500 Hz but files are 250 Hz, every mask
-runs over the wrong window and the user gets no error.
 
-Fix: at the top of each per-file `with edf.Reader(path)` block, read
-`int(reader.header.samples_per_record[0])` and raise a clear error
-when it disagrees with the params `fs`. The Explore agent identified
-the insertion points as line 208 in `src/ebb/process/psd_compute.py`
-(inside `estimate_psd`) and line 252 in
-`src/ebb_viewer/pipeline/mask_export.py` (inside `_build_masks`). The
-read pattern already exists in `ebb/io/fs_detect.py` and in
-`edf_viewer/eeg_viewer.py:56`.
+### ~~psd / mask_export: per-file fs-mismatch guard~~
+**DONE** — `ebb.io.fs_detect.assert_fs_matches(reader, expected_fs, *, path)`
+is called inside `estimate_psd` (`psd_compute.py:209`) and
+`mask_export._build_masks` (`mask_export.py:253`). A user-set fs that
+disagrees with the EDF header now raises `ValueError` with a clear
+message instead of silently driving mask windows at the wrong sample
+count. Covered by tests in `test_fs_detect.py`,
+`test_psd_compute_states.py`, and `test_mask_export_pipeline.py`.
 
-Once this lands, the PSD/Mask Export pages can also drop their default
-fs from a hardcoded 250 → auto-detect at page open (via `fs_detect`),
-since the runtime check makes "fs got out of sync with the files" a
-loud error rather than a silent miscalculation. Related TODO:
-`psd_compute: Commutator mask params should scale with user-set fs`
-(same family of bug — see memory `feedback_fs_coupled_constants.md`).
+### psd / mask_export: auto-detect fs at page open instead of hardcoded 250
+Now that `assert_fs_matches` makes fs mismatches a loud error, the PSD
+Compute and Mask Export pages can drop their hardcoded `fs=250` default
+in favor of running `fs_detect.detect_fs_from_standard(project_root)`
+on `showEvent`. Users open the page and see the right value already
+filled in, with the ↻ button kept as the manual refresh path. Related:
+`psd_compute: Commutator mask params should scale with user-set fs` is
+the same family of bug — see memory `feedback_fs_coupled_constants.md`.
 
 ### ~~psd: Revisit SD-threshold rule for lumped state groups~~
 ~~With state-selection presets, a user can pick a lumped group like `all` (wake+nrem+rem) or `sleep` (nrem+rem). Today SD thresholding is applied only when the group is literally named `wake` (see `if 'wake' in combo_state` in `estimate_psd`). For `all`, which contains wake samples, SD probably should apply to the wake portion. For `sleep`, it should stay off. Decide the rule (likely: apply SD when the group's code list includes `"w"`), update `estimate_psd` and tests accordingly.~~

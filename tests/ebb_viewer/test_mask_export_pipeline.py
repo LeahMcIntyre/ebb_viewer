@@ -10,6 +10,7 @@ mocks alone.
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -396,3 +397,30 @@ def test_default_pairs_returns_only_ok_runs(tmp_path):
     )
     pairs = me.default_pairs(m)
     assert sorted(pairs) == [("A", "LFC_RSC"), ("C", "LSC_RSC")]
+
+
+# ---------------------------------------------------------------------------
+# fs-mismatch guard
+# ---------------------------------------------------------------------------
+
+
+def test_build_masks_raises_on_fs_mismatch(tmp_path):
+    """_build_masks must abort when the user-set fs disagrees with the EDF
+    header — mask windows are computed as winsize*fs / radius*fs and would
+    otherwise silently run at the wrong sample count."""
+    paths = me.ResolvedPaths(
+        edf=tmp_path / "AM001_PREPROCESSED.edf",
+        state=tmp_path / "AM001_states.csv",
+        drink=None,
+        swd=None,
+        offset_csv=None,
+    )
+
+    reader = MagicMock()
+    reader.__enter__ = MagicMock(return_value=reader)
+    reader.__exit__ = MagicMock(return_value=False)
+    reader.header.samples_per_record = [250, 250, 250, 250]  # file is 250 Hz
+
+    with patch.object(me.edf, "Reader", return_value=reader):
+        with pytest.raises(ValueError, match=r"file is 250 Hz but caller passed fs=500"):
+            me._build_masks(paths, params={"fs": 500, "channels": [0, 1, 2]})

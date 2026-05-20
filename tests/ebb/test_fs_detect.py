@@ -1,10 +1,11 @@
-"""Tests for ``ebb.io.fs_detect.detect_fs_from_standard``.
+"""Tests for ``ebb.io.fs_detect``: ``detect_fs_from_standard`` (UI helper)
+and ``assert_fs_matches`` (per-file runtime guard).
 
-The success path (open a real EDF, return its first-channel
-``samples_per_record``) is exercised end-to-end by manual smoke checks on
-the PSD compute / Mask Export pages. These tests focus on the fallback
-paths that the helper needs to handle gracefully when invoked from the
-GUI's ↻ button.
+The success path of ``detect_fs_from_standard`` (open a real EDF, return
+its first-channel ``samples_per_record``) is exercised end-to-end by
+manual smoke checks on the PSD compute / Mask Export pages. These tests
+focus on the fallback paths that the helper needs to handle gracefully
+when invoked from the GUI's ↻ button.
 """
 
 from __future__ import annotations
@@ -12,7 +13,9 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from ebb.io.fs_detect import detect_fs_from_standard
+import pytest
+
+from ebb.io.fs_detect import assert_fs_matches, detect_fs_from_standard
 
 
 def test_returns_none_when_no_standard_dir(tmp_path: Path):
@@ -67,3 +70,45 @@ def test_returns_fs_from_first_edf_when_readable(tmp_path: Path):
 def test_accepts_string_path(tmp_path: Path):
     """The helper accepts a str or Path; both should behave identically."""
     assert detect_fs_from_standard(str(tmp_path)) is None
+
+
+# ---------------------------------------------------------------------------
+# assert_fs_matches
+# ---------------------------------------------------------------------------
+
+
+class _FakeReader:
+    """Minimal stand-in: only exposes ``header.samples_per_record``."""
+
+    def __init__(self, fs: int):
+        self.header = type("H", (), {"samples_per_record": [fs, fs, fs, fs]})()
+
+
+def test_assert_fs_matches_passes_when_equal():
+    """No raise when reader's fs equals expected_fs."""
+    assert_fs_matches(_FakeReader(250), 250)
+
+
+def test_assert_fs_matches_accepts_float_expected():
+    """Floats convert via int() for the comparison."""
+    assert_fs_matches(_FakeReader(250), 250.0)
+
+
+def test_assert_fs_matches_raises_on_mismatch():
+    """Mismatch must raise ValueError so a batch run aborts loudly."""
+    with pytest.raises(ValueError, match=r"file is 250 Hz but caller passed fs=500"):
+        assert_fs_matches(_FakeReader(250), 500)
+
+
+def test_assert_fs_matches_includes_path_name_in_message():
+    """Error message names the offending file so the user can locate it."""
+    with pytest.raises(ValueError, match=r"animal-42_PREPROCESSED\.edf"):
+        assert_fs_matches(
+            _FakeReader(250), 500, path=Path("/tmp/foo/animal-42_PREPROCESSED.edf")
+        )
+
+
+def test_assert_fs_matches_falls_back_to_edf_placeholder_without_path():
+    """Without a path, the message uses 'EDF' rather than crashing."""
+    with pytest.raises(ValueError, match=r"Sampling-frequency mismatch for EDF"):
+        assert_fs_matches(_FakeReader(250), 500)
