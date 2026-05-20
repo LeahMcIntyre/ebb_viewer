@@ -608,7 +608,30 @@ class HomePage(QWidget):
             )
             return
 
-        choices = [c for c in CHANNEL_COMBOS if c != combo]
+        # Same exclusion rule as _make_review_card's dropdown: hide combos
+        # that would violate the one-ok invariant or silently rewire another
+        # combo's existing rerun chain (see flag_sleep_qc:612).
+        ok_combos = {c for c, r in entry.runs.items() if r.sleep_qc == "ok"}
+        queued_combos = {
+            c for c, r in entry.runs.items()
+            if r.sleep_qc == "needs_rerun" and c != combo
+        }
+        source_combo = run.source_combo
+        choices = [
+            c for c in CHANNEL_COMBOS
+            if c != combo
+            and c != source_combo
+            and c not in ok_combos
+            and c not in queued_combos
+        ]
+        if not choices:
+            QMessageBox.information(
+                self,
+                "No clean rerun targets",
+                "Every other channel combo for this animal is already ok, "
+                "queued for rerun, or this row's source combo.",
+            )
+            return
         new_combo, ok = QInputDialog.getItem(
             self,
             "Change Rerun Combo",
@@ -1014,17 +1037,31 @@ class HomePage(QWidget):
         )
         h.addWidget(btn_ok)
 
-        # Build rerun options: exclude current combo and any already-ok combos
+        # Build rerun options. Exclude:
+        # - current combo (would be a no-op),
+        # - any combo already marked ok,
+        # - this run's source_combo (it routed *to* here — circular), and
+        # - any combo whose own sleep_qc is needs_rerun (flag_sleep_qc at
+        #   manifest.py:612 silently overwrites the existing chain when the
+        #   target already exists, so we hide that footgun from the UI).
+        current_run = entry.runs.get(channels)
+        source_combo = current_run.source_combo if current_run else None
         ok_combos = {c for c, r in entry.runs.items() if r.sleep_qc == "ok"}
+        queued_combos = {c for c, r in entry.runs.items() if r.sleep_qc == "needs_rerun"}
         rerun_combo = QComboBox()
         rerun_combo.setToolTip("Channel combination to rerun spindle with")
         for c in CHANNEL_COMBOS:
-            if c == channels or c in ok_combos:
+            if (
+                c == channels
+                or c == source_combo
+                or c in ok_combos
+                or c in queued_combos
+            ):
                 continue
             run_for_c = entry.runs.get(c)
-            # "ok" already excluded above. Show a tag for non-clean states
-            # (needs_review / needs_rerun) so the user sees the combo isn't
-            # a clean target; "rejected" and None show as the bare combo.
+            # "ok" and "needs_rerun" already excluded above. "needs_review" is
+            # the only non-clean state that still reaches here, so tag it;
+            # "rejected" and None show as the bare combo.
             if run_for_c and run_for_c.sleep_qc not in (None, "rejected"):
                 label = f"{c} ({_SLEEP_QC_LABEL.get(run_for_c.sleep_qc, run_for_c.sleep_qc)})"
             else:
@@ -1044,6 +1081,14 @@ class HomePage(QWidget):
                 )
             )
             h.addWidget(btn_rerun)
+        else:
+            no_targets_lbl = QLabel("No clean rerun targets")
+            no_targets_lbl.setStyleSheet("color: #888; font-style: italic;")
+            no_targets_lbl.setToolTip(
+                "Every other channel combo is already ok, queued for rerun, "
+                "or this run's source combo."
+            )
+            h.addWidget(no_targets_lbl)
 
         return row_w
 
