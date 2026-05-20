@@ -21,6 +21,7 @@ from openseize import producer
 from openseize.file_io import edf
 
 from ebb import masking
+from ebb.io.fs_detect import assert_fs_matches
 from ebb.masking.annotations import keyword_mask
 from ebb.process.mask_export import (
     artifact_masks_to_intervals,
@@ -250,6 +251,7 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
     channels = list(_coerce_param(params, "channels", [0, 1, 2]))
 
     with edf.Reader(paths.edf) as reader:
+        assert_fs_matches(reader, fs, path=paths.edf)
         reader.channels = channels
         pro = producer(reader, chunksize=chunksize, axis=-1)
         n_samples = pro.shape[-1]

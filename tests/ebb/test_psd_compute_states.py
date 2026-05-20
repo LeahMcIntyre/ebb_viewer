@@ -151,6 +151,26 @@ def test_batch_estimate_unknown_state_raises(tmp_path):
             )
 
 
+def test_estimate_psd_raises_on_fs_mismatch():
+    """estimate_psd must abort if the user-supplied fs disagrees with the
+    EDF header — otherwise mask windows silently use the wrong sample count."""
+    from ebb.process import psd_compute
+
+    reader = MagicMock()
+    reader.__enter__ = MagicMock(return_value=reader)
+    reader.__exit__ = MagicMock(return_value=False)
+    reader.header.samples_per_record = [250, 250, 250, 250]  # file is 250 Hz
+
+    with patch.object(psd_compute.edf, "Reader", return_value=reader):
+        with pytest.raises(ValueError, match=r"file is 250 Hz but caller passed fs=500"):
+            psd_compute.estimate_psd(
+                path=Path("AM001_PREPROCESSED.edf"),
+                state_path=Path("AM001_states.csv"),
+                fs=500,  # user typed the wrong value
+                verbose=False,
+            )
+
+
 def test_batch_estimate_empty_paired_skips_savepath_write(tmp_path):
     """When match_paths yields nothing, batch_estimate must not write the
     savepath — silently pickling an empty list there causes downstream
@@ -319,6 +339,9 @@ def _run_estimate_psd(labels, wake, nrem, rem, sd):
     reader.__exit__ = MagicMock(return_value=False)
     reader.channels = []
     reader.shape = (3, n)
+    # assert_fs_matches reads samples_per_record[0]; set it so the
+    # mismatch guard passes for the fs=10 call below.
+    reader.header.samples_per_record = [10, 10, 10, 10]
 
     with (
         patch.object(psd_compute.edf, "Reader", return_value=reader),
