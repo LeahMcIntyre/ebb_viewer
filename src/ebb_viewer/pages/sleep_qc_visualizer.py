@@ -544,6 +544,8 @@ class SleepQCGridPage(QWidget):
 
     def _on_axis_mode_changed(self, index: int) -> None:
         self._axis_mode = self._AXIS_MODES[index][1]
+        if self._axis_mode == "rotate":
+            self._maybe_show_rotate_skip_warning()
         self._update_all_plots()
 
     def _set_spindle_mask_mode(self, spindle: bool) -> None:
@@ -742,45 +744,52 @@ class SleepQCGridPage(QWidget):
         if missing:
             self._pending_missing_edf.setdefault(combo, set()).update(missing)
         if too_short:
+            # Recorded but NOT auto-popped — too-short animals are visible in
+            # Clock-aligned (the default), so we only surface the warning when
+            # the user actively switches to Rotate mode (see
+            # _maybe_show_rotate_skip_warning).
             self._pending_too_short.setdefault(combo, set()).update(too_short)
-        if (missing or too_short) and not self._skip_popup_scheduled:
+        if missing and not self._skip_popup_scheduled:
             self._skip_popup_scheduled = True
             QTimer.singleShot(0, self._flush_skip_warnings)
 
     def _flush_skip_warnings(self) -> None:
         self._skip_popup_scheduled = False
-        sections: list[str] = []
-        if self._pending_missing_edf:
-            lines = [
-                f"  {combo}: {', '.join(sorted(animals))}"
-                for combo, animals in sorted(self._pending_missing_edf.items())
-            ]
-            sections.append(
-                "Animals with sleep CSVs but no preprocessed EDF in standard/ "
-                "(offset/clock-aligned metrics skipped):\n\n"
-                + "\n".join(lines)
-                + "\n\nRe-run the Preprocess page for these animals to include them."
-            )
-            self._pending_missing_edf.clear()
-        if self._pending_too_short:
-            lines = [
-                f"  {combo}: {', '.join(sorted(animals))}"
-                for combo, animals in sorted(self._pending_too_short.items())
-            ]
-            sections.append(
-                "Animals whose recording was too short for the 6AM rotation "
-                "(skipped in Rotate mode):\n\n"
-                + "\n".join(lines)
-                + "\n\nSwitch to Clock-aligned mode to view these at their "
-                "true circadian position."
-            )
-            self._pending_too_short.clear()
-        if not sections:
+        if not self._pending_missing_edf:
             return
+        lines = [
+            f"  {combo}: {', '.join(sorted(animals))}"
+            for combo, animals in sorted(self._pending_missing_edf.items())
+        ]
+        self._pending_missing_edf.clear()
         QMessageBox.warning(
             self,
-            "Skipped animals",
-            "\n\n— — —\n\n".join(sections),
+            "Missing preprocessed EDFs",
+            "Animals with sleep CSVs but no preprocessed EDF in standard/ "
+            "(offset/clock-aligned metrics skipped):\n\n"
+            + "\n".join(lines)
+            + "\n\nRe-run the Preprocess page for these animals to include them.",
+        )
+
+    def _maybe_show_rotate_skip_warning(self) -> None:
+        # Surface the too-short warning that _record_skip_warnings stashed.
+        # Called from _on_axis_mode_changed when the user picks rotate, so the
+        # message is contextual to the mode that actually hides these animals.
+        if not self._pending_too_short:
+            return
+        lines = [
+            f"  {combo}: {', '.join(sorted(animals))}"
+            for combo, animals in sorted(self._pending_too_short.items())
+        ]
+        self._pending_too_short.clear()
+        QMessageBox.warning(
+            self,
+            "Animals hidden in Rotate mode",
+            "These recordings were too short to reach the next 6AM and are "
+            "skipped in Rotate mode:\n\n"
+            + "\n".join(lines)
+            + "\n\nSwitch back to Clock-aligned mode to view them at their "
+            "true circadian position.",
         )
 
     def _ensure_all_combos_loaded(self) -> None:
