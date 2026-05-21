@@ -21,7 +21,7 @@ from openseize import producer
 from openseize.file_io import edf
 
 from ebb import masking
-from ebb.io.fs_detect import assert_fs_matches
+from ebb.io.edf_header import assert_fs_matches, parse_edf_start_datetime
 from ebb.masking.annotations import keyword_mask
 from ebb.process.mask_export import (
     artifact_masks_to_intervals,
@@ -209,12 +209,6 @@ def _coerce_param(params: dict[str, Any], key: str, default: Any) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def _read_recording_start(reader: edf.Reader) -> _dt.datetime:
-    start_str = reader.header.start_time  # "HH.MM.SS"
-    date_str = reader.header.start_date  # "DD.MM.YY"
-    return _dt.datetime.strptime(f"{date_str} {start_str}", "%d.%m.%y %H.%M.%S")
-
-
 @dataclass
 class _BuiltMasks:
     """Output of `_build_masks` — every mask + bookkeeping needed to write an export."""
@@ -255,7 +249,7 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
         reader.channels = channels
         pro = producer(reader, chunksize=chunksize, axis=-1)
         n_samples = pro.shape[-1]
-        rec_start = _read_recording_start(reader)
+        rec_start = parse_edf_start_datetime(reader.header)
 
         # --- state masks ---
         # Lumped groups can't be filtered with the single-class sprob; OR the

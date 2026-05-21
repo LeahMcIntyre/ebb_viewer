@@ -51,7 +51,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ebb.core.naming import parse_animal_id
-from ebb.io.fs_detect import detect_fs_from_standard
+from ebb.io.edf_header import detect_fs_from_standard
 from ebb.process.psd_compute import batch_estimate, build_final_pkl
 from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest, merged_psd_path

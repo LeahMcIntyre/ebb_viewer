@@ -271,8 +271,24 @@ Whether to mask out or include the transition state (TS) in PSD computation is a
 ### combine: Expand `ebb.io.combine` to other data types
 Today `combine_edf` and `combine_swd` handle the two specific file types we restart-and-resume. The same per-file shift-and-stack pattern should generalize to drink masks (`.npy`) and any other timestamped data we end up restarting. Sketch a `combine_npy` (or a generic `combine_arrays(loader, writer, ...)`) that mirrors the `combine_swd` semantics: pair files, shift each by `idx * amount_sec`, concatenate, write.
 
-### sleep_compute: Pair state CSVs with EDFs and read start times from headers
-`compute_sleep_bins_df_offset` currently parses recording start time from the `_HH_MM_SS_` chunk of the state CSV's filename. This is brittle (depends on filename convention, ignores date, blows up on differently-named files) and the EDF header already carries the authoritative `start_date` / `start_time`. Refactor to take an `edf_dir` (or the manifest) alongside `state_dir`, pair each state CSV with its EDF by animal ID, and pull the start datetime from the EDF header instead of parsing the filename. While here: make the rotation timezone-aware (`zoneinfo`) so multi-day recordings that cross DST align correctly — currently the naive `timedelta(days=1)` arithmetic silently misaligns bin boundaries by one hour across a DST shift.
+### ~~sleep_compute: Pair state CSVs with EDFs and read start times from headers~~
+**DONE** — `compute_sleep_bins_df_offset(state_dir, edf_dir, ..., tz=None)`
+pairs each CSV with its preprocessed EDF by animal ID and reads
+`start_date`/`start_time` from the EDF header via the new
+`ebb.io.edf_header.read_edf_start_datetime` helper. CSVs without a
+matching EDF emit a `UserWarning` and are skipped; pure CSV-only callers
+are gone. Rotation is DST-aware when a `tz` is passed: the Sleep QC
+visualizer page passes `ZoneInfo("America/Chicago")`, so a recording
+that crosses spring-forward rotates by 7h of real-elapsed samples (not
+a naive 8h) into the next `begin_hr:00`. Implementation note:
+`seconds_until_target` converts both endpoints via `astimezone(timezone.utc)`
+to dodge Python's same-`ZoneInfo` subtraction shortcut, which would otherwise
+diff wall-clock fields. Same refactor renamed `ebb.io.fs_detect` →
+`ebb.io.edf_header` (now also home to `detect_fs_from_standard`,
+`assert_fs_matches`, and `parse_edf_start_datetime`); the three duplicated
+`strptime` blocks in `psd_compute`, `mask_export`, and `eeg_viewer` were
+deduped at the same time. Covered by 8 new tests in
+`test_sleep_compute.py` + 1 in `test_edf_header.py`.
 
 ### psd_params: Partition `psd_params.json` into `ui` and `kwargs` sections
 The saved psd_params JSON currently mixes UI affordances (`swd_mode`, `ann_enabled`, `time_filter_enabled`, `tod_start`, `tod_end`, `hw_enabled`) with scientific kwargs that get passed to `estimate_psd`. The mix forces `ebb.process.psd_compute._prepare_estimator_kwargs` to maintain a `_UI_ONLY_KWARGS` blacklist and to translate `states` (preset key list) → `labels` (group→codes dict) at every batch call. Cleaner structure: a top-level `{"ui": {...}, "kwargs": {...}}` shape so the kwargs block is exactly what `partial(estimate_psd, ...)` consumes. UI state (toggles + remembered-but-disabled values like "last hour_windows when hw_enabled=False") stays UI-shaped. Migration: read old flat JSON once, save as partitioned. `states→labels` happens once at load. Best tackled during Phase 2 cleanup of `pipeline/psd_params.py` (the GUI side has the right context). Until then the current helper is small, tested, and encapsulated — not urgent.

@@ -16,15 +16,17 @@ the caller passes `sample_rate_hz` to match whatever rate `states` arrives at
 """
 
 import csv
-import re
+import warnings
 from collections import Counter
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
 
 from ebb.core.naming import parse_animal_id
+from ebb.io.edf_header import read_edf_start_datetime
 
 # SPINDLE epoch length in seconds. Used to upsample 0.25 Hz epoch-rate state
 # arrays to 1 Hz second-rate when rotating to a fixed clock hour.
@@ -35,25 +37,32 @@ _VALID_RAW_STATES = set(_RAW_STATE_TO_NAME)
 _STATE_DISPLAY_ORDER = ["Wake", "NREM", "REM"]
 
 
-def seconds_until_target(t: time, h: int = 6) -> int:
-    """Seconds from clock time `t` forward to the next occurrence of `h:00`.
+def seconds_until_target(start: datetime, h: int = 6) -> int:
+    """Real-elapsed seconds from ``start`` forward to the next wall-clock ``h:00``.
 
-    If `t` is at or before `h:00` today, the target is today's `h:00`;
-    otherwise the target is tomorrow's `h:00`. Used by
-    `compute_sleep_bins_df_offset` to compute the rotation offset that
-    aligns each animal's data to the same clock hour.
+    If ``start`` is at or before ``h:00`` on its calendar date, the target is
+    that same day's ``h:00``; otherwise the target is the next day's ``h:00``.
 
-    Note:
-        Uses naive datetime arithmetic. `timedelta(days=1)` is exactly
-        86,400 seconds and ignores DST transitions; recordings that cross
-        a DST shift will have their bin alignment off by one hour. See
-        TODO.md for the timezone-aware follow-up.
+    When ``start`` carries a ``tzinfo``, the diff is computed in UTC so the
+    returned seconds reflect actual elapsed real time — recordings that cross
+    a DST transition resolve to 7h/9h rather than a naive 8h across the
+    22:00 → 06:00 window. Naive ``start`` falls back to wall-clock arithmetic.
+
+    Implementation note: when both endpoints share the same ZoneInfo instance,
+    Python's ``-`` operator skips UTC normalization and diffs the wall-clock
+    fields. ``astimezone(timezone.utc)`` forces the normalization.
     """
-    today = datetime.today().date()
-    now = datetime.combine(today, t)
-    target_today = datetime.combine(today, time(h, 0))
-    target = target_today if now <= target_today else target_today + timedelta(days=1)
-    return int((target - now).total_seconds())
+    target_today = start.replace(hour=h, minute=0, second=0, microsecond=0)
+    if start <= target_today:
+        target = target_today
+    else:
+        next_date = (start + timedelta(days=1)).date()
+        target = datetime.combine(next_date, time(h, 0), tzinfo=start.tzinfo)
+    if start.tzinfo is not None:
+        return int(
+            (target.astimezone(timezone.utc) - start.astimezone(timezone.utc)).total_seconds()
+        )
+    return int((target - start).total_seconds())
 
 
 def read_rawstate_column(state_path: Path) -> list[str]:
@@ -180,47 +189,65 @@ def compute_sleep_bins_df(
 
 def compute_sleep_bins_df_offset(
     state_dir: str | Path,
+    edf_dir: str | Path,
     bin_hours: int = 2,
     begin_hr: int = 6,
     spindle_epoch_sec: int = DEFAULT_SPINDLE_EPOCH_SEC,
+    tz: ZoneInfo | None = None,
 ) -> pd.DataFrame:
     """Like `compute_sleep_bins_df`, but rotates each animal's state array so
     that bin 0 starts at `begin_hr:00` clock time.
 
-    The recording start time is parsed from `_HH_MM_SS_` in the filename
-    (project EDF-stem convention). Each state array is upsampled from
-    SPINDLE epoch rate to per-second by repeating each epoch
-    `spindle_epoch_sec` times, then rotated so that the slice covering
-    `[begin_hr:00, ...]` comes first.
+    Each CSV is paired with its preprocessed EDF in ``edf_dir`` by animal ID
+    (the first ``_``-delimited token of the filename stem). The recording
+    start datetime is read from the EDF header — the CSV filename is no
+    longer parsed for time.
+
+    Each state array is upsampled from SPINDLE epoch rate to per-second by
+    repeating each epoch ``spindle_epoch_sec`` times, then rotated so that
+    the slice covering ``[begin_hr:00, ...]`` comes first.
 
     Args:
         state_dir: Directory of SPINDLE CSVs.
+        edf_dir: Directory of preprocessed EDFs (typically ``project_root/standard/``).
+            CSVs without a matching EDF are skipped with a warning.
         bin_hours: Bin width in hours.
         begin_hr: Clock hour (0-23) at which bin 0 should start.
         spindle_epoch_sec: SPINDLE epoch length in seconds.
+        tz: Optional timezone. When given, the EDF header datetime is
+            localized so that the next-`begin_hr` rotation honors DST
+            transitions (a recording that crosses spring-forward rotates by
+            23h of real time, not a naive 24h). ``None`` keeps the legacy
+            naive arithmetic.
 
     Raises:
-        ValueError: if a CSV's filename doesn't include the `_HH_MM_SS_`
-            pattern, or if the recording is too short to contain the rotation
-            offset (rotation would silently no-op).
+        ValueError: if a paired recording is too short to contain the
+            rotation offset (rotation would silently no-op).
     """
-    # TODO: parse start time from the paired EDF header instead of regex'ing
-    # the filename. See TODO.md "sleep_compute: Pair state CSVs with EDFs".
+    edf_by_animal = {parse_animal_id(p): p for p in Path(edf_dir).glob("*PROCESSED.edf")}
+
     sleep_dfs = []
     for state_path in Path(state_dir).glob("*.csv"):
         animal = parse_animal_id(state_path)
-        match = re.search(r"_(\d{2})_(\d{2})_(\d{2})_", str(state_path))
-        if not match:
-            raise ValueError(f"Could not parse start time from filename: {state_path.name}")
-        hh, mm, ss = map(int, match.groups())
-        t = time(hh, mm, ss)
+        edf_path = edf_by_animal.get(animal)
+        if edf_path is None:
+            warnings.warn(
+                f"No EDF for animal {animal!r} in {edf_dir}; skipping rotation/metrics "
+                f"for {state_path.name}.",
+                stacklevel=2,
+            )
+            continue
+
+        rec_start = read_edf_start_datetime(edf_path)
+        if tz is not None:
+            rec_start = rec_start.replace(tzinfo=tz)
 
         states = read_rawstate_column(state_path)
         # SPINDLE epoch-rate (0.25 Hz) → per-second by repeating each epoch
         # spindle_epoch_sec times.
         expanded_states = [s for s in states for _ in range(spindle_epoch_sec)]
 
-        offset = seconds_until_target(t=t, h=begin_hr)
+        offset = seconds_until_target(rec_start, h=begin_hr)
         if offset >= len(expanded_states):
             raise ValueError(
                 f"Recording for {animal} is too short for begin_hr={begin_hr} rotation: "
@@ -237,6 +264,8 @@ def compute_sleep_bins_df_offset(
 
         sleep_dfs.append(df_mouse)
 
+    if not sleep_dfs:
+        return pd.DataFrame()
     return pd.concat(sleep_dfs, ignore_index=True)
 
 

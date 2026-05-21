@@ -15,13 +15,15 @@ on showEvent / poll / decisions) plus ``self._data_cache`` keyed by combo
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import matplotlib as mpl
 import numpy as np
 import pandas as pd
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QComboBox,
@@ -45,6 +47,11 @@ from ebb.process.sleep_compute import (
 )
 from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
 from ebb_viewer.pipeline.theme import COMBO_PLOT_RGB, STATUS_COLOR_HEX
+
+# Project recordings are all acquired in the Central time zone. Used by the
+# offset variant of the sleep-bins computation so the next-`begin_hr`
+# rotation honors DST transitions rather than drifting an hour across them.
+_RECORDING_TZ = ZoneInfo("America/Chicago")
 
 
 class SleepQCGridPage(QWidget):
@@ -108,6 +115,14 @@ class SleepQCGridPage(QWidget):
         # _get_spindle_outlier_animals. Invalidated wherever _data_cache
         # is evicted or repopulated for a combo (same lifecycle).
         self._outlier_cache: dict[str, set[str]] = {}
+
+        # Per-combo set of animals skipped during the offset compute because
+        # no preprocessed EDF was found. Populated by `_load_combo`, drained
+        # by `_flush_missing_edf_warning` on the next event-loop tick so that
+        # multiple combo loads in one batch (e.g. _ensure_all_combos_loaded)
+        # collapse into a single dialog.
+        self._pending_missing_edf: dict[str, set[str]] = {}
+        self._missing_edf_popup_scheduled: bool = False
 
         self._plots: dict[tuple[str, str], pg.PlotItem] = {}
 
@@ -657,18 +672,63 @@ class SleepQCGridPage(QWidget):
         if not d.is_dir():
             return False
         try:
-            df = compute_sleep_bins_df(d)
-            df_offset = compute_sleep_bins_df_offset(d)
-            df_frac = compute_spindle_fractions(d)
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", UserWarning)
+                df = compute_sleep_bins_df(d)
+                df_offset = compute_sleep_bins_df_offset(
+                    d, self.project_root / "standard", tz=_RECORDING_TZ
+                )
+                df_frac = compute_spindle_fractions(d)
         except Exception as e:
             QMessageBox.critical(
                 self, "Error loading sleep metrics", f"Could not load {combo}:\n{e}"
             )
             return False
+        self._record_missing_edf_warnings(combo, caught)
         self._data_cache[combo] = (df, df_offset, df_frac)
         # Fresh fraction data → drop any cached outlier set for this combo.
         self._outlier_cache.pop(combo, None)
         return True
+
+    def _record_missing_edf_warnings(self, combo: str, caught: list) -> None:
+        """Collect "No EDF for animal X" warnings from a compute batch and
+        schedule a single dialog to fire once the current event-loop tick
+        finishes (so a batch load doesn't pop N modals)."""
+        skipped: set[str] = set()
+        for w in caught:
+            msg = str(w.message)
+            if not msg.startswith("No EDF for animal"):
+                continue
+            # Format: "No EDF for animal 'AM001' in ...; skipping ..."
+            try:
+                animal = msg.split("'", 2)[1]
+            except IndexError:
+                continue
+            skipped.add(animal)
+        if not skipped:
+            return
+        self._pending_missing_edf.setdefault(combo, set()).update(skipped)
+        if not self._missing_edf_popup_scheduled:
+            self._missing_edf_popup_scheduled = True
+            QTimer.singleShot(0, self._flush_missing_edf_warning)
+
+    def _flush_missing_edf_warning(self) -> None:
+        self._missing_edf_popup_scheduled = False
+        if not self._pending_missing_edf:
+            return
+        lines = [
+            f"  {combo}: {', '.join(sorted(animals))}"
+            for combo, animals in sorted(self._pending_missing_edf.items())
+        ]
+        self._pending_missing_edf.clear()
+        QMessageBox.warning(
+            self,
+            "Missing preprocessed EDFs",
+            "These animals had sleep CSVs but no preprocessed EDF in "
+            "standard/, so their offset metrics were skipped:\n\n"
+            + "\n".join(lines)
+            + "\n\nRe-run the Preprocess page for these animals to include them.",
+        )
 
     def _ensure_all_combos_loaded(self) -> None:
         for combo in self._available_combos:

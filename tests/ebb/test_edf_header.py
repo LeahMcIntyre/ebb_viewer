@@ -1,5 +1,6 @@
-"""Tests for ``ebb.io.fs_detect``: ``detect_fs_from_standard`` (UI helper)
-and ``assert_fs_matches`` (per-file runtime guard).
+"""Tests for ``ebb.io.edf_header``: ``detect_fs_from_standard`` (UI helper),
+``assert_fs_matches`` (per-file runtime guard), and ``read_edf_start_datetime``
+(header datetime parser).
 
 The success path of ``detect_fs_from_standard`` (open a real EDF, return
 its first-channel ``samples_per_record``) is exercised end-to-end by
@@ -10,12 +11,17 @@ when invoked from the GUI's ↻ button.
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from ebb.io.fs_detect import assert_fs_matches, detect_fs_from_standard
+from ebb.io.edf_header import (
+    assert_fs_matches,
+    detect_fs_from_standard,
+    read_edf_start_datetime,
+)
 
 
 def test_returns_none_when_no_standard_dir(tmp_path: Path):
@@ -38,7 +44,7 @@ def test_returns_none_on_unreadable_edf(tmp_path: Path):
     std.mkdir()
     (std / "fake.edf").write_text("not a real EDF")
     # Patch the reader inside the helper's module so we don't need a valid EDF.
-    with patch("ebb.io.fs_detect.edf.Reader", side_effect=OSError("bad file")):
+    with patch("ebb.io.edf_header.edf.Reader", side_effect=OSError("bad file")):
         assert detect_fs_from_standard(tmp_path) is None
 
 
@@ -63,7 +69,7 @@ def test_returns_fs_from_first_edf_when_readable(tmp_path: Path):
         def __exit__(self, *_):
             return False
 
-    with patch("ebb.io.fs_detect.edf.Reader", _FakeReader):
+    with patch("ebb.io.edf_header.edf.Reader", _FakeReader):
         assert detect_fs_from_standard(tmp_path) == 500
 
 
@@ -112,3 +118,38 @@ def test_assert_fs_matches_falls_back_to_edf_placeholder_without_path():
     """Without a path, the message uses 'EDF' rather than crashing."""
     with pytest.raises(ValueError, match=r"Sampling-frequency mismatch for EDF"):
         assert_fs_matches(_FakeReader(250), 500)
+
+
+# ---------------------------------------------------------------------------
+# read_edf_start_datetime
+# ---------------------------------------------------------------------------
+
+
+class _FakeHeaderWithDate:
+    def __init__(self, start_date: str, start_time: str):
+        self.start_date = start_date
+        self.start_time = start_time
+
+
+class _FakeReaderWithDate:
+    def __init__(self, start_date: str, start_time: str):
+        self.header = _FakeHeaderWithDate(start_date, start_time)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+
+def test_read_edf_start_datetime_parses_header(tmp_path: Path):
+    """Combines start_date (DD.MM.YY) + start_time (HH.MM.SS) into a naive datetime."""
+
+    def reader_factory(_path):
+        return _FakeReaderWithDate("08.03.26", "22.30.45")
+
+    with patch("ebb.io.edf_header.edf.Reader", reader_factory):
+        dt = read_edf_start_datetime(tmp_path / "fake.edf")
+
+    assert dt == datetime(2026, 3, 8, 22, 30, 45)
+    assert dt.tzinfo is None  # helper returns naive; localization is the caller's job
