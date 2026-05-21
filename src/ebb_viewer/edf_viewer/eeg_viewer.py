@@ -5,7 +5,6 @@ Used both inside pipeline pages (via `launch_edf_window`) and standalone
 """
 
 import sys
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
@@ -13,6 +12,7 @@ from openseize.file_io import edf
 from PyQt6 import QtGui, QtWidgets
 from PyQt6.QtCore import Qt
 
+from ebb.io.edf_header import parse_edf_start_datetime
 from ebb.masking import get_offset
 from ebb.process.sleep_compute import DEFAULT_SPINDLE_EPOCH_SEC
 from ebb_viewer.edf_viewer.file_openers import (
@@ -42,7 +42,6 @@ from ebb_viewer.widgets.sleep_viewer import SleepPopup
 from ebb_viewer.widgets.stft_viewer import STFTBoundsDialog, STFTPopup
 
 _CH_NAMES = ("LFC", "RSC", "LSC", "EMG")
-_EDF_TIME_FMT = "%d.%m.%y %H.%M.%S"
 
 
 def _load_recording(edf_path: Path, csv_path: Path | None = None) -> Recording:
@@ -58,9 +57,7 @@ def _load_recording(edf_path: Path, csv_path: Path | None = None) -> Recording:
             raise ValueError(
                 f"Expected fs=250 Hz, got {fs} Hz. Please select a compatible file."
             )
-        start_str = reader.header.start_time
-        date_str = reader.header.start_date
-    start_time = datetime.strptime(f"{date_str} {start_str}", _EDF_TIME_FMT)
+        start_time = parse_edf_start_datetime(reader.header)
     return Recording(
         data=data,
         fs=fs,

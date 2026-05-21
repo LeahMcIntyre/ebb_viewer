@@ -21,7 +21,6 @@ import pickle
 import time
 import warnings
 from collections.abc import Callable, Sequence
-from datetime import datetime
 from functools import partial
 from pathlib import Path
 
@@ -34,7 +33,7 @@ from openseize.spectra import estimators
 from ebb import masking
 from ebb.core import concurrency, metastores
 from ebb.core.naming import parse_animal_id
-from ebb.io.fs_detect import assert_fs_matches
+from ebb.io.edf_header import assert_fs_matches, parse_edf_start_datetime
 from ebb.masking.annotations import keyword_mask
 from ebb.process.state_presets import labels_from_presets
 
@@ -304,9 +303,7 @@ def estimate_psd(
 
         # Build hour-window mask if requested
         if hour_windows is not None:
-            start_str = reader.header.start_time  # "HH.MM.SS"
-            date_str = reader.header.start_date  # "DD.MM.YY"
-            rec_start = datetime.strptime(f"{date_str} {start_str}", "%d.%m.%y %H.%M.%S")
+            rec_start = parse_edf_start_datetime(reader.header)
             tod_mask, used_windows = masking.hour_window_mask(
                 rec_start,
                 n_samples,

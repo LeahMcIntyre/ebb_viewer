@@ -41,7 +41,7 @@ from ebb_viewer.pipeline.mask_export import (
     default_pairs,
     export_run,
 )
-from ebb.io.fs_detect import detect_fs_from_standard
+from ebb.io.edf_header import detect_fs_from_standard
 from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
 from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget
 from ebb_viewer.widgets.no_scroll_spinbox import NoScrollSpinBox
