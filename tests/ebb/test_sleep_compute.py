@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from ebb.process.sleep_compute import (
+    compute_sleep_bins_df_clock_aligned,
     compute_sleep_bins_df_offset,
     compute_spindle_fractions,
     seconds_until_target,
@@ -418,20 +419,203 @@ def test_offset_dst_aware_uses_real_elapsed_seconds(tmp_path: Path):
     assert df_naive["bin_start_hr"].min() == 6
 
 
-def test_offset_raises_when_recording_too_short(tmp_path: Path):
-    """Short recording that can't span the rotation offset raises ValueError."""
+def test_offset_warns_and_skips_short_recording(tmp_path: Path):
+    """Recording that can't span the rotation offset is skipped with a warning,
+    leaving longer recordings in the result instead of raising."""
     state_dir = tmp_path / "spindle_outputs"
     edf_dir = tmp_path / "standard"
     state_dir.mkdir()
     edf_dir.mkdir()
 
-    # Only 100 epochs = 400s of recording. Offset would need 8h = 28800s.
-    _write_rawstate_csv(state_dir / "Animal1_run.csv", ["w"] * 100)
-    _write_fake_edf(edf_dir / "Animal1_PREPROCESSED.edf")
+    # Short: 100 epochs = 400s. Offset would need 8h = 28800s.
+    _write_rawstate_csv(state_dir / "Short_run.csv", ["w"] * 100)
+    _write_fake_edf(edf_dir / "Short_PREPROCESSED.edf")
+    # Long: 24h of wake.
+    _write_rawstate_csv(state_dir / "Long_run.csv", ["w"] * 21600)
+    _write_fake_edf(edf_dir / "Long_PREPROCESSED.edf")
 
     fake_start = datetime(2026, 5, 21, 22, 0, 0)  # 22:00 → 8h to 06:00
     with patch(
         "ebb.process.sleep_compute.read_edf_start_datetime", return_value=fake_start
     ):
-        with pytest.raises(ValueError, match=r"too short for begin_hr"):
-            compute_sleep_bins_df_offset(state_dir, edf_dir, bin_hours=2, begin_hr=6)
+        with pytest.warns(UserWarning, match=r"too short for begin_hr"):
+            df = compute_sleep_bins_df_offset(
+                state_dir, edf_dir, bin_hours=2, begin_hr=6
+            )
+
+    assert set(df["mouse_id"]) == {"Long"}
+
+
+# ---------------------------------------------------------------------------
+# compute_sleep_bins_df_clock_aligned
+# ---------------------------------------------------------------------------
+
+
+def test_clock_aligned_recording_starts_on_begin_hr(tmp_path: Path):
+    """24h recording starting exactly at begin_hr → bins at 6, 8, ..., 28."""
+    state_dir = tmp_path / "spindle_outputs"
+    edf_dir = tmp_path / "standard"
+    state_dir.mkdir()
+    edf_dir.mkdir()
+
+    _write_rawstate_csv(state_dir / "Animal1_run.csv", ["w"] * 21600)  # 24h
+    _write_fake_edf(edf_dir / "Animal1_PREPROCESSED.edf")
+
+    fake_start = datetime(2026, 5, 21, 6, 0, 0)
+    with patch(
+        "ebb.process.sleep_compute.read_edf_start_datetime", return_value=fake_start
+    ):
+        df = compute_sleep_bins_df_clock_aligned(
+            state_dir, edf_dir, bin_hours=2, begin_hr=6
+        )
+
+    starts = sorted(df["bin_start_hr"].unique())
+    assert starts == [6.0, 8.0, 10.0, 12.0, 14.0, 16.0, 18.0, 20.0, 22.0, 24.0, 26.0, 28.0]
+
+
+def test_clock_aligned_24h_recording_starting_late(tmp_path: Path):
+    """24h recording starting at 22:00 (begin_hr=6) → bins at 22, 24, ..., 44."""
+    state_dir = tmp_path / "spindle_outputs"
+    edf_dir = tmp_path / "standard"
+    state_dir.mkdir()
+    edf_dir.mkdir()
+
+    _write_rawstate_csv(state_dir / "Animal1_run.csv", ["w"] * 21600)  # 24h
+    _write_fake_edf(edf_dir / "Animal1_PREPROCESSED.edf")
+
+    fake_start = datetime(2026, 5, 21, 22, 0, 0)
+    with patch(
+        "ebb.process.sleep_compute.read_edf_start_datetime", return_value=fake_start
+    ):
+        df = compute_sleep_bins_df_clock_aligned(
+            state_dir, edf_dir, bin_hours=2, begin_hr=6
+        )
+
+    starts = sorted(df["bin_start_hr"].unique())
+    assert starts == [22.0, 24.0, 26.0, 28.0, 30.0, 32.0, 34.0, 36.0, 38.0, 40.0, 42.0, 44.0]
+
+
+def test_clock_aligned_48h_preserves_day_distinction(tmp_path: Path):
+    """48h recording starting at 22:00 → bins 22..68 (no mod-24 wrap)."""
+    state_dir = tmp_path / "spindle_outputs"
+    edf_dir = tmp_path / "standard"
+    state_dir.mkdir()
+    edf_dir.mkdir()
+
+    # 48h at 0.25 Hz = 43200 epochs.
+    _write_rawstate_csv(state_dir / "Animal1_run.csv", ["w"] * 43200)
+    _write_fake_edf(edf_dir / "Animal1_PREPROCESSED.edf")
+
+    fake_start = datetime(2026, 5, 21, 22, 0, 0)
+    with patch(
+        "ebb.process.sleep_compute.read_edf_start_datetime", return_value=fake_start
+    ):
+        df = compute_sleep_bins_df_clock_aligned(
+            state_dir, edf_dir, bin_hours=2, begin_hr=6
+        )
+
+    starts = sorted(df["bin_start_hr"].unique())
+    assert starts[0] == 22.0
+    assert starts[-1] == 68.0
+    assert len(starts) == 24  # 48h / 2h per bin
+
+
+def test_clock_aligned_short_recording_placed_at_true_position(tmp_path: Path):
+    """1h recording starting at 22:00 → single bin at bin_start_hr=22."""
+    state_dir = tmp_path / "spindle_outputs"
+    edf_dir = tmp_path / "standard"
+    state_dir.mkdir()
+    edf_dir.mkdir()
+
+    # 1h at 0.25 Hz = 900 epochs.
+    _write_rawstate_csv(state_dir / "Animal1_run.csv", ["w"] * 900)
+    _write_fake_edf(edf_dir / "Animal1_PREPROCESSED.edf")
+
+    fake_start = datetime(2026, 5, 21, 22, 0, 0)
+    with patch(
+        "ebb.process.sleep_compute.read_edf_start_datetime", return_value=fake_start
+    ):
+        df = compute_sleep_bins_df_clock_aligned(
+            state_dir, edf_dir, bin_hours=2, begin_hr=6
+        )
+
+    starts = sorted(df["bin_start_hr"].unique())
+    assert starts == [22.0]
+
+
+def test_clock_aligned_recording_starting_before_begin_hr(tmp_path: Path):
+    """Recording starting at 05:00 (1h before begin_hr=6) → first bin at 4.
+
+    Sample 0 sits inside the bin spanning 04:00-06:00 (one hour into it),
+    so the first emitted bin_start_hr is 4 and the bin covers only the
+    actual data from 05:00 onward."""
+    state_dir = tmp_path / "spindle_outputs"
+    edf_dir = tmp_path / "standard"
+    state_dir.mkdir()
+    edf_dir.mkdir()
+
+    _write_rawstate_csv(state_dir / "Animal1_run.csv", ["w"] * 21600)  # 24h
+    _write_fake_edf(edf_dir / "Animal1_PREPROCESSED.edf")
+
+    fake_start = datetime(2026, 5, 21, 5, 0, 0)
+    with patch(
+        "ebb.process.sleep_compute.read_edf_start_datetime", return_value=fake_start
+    ):
+        df = compute_sleep_bins_df_clock_aligned(
+            state_dir, edf_dir, bin_hours=2, begin_hr=6
+        )
+
+    starts = sorted(df["bin_start_hr"].unique())
+    # Previous begin_hr boundary is yesterday's 06:00; rec_start is 23h past
+    # that, which falls 1h into the bin spanning 22h-24h past begin_hr
+    # (bin_start_hr = 28). The first bin is partial (1h of data), then 11 full
+    # bins, then a final partial bin covering 04:00-05:00 the day after — 13
+    # bins total, last bin_start_hr = 28 + 24 = 52.
+    assert starts[0] == 28.0
+    assert starts[-1] == 52.0
+    assert len(starts) == 13
+
+
+def test_clock_aligned_empty_csv_warns(tmp_path: Path):
+    """Empty state CSV → skipped with warning, not raised."""
+    state_dir = tmp_path / "spindle_outputs"
+    edf_dir = tmp_path / "standard"
+    state_dir.mkdir()
+    edf_dir.mkdir()
+
+    _write_rawstate_csv(state_dir / "Animal1_run.csv", [])
+    _write_fake_edf(edf_dir / "Animal1_PREPROCESSED.edf")
+
+    fake_start = datetime(2026, 5, 21, 6, 0, 0)
+    with patch(
+        "ebb.process.sleep_compute.read_edf_start_datetime", return_value=fake_start
+    ):
+        with pytest.warns(UserWarning, match="Empty state CSV"):
+            df = compute_sleep_bins_df_clock_aligned(
+                state_dir, edf_dir, bin_hours=2, begin_hr=6
+            )
+
+    assert df.empty
+
+
+def test_clock_aligned_warns_and_skips_csv_without_matching_edf(tmp_path: Path):
+    """CSV with no paired EDF → warning emitted, other animal still in result."""
+    state_dir = tmp_path / "spindle_outputs"
+    edf_dir = tmp_path / "standard"
+    state_dir.mkdir()
+    edf_dir.mkdir()
+
+    _write_rawstate_csv(state_dir / "Animal1_run.csv", ["w"] * 21600)
+    _write_rawstate_csv(state_dir / "Animal2_run.csv", ["w"] * 21600)
+    _write_fake_edf(edf_dir / "Animal1_PREPROCESSED.edf")
+
+    fake_start = datetime(2026, 5, 21, 6, 0, 0)
+    with patch(
+        "ebb.process.sleep_compute.read_edf_start_datetime", return_value=fake_start
+    ):
+        with pytest.warns(UserWarning, match=r"No EDF for animal 'Animal2'"):
+            df = compute_sleep_bins_df_clock_aligned(
+                state_dir, edf_dir, bin_hours=2, begin_hr=6
+            )
+
+    assert set(df["mouse_id"]) == {"Animal1"}

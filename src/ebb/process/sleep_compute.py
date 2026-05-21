@@ -80,6 +80,30 @@ def read_rawstate_column(state_path: Path) -> list[str]:
         return [row[idx] for row in reader if row]
 
 
+def _bouts_for_state(mask, sample_rate_hz):
+    # Run-length encoding via diff. The mask[0]/mask[-1] guards handle
+    # bouts that touch the bin's left/right edge (no preceding/following
+    # transition to detect via diff).
+    if mask.size == 0:
+        return 0, np.nan
+
+    x = mask.astype(int)
+    dx = np.diff(x)
+    starts = np.where(dx == 1)[0] + 1
+    ends = np.where(dx == -1)[0] + 1
+
+    if mask[0]:
+        starts = np.r_[0, starts]
+    if mask[-1]:
+        ends = np.r_[ends, mask.size]
+
+    if len(starts) == 0:
+        return 0, np.nan
+
+    durations_sec = (ends - starts) / sample_rate_hz
+    return len(durations_sec), durations_sec.mean()
+
+
 def compute_sleep_metrics_per_mouse(
     states,
     mouse_id=None,
@@ -112,29 +136,6 @@ def compute_sleep_metrics_per_mouse(
     n_bins = int(np.ceil(n_samples / bin_size_samples))
     unique_states = np.unique(states)
 
-    def bouts_for_state(mask, sample_rate_hz):
-        # Run-length encoding via diff. The mask[0]/mask[-1] guards handle
-        # bouts that touch the bin's left/right edge (no preceding/following
-        # transition to detect via diff).
-        if mask.size == 0:
-            return 0, np.nan
-
-        x = mask.astype(int)
-        dx = np.diff(x)
-        starts = np.where(dx == 1)[0] + 1
-        ends = np.where(dx == -1)[0] + 1
-
-        if mask[0]:
-            starts = np.r_[0, starts]
-        if mask[-1]:
-            ends = np.r_[ends, mask.size]
-
-        if len(starts) == 0:
-            return 0, np.nan
-
-        durations_sec = (ends - starts) / sample_rate_hz
-        return len(durations_sec), durations_sec.mean()
-
     rows = []
     for bin_idx in range(n_bins):
         start = bin_idx * bin_size_samples
@@ -148,7 +149,7 @@ def compute_sleep_metrics_per_mouse(
             mask = bin_states == state
             time_in_state = mask.sum()
             frac_time = time_in_state / bin_len
-            n_bouts, mean_bout_sec = bouts_for_state(mask, sample_rate_hz)
+            n_bouts, mean_bout_sec = _bouts_for_state(mask, sample_rate_hz)
 
             rows.append(
                 {
@@ -220,9 +221,10 @@ def compute_sleep_bins_df_offset(
             23h of real time, not a naive 24h). ``None`` keeps the legacy
             naive arithmetic.
 
-    Raises:
-        ValueError: if a paired recording is too short to contain the
-            rotation offset (rotation would silently no-op).
+    Recordings shorter than the rotation offset (i.e. that don't reach the
+    next ``begin_hr`` boundary) cannot be rotated and are skipped with a
+    ``UserWarning``. Use ``compute_sleep_bins_df_clock_aligned`` to include
+    those animals at their true circadian position.
     """
     edf_by_animal = {parse_animal_id(p): p for p in Path(edf_dir).glob("*PROCESSED.edf")}
 
@@ -249,11 +251,14 @@ def compute_sleep_bins_df_offset(
 
         offset = seconds_until_target(rec_start, h=begin_hr)
         if offset >= len(expanded_states):
-            raise ValueError(
-                f"Recording for {animal} is too short for begin_hr={begin_hr} rotation: "
-                f"offset={offset}s but recording is only {len(expanded_states)}s long. "
-                f"Drop the animal or pick a closer begin_hr."
+            warnings.warn(
+                f"Recording for {animal!r} is too short for begin_hr={begin_hr} "
+                f"rotation: offset={offset}s but recording is only "
+                f"{len(expanded_states)}s long; skipping (use the clock-aligned "
+                f"variant to include this animal).",
+                stacklevel=2,
             )
+            continue
         offset_states = expanded_states[offset:] + expanded_states[:offset]
 
         df_mouse = compute_sleep_metrics_per_mouse(
@@ -262,6 +267,144 @@ def compute_sleep_bins_df_offset(
         df_mouse["bin_start_sec"] = df_mouse["bin_start_sec"] + (3600 * begin_hr)
         df_mouse["bin_start_hr"] = df_mouse["bin_start_hr"] + begin_hr
 
+        sleep_dfs.append(df_mouse)
+
+    if not sleep_dfs:
+        return pd.DataFrame()
+    return pd.concat(sleep_dfs, ignore_index=True)
+
+
+def _bin_states_clock_aligned(
+    states,
+    mouse_id,
+    bin_hours: int,
+    rec_start_offset_secs: int,
+    begin_hr: int,
+    sample_rate_hz: float = 1.0,
+) -> pd.DataFrame:
+    # Bin states by clock time, anchored to begin_hr boundaries.
+    #
+    # rec_start_offset_secs is the seconds from the most recent begin_hr
+    # boundary at-or-before rec_start to rec_start itself (in [0, 86400)).
+    # The recording's sample 0 lands somewhere inside the bin whose left
+    # edge is ``(rec_start_offset_secs // bin_size_secs) * bin_size_secs``
+    # seconds past that boundary. The first emitted bin is partial whenever
+    # rec_start is not on a bin edge. Subsequent bins are full; the final
+    # bin may also be partial. bin_start_hr increases monotonically — no
+    # mod-24 wrap — so multi-day recordings get distinct positions per day.
+    states = np.asarray(states)
+    n_samples = len(states)
+    if n_samples == 0:
+        return pd.DataFrame()
+
+    bin_size_secs = bin_hours * 3600
+    bin_size_samples = int(round(bin_size_secs * sample_rate_hz))
+    if bin_size_samples <= 0:
+        raise ValueError("bin_hours * 3600 * sample_rate_hz must be >= 1 sample")
+
+    first_bin_circadian_start = (rec_start_offset_secs // bin_size_secs) * bin_size_secs
+    first_sample_offset_in_bin = int(
+        round((rec_start_offset_secs - first_bin_circadian_start) * sample_rate_hz)
+    )
+    samples_in_first_bin = bin_size_samples - first_sample_offset_in_bin
+
+    unique_states = np.unique(states)
+    rows = []
+    bin_idx = 0
+    sample_pos = 0
+    current_circadian_start = first_bin_circadian_start
+    while sample_pos < n_samples:
+        chunk = samples_in_first_bin if bin_idx == 0 else bin_size_samples
+        end_pos = min(sample_pos + chunk, n_samples)
+
+        bin_states = states[sample_pos:end_pos]
+        bin_len = len(bin_states)
+        if bin_len > 0:
+            for state in unique_states:
+                mask = bin_states == state
+                time_in_state = mask.sum()
+                frac_time = time_in_state / bin_len
+                n_bouts, mean_bout_sec = _bouts_for_state(mask, sample_rate_hz)
+                rows.append(
+                    {
+                        "mouse_id": mouse_id,
+                        "group": None,
+                        "dataset": None,
+                        "bin_idx": bin_idx,
+                        "bin_start_sec": current_circadian_start + 3600 * begin_hr,
+                        "bin_start_hr": current_circadian_start / 3600 + begin_hr,
+                        "state": state,
+                        "frac_time": frac_time,
+                        "n_bouts": n_bouts,
+                        "mean_bout_sec": mean_bout_sec,
+                    }
+                )
+
+        sample_pos = end_pos
+        bin_idx += 1
+        current_circadian_start += bin_size_secs
+
+    return pd.DataFrame(rows)
+
+
+def compute_sleep_bins_df_clock_aligned(
+    state_dir: str | Path,
+    edf_dir: str | Path,
+    bin_hours: int = 2,
+    begin_hr: int = 6,
+    spindle_epoch_sec: int = DEFAULT_SPINDLE_EPOCH_SEC,
+    tz: ZoneInfo | None = None,
+) -> pd.DataFrame:
+    """Per-animal sleep bins, placed at their true circadian position.
+
+    Like ``compute_sleep_bins_df_offset`` but instead of rotating each
+    recording so bin 0 lands at ``begin_hr:00``, bins are anchored to
+    ``begin_hr``-aligned clock boundaries and each recording contributes
+    data to whichever bins its wall-clock samples cover. ``bin_start_hr``
+    grows monotonically across the recording (e.g. a 48 h recording
+    starting at 22:00 with ``begin_hr=6`` yields bins at 22, 24, …, 70 —
+    no mod-24 wrap, so day 1 night and day 2 night land at distinct x
+    positions). Short recordings that the rotation variant would reject
+    instead appear at the partial bin matching their wall-clock window.
+    """
+    edf_by_animal = {parse_animal_id(p): p for p in Path(edf_dir).glob("*PROCESSED.edf")}
+
+    sleep_dfs = []
+    for state_path in Path(state_dir).glob("*.csv"):
+        animal = parse_animal_id(state_path)
+        edf_path = edf_by_animal.get(animal)
+        if edf_path is None:
+            warnings.warn(
+                f"No EDF for animal {animal!r} in {edf_dir}; skipping rotation/metrics "
+                f"for {state_path.name}.",
+                stacklevel=2,
+            )
+            continue
+
+        rec_start = read_edf_start_datetime(edf_path)
+        if tz is not None:
+            rec_start = rec_start.replace(tzinfo=tz)
+
+        states = read_rawstate_column(state_path)
+        expanded_states = [s for s in states for _ in range(spindle_epoch_sec)]
+        if not expanded_states:
+            warnings.warn(
+                f"Empty state CSV for animal {animal!r}; skipping.",
+                stacklevel=2,
+            )
+            continue
+
+        tod_secs = rec_start.hour * 3600 + rec_start.minute * 60 + rec_start.second
+        rec_start_offset_secs = (tod_secs - begin_hr * 3600) % (24 * 3600)
+
+        df_mouse = _bin_states_clock_aligned(
+            expanded_states,
+            mouse_id=animal,
+            bin_hours=bin_hours,
+            rec_start_offset_secs=rec_start_offset_secs,
+            begin_hr=begin_hr,
+            sample_rate_hz=1.0,
+        )
         sleep_dfs.append(df_mouse)
 
     if not sleep_dfs:

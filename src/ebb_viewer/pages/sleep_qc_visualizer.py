@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
 
 from ebb.process.sleep_compute import (
     compute_sleep_bins_df,
+    compute_sleep_bins_df_clock_aligned,
     compute_sleep_bins_df_offset,
     compute_spindle_fractions,
 )
@@ -73,6 +74,14 @@ class SleepQCGridPage(QWidget):
     manifest_changed = pyqtSignal()
     navigate_to = pyqtSignal(str)
 
+    # (display label, internal mode key) pairs for the axis dropdown. Order
+    # determines the dropdown's item order and the default (first item).
+    _AXIS_MODES = (
+        ("Clock-aligned", "clock"),
+        ("Rotate to 6AM", "rotate"),
+        ("From Start", "start"),
+    )
+
     STATE_ORDER = ["w", "n", "r"]
     STATE_DEF = {"w": "Wake", "n": "NREM", "r": "REM"}
     METRIC_ORDER = [
@@ -102,7 +111,14 @@ class SleepQCGridPage(QWidget):
         self.project_root = Path(project_root)
 
         self._available_combos: list[str] = []
-        self._data_cache: dict[str, tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]] = {}
+        # Per-combo cache: (df_start, df_rotate, df_clock, df_frac). df_start has
+        # bin_start_hr counted from sample 0; df_rotate is rotated so bin 0 lands
+        # on begin_hr; df_clock places each animal's bins at their true clock
+        # position. _axis_mode picks which one feeds _get_df.
+        self._data_cache: dict[
+            str, tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]
+        ] = {}
+        self._axis_mode: str = "clock"
         self._mouse_ids: list[str] = []
         self._current_page: int = 0
         self._mode: str = "group"
@@ -117,12 +133,14 @@ class SleepQCGridPage(QWidget):
         self._outlier_cache: dict[str, set[str]] = {}
 
         # Per-combo set of animals skipped during the offset compute because
-        # no preprocessed EDF was found. Populated by `_load_combo`, drained
-        # by `_flush_missing_edf_warning` on the next event-loop tick so that
-        # multiple combo loads in one batch (e.g. _ensure_all_combos_loaded)
-        # collapse into a single dialog.
+        # no preprocessed EDF was found, or whose recording was too short for
+        # the begin_hr rotation. Populated by `_load_combo`, drained by
+        # `_flush_skip_warnings` on the next event-loop tick so that multiple
+        # combo loads in one batch (e.g. _ensure_all_combos_loaded) collapse
+        # into a single dialog.
         self._pending_missing_edf: dict[str, set[str]] = {}
-        self._missing_edf_popup_scheduled: bool = False
+        self._pending_too_short: dict[str, set[str]] = {}
+        self._skip_popup_scheduled: bool = False
 
         self._plots: dict[tuple[str, str], pg.PlotItem] = {}
 
@@ -333,11 +351,14 @@ class SleepQCGridPage(QWidget):
         mode_wrap.setLayout(mode_row)
         smc.addWidget(mode_wrap)
 
-        # 6AM Start / Median — independent on/off toggles (native look)
-        self.btn_offset = QPushButton("6AM Start")
-        self.btn_offset.setCheckable(True)
-        self.btn_offset.setChecked(True)
-        smc.addWidget(self.btn_offset)
+        # Axis mode — three exclusive options behind a compact dropdown.
+        # Display labels are tied to the internal mode keys via _AXIS_MODES.
+        smc.addWidget(QLabel("Time axis:"))
+        self.cmb_axis_mode = QComboBox()
+        self.cmb_axis_mode.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        for label, _ in self._AXIS_MODES:
+            self.cmb_axis_mode.addItem(label)
+        smc.addWidget(self.cmb_axis_mode)
 
         self.btn_median = QPushButton("Median")
         self.btn_median.setCheckable(True)
@@ -481,7 +502,7 @@ class SleepQCGridPage(QWidget):
         self.cmb_combo.currentTextChanged.connect(self._on_combo_changed)
         self.btn_group.clicked.connect(lambda: self._set_mode("group"))
         self.btn_animal.clicked.connect(lambda: self._set_mode("animal"))
-        self.btn_offset.toggled.connect(self._update_all_plots)
+        self.cmb_axis_mode.currentIndexChanged.connect(self._on_axis_mode_changed)
         self.btn_median.toggled.connect(self._on_median_toggled)
         self.btn_view_sleep.clicked.connect(lambda: self._set_spindle_mask_mode(False))
         self.btn_spindle.clicked.connect(lambda: self._set_spindle_mask_mode(True))
@@ -519,6 +540,10 @@ class SleepQCGridPage(QWidget):
             self._ensure_all_combos_loaded()
             self._refresh_animal_combo()
 
+        self._update_all_plots()
+
+    def _on_axis_mode_changed(self, index: int) -> None:
+        self._axis_mode = self._AXIS_MODES[index][1]
         self._update_all_plots()
 
     def _set_spindle_mask_mode(self, spindle: bool) -> None:
@@ -674,8 +699,11 @@ class SleepQCGridPage(QWidget):
         try:
             with warnings.catch_warnings(record=True) as caught:
                 warnings.simplefilter("always", UserWarning)
-                df = compute_sleep_bins_df(d)
-                df_offset = compute_sleep_bins_df_offset(
+                df_start = compute_sleep_bins_df(d)
+                df_rotate = compute_sleep_bins_df_offset(
+                    d, self.project_root / "standard", tz=_RECORDING_TZ
+                )
+                df_clock = compute_sleep_bins_df_clock_aligned(
                     d, self.project_root / "standard", tz=_RECORDING_TZ
                 )
                 df_frac = compute_spindle_fractions(d)
@@ -684,50 +712,75 @@ class SleepQCGridPage(QWidget):
                 self, "Error loading sleep metrics", f"Could not load {combo}:\n{e}"
             )
             return False
-        self._record_missing_edf_warnings(combo, caught)
-        self._data_cache[combo] = (df, df_offset, df_frac)
+        self._record_skip_warnings(combo, caught)
+        self._data_cache[combo] = (df_start, df_rotate, df_clock, df_frac)
         # Fresh fraction data → drop any cached outlier set for this combo.
         self._outlier_cache.pop(combo, None)
         return True
 
-    def _record_missing_edf_warnings(self, combo: str, caught: list) -> None:
-        """Collect "No EDF for animal X" warnings from a compute batch and
-        schedule a single dialog to fire once the current event-loop tick
-        finishes (so a batch load doesn't pop N modals)."""
-        skipped: set[str] = set()
+    def _record_skip_warnings(self, combo: str, caught: list) -> None:
+        """Collect skip warnings from a compute batch (missing-EDF and
+        too-short-for-rotation) and schedule a single dialog to fire once the
+        current event-loop tick finishes (so a batch load doesn't pop N
+        modals)."""
+        missing: set[str] = set()
+        too_short: set[str] = set()
         for w in caught:
             msg = str(w.message)
-            if not msg.startswith("No EDF for animal"):
-                continue
-            # Format: "No EDF for animal 'AM001' in ...; skipping ..."
-            try:
-                animal = msg.split("'", 2)[1]
-            except IndexError:
-                continue
-            skipped.add(animal)
-        if not skipped:
-            return
-        self._pending_missing_edf.setdefault(combo, set()).update(skipped)
-        if not self._missing_edf_popup_scheduled:
-            self._missing_edf_popup_scheduled = True
-            QTimer.singleShot(0, self._flush_missing_edf_warning)
+            if msg.startswith("No EDF for animal"):
+                # Format: "No EDF for animal 'AM001' in ...; skipping ..."
+                try:
+                    missing.add(msg.split("'", 2)[1])
+                except IndexError:
+                    continue
+            elif msg.startswith("Recording for ") and "too short for begin_hr" in msg:
+                # Format: "Recording for 'GT0582' is too short for begin_hr=6 ..."
+                try:
+                    too_short.add(msg.split("'", 2)[1])
+                except IndexError:
+                    continue
+        if missing:
+            self._pending_missing_edf.setdefault(combo, set()).update(missing)
+        if too_short:
+            self._pending_too_short.setdefault(combo, set()).update(too_short)
+        if (missing or too_short) and not self._skip_popup_scheduled:
+            self._skip_popup_scheduled = True
+            QTimer.singleShot(0, self._flush_skip_warnings)
 
-    def _flush_missing_edf_warning(self) -> None:
-        self._missing_edf_popup_scheduled = False
-        if not self._pending_missing_edf:
+    def _flush_skip_warnings(self) -> None:
+        self._skip_popup_scheduled = False
+        sections: list[str] = []
+        if self._pending_missing_edf:
+            lines = [
+                f"  {combo}: {', '.join(sorted(animals))}"
+                for combo, animals in sorted(self._pending_missing_edf.items())
+            ]
+            sections.append(
+                "Animals with sleep CSVs but no preprocessed EDF in standard/ "
+                "(offset/clock-aligned metrics skipped):\n\n"
+                + "\n".join(lines)
+                + "\n\nRe-run the Preprocess page for these animals to include them."
+            )
+            self._pending_missing_edf.clear()
+        if self._pending_too_short:
+            lines = [
+                f"  {combo}: {', '.join(sorted(animals))}"
+                for combo, animals in sorted(self._pending_too_short.items())
+            ]
+            sections.append(
+                "Animals whose recording was too short for the 6AM rotation "
+                "(skipped in Rotate mode):\n\n"
+                + "\n".join(lines)
+                + "\n\nSwitch to Clock-aligned mode to view these at their "
+                "true circadian position."
+            )
+            self._pending_too_short.clear()
+        if not sections:
             return
-        lines = [
-            f"  {combo}: {', '.join(sorted(animals))}"
-            for combo, animals in sorted(self._pending_missing_edf.items())
-        ]
-        self._pending_missing_edf.clear()
         QMessageBox.warning(
             self,
-            "Missing preprocessed EDFs",
-            "These animals had sleep CSVs but no preprocessed EDF in "
-            "standard/, so their offset metrics were skipped:\n\n"
-            + "\n".join(lines)
-            + "\n\nRe-run the Preprocess page for these animals to include them.",
+            "Skipped animals",
+            "\n\n— — —\n\n".join(sections),
         )
 
     def _ensure_all_combos_loaded(self) -> None:
@@ -888,14 +941,15 @@ class SleepQCGridPage(QWidget):
     # Plotting helpers
     # ------------------------------------------------------------------
     def _get_df(self, combo: str) -> pd.DataFrame | None:
-        pair = self._data_cache.get(combo)
-        if pair is None:
+        entry = self._data_cache.get(combo)
+        if entry is None:
             return None
-        return pair[1] if self.btn_offset.isChecked() else pair[0]
+        df_start, df_rotate, df_clock, _df_frac = entry
+        return {"start": df_start, "rotate": df_rotate, "clock": df_clock}[self._axis_mode]
 
     def _get_frac_df(self, combo: str) -> pd.DataFrame | None:
-        pair = self._data_cache.get(combo)
-        return pair[2] if pair is not None else None
+        entry = self._data_cache.get(combo)
+        return entry[3] if entry is not None else None
 
     @staticmethod
     def _ensure_x_col(df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
@@ -936,6 +990,34 @@ class SleepQCGridPage(QWidget):
         self._outlier_cache[combo] = outliers
         return outliers
 
+    @staticmethod
+    def _plot_series(
+        plot_item,
+        xs,
+        ys,
+        *,
+        color: tuple[int, int, int],
+        alpha: int = 255,
+        width: float = 1.5,
+        style: Qt.PenStyle = Qt.PenStyle.SolidLine,
+    ) -> None:
+        # pyqtgraph needs >=2 points to draw a visible line segment, so single-
+        # point series (e.g. short clock-aligned recordings that span <1 bin)
+        # would render as nothing without a marker.
+        pen = pg.mkPen(color=(*color, alpha), width=width, style=style)
+        if len(xs) <= 1:
+            plot_item.plot(
+                xs,
+                ys,
+                pen=None,
+                symbol="o",
+                symbolBrush=(*color, alpha),
+                symbolPen=None,
+                symbolSize=7,
+            )
+        else:
+            plot_item.plot(xs, ys, pen=pen)
+
     def _apply_hour_of_day_ticks(self, x_vals) -> None:
         """Replace bottom-axis tick labels with hour-of-day (x % 24) for offset mode."""
         ticks = [[(float(x), str(int(x) % 24)) for x in sorted(set(x_vals)) if int(x) % 6 == 0]]
@@ -970,7 +1052,11 @@ class SleepQCGridPage(QWidget):
             for metric, _ in self.METRIC_ORDER:
                 p = self._plots[(metric, state)]
                 if metric == self.METRIC_ORDER[-1][0]:
-                    label = "Time (h)" if self.btn_offset.isChecked() else "Time (h) From EEG Start"
+                    label = (
+                        "Time (h) From EEG Start"
+                        if self._axis_mode == "start"
+                        else "Time (h)"
+                    )
                     p.setLabel("bottom", label)
 
         sub = df[df["mouse_id"].isin(mice)]
@@ -988,13 +1074,15 @@ class SleepQCGridPage(QWidget):
                         alpha = 255 if mid == self._highlighted_animal else 80
                     else:
                         alpha = 255
-                    p.plot(
+                    self._plot_series(
+                        p,
                         dm[x_col].to_numpy(),
                         dm[metric].to_numpy(),
-                        pen=pg.mkPen(color=(*mouse_colors[mid], alpha), width=1.5),
+                        color=mouse_colors[mid],
+                        alpha=alpha,
                     )
 
-        if self.btn_offset.isChecked() and not df.empty:
+        if self._axis_mode != "start" and not df.empty:
             self._apply_hour_of_day_ticks(df[x_col].unique())
 
         ref_combo = self._get_ref_combo() if self._show_ref_median else None
@@ -1029,11 +1117,7 @@ class SleepQCGridPage(QWidget):
             outlier_combos = self._get_spindle_outlier_animals(combo)
             is_outlier = animal in outlier_combos
             alpha = 255 if (not outlier_combos or is_outlier) else 80
-            pen = pg.mkPen(
-                color=(*color, alpha),
-                width=2.0,
-                style=Qt.PenStyle.DashLine if is_rerun else Qt.PenStyle.SolidLine,
-            )
+            line_style = Qt.PenStyle.DashLine if is_rerun else Qt.PenStyle.SolidLine
             for state in self.STATE_ORDER:
                 for metric, _ in self.METRIC_ORDER:
                     dm = adf[adf["state"] == state].copy()
@@ -1041,8 +1125,14 @@ class SleepQCGridPage(QWidget):
                         continue
                     dm[metric] = dm[metric].fillna(0)
                     dm = dm.sort_values(x_col)
-                    self._plots[(metric, state)].plot(
-                        dm[x_col].to_numpy(), dm[metric].to_numpy(), pen=pen
+                    self._plot_series(
+                        self._plots[(metric, state)],
+                        dm[x_col].to_numpy(),
+                        dm[metric].to_numpy(),
+                        color=color,
+                        alpha=alpha,
+                        width=2.0,
+                        style=line_style,
                     )
             drawn_combos.append(combo)
 
@@ -1052,7 +1142,7 @@ class SleepQCGridPage(QWidget):
         if ref_combo is not None:
             self._draw_ref_median(ref_combo)
 
-        if self.btn_offset.isChecked() and all_x_vals:
+        if self._axis_mode != "start" and all_x_vals:
             # Union of x values across every drawn combo — using just the
             # last combo's x range can omit ticks when recordings differ in
             # length (e.g. a short rerun missing the original's late bins).
@@ -1404,10 +1494,10 @@ class SleepQCGridPage(QWidget):
 
     def _get_animal_fractions(self, animal: str, combo: str) -> dict[str, float] | None:
         """Return {state: fraction} for one animal from the cache, or None if unavailable."""
-        pair = self._data_cache.get(combo)
-        if pair is None:
+        entry = self._data_cache.get(combo)
+        if entry is None:
             return None
-        df_frac = pair[2]
+        df_frac = entry[3]
         rows = df_frac[(df_frac["mouse_id"] == animal) & (df_frac["state"] != "Total")]
         if rows.empty:
             return None
@@ -1700,45 +1790,52 @@ class SpindleFractionPlot(QWidget):
 
         for xi, state in enumerate(self.STATE_ORDER):
             sdf = df[df["state"] == state].dropna(subset=["fraction"])
-            # Need ≥2 points for a meaningful box+whisker; the IQR math is
-            # degenerate at len 1 (q1 == q3, fences collapse onto the point)
-            # and downstream `fracs[fracs >= lo_fence].min()` is fragile.
-            if len(sdf) < 2:
+            if sdf.empty:
                 continue
 
             fracs = sdf["fraction"].to_numpy(dtype=float)
             mids = sdf["mouse_id"].to_numpy()
             y_max = max(y_max, fracs.max())
 
-            q1, med, q3 = np.percentile(fracs, [25, 50, 75])
-            iqr = q3 - q1
-            lo_fence = q1 - 1.5 * iqr
-            hi_fence = q3 + 1.5 * iqr
-            lo_wh = fracs[fracs >= lo_fence].min()
-            hi_wh = fracs[fracs <= hi_fence].max()
+            # Box-and-whisker math needs ≥2 points; with len 1 the IQR
+            # collapses and `fracs[fracs >= lo_fence].min()` etc. are
+            # fragile. Skip the box for tiny cohorts but still draw the
+            # scatter point so a single-animal combo shows up.
+            if len(fracs) >= 2:
+                q1, med, q3 = np.percentile(fracs, [25, 50, 75])
+                iqr = q3 - q1
+                lo_fence = q1 - 1.5 * iqr
+                hi_fence = q3 + 1.5 * iqr
+                lo_wh = fracs[fracs >= lo_fence].min()
+                hi_wh = fracs[fracs <= hi_fence].max()
 
-            # IQR box
-            pi.addItem(
-                pg.PlotCurveItem(
-                    [xi - box_w, xi - box_w, xi + box_w, xi + box_w, xi - box_w],
-                    [q1, q3, q3, q1, q1],
-                    pen=gray,
+                # IQR box
+                pi.addItem(
+                    pg.PlotCurveItem(
+                        [xi - box_w, xi - box_w, xi + box_w, xi + box_w, xi - box_w],
+                        [q1, q3, q3, q1, q1],
+                        pen=gray,
+                    )
                 )
-            )
-            # Median bar
-            pi.addItem(pg.PlotCurveItem([xi - box_w, xi + box_w], [med, med], pen=thick))
-            # Whiskers
-            pi.addItem(pg.PlotCurveItem([xi, xi], [q1, lo_wh], pen=gray))
-            pi.addItem(pg.PlotCurveItem([xi, xi], [q3, hi_wh], pen=gray))
-            # Whisker caps
-            pi.addItem(pg.PlotCurveItem([xi - cap_w, xi + cap_w], [lo_wh, lo_wh], pen=gray))
-            pi.addItem(pg.PlotCurveItem([xi - cap_w, xi + cap_w], [hi_wh, hi_wh], pen=gray))
+                # Median bar
+                pi.addItem(pg.PlotCurveItem([xi - box_w, xi + box_w], [med, med], pen=thick))
+                # Whiskers
+                pi.addItem(pg.PlotCurveItem([xi, xi], [q1, lo_wh], pen=gray))
+                pi.addItem(pg.PlotCurveItem([xi, xi], [q3, hi_wh], pen=gray))
+                # Whisker caps
+                pi.addItem(pg.PlotCurveItem([xi - cap_w, xi + cap_w], [lo_wh, lo_wh], pen=gray))
+                pi.addItem(pg.PlotCurveItem([xi - cap_w, xi + cap_w], [hi_wh, hi_wh], pen=gray))
+
+                is_out = (fracs < lo_fence) | (fracs > hi_fence)
+            else:
+                # Single-point group: no outlier classification possible.
+                med = float(fracs[0])
+                is_out = np.zeros(len(fracs), dtype=bool)
 
             # Scatter points (reproducible jitter)
             jitter = rng.uniform(-0.14, 0.14, len(fracs))
             xs = (xi + jitter).astype(float)
 
-            is_out = (fracs < lo_fence) | (fracs > hi_fence)
             is_current = mids == current_animal
 
             # Regular inlier points

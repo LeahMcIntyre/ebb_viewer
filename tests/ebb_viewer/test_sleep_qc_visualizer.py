@@ -314,7 +314,7 @@ def test_outlier_cache_returns_same_set_on_repeat_calls(qapp, tmp_path: Path):
             "fraction": [0.1, 0.12, 0.11, 0.13, 0.95],  # AM005 outlier
         }
     )
-    page._data_cache["LFC_RSC"] = (pd.DataFrame(), pd.DataFrame(), df_frac)
+    page._data_cache["LFC_RSC"] = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), df_frac)
 
     first = page._get_spindle_outlier_animals("LFC_RSC")
     second = page._get_spindle_outlier_animals("LFC_RSC")
@@ -433,6 +433,11 @@ def test_outlier_cache_invalidated_when_data_cache_repopulated(qapp, tmp_path: P
     page._outlier_cache["LFC_RSC"] = {"STALE"}
     # _load_combo's success path pops the outlier cache; simulate that
     # without an actual disk load:
-    page._data_cache["LFC_RSC"] = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame())
+    page._data_cache["LFC_RSC"] = (
+        pd.DataFrame(),
+        pd.DataFrame(),
+        pd.DataFrame(),
+        pd.DataFrame(),
+    )
     page._outlier_cache.pop("LFC_RSC", None)  # mirrors _load_combo's pop
     assert "LFC_RSC" not in page._outlier_cache
