@@ -1,7 +1,11 @@
 import sys
+import os
 
 from pathlib import Path
 from datetime import datetime
+
+if sys.platform == "linux" and os.environ.get("XDG_SESSION_TYPE") == "wayland":
+    os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
 import pandas as pd
 
