@@ -544,6 +544,11 @@ class SleepQCGridPage(QWidget):
 
     def _on_axis_mode_changed(self, index: int) -> None:
         self._axis_mode = self._AXIS_MODES[index][1]
+        # Repopulate any cache entries the background _poll evicted while the
+        # page was visible (pending-rerun combos get popped on every tick).
+        # Without this, the first axis-mode switch after eviction blanks the
+        # affected combos and no later switch recovers them.
+        self._ensure_all_combos_loaded()
         if self._axis_mode == "rotate":
             self._maybe_show_rotate_skip_warning()
         self._update_all_plots()
