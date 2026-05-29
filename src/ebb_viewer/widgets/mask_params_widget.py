@@ -1038,7 +1038,11 @@ class MaskParamsWidget(QWidget):
         n_found = sum(
             1
             for aid in animal_ids
-            if any(self._ann_dir.glob(f"{aid}*.txt")) or any(self._ann_dir.glob(f"{aid}*.csv"))
+            if (
+                any(self._ann_dir.glob(f"{aid}*.txt"))
+                or any(self._ann_dir.glob(f"{aid}*.csv"))
+                or any(self._ann_dir.glob(f"{aid}*.tsv"))
+            )
         )
         if n_animals == 0:
             self._lbl_ann_status.setText("No animals in manifest")

@@ -560,8 +560,10 @@ class EegMainWindow(QtWidgets.QMainWindow):
         if not dir_path:
             return
         animal_id = self.animal_id or parse_animal_id(self.rec.edf_path)
-        matches = sorted(Path(dir_path).glob(f"{animal_id}*.txt")) + sorted(
-            Path(dir_path).glob(f"{animal_id}*.csv")
+        matches = (
+            sorted(Path(dir_path).glob(f"{animal_id}*.txt"))
+            + sorted(Path(dir_path).glob(f"{animal_id}*.csv"))
+            + sorted(Path(dir_path).glob(f"{animal_id}*.tsv"))
         )
         if not matches:
             QtWidgets.QMessageBox.warning(

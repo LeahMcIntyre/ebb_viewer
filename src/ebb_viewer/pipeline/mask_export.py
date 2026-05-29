@@ -181,13 +181,17 @@ def _find_annotation_for_animal(ann_dir: Path | str, animal_id: str) -> Path | N
     """Locate the annotation file for an animal inside ``ann_dir``.
 
     Mirrors the EEG viewer's auto-discovery rule used by
-    ``on_load_annotation_dir``: .txt matches preferred over .csv, sorted
-    deterministically, first hit wins. Returns ``None`` if no match.
+    ``on_load_annotation_dir``: .txt matches preferred over .csv over .tsv,
+    sorted deterministically, first hit wins. Returns ``None`` if no match.
     """
     d = Path(ann_dir)
     if not d.is_dir():
         return None
-    matches = sorted(d.glob(f"{animal_id}*.txt")) + sorted(d.glob(f"{animal_id}*.csv"))
+    matches = (
+        sorted(d.glob(f"{animal_id}*.txt"))
+        + sorted(d.glob(f"{animal_id}*.csv"))
+        + sorted(d.glob(f"{animal_id}*.tsv"))
+    )
     return matches[0] if matches else None
 
 

@@ -437,7 +437,11 @@ def _prepare_estimator_kwargs(
     if ann_params:
         ann_dir = ann_params.get("ann_dir")
         if ann_dir and Path(ann_dir).is_dir():
-            for f in list(Path(ann_dir).glob("*.txt")) + list(Path(ann_dir).glob("*.csv")):
+            for f in (
+                list(Path(ann_dir).glob("*.txt"))
+                + list(Path(ann_dir).glob("*.csv"))
+                + list(Path(ann_dir).glob("*.tsv"))
+            ):
                 ann_by_animal[parse_animal_id(f)] = f
         kwargs.update(
             {

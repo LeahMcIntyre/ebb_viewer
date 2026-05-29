@@ -68,7 +68,7 @@ def pick_annotations_csv(parent=None, start_dir=""):
         parent,
         "Select annotation CSV",
         start_dir,
-        "CSV files (*.csv *.txt);;All files (*)",
+        "Annotation files (*.csv *.txt *.tsv);;All files (*)",
     )
     if not path:
         return None

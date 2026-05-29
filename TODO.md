@@ -271,6 +271,9 @@ Whether to mask out or include the transition state (TS) in PSD computation is a
 ### combine: Expand `ebb.io.combine` to other data types
 Today `combine_edf` and `combine_swd` handle the two specific file types we restart-and-resume. The same per-file shift-and-stack pattern should generalize to drink masks (`.npy`) and any other timestamped data we end up restarting. Sketch a `combine_npy` (or a generic `combine_arrays(loader, writer, ...)`) that mirrors the `combine_swd` semantics: pair files, shift each by `idx * amount_sec`, concatenate, write.
 
+### combine: Accept `.tsv` annotation files in `combine_annotations`
+The PSD-compute and mask-export paths now discover annotation files in `.txt`/`.csv`/`.tsv` (openseize's `Pinnacle` reads tab-delimited by default, so `.tsv` parses fine). `ebb.io.combine` still globs only `*.txt` (`combine.py:322`). Extend its glob to include `.csv`/`.tsv` so combined annotations stay in sync with the rest of the pipeline.
+
 ### ~~sleep_compute: Pair state CSVs with EDFs and read start times from headers~~
 **DONE** — `compute_sleep_bins_df_offset(state_dir, edf_dir, ..., tz=None)`
 pairs each CSV with its preprocessed EDF by animal ID and reads
