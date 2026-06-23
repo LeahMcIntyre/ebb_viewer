@@ -18,6 +18,7 @@ import pyqtgraph as pg
 from PyQt6 import QtGui, QtWidgets
 from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
 
+from ebb_viewer.edf_viewer.annotations import SwdAnnotation
 from ebb_viewer.edf_viewer.masks import MaskSet
 from ebb_viewer.edf_viewer.state_bar import StateBar
 from ebb_viewer.edf_viewer.state_legend import StateLegend
@@ -110,11 +111,11 @@ class TraceView(QtWidgets.QWidget):
         self.state_set: MaskSet | None = None
         self._overlay_items: list[tuple[pg.PlotWidget, pg.LinearRegionItem]] = []
 
-        # Annotation vertical lines: list of (t_sec, label). Items are tracked
-        # alongside their plot widget so teardown doesn't depend on
-        # InfiniteLine.getViewBox() (which can return None after detachment).
-        self._annotations: list[tuple[float, str]] = []
-        self._annotation_items: list[tuple[pg.PlotWidget, pg.InfiniteLine]] = []
+        # Annotation spans: editable SwdAnnotation objects drawn as draggable
+        # regions. Items are tracked alongside their plot widget so teardown
+        # doesn't depend on getViewBox() (which can return None after detachment).
+        self._annotations: list[SwdAnnotation] = []
+        self._annotation_items: list[tuple[pg.PlotWidget, pg.LinearRegionItem]] = []
 
         # State bar + legend (both hidden until set_state_masks is called)
         self.state_bar = StateBar(self)
@@ -511,9 +512,9 @@ class TraceView(QtWidgets.QWidget):
         # One-sample epsilon so we skip the annotation at the current center
         # without skipping a legitimately-close neighbor.
         epsilon = 1.0 / self.fs
-        for t_sec, _ in sorted(self._annotations):
-            if t_sec > t_current + epsilon:
-                self.jump_to_sample(int(t_sec * self.fs))
+        for ann in sorted(self._annotations, key=lambda a: a.start_sec):
+            if ann.start_sec > t_current + epsilon:
+                self.jump_to_sample(int(ann.start_sec * self.fs))
                 return
 
     def jump_to_prev_annotation(self) -> None:
@@ -521,34 +522,84 @@ class TraceView(QtWidgets.QWidget):
             return
         t_current = self.center_sample / self.fs
         epsilon = 1.0 / self.fs
-        for t_sec, _ in sorted(self._annotations, reverse=True):
-            if t_sec < t_current - epsilon:
-                self.jump_to_sample(int(t_sec * self.fs))
+        for ann in sorted(self._annotations, key=lambda a: a.start_sec, reverse=True):
+            if ann.start_sec < t_current - epsilon:
+                self.jump_to_sample(int(ann.start_sec * self.fs))
                 return
 
-    def set_annotations(self, annotations: list[tuple[float, str]]) -> None:
-        """Draw vertical lines for each (t_sec, label) annotation across all channels."""
+    def set_annotations(self, annotations: list[SwdAnnotation]) -> None:
+        """Draw each annotation as an editable onset→offset span on every channel.
+
+        The region on the top channel is draggable; dragging it mutates the
+        :class:`SwdAnnotation` in place and mirrors the new bounds onto the
+        regions drawn on the lower channels.
+        """
         for pw, item in self._annotation_items:
             pw.removeItem(item)
         self._annotation_items.clear()
 
         self._annotations = annotations
         pen = pg.mkPen(color=(200, 0, 200, 200), width=1.5, style=Qt.PenStyle.DashLine)
-        for t_sec, label in annotations:
-            labeled = pg.InfiniteLine(
-                pos=t_sec,
-                angle=90,
-                movable=False,
-                pen=pen,
-                label=label,
-                labelOpts={"position": 0.95, "color": (180, 0, 180), "fill": (255, 255, 255, 120)},
-            )
-            labeled.setZValue(20)
-            self.plots[0].addItem(labeled)
-            self._annotation_items.append((self.plots[0], labeled))
-
+        brush = pg.mkBrush(200, 0, 200, 45)
+        for ann in annotations:
+            bounds = (ann.start_sec, ann.end_sec)
+            mirrors: list[pg.LinearRegionItem] = []
             for pw in self.plots[1:]:
-                line = pg.InfiniteLine(pos=t_sec, angle=90, movable=False, pen=pen)
-                line.setZValue(20)
-                pw.addItem(line)
-                self._annotation_items.append((pw, line))
+                region = pg.LinearRegionItem(values=bounds, movable=False, brush=brush, pen=pen)
+                region.setZValue(15)
+                pw.addItem(region)
+                self._annotation_items.append((pw, region))
+                mirrors.append(region)
+
+            master = pg.LinearRegionItem(values=bounds, movable=True, brush=brush, pen=pen)
+            master.setZValue(15)
+            pg.InfLineLabel(
+                master.lines[0],
+                text=ann.label,
+                position=0.95,
+                color=(180, 0, 180),
+                fill=(255, 255, 255, 120),
+            )
+            master.sigRegionChanged.connect(
+                lambda m=master, a=ann, ms=mirrors: self._on_annotation_region_changed(m, a, ms)
+            )
+            self.plots[0].addItem(master)
+            self._annotation_items.append((self.plots[0], master))
+
+    def _on_annotation_region_changed(
+        self,
+        region: pg.LinearRegionItem,
+        ann: SwdAnnotation,
+        mirrors: list[pg.LinearRegionItem],
+    ) -> None:
+        """Write the dragged region bounds back to the annotation and mirror them."""
+        lo, hi = region.getRegion()
+        if hi < lo:
+            lo, hi = hi, lo
+        ann.start_sec, ann.end_sec = lo, hi
+        for m in mirrors:
+            m.blockSignals(True)
+            m.setRegion((lo, hi))
+            m.blockSignals(False)
+
+    def annotation_at_center(self) -> SwdAnnotation | None:
+        """Return the annotation under the playhead, else the nearest one.
+
+        Prefers a span containing the current center; otherwise returns the
+        annotation whose span is closest in time. ``None`` if there are none.
+        """
+        if not self._annotations:
+            return None
+        t = self.center_sample / self.fs
+        containing = [a for a in self._annotations if a.start_sec <= t <= a.end_sec]
+        if containing:
+            return min(containing, key=lambda a: t - a.start_sec)
+
+        def _dist(a: SwdAnnotation) -> float:
+            if t < a.start_sec:
+                return a.start_sec - t
+            if t > a.end_sec:
+                return t - a.end_sec
+            return 0.0
+
+        return min(self._annotations, key=_dist)

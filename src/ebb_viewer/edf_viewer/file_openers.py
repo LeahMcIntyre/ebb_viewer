@@ -1,6 +1,5 @@
-"""File-picker dialogs and Pinnacle-style annotation CSV loader."""
+"""File-picker dialogs for the EEG viewer."""
 
-import csv
 from pathlib import Path
 
 from PyQt6.QtWidgets import QFileDialog
@@ -73,47 +72,3 @@ def pick_annotations_csv(parent=None, start_dir=""):
     if not path:
         return None
     return Path(path)
-
-
-def load_annotations(csv_path) -> list[tuple[float, str]]:
-    """Parse a Pinnacle-style annotation CSV and return (t_sec, label) pairs.
-
-    Supports both comma- and tab-delimited files. Uses the 'Time From Start'
-    column for the time value (seconds from recording start).
-    """
-    csv_path = Path(csv_path)
-    with csv_path.open("r", newline="") as f:
-        raw = f.read()
-
-    # Auto-detect delimiter
-    delim = "\t" if "\t" in raw.split("\n")[0] else ","
-
-    lines = raw.splitlines()
-
-    # Find the header row
-    table_start = None
-    for i, line in enumerate(lines):
-        parts = [p.strip() for p in line.split(delim)]
-        if "Time From Start" in parts:
-            table_start = i
-            break
-
-    if table_start is None:
-        return []
-
-    table_str = "\n".join(lines[table_start:])
-    reader = csv.DictReader(table_str.splitlines(), delimiter=delim)
-
-    annotations = []
-    for row in reader:
-        t_str = (row.get("Time From Start") or "").strip()
-        label = (row.get("Annotation") or "").strip()
-        if not t_str:
-            continue
-        try:
-            t_sec = float(t_str)
-        except ValueError:
-            continue
-        annotations.append((t_sec, label))
-
-    return annotations

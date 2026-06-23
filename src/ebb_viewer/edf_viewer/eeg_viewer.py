@@ -15,8 +15,15 @@ from PyQt6.QtCore import Qt
 from ebb.io.edf_header import parse_edf_start_datetime
 from ebb.masking import get_offset
 from ebb.process.sleep_compute import DEFAULT_SPINDLE_EPOCH_SEC
+from ebb_viewer.edf_viewer.annotations import (
+    DEFAULT_SPAN_SEC,
+    AnnotationFile,
+    SwdAnnotation,
+    load_annotation_file,
+    save_annotation_file,
+    sidecar_path,
+)
 from ebb_viewer.edf_viewer.file_openers import (
-    load_annotations,
     pick_annotations_csv,
     pick_edf_csv,
     pick_mat,
@@ -28,6 +35,7 @@ from ebb_viewer.edf_viewer.mask_builder import (
     load_drink_mask,
     load_state_masks,
     load_swd_mask,
+    SWD_COLORS,
     rebuild_annotation_mask,
     rebuild_artifact_masks,
     rebuild_drink_mask,
@@ -37,6 +45,7 @@ from ebb_viewer.edf_viewer.masks_dock import MasksDock
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
 from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, parse_animal_id
+from ebb_viewer.qt_platform import force_xcb_on_wayland
 from ebb_viewer.widgets.drink_mask_dialog import DrinkMaskDialogue
 from ebb_viewer.widgets.sleep_viewer import SleepPopup
 from ebb_viewer.widgets.stft_viewer import STFTBoundsDialog, STFTPopup
@@ -84,7 +93,7 @@ class AnnotationMaskDialog(QtWidgets.QDialog):
     knows what keywords to enter.  A live count updates as the user types.
     """
 
-    def __init__(self, annotations: list[tuple[float, str]], parent=None):
+    def __init__(self, annotations: list[SwdAnnotation], parent=None):
         super().__init__(parent)
         self.setWindowTitle("Mask from Annotations")
         self.setMinimumWidth(440)
@@ -93,7 +102,7 @@ class AnnotationMaskDialog(QtWidgets.QDialog):
         layout = QtWidgets.QVBoxLayout(self)
 
         # --- unique labels for reference ---
-        unique = sorted({label for _, label in annotations if label.strip()})
+        unique = sorted({a.label for a in annotations if a.label.strip()})
         ref_lbl = QtWidgets.QLabel("Annotation labels found:")
         layout.addWidget(ref_lbl)
         labels_box = QtWidgets.QPlainTextEdit()
@@ -169,12 +178,12 @@ class AnnotationMaskDialog(QtWidgets.QDialog):
         exact = self._radio_exact.isChecked()
         if exact:
             kw_set = set(keywords)
-            n_match = sum(1 for _, label in self._annotations if label.strip().lower() in kw_set)
+            n_match = sum(1 for a in self._annotations if a.label.strip().lower() in kw_set)
         else:
             n_match = sum(
                 1
-                for _, label in self._annotations
-                if any(kw in label.strip().lower() for kw in keywords)
+                for a in self._annotations
+                if any(kw in a.label.strip().lower() for kw in keywords)
             )
         self._count_lbl.setText(f"{n_match} of {len(self._annotations)} annotations match")
 
@@ -212,7 +221,8 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.mask_set = build_default_masks(recording)
         self.state_set = None
         self.state_df = None
-        self._annotations: list[tuple[float, str]] = []
+        self._annotations: list[SwdAnnotation] = []
+        self._annotation_file: AnnotationFile | None = None
         self._annotation_path = None
 
         # STFT state
@@ -299,6 +309,19 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.act_mask_annotations.setEnabled(False)
         self.act_mask_annotations.triggered.connect(self.on_mask_from_annotations)
 
+        self.act_save_annotations = QtGui.QAction("Save Annotations…", self)
+        self.act_save_annotations.setEnabled(False)
+        self.act_save_annotations.triggered.connect(self.on_save_annotations)
+
+        self.act_add_annotation = QtGui.QAction("Add Annotation", self)
+        self.act_add_annotation.setShortcut("A")
+        self.act_add_annotation.triggered.connect(self.on_add_annotation)
+
+        self.act_delete_annotation = QtGui.QAction("Delete Annotation", self)
+        self.act_delete_annotation.setShortcut(QtGui.QKeySequence.StandardKey.Delete)
+        self.act_delete_annotation.setEnabled(False)
+        self.act_delete_annotation.triggered.connect(self.on_delete_annotation)
+
         self.act_next_annotation = QtGui.QAction("Next Annotation", self)
         self.act_next_annotation.setShortcut("]")
         self.act_next_annotation.triggered.connect(self.trace_view.jump_to_next_annotation)
@@ -319,6 +342,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         m_file.addAction(self.act_load_annotations)
         m_file.addAction(self.act_load_annotation_dir)
         m_file.addAction(self.act_mask_annotations)
+        m_file.addAction(self.act_save_annotations)
         m_file.addSeparator()
         m_file.addAction(self.act_quit)
         m_file.addAction(self.act_info)
@@ -328,6 +352,8 @@ class EegMainWindow(QtWidgets.QMainWindow):
         m_view.addSeparator()
         m_view.addAction(self.act_prev_annotation)
         m_view.addAction(self.act_next_annotation)
+        m_view.addAction(self.act_add_annotation)
+        m_view.addAction(self.act_delete_annotation)
 
         m_tools = mb.addMenu("&Tools")
         m_tools.addAction(self.act_stft)
@@ -494,14 +520,47 @@ class EegMainWindow(QtWidgets.QMainWindow):
         if mat_path is None:
             return
 
+        name, ok = QtWidgets.QInputDialog.getText(
+            self,
+            "Name SWD Mask",
+            "Mask name:",
+            text=self._unique_swd_name(mat_path.stem),
+        )
+        if not ok:
+            return
+        name = name.strip() or self._unique_swd_name(mat_path.stem)
+        if name in self.mask_set.masks:
+            name = self._unique_swd_name(name)
+
+        swd_idx = getattr(self, "_swd_load_count", 0)
+        color = SWD_COLORS[swd_idx % len(SWD_COLORS)]
+
         try:
             _, n_samples = self.rec.data.shape
-            self.mask_set.add(load_swd_mask(mat_path, fs=self.rec.fs, n_samples=n_samples))
+            self.mask_set.add(
+                load_swd_mask(
+                    mat_path,
+                    fs=self.rec.fs,
+                    n_samples=n_samples,
+                    name=name,
+                    color=color,
+                )
+            )
+            self._swd_load_count = swd_idx + 1
             self.trace_view.refresh_overlays()
             self.masks_dock.rebuild(self.mask_set, self.state_set)
             self.rec.swd_path = mat_path
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
+
+    def _unique_swd_name(self, base: str) -> str:
+        """Return a mask name based on ``base`` not already in the mask set."""
+        if base not in self.mask_set.masks:
+            return base
+        i = 2
+        while f"{base} ({i})" in self.mask_set.masks:
+            i += 1
+        return f"{base} ({i})"
 
     def on_load_drink(self):
         drink_path, offset_path = pick_npy_csv(self, self.initial_dir)
@@ -536,12 +595,96 @@ class EegMainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
 
     def _load_annotation_file(self, csv_path: Path) -> None:
-        """Load a single annotation file and enable masking."""
-        ann = load_annotations(csv_path)
-        self.trace_view.set_annotations(ann)
-        self._annotations = ann
+        """Load a single annotation file and enable masking + editing."""
+        annfile = load_annotation_file(csv_path)
+        self.trace_view.set_annotations(annfile.annotations)
+        self._annotation_file = annfile
+        self._annotations = annfile.annotations
         self._annotation_path = csv_path
         self.act_mask_annotations.setEnabled(True)
+        self.act_save_annotations.setEnabled(True)
+        self.act_delete_annotation.setEnabled(bool(annfile.annotations))
+
+    def _ensure_annotation_file(self) -> AnnotationFile:
+        """Return the active annotation file, creating an empty one if needed.
+
+        Lets the user add annotations to a recording that has no annotation
+        file loaded. The new file shares ``self._annotations`` so add/delete
+        and drag edits all flow into the same list that save reads.
+        """
+        if self._annotation_file is None:
+            self._annotation_file = AnnotationFile(
+                path=None,
+                header_lines=[],
+                columns=["Number", "Start Time", "End Time", "Time From Start", "Channel", "Annotation"],
+                delimiter="\t",
+                start_clock=self.rec.start_time,
+                annotations=self._annotations,
+            )
+        return self._annotation_file
+
+    def on_add_annotation(self):
+        """Create a new annotation span at the playhead."""
+        label, ok = QtWidgets.QInputDialog.getText(
+            self, "Add Annotation", "Label:", text="SWD"
+        )
+        if not ok:
+            return
+        self._ensure_annotation_file()  # so a from-scratch set is saveable
+        t = self.trace_view.center_sample / self.rec.fs
+        number = max((a.number for a in self._annotations), default=-1) + 1
+        ann = SwdAnnotation(
+            number=number,
+            label=label.strip(),
+            start_sec=t,
+            end_sec=t + DEFAULT_SPAN_SEC,
+            channel="ALL",
+        )
+        self._annotations.append(ann)
+        self.trace_view.set_annotations(self._annotations)
+        self.trace_view.jump_to_sample(int(ann.start_sec * self.rec.fs))
+        self.act_save_annotations.setEnabled(True)
+        self.act_delete_annotation.setEnabled(True)
+
+    def on_delete_annotation(self):
+        """Delete the annotation under the playhead after confirmation."""
+        ann = self.trace_view.annotation_at_center()
+        if ann is None:
+            return
+        resp = QtWidgets.QMessageBox.question(
+            self,
+            "Delete Annotation",
+            f"Delete '{ann.label}' ({ann.start_sec:.2f}–{ann.end_sec:.2f} s)?",
+        )
+        if resp != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self._annotations.remove(ann)
+        self.trace_view.set_annotations(self._annotations)
+        self.act_delete_annotation.setEnabled(bool(self._annotations))
+
+    def on_save_annotations(self):
+        """Write the edited annotation spans to a sidecar file."""
+        annfile = self._ensure_annotation_file()
+        if self._annotation_path is not None:
+            default = sidecar_path(self._annotation_path)
+        else:
+            edf = self.rec.edf_path
+            default = edf.with_name(f"{edf.stem}_annotations.csv")
+        out, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self,
+            "Save Edited Annotations",
+            str(default),
+            "Annotation files (*.csv *.txt *.tsv);;All files (*)",
+        )
+        if not out:
+            return
+        try:
+            written = save_annotation_file(annfile, out)
+            QtWidgets.QMessageBox.information(
+                self, "Annotations Saved", f"Saved {len(self._annotations)} annotations to:\n{written}"
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Save Error", f"{type(e).__name__}: {e}")
 
     def on_load_annotations(self):
         csv_path = pick_annotations_csv(self, self.initial_dir)
@@ -674,6 +817,7 @@ def main():
 
     Usage: ``ebb-eeg-viewer [initial_dir]``
     """
+    force_xcb_on_wayland()  # must precede QApplication; see qt_platform
     app = QtWidgets.QApplication(sys.argv)
     initial_dir = sys.argv[1] if len(sys.argv) > 1 else ""
 

@@ -274,9 +274,23 @@ def rebuild_annotation_mask(annotation_path, n_samples: int, fs: float, meta: di
     return m
 
 
-def load_swd_mask(swd_path, fs: int, n_samples: int) -> Mask:
+# Distinct fill colors cycled through as multiple SWD masks are loaded, so
+# overlapping SWD masks remain visually distinguishable.
+SWD_COLORS = (
+    (178, 170, 248, 80),  # lavender
+    (248, 178, 235, 80),  # pink
+    (170, 220, 248, 80),  # sky
+    (200, 248, 170, 80),  # lime
+    (248, 215, 170, 80),  # peach
+    (170, 248, 220, 80),  # mint
+)
+
+
+def load_swd_mask(
+    swd_path, fs: int, n_samples: int, name: str = "swd", color=SWD_COLORS[0]
+) -> Mask:
     arr = masking.swd(swd_path, fs=fs, n_samples=n_samples)
-    return Mask.from_bool("swd", (178, 170, 248, 80), ~arr)
+    return Mask.from_bool(name, color, ~arr)
 
 
 def load_drink_mask(drink_path, fs: int, offset_sec: float, pad_sec: int) -> Mask:

@@ -6,15 +6,13 @@ Prompts the user for a project root directory, then launches the
 ``psd/``, and ``manifest.json``.
 """
 
-import os
 import sys
 from pathlib import Path
 
-# PyQt6's Wayland backend miscomputes QMessageBox size hints, clipping the
-# title bar and body text on short dialogs. Force the xcb (X11) backend on
-# Linux/Wayland sessions before QApplication is constructed.
-if sys.platform == "linux" and os.environ.get("XDG_SESSION_TYPE") == "wayland":
-    os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+from ebb_viewer.qt_platform import force_xcb_on_wayland
+
+# Must run before QApplication is constructed (see force_xcb_on_wayland).
+force_xcb_on_wayland()
 
 from PyQt6.QtWidgets import QApplication, QFileDialog  # noqa: E402
 
