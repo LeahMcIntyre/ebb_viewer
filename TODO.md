@@ -343,6 +343,35 @@ restored sibling (mirroring what un-okaying does to the run itself).
 
 ---
 
+## Windows appearance polish (salvaged from deleted branches)
+
+Two stale remote branches (`feature/windows-polish` @ `226e2c6`,
+`refactor/window_compat` @ `603ec01`, both by `yygou`, ~137–147 commits
+behind `dev`) were deleted 2026-07-02 after confirming their only
+still-relevant content was cosmetic. The `ebbv2.core → ebb.core` import
+fix they carried is already in `dev`; their `__main__.py` was a stale
+placeholder superseded by dev's current entry point. The ideas below are
+worth re-applying *by hand* to current `dev` (do NOT cherry-pick — the
+old commits conflict heavily). Only relevant if we still run on Windows.
+
+1. **Windows HiDPI + native font.** In `__main__.py` `main()`, before
+   constructing `QApplication`, on `sys.platform == "win32"` set
+   `QApplication.setHighDpiScaleFactorRoundingPolicy(PassThrough)`, and
+   after constructing it, `app.setFont(QFont("Segoe UI", 9))`. Mirrors
+   the existing Wayland/xcb platform guard already in that file.
+2. **Higher-contrast status colors.** `pipeline/theme.py`
+   `STATUS_COLOR_HEX` — the branch used punchier values that read better
+   on Windows: ok `#9fd6ae`, needs_review `#ffe293`, rejected `#d4d4d4`,
+   drink_mask_applied `#9fd6ae` (needs_rerun / needs_drink_mask unchanged
+   at `#E97B7B`). Sleep QC legend `_STATUS_BG` override used
+   needs_rerun `#f9c890`, rejected `#d4d4d4`. Verify against current
+   dev colors before applying; treat as a deliberate palette bump.
+3. **Global button style (optional).** A global `QPushButton` stylesheet
+   (padding/border/hover/pressed/checked) was set in `__main__.py`. Lower
+   priority — dev now has `PRIMARY_BUTTON_QSS` / `apply_primary_button()`
+   in `pipeline/theme.py`, so reconcile with that rather than adding a
+   competing global rule.
+
 ## Additional Suggestions
 
 - **EDF format validation on import**: When `build_from_standard` encounters a file that doesn't match `AnimalID_anything_YYYY_MM_DD_HH_MM_SS.edf`, emit a non-blocking warning rather than silently skipping or crashing later.

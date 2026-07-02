@@ -16,9 +16,11 @@ from ebb.io.edf_header import parse_edf_start_datetime
 from ebb.masking import get_offset
 from ebb.process.sleep_compute import DEFAULT_SPINDLE_EPOCH_SEC
 from ebb_viewer.edf_viewer.annotations import (
+    DEFAULT_COLUMNS,
     DEFAULT_SPAN_SEC,
     AnnotationFile,
     SwdAnnotation,
+    default_header_lines,
     load_annotation_file,
     save_annotation_file,
     sidecar_path,
@@ -56,16 +58,12 @@ _CH_NAMES = ("LFC", "RSC", "LSC", "EMG")
 def _load_recording(edf_path: Path, csv_path: Path | None = None) -> Recording:
     """Read an EDF + optional state CSV and return a Recording.
 
-    Raises:
-        ValueError: if the EDF's sampling rate is not 250 Hz.
+    The sampling rate is read from the EDF header and threaded through the
+    viewer, so 250 Hz and 500 Hz files are both supported.
     """
     with edf.Reader(str(edf_path)) as reader:
         data = reader.read(start=0)
         fs = int(reader.header.samples_per_record[0])
-        if fs != 250:
-            raise ValueError(
-                f"Expected fs=250 Hz, got {fs} Hz. Please select a compatible file."
-            )
         start_time = parse_edf_start_datetime(reader.header)
     return Recording(
         data=data,
@@ -224,11 +222,12 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self._annotations: list[SwdAnnotation] = []
         self._annotation_file: AnnotationFile | None = None
         self._annotation_path = None
+        self._last_annotation_label = "SWD"
 
         # STFT state
         self.stft_fmin = 0
         self.stft_fmax = 120
-        self.nperseg = 125  # 0.5 s at 250 Hz
+        self.nperseg = int(recording.fs * 0.5)  # 0.5 s window, fs-independent
 
         # Popups created once and reused so repeated menu clicks don't accumulate
         # hidden dialogs parented to self.
@@ -268,6 +267,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self._build_docks()
 
         self.trace_view.timeDoubleClicked.connect(self.on_time_double_clicked)
+        self.trace_view.annotationDragCreated.connect(self.on_annotation_dragged)
 
     # ---------- actions ----------
 
@@ -317,6 +317,12 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.act_add_annotation.setShortcut("A")
         self.act_add_annotation.triggered.connect(self.on_add_annotation)
 
+        self.act_rename_annotation = QtGui.QAction("Rename Annotation", self)
+        # F2 (the conventional rename key) rather than "R", which would shadow
+        # the trace view's r/Shift+R REM-epoch navigation.
+        self.act_rename_annotation.setShortcut("F2")
+        self.act_rename_annotation.triggered.connect(self.on_rename_annotation)
+
         self.act_delete_annotation = QtGui.QAction("Delete Annotation", self)
         self.act_delete_annotation.setShortcut(QtGui.QKeySequence.StandardKey.Delete)
         self.act_delete_annotation.setEnabled(False)
@@ -353,6 +359,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         m_view.addAction(self.act_prev_annotation)
         m_view.addAction(self.act_next_annotation)
         m_view.addAction(self.act_add_annotation)
+        m_view.addAction(self.act_rename_annotation)
         m_view.addAction(self.act_delete_annotation)
 
         m_tools = mb.addMenu("&Tools")
@@ -613,38 +620,66 @@ class EegMainWindow(QtWidgets.QMainWindow):
         and drag edits all flow into the same list that save reads.
         """
         if self._annotation_file is None:
+            animal_id = self.animal_id or parse_animal_id(self.rec.edf_path)
             self._annotation_file = AnnotationFile(
                 path=None,
-                header_lines=[],
-                columns=["Number", "Start Time", "End Time", "Time From Start", "Channel", "Annotation"],
+                header_lines=default_header_lines(animal_id=animal_id),
+                columns=list(DEFAULT_COLUMNS),
                 delimiter="\t",
                 start_clock=self.rec.start_time,
                 annotations=self._annotations,
             )
         return self._annotation_file
 
-    def on_add_annotation(self):
-        """Create a new annotation span at the playhead."""
-        label, ok = QtWidgets.QInputDialog.getText(
-            self, "Add Annotation", "Label:", text="SWD"
-        )
-        if not ok:
-            return
+    def _append_annotation(self, label: str, start_sec: float, end_sec: float) -> SwdAnnotation:
+        """Create, store, and draw a new span; enable save/delete actions."""
         self._ensure_annotation_file()  # so a from-scratch set is saveable
-        t = self.trace_view.center_sample / self.rec.fs
         number = max((a.number for a in self._annotations), default=-1) + 1
         ann = SwdAnnotation(
             number=number,
             label=label.strip(),
-            start_sec=t,
-            end_sec=t + DEFAULT_SPAN_SEC,
+            start_sec=start_sec,
+            end_sec=end_sec,
             channel="ALL",
         )
         self._annotations.append(ann)
         self.trace_view.set_annotations(self._annotations)
-        self.trace_view.jump_to_sample(int(ann.start_sec * self.rec.fs))
         self.act_save_annotations.setEnabled(True)
         self.act_delete_annotation.setEnabled(True)
+        return ann
+
+    def on_add_annotation(self):
+        """Create a default-width annotation span at the playhead."""
+        label, ok = QtWidgets.QInputDialog.getText(
+            self, "Add Annotation", "Label:", text=self._last_annotation_label
+        )
+        if not ok:
+            return
+        self._last_annotation_label = label.strip()
+        t = self.trace_view.center_sample / self.rec.fs
+        ann = self._append_annotation(self._last_annotation_label, t, t + DEFAULT_SPAN_SEC)
+        self.trace_view.jump_to_sample(int(ann.start_sec * self.rec.fs))
+
+    def on_annotation_dragged(self, start_sec: float, end_sec: float):
+        """Create a span from a right-click drag, reusing the last-used label."""
+        self._append_annotation(self._last_annotation_label, start_sec, end_sec)
+
+    def on_rename_annotation(self):
+        """Relabel the annotation under the playhead; remember the new label."""
+        self._rename_annotation(self.trace_view.annotation_at_center())
+
+    def _rename_annotation(self, ann: SwdAnnotation | None) -> None:
+        """Prompt to relabel ``ann`` (no-op if ``None``); remember the label."""
+        if ann is None:
+            return
+        label, ok = QtWidgets.QInputDialog.getText(
+            self, "Rename Annotation", "Label:", text=ann.label
+        )
+        if not ok:
+            return
+        ann.label = label.strip()
+        self._last_annotation_label = ann.label
+        self.trace_view.set_annotations(self._annotations)
 
     def on_delete_annotation(self):
         """Delete the annotation under the playhead after confirmation."""
@@ -765,6 +800,11 @@ class EegMainWindow(QtWidgets.QMainWindow):
         win.show()
 
     def on_time_double_clicked(self, t_sec: float):
+        # A double-click landing inside an annotation span renames it.
+        ann = self.trace_view.annotation_at_time(t_sec)
+        if ann is not None:
+            self._rename_annotation(ann)
+            return
         if self.state_df is None:
             return
         epoch_samples = int(DEFAULT_SPINDLE_EPOCH_SEC * self.rec.fs)
@@ -797,8 +837,8 @@ def launch_edf_window(
 ) -> EegMainWindow:
     """Load an EDF file and return a configured (not yet shown) EegMainWindow.
 
-    Raises:
-        ValueError: if the EDF's sampling rate is not 250 Hz.
+    The EDF's sampling rate is read from its header; 250 Hz and 500 Hz files
+    are both supported.
     """
     rec = _load_recording(edf_path, csv_path)
     win = EegMainWindow(

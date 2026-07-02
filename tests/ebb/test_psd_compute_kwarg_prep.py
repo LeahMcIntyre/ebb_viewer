@@ -7,8 +7,9 @@ a saved psd_params.json (or a fresh widget-emitted dict) reaching
 - shadow a real param with a wrongly-named value (silent miscomputation)
 
 Particular attention to keys emitted by the new MaskParamsWidget
-(use_swd_mask, use_drink_mask, swd_pad, drink_offset_csv_override,
-ann_pad_before, ann_pad_after, ann_dir).
+(use_swd_mask, use_drink_mask, drink_offset_csv_override,
+ann_pad_before, ann_pad_after, ann_dir). Note that swd_pad is NOT
+UI-only — it is a real estimate_psd kwarg and must survive prep.
 """
 
 from ebb.process.psd_compute import _UI_ONLY_KWARGS, _prepare_estimator_kwargs
@@ -50,12 +51,13 @@ def test_strips_all_known_ui_only_kwargs():
 
 
 def test_strips_widget_emitted_swd_keys():
-    """MaskParamsWidget emits use_swd_mask + swd_pad; both must be stripped."""
+    """MaskParamsWidget emits use_swd_mask (stripped) + swd_pad (a real
+    estimate_psd kwarg, so it must survive and reach the estimator)."""
     kwargs, _, _, _ = _prepare_estimator_kwargs(
         {"use_swd_mask": True, "swd_pad": 5, "fs": 250}
     )
     assert "use_swd_mask" not in kwargs
-    assert "swd_pad" not in kwargs
+    assert kwargs.get("swd_pad") == 5
     assert kwargs["fs"] == 250
 
 
@@ -210,13 +212,21 @@ def test_full_widget_emitted_dict_does_not_crash_estimator_kwargs_prep():
     kwargs, hw, days, _ = _prepare_estimator_kwargs(widget_dict)
 
     # Real estimator kwargs survived
-    for real_key in ("fs", "winsize", "radius", "nstd", "noise_thresh", "drink_pad", "channels"):
+    for real_key in (
+        "fs",
+        "winsize",
+        "radius",
+        "nstd",
+        "noise_thresh",
+        "drink_pad",
+        "swd_pad",
+        "channels",
+    ):
         assert real_key in kwargs, f"real estimator kwarg {real_key!r} was incorrectly stripped"
 
     # All UI-only keys gone
     ui_only = [
         "use_swd_mask",
-        "swd_pad",
         "use_drink_mask",
         "ann_enabled",
         "ann_dir",

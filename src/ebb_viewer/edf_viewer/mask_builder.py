@@ -83,6 +83,8 @@ _STATE_LABELS = {
 }
 
 
+# radius/pad are in samples and represent 1 s; they are scaled to the
+# recording's fs in build_default_masks (250 here is the 250 Hz baseline).
 _DEFAULT_COMM_META = {"value": 2000, "radius": 250, "pad": 250, "min_to_pad": 10}
 _DEFAULT_SD_META = {"nstd": 5, "winsize": 180, "radius": 0.5, "comm_mask": True}
 
@@ -144,6 +146,8 @@ def build_default_masks(rec: Recording) -> MaskSet:
     Adds spindle_noise mask if rec.csv_path is available.
     """
     comm_meta = dict(_DEFAULT_COMM_META)
+    comm_meta["radius"] = int(rec.fs)  # 1 s
+    comm_meta["pad"] = int(rec.fs)  # 1 s
     sd_meta = dict(_DEFAULT_SD_META)
     comm_mask, sd_mask = _compute_artifact_masks(rec, comm_meta, sd_meta)
     c, sd = _wrap_artifact_masks(comm_mask, sd_mask, comm_meta, sd_meta)

@@ -53,7 +53,6 @@ _UI_ONLY_KWARGS = (
     "state_path",
     "swd_mode",
     "use_swd_mask",  # widget-emitted boolean shadow of swd_mode (export-side key)
-    "swd_pad",  # used by export pipeline only; estimate_psd has no SWD pad
     "use_drink_mask",  # widget-emitted; estimate_psd uses drink_path presence instead
     "drink_offset_csv_override",  # used by export pipeline only
     "ann_enabled",
@@ -118,6 +117,7 @@ def estimate_psd(
     noise_thresh: float = 0.5,
     comm_value: int = _COMMUTATOR_VALUE_UV,
     drink_pad: int = 2,
+    swd_pad: float = 0.0,
     s_prob: float | None = None,
     ann_keywords: list[str] | None = None,
     ann_match_mode: str = "contains",
@@ -179,6 +179,9 @@ def estimate_psd(
             Pad each drink event by this many seconds on each side. (The
             unit is seconds despite the unsuffixed name; preserved for
             backwards compatibility.)
+        swd_pad:
+            Pad each SWD event by this many seconds on each side before
+            masking. Defaults to 0 (no padding).
         s_prob:
             If set, restricts state masks to epochs whose class probability
             >= `s_prob` (uses `masking.state_prob` instead of `masking.state`).
@@ -268,7 +271,7 @@ def estimate_psd(
 
         # Compute SWD mask if path provided
         if swd_path is not None:
-            swd_mask = masking.swd(path=swd_path, n_samples=pro.shape[-1], fs=fs, pad_sec=0)
+            swd_mask = masking.swd(path=swd_path, n_samples=pro.shape[-1], fs=fs, pad_sec=swd_pad)
         else:
             swd_mask = np.ones(pro.shape[-1], dtype=bool)
 

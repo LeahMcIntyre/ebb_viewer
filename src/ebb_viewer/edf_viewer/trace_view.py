@@ -49,9 +49,20 @@ _SHIFT_NUM_KEYS = {
 
 
 class TimeClickViewBox(pg.ViewBox):
-    """ViewBox that emits a `timeDoubleClicked(t_sec)` signal on left-double-click."""
+    """ViewBox that emits time signals for the trace plots.
+
+    - `timeDoubleClicked(t_sec)` on a left-double-click.
+    - `annotationDragged(start_sec, end_sec)` after a right-button drag, used
+      to rubber-band a new annotation span. A translucent region tracks the
+      drag and the signal fires once on release (zero-width drags are ignored).
+    """
 
     timeDoubleClicked = pyqtSignal(float)
+    annotationDragged = pyqtSignal(float, float)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._drag_region: pg.LinearRegionItem | None = None
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -61,12 +72,43 @@ class TimeClickViewBox(pg.ViewBox):
             return
         super().mouseDoubleClickEvent(event)
 
+    def mouseDragEvent(self, ev, axis=None):
+        # Left button keeps the default pan; right button draws an annotation
+        # span instead of pyqtgraph's default right-drag zoom.
+        if ev.button() != Qt.MouseButton.RightButton:
+            super().mouseDragEvent(ev, axis=axis)
+            return
+        ev.accept()
+        lo, hi = sorted(
+            (
+                float(self.mapSceneToView(ev.buttonDownScenePos()).x()),
+                float(self.mapSceneToView(ev.scenePos()).x()),
+            )
+        )
+        if ev.isStart():
+            self._drag_region = pg.LinearRegionItem(
+                values=(lo, hi),
+                movable=False,
+                brush=pg.mkBrush(0, 150, 0, 50),
+                pen=pg.mkPen((0, 150, 0, 200), width=1.0),
+            )
+            self._drag_region.setZValue(20)
+            self.addItem(self._drag_region)
+        elif self._drag_region is not None:
+            self._drag_region.setRegion((lo, hi))
+        if ev.isFinish() and self._drag_region is not None:
+            self.removeItem(self._drag_region)
+            self._drag_region = None
+            if hi > lo:
+                self.annotationDragged.emit(lo, hi)
+
 
 class TraceView(QtWidgets.QWidget):
     """Multi-channel EEG trace plot with horizontal pan, per-channel y-zoom,
     mask overlays, sleep-state bar, and keyboard mask navigation."""
 
     timeDoubleClicked = pyqtSignal(float)
+    annotationDragCreated = pyqtSignal(float, float)
 
     def __init__(
         self,
@@ -170,6 +212,7 @@ class TraceView(QtWidgets.QWidget):
             # plot
             vb = TimeClickViewBox()
             vb.timeDoubleClicked.connect(self.timeDoubleClicked)
+            vb.annotationDragged.connect(self.annotationDragCreated)
             plot_item = pg.PlotItem(viewBox=vb, title=self.ch_names[i])
             pw = pg.PlotWidget(plotItem=plot_item)
             pw.setMenuEnabled(False)
@@ -581,6 +624,17 @@ class TraceView(QtWidgets.QWidget):
             m.blockSignals(True)
             m.setRegion((lo, hi))
             m.blockSignals(False)
+
+    def annotation_at_time(self, t_sec: float) -> SwdAnnotation | None:
+        """Return the annotation whose span contains ``t_sec``, else ``None``.
+
+        Unlike :meth:`annotation_at_center`, this does not fall back to the
+        nearest span — used for hit-testing a click on a region.
+        """
+        containing = [a for a in self._annotations if a.start_sec <= t_sec <= a.end_sec]
+        if not containing:
+            return None
+        return min(containing, key=lambda a: t_sec - a.start_sec)
 
     def annotation_at_center(self) -> SwdAnnotation | None:
         """Return the annotation under the playhead, else the nearest one.

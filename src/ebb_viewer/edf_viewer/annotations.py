@@ -17,12 +17,50 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 # Width (seconds) seeded for point-in-time annotations so the region has a
-# grabbable offset edge on load.
-DEFAULT_SPAN_SEC = 1.0
+# grabbable offset edge. Kept small so new/loaded points read as markers
+# rather than auto-expanding to a full span; drag an edge to make them longer.
+DEFAULT_SPAN_SEC = 0.1
 
 # Clock formats accepted in the ``Start Time`` / ``End Time`` columns. The
 # millisecond form comes first since that is what Pinnacle emits.
 _CLOCK_FMTS = ("%m/%d/%y %H:%M:%S.%f", "%m/%d/%y %H:%M:%S")
+
+# Default table columns when starting an annotation set from scratch.
+DEFAULT_COLUMNS = [
+    "Number",
+    "Start Time",
+    "End Time",
+    "Time From Start",
+    "Channel",
+    "Annotation",
+]
+
+
+def default_header_lines(
+    animal_id: str = "",
+    experiment_id: str | None = None,
+    researcher: str = "",
+) -> list[str]:
+    """Return the 6 Pinnacle metadata lines that precede the column header.
+
+    Mirrors the layout Pinnacle emits (and that :func:`save_annotation_file`
+    round-trips): six tab-delimited rows of six fields each, the first three
+    naming Experiment ID / Animal ID / Researcher, then ``Directory path`` and
+    two blank rows. Used to seed an annotation set built from scratch so its
+    export matches the original header length and structure.
+
+    ``experiment_id`` defaults to ``animal_id`` since the true experiment ID
+    (e.g. a ``_29_91`` session suffix) cannot be derived from the recording.
+    """
+    exp = experiment_id if experiment_id is not None else animal_id
+    return [
+        f"Experiment ID\t{exp}\t\t\t\t",
+        f"Animal ID\t{animal_id}\t\t\t\t",
+        f"Researcher\t{researcher}\t\t\t\t",
+        "Directory path\t\t\t\t\t",
+        "\t\t\t\t\t",
+        "\t\t\t\t\t",
+    ]
 
 
 @dataclass
@@ -154,14 +192,7 @@ def save_annotation_file(annfile: AnnotationFile, out_path) -> Path:
     """
     out_path = Path(out_path)
     delim = "\t"
-    columns = annfile.columns or [
-        "Number",
-        "Start Time",
-        "End Time",
-        "Time From Start",
-        "Channel",
-        "Annotation",
-    ]
+    columns = annfile.columns or list(DEFAULT_COLUMNS)
 
     with out_path.open("w", newline="") as f:
         for line in annfile.header_lines:
