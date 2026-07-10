@@ -10,6 +10,7 @@ Per-channel y-zoom uses a "sticky center" model:
   leaves ``_ch_centers`` intact so the user's chosen centers survive.
 """
 
+import os
 from collections.abc import Sequence
 from datetime import datetime, timedelta
 
@@ -26,6 +27,8 @@ from ebb_viewer.edf_viewer.state_legend import StateLegend
 pg.setConfigOption("background", "w")
 pg.setConfigOption("foreground", "k")
 pg.setConfigOptions(antialias=True)
+if os.environ.get("EBB_VIEWER_USE_OPENGL"):
+    pg.setConfigOptions(useOpenGL=True)
 
 # Shift+1..9 produces different key codes on most platforms (!, @, # …).
 # Map them back to 0-based mask indices.
@@ -230,6 +233,7 @@ class TraceView(QtWidgets.QWidget):
                 vb.disableAutoRange(axis=pg.ViewBox.YAxis)
 
             curve = pw.plot(pen=pg.mkPen((0, 0, 0, 180), width=1.2))
+            curve.setDownsampling(auto=True, method="peak")
 
             self.plots.append(pw)
             self.curves.append(curve)
