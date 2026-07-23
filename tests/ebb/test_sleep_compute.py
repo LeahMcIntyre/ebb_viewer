@@ -11,6 +11,7 @@ from ebb.process.sleep_compute import (
     compute_sleep_bins_df_clock_aligned,
     compute_sleep_bins_df_offset,
     compute_spindle_fractions,
+    compute_whole_file_metrics,
     seconds_until_target,
 )
 
@@ -619,3 +620,54 @@ def test_clock_aligned_warns_and_skips_csv_without_matching_edf(tmp_path: Path):
             )
 
     assert set(df["mouse_id"]) == {"Animal1"}
+
+
+# ---------------------------------------------------------------------------
+# Whole-file metrics
+# ---------------------------------------------------------------------------
+
+
+def test_whole_file_metrics_fractions_and_normalization(tmp_path: Path):
+    # 900 epochs/hour at 4s epochs. Two 3h wake blocks around a 3h NREM block,
+    # then 1h REM: wake=6h (two bouts), nrem=3h (one bout), rem=1h (one bout).
+    per_hr = 3600 // 4
+    states = (
+        ["w"] * (3 * per_hr)
+        + ["n"] * (3 * per_hr)
+        + ["w"] * (3 * per_hr)
+        + ["r"] * (1 * per_hr)
+    )
+    _write_rawstate_csv(tmp_path / "Animal1_run.csv", states)
+
+    df = compute_whole_file_metrics(tmp_path).set_index("state")
+
+    # Recording is 10h long.
+    assert math.isclose(df.loc["w", "n_hours"], 10.0)
+    assert math.isclose(df.loc["w", "n_days"], 10.0 / 24.0)
+    # Fractions standardized by whole recording.
+    assert math.isclose(df.loc["w", "frac_time"], 6 / 10)
+    assert math.isclose(df.loc["n", "frac_time"], 3 / 10)
+    assert math.isclose(df.loc["r", "frac_time"], 1 / 10)
+    # Wake occurs in two separated blocks → two bouts.
+    assert df.loc["w", "n_bouts"] == 2
+    assert df.loc["n", "n_bouts"] == 1
+    assert math.isclose(df.loc["w", "bouts_per_hour"], 2 / 10)
+    # Mean wake bout is 3h = 10800s.
+    assert math.isclose(df.loc["w", "mean_bout_sec"], 3 * 3600)
+
+
+def test_whole_file_metrics_absent_state_zero_filled(tmp_path: Path):
+    # No REM at all — should still get a REM row with zeros / NaN mean.
+    _write_rawstate_csv(tmp_path / "A1_run.csv", ["w"] * 100 + ["n"] * 100)
+    df = compute_whole_file_metrics(tmp_path)
+    assert set(df["state"]) == {"w", "n", "r"}
+    rem = df[df["state"] == "r"].iloc[0]
+    assert rem["frac_time"] == 0.0
+    assert rem["n_bouts"] == 0
+    assert math.isnan(rem["mean_bout_sec"])
+
+
+def test_whole_file_metrics_empty_dir(tmp_path: Path):
+    df = compute_whole_file_metrics(tmp_path)
+    assert df.empty
+    assert "bouts_per_hour" in df.columns

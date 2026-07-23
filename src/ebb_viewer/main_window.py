@@ -56,7 +56,7 @@ _NAV: list[tuple[str, int] | None] = [
     ("6. PSD Computation", 6),
     ("7. PSD Visualizer", 7),
     ("8. Drink Mask", 8),
-    ("9. Finalize PSD", 9),
+    ("9. Finalize", 9),
     None,
     ("10. Export Masks", 10),
 ]

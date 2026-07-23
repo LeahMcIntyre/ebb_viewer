@@ -412,6 +412,75 @@ def compute_sleep_bins_df_clock_aligned(
     return pd.concat(sleep_dfs, ignore_index=True)
 
 
+def compute_whole_file_metrics(
+    state_dir: str | Path,
+    spindle_epoch_sec: int = DEFAULT_SPINDLE_EPOCH_SEC,
+) -> pd.DataFrame:
+    """Per-animal, per-state metrics computed over each whole recording.
+
+    Unlike the binned functions, this collapses each recording to a single
+    row per (animal, state), standardized by recording length so animals
+    with different-duration recordings are comparable:
+
+    - ``frac_time``: fraction of the whole recording spent in the state
+      (already duration-independent).
+    - ``n_bouts``: total contiguous runs of the state across the recording.
+    - ``mean_bout_sec``: mean bout duration in seconds.
+    - ``bouts_per_hour``: ``n_bouts`` normalized by recording length in hours.
+    - ``n_hours`` / ``n_days``: recording length, so any other per-time
+      normalization is a downstream division.
+
+    States are read from the SPINDLE ``rawstate`` column at epoch rate; no
+    EDF pairing or clock alignment is needed. Every animal gets one row per
+    ``w``/``n``/``r`` state even if a state never occurs (zero-filled).
+
+    Args:
+        state_dir: Directory of SPINDLE CSVs (typically the gathered
+            ok-combo CSVs assembled for export).
+        spindle_epoch_sec: SPINDLE epoch length in seconds, used to convert
+            epoch counts to real time.
+    """
+    sample_rate_hz = 1.0 / spindle_epoch_sec
+    rows: list[dict] = []
+    for state_path in sorted(Path(state_dir).glob("*.csv")):
+        animal = parse_animal_id(state_path)
+        states = np.asarray(read_rawstate_column(state_path))
+        n_epochs = len(states)
+        n_hours = n_epochs * spindle_epoch_sec / 3600.0
+        for raw in _RAW_STATE_TO_NAME:
+            mask = states == raw
+            time_in_state = int(mask.sum())
+            frac_time = time_in_state / n_epochs if n_epochs else float("nan")
+            n_bouts, mean_bout_sec = _bouts_for_state(mask, sample_rate_hz)
+            rows.append(
+                {
+                    "mouse_id": animal,
+                    "state": raw,
+                    "frac_time": frac_time,
+                    "n_bouts": n_bouts,
+                    "mean_bout_sec": mean_bout_sec,
+                    "bouts_per_hour": n_bouts / n_hours if n_hours else float("nan"),
+                    "n_hours": n_hours,
+                    "n_days": n_hours / 24.0,
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "mouse_id",
+                "state",
+                "frac_time",
+                "n_bouts",
+                "mean_bout_sec",
+                "bouts_per_hour",
+                "n_hours",
+                "n_days",
+            ]
+        )
+    return pd.DataFrame(rows)
+
+
 def compute_spindle_fractions(
     state_dir: str | Path,
     noise_prob_threshold: float = 0.5,
