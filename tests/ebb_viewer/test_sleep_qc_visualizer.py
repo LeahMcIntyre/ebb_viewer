@@ -127,8 +127,15 @@ def test_b2_review_mode_with_zero_pending_does_not_enter_review(qapp, tmp_path: 
     """Clicking the reruns badge when no reruns are pending must leave the
     page entirely in its non-review state — background, labels, button
     checked-state, lbl_filter visibility all consistent."""
+    from PyQt6.QtWidgets import QMessageBox
+
     page = _make_page(qapp, tmp_path)
-    page._on_review_mode_toggled(True)
+    # The zero-pending branch pops a real "No Pending Reruns" info dialog —
+    # mock it out (mirrors the QMessageBox.question mocking used elsewhere
+    # in this file) so .exec() doesn't block forever under the offscreen
+    # Qt platform this suite runs under headlessly.
+    with patch.object(QMessageBox, "information"):
+        page._on_review_mode_toggled(True)
     assert page._review_mode is False
     assert not page.btn_reruns_ready.isChecked()
     assert page._lbl_animal.text() == "Animal:"
@@ -144,9 +151,18 @@ def test_b2_review_mode_with_pending_reruns_enters_correctly(qapp, tmp_path: Pat
     Tests the happy path so we know the rollback isn't over-aggressive.
     """
     # Need a CSV on disk for pending_rerun_review to consider the rerun real.
+    # Must include real rawstate/noise_probs data (not just a header) —
+    # entering review mode loads every available combo via _load_combo,
+    # which calls compute_spindle_fractions; a header-only CSV made that
+    # raise ValueError("'noise_probs' column not found"), which _load_combo
+    # surfaces via a real (unmocked) QMessageBox.critical — hanging this
+    # "happy path" test under the offscreen Qt platform instead of letting
+    # it reach the assertions below.
     spindle = tmp_path / "spindle_outputs" / "LFC_LSC"
     spindle.mkdir(parents=True)
-    (spindle / "AM001_LFC_LSC.csv").write_text("rawstate\n")
+    (spindle / "AM001_LFC_LSC.csv").write_text(
+        "rawstate,noise_probs\nw,0.1\nn,0.2\nn,0.1\nr,0.3\n"
+    )
     _seed_manifest(
         tmp_path,
         {
@@ -441,3 +457,83 @@ def test_outlier_cache_invalidated_when_data_cache_repopulated(qapp, tmp_path: P
     )
     page._outlier_cache.pop("LFC_RSC", None)  # mirrors _load_combo's pop
     assert "LFC_RSC" not in page._outlier_cache
+
+
+# ---------------------------------------------------------------------------
+# _open_notes_dialog
+# ---------------------------------------------------------------------------
+
+
+class _FakeNotesDialog:
+    def __init__(self, *, animal_id, initial_text, parent=None):
+        self.animal_id = animal_id
+        self.initial_text = initial_text
+
+    def exec(self):
+        return True
+
+    def text(self):
+        return "new note"
+
+
+class _FakeNotesDialogCancelled(_FakeNotesDialog):
+    def exec(self):
+        return False
+
+    def text(self):
+        raise AssertionError("text() should not be called when cancelled")
+
+
+def test_open_notes_dialog_accept_persists_and_emits(qapp, tmp_path: Path):
+    import ebb_viewer.pages.sleep_qc_visualizer as sqv_mod
+
+    _seed_one_animal(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    emitted: list = []
+    page.manifest_changed.connect(lambda: emitted.append(True))
+
+    with patch.object(sqv_mod, "NotesDialog", _FakeNotesDialog):
+        page._open_notes_dialog("AM001")
+
+    assert page._manifest.get("AM001").notes == "new note"
+    assert emitted == [True]
+
+
+def test_open_notes_dialog_prefills_existing_text(qapp, tmp_path: Path):
+    import ebb_viewer.pages.sleep_qc_visualizer as sqv_mod
+
+    _seed_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry()}})
+    m = Manifest.load(tmp_path)
+    m.set_notes("AM001", "existing note")
+
+    page = _make_page(qapp, tmp_path)
+
+    captured: dict = {}
+
+    class _CapturingFakeDialog(_FakeNotesDialog):
+        def __init__(self, *, animal_id, initial_text, parent=None):
+            super().__init__(animal_id=animal_id, initial_text=initial_text, parent=parent)
+            captured["initial_text"] = initial_text
+
+    with patch.object(sqv_mod, "NotesDialog", _CapturingFakeDialog):
+        page._open_notes_dialog("AM001")
+
+    assert captured["initial_text"] == "existing note"
+
+
+def test_open_notes_dialog_cancel_does_not_change_manifest(qapp, tmp_path: Path):
+    import ebb_viewer.pages.sleep_qc_visualizer as sqv_mod
+
+    _seed_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry()}})
+    m = Manifest.load(tmp_path)
+    m.set_notes("AM001", "original note")
+
+    page = _make_page(qapp, tmp_path)
+    emitted: list = []
+    page.manifest_changed.connect(lambda: emitted.append(True))
+
+    with patch.object(sqv_mod, "NotesDialog", _FakeNotesDialogCancelled):
+        page._open_notes_dialog("AM001")
+
+    assert page._manifest.get("AM001").notes == "original note"
+    assert emitted == []

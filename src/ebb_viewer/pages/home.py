@@ -42,6 +42,7 @@ from ebb_viewer.pipeline.manifest import (
 )
 from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, drink_mask_rel
 from ebb_viewer.pipeline.theme import COMBO_BADGE_HEX, STATUS_COLOR_HEX
+from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.table_helpers import make_cell
 from ebb_viewer.widgets.tree_view import ProjectTree
 
@@ -56,8 +57,10 @@ _COLUMNS = [
     "Sleep QC",
     "PSD File",
     "PSD Status",
+    "Notes",
 ]
 _COL_SLEEP_QC = _COLUMNS.index("Sleep QC")
+_COL_NOTES = _COLUMNS.index("Notes")
 
 _MULTIRUN_COLOR = QColor("#dce8f7")  # light blue = animal has multiple runs
 
@@ -588,14 +591,20 @@ class HomePage(QWidget):
     # ---------------------------------------------------------------
     # Allows rerun channel combo to be more editable.
     def _on_cell_double_clicked(self, row: int, col: int) -> None:
-        """Allow changing the rerun combo on a needs_rerun row if no EDF written yet."""
-        if col != _COL_SLEEP_QC:
-            return
+        """Dispatch per-cell double-click actions (edit notes, change rerun combo)."""
         # Resolve against the rendered row cache so the index always points
         # to what the user sees, even if the manifest has changed since.
         if row >= len(self._table_rows):
             return
         entry, combo, run = self._table_rows[row]
+
+        if col == _COL_NOTES:
+            self._edit_notes(entry)
+            return
+
+        if col != _COL_SLEEP_QC:
+            return
+        # Allow changing the rerun combo on a needs_rerun row if no EDF written yet.
         if run is None or run.sleep_qc != "needs_rerun" or not run.rerun_combo:
             return
 
@@ -646,6 +655,17 @@ class HomePage(QWidget):
         # Fresh load for the mutation — flag_sleep_qc saves internally.
         manifest = Manifest.load(self.project_root)
         manifest.flag_sleep_qc(entry.animal_id, combo, "needs_rerun", rerun_combo=new_combo)
+        self._refresh()
+        self.manifest_changed.emit()
+
+    def _edit_notes(self, entry: ManifestEntry) -> None:
+        """Open the notes editor for an animal and persist any change."""
+        dlg = NotesDialog(animal_id=entry.animal_id, initial_text=entry.notes, parent=self)
+        if not dlg.exec():
+            return
+        # Fresh load for the mutation — set_notes saves internally.
+        manifest = Manifest.load(self.project_root)
+        manifest.set_notes(entry.animal_id, dlg.text())
         self._refresh()
         self.manifest_changed.emit()
 
@@ -874,6 +894,13 @@ class HomePage(QWidget):
         # 8: PSD Status
         self.table.setItem(
             row_idx, 8, self._build_psd_status_cell(entry, run, psd_status, psd_file_ok)
+        )
+
+        # 9: Notes
+        self.table.setItem(
+            row_idx,
+            _COL_NOTES,
+            make_cell("📝" if entry.notes.strip() else "—", tooltip=entry.notes or None),
         )
 
     def _build_sleep_qc_cell(

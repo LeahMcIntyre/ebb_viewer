@@ -48,6 +48,7 @@ from ebb.process.sleep_compute import (
 )
 from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
 from ebb_viewer.pipeline.theme import COMBO_PLOT_RGB, STATUS_COLOR_HEX
+from ebb_viewer.widgets.notes_dialog import NotesDialog
 
 # Project recordings are all acquired in the Central time zone. Used by the
 # offset variant of the sleep-bins computation so the next-`begin_hr`
@@ -1389,6 +1390,12 @@ class SleepQCGridPage(QWidget):
                 outlier_lbl.setTextFormat(Qt.TextFormat.RichText)
                 row_l.addWidget(outlier_lbl)
 
+            btn_notes = QPushButton("📝")
+            btn_notes.setFixedHeight(24)
+            btn_notes.setToolTip("Edit notes")
+            btn_notes.clicked.connect(lambda _, a=mid: self._open_notes_dialog(a))
+            row_l.addWidget(btn_notes)
+
             row_l.addStretch(1)
             self._build_flag_buttons(
                 row_l,
@@ -1432,6 +1439,13 @@ class SleepQCGridPage(QWidget):
             if source_combo:
                 combo_label.setStyleSheet("font-style: italic;")
             row_l.addWidget(combo_label)
+
+            btn_notes = QPushButton("📝")
+            btn_notes.setFixedHeight(24)
+            btn_notes.setToolTip("Edit notes")
+            btn_notes.clicked.connect(lambda _, a=animal: self._open_notes_dialog(a))
+            row_l.addWidget(btn_notes)
+
             # Stretch BEFORE action buttons so they right-align, matching
             # the group-mode legend at L1027.
             row_l.addStretch(1)
@@ -1505,6 +1519,16 @@ class SleepQCGridPage(QWidget):
             if frac_widget is not None:
                 insert_row = (len(combos) + 1) // 2 + (1 if ref_combo else 0)
                 self.legend_layout.addWidget(frac_widget, insert_row, 0, 1, 2)
+
+    def _open_notes_dialog(self, animal_id: str) -> None:
+        """Open the notes editor for an animal and persist any change."""
+        entry = self._manifest.get(animal_id)
+        initial = entry.notes if entry is not None else ""
+        dlg = NotesDialog(animal_id=animal_id, initial_text=initial, parent=self)
+        if not dlg.exec():
+            return
+        self._manifest.set_notes(animal_id, dlg.text())
+        self.manifest_changed.emit()
 
     def _get_animal_fractions(self, animal: str, combo: str) -> dict[str, float] | None:
         """Return {state: fraction} for one animal from the cache, or None if unavailable."""

@@ -371,6 +371,11 @@ class Manifest:
             self.save()
         return entry.runs[channels]
 
+    def set_notes(self, animal_id: str, notes: str) -> None:
+        """Set free-text notes for an animal."""
+        self._entries[animal_id].notes = notes
+        self.save()
+
     def __iter__(self) -> Iterator[ManifestEntry]:
         return iter(self._entries.values())
 
