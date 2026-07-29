@@ -334,6 +334,11 @@ class Manifest:
             return None
         return entry.runs.get(channels)
 
+    def ok_combo(self, animal_id: str) -> str | None:
+        """Return the accepted (sleep_qc == 'ok') combo for an animal, or None."""
+        entry = self._entries.get(animal_id)
+        return _ok_combo(entry) if entry is not None else None
+
     def add_run(self, animal_id: str, channels: str, source_combo: str | None = None) -> RunEntry:
         """Add a RunEntry for (animal_id, channels) if not present; return it.
 

@@ -164,7 +164,7 @@ class FinalizePage(QWidget):
         root.setSpacing(10)
 
         hdr = QHBoxLayout()
-        lbl = QLabel("Finalize PSD")
+        lbl = QLabel("Finalize")
         lbl.setStyleSheet("font-weight: bold; font-size: 15px;")
         hdr.addWidget(lbl)
         hdr.addStretch(1)
@@ -172,6 +172,10 @@ class FinalizePage(QWidget):
         self._btn_refresh.clicked.connect(self._refresh)
         hdr.addWidget(self._btn_refresh)
         root.addLayout(hdr)
+
+        psd_hdr = QLabel("PSD")
+        psd_hdr.setStyleSheet("font-weight: bold; font-size: 13px; color: #333;")
+        root.addWidget(psd_hdr)
 
         desc = QLabel(
             "Review the status of each PSD run and seal completed runs into "
@@ -199,9 +203,41 @@ class FinalizePage(QWidget):
         self._no_runs_lbl.setVisible(False)
         root.addWidget(self._no_runs_lbl)
 
+        # ── Sleep section ─────────────────────────────────────────────────
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: #dee2e6;")
+        root.addWidget(sep)
+
+        sleep_hdr = QLabel("Sleep")
+        sleep_hdr.setStyleSheet("font-weight: bold; font-size: 13px; color: #333;")
+        root.addWidget(sleep_hdr)
+
+        sleep_desc = QLabel(
+            "Consolidate each animal's accepted-combo sleep scoring into one "
+            "export bundle under sleep_export/: the chosen SPINDLE CSVs plus "
+            "rotate-to-6AM binned metrics, per-day averages, and whole-recording "
+            "summaries (as tidy CSVs and an Excel workbook)."
+        )
+        sleep_desc.setWordWrap(True)
+        sleep_desc.setStyleSheet("color: #555; font-size: 12px;")
+        root.addWidget(sleep_desc)
+
+        sleep_row = QHBoxLayout()
+        self._sleep_status_lbl = QLabel("—")
+        self._sleep_status_lbl.setWordWrap(True)
+        sleep_row.addWidget(self._sleep_status_lbl, 1)
+        self._btn_export_sleep = QPushButton("Export Sleep Data")
+        self._btn_export_sleep.setStyleSheet("font-weight: bold;")
+        self._btn_export_sleep.clicked.connect(self._on_export_sleep)
+        sleep_row.addWidget(self._btn_export_sleep)
+        root.addLayout(sleep_row)
+
     # ------------------------------------------------------------------
 
     def _refresh(self):
+        self._refresh_sleep_section()
+
         # Clear existing cards (keep the trailing stretch)
         while self._cards_layout.count() > 1:
             item = self._cards_layout.takeAt(0)
@@ -346,6 +382,63 @@ class FinalizePage(QWidget):
             btn_settings.setEnabled(False)
 
         return card
+
+    # ------------------------------------------------------------------
+    # Sleep section
+    # ------------------------------------------------------------------
+
+    def _refresh_sleep_section(self):
+        try:
+            manifest = Manifest.load(self.project_root)
+        except Exception:
+            self._sleep_status_lbl.setText("Could not read manifest.")
+            self._sleep_status_lbl.setStyleSheet("color: gray;")
+            self._btn_export_sleep.setEnabled(False)
+            return
+
+        with_runs = [e.animal_id for e in manifest if e.runs]
+        if not with_runs:
+            self._sleep_status_lbl.setText("No animals have sleep scoring yet.")
+            self._sleep_status_lbl.setStyleSheet("color: gray;")
+            self._btn_export_sleep.setEnabled(False)
+            return
+
+        missing = [a for a in with_runs if manifest.ok_combo(a) is None]
+        n_ok = len(with_runs) - len(missing)
+        if missing:
+            preview = ", ".join(missing[:8]) + ("…" if len(missing) > 8 else "")
+            self._sleep_status_lbl.setText(
+                f"⚠ {n_ok} of {len(with_runs)} animals have an accepted combo. "
+                f"Not yet accepted: {preview}"
+            )
+            self._sleep_status_lbl.setStyleSheet("color: #8a4400;")
+        else:
+            self._sleep_status_lbl.setText(f"✓ All {n_ok} animals have an accepted combo.")
+            self._sleep_status_lbl.setStyleSheet("color: #1a5c1a;")
+        self._btn_export_sleep.setEnabled(n_ok > 0)
+
+    def _on_export_sleep(self):
+        from ebb_viewer.pipeline.sleep_finalize import build_sleep_export
+
+        try:
+            result = build_sleep_export(self.project_root)
+        except Exception as e:
+            QMessageBox.critical(self, "Sleep Export Failed", str(e))
+            return
+
+        lines = [
+            f"Exported {len(result.exported)} animal(s) to:",
+            str(result.out_dir),
+            "",
+            "Wrote sleep_bins.csv, sleep_bins_avg.csv, sleep_whole_file.csv, "
+            "sleep_export.xlsx, and chosen_csvs/.",
+        ]
+        if result.missing_ok:
+            lines += ["", f"Skipped — no accepted combo: {', '.join(result.missing_ok)}"]
+        if result.missing_csv:
+            lines += ["", f"Skipped — CSV missing on disk: {', '.join(result.missing_csv)}"]
+        QMessageBox.information(self, "Sleep Data Exported", "\n".join(lines))
+        self._refresh()
 
     def _on_finalize(self, run_name: str):
         from ebb.process.psd_compute import build_run_final_pkl
