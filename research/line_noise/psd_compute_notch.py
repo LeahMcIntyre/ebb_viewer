@@ -159,14 +159,16 @@ def estimate_psd(
     hour_windows: list[tuple[float, float]] | None = None,
     selected_days: list[int] | None = None,
     notch_halfwidth_hz: float = _NOTCH_HALFWIDTH_HZ,
+    notch_order: int = _NOTCH_ORDER,
     **kwargs,
 ) -> list[PSDResult]:
     """Estimate PSDs for one EDF, one PSDResult per (state-group ∩ artifacts).
 
     Before anything else, the raw producer is bidirectionally notch-filtered
-    with an 8th-order Butterworth bandstop around 60 Hz (+/- `notch_halfwidth_hz`)
-    to remove power-line noise (see `NotchButterworth`); all downstream masks
-    and PSDs are computed from the filtered signal.
+    with a `notch_order`-order Butterworth bandstop around 60 Hz
+    (+/- `notch_halfwidth_hz`) to remove power-line noise (see
+    `NotchButterworth`); all downstream masks and PSDs are computed from the
+    filtered signal.
 
     For each label group in `labels`, builds a state mask (which samples
     belong to that group), intersects it with the combined artifact mask
@@ -236,6 +238,9 @@ def estimate_psd(
             Half-bandwidth (Hz) of the 60 Hz notch, i.e. the stopband spans
             `60 - notch_halfwidth_hz` to `60 + notch_halfwidth_hz`. Defaults
             to `_NOTCH_HALFWIDTH_HZ` (2 Hz).
+        notch_order:
+            Order of the Butterworth notch filter. Defaults to `_NOTCH_ORDER`
+            (8).
         **kwargs:
             Forwarded to openseize's `estimators.psd`.
 
@@ -262,7 +267,7 @@ def estimate_psd(
         notch = NotchButterworth(
             fstop=(_NOTCH_CENTER_HZ - notch_halfwidth_hz, _NOTCH_CENTER_HZ + notch_halfwidth_hz),
             fs=fs,
-            order=_NOTCH_ORDER,
+            order=notch_order,
         )
         pro = notch(pro, chunksize, axis=-1, dephase=True)
 
