@@ -245,6 +245,24 @@ def test_flag_needs_rerun_stores_combo(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# set_notes
+# ---------------------------------------------------------------------------
+
+
+def test_set_notes_persisted(tmp_path):
+    m = _make_manifest(tmp_path, {"AM001": {}})
+    m.set_notes("AM001", "noisy EMG channel")
+    assert _reload(m).get("AM001").notes == "noisy EMG channel"
+
+
+def test_set_notes_overwrites_existing(tmp_path):
+    m = _make_manifest(tmp_path, {"AM001": {}})
+    m.set_notes("AM001", "first note")
+    m.set_notes("AM001", "second note")
+    assert _reload(m).get("AM001").notes == "second note"
+
+
+# ---------------------------------------------------------------------------
 # reset_sleep_qc
 # ---------------------------------------------------------------------------
 

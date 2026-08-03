@@ -710,3 +710,116 @@ def test_b4_double_click_uses_cached_rendered_rows(qapp, tmp_path: Path):
     # The cached rows still describe what the table actually shows.
     cached_animal_ids = [r[0].animal_id for r in page._table_rows]
     assert "AM000" not in cached_animal_ids
+
+
+# ---------------------------------------------------------------------------
+# Notes column
+# ---------------------------------------------------------------------------
+
+_NOTES_COL = 9
+
+
+def test_notes_cell_dash_when_empty(qapp, tmp_path: Path):
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001", preprocessed_edf="AM001_PREPROCESSED.edf", runs={}
+    )
+    m.save()
+
+    page = _make_page(qapp, tmp_path)
+    item = page.table.item(0, _NOTES_COL)
+    assert item.text() == "—"
+    assert item.toolTip() == ""
+
+
+def test_notes_cell_shows_icon_and_tooltip_when_present(qapp, tmp_path: Path):
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        runs={},
+        notes="noisy EMG channel",
+    )
+    m.save()
+
+    page = _make_page(qapp, tmp_path)
+    item = page.table.item(0, _NOTES_COL)
+    assert item.text() == "📝"
+    assert item.toolTip() == "noisy EMG channel"
+
+
+def test_double_click_notes_column_persists_and_emits(qapp, tmp_path: Path, monkeypatch):
+    """Double-clicking the Notes cell opens the editor and persists the text."""
+    import ebb_viewer.pages.home as home_mod
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001", preprocessed_edf="AM001_PREPROCESSED.edf", runs={}
+    )
+    m.save()
+
+    page = _make_page(qapp, tmp_path)
+    row_idx = next(
+        i for i, (e, _combo, _r) in enumerate(page._table_rows) if e.animal_id == "AM001"
+    )
+
+    class FakeNotesDialog:
+        def __init__(self, *, animal_id, initial_text, parent=None):
+            self.animal_id = animal_id
+            self.initial_text = initial_text
+
+        def exec(self):
+            return True
+
+        def text(self):
+            return "new note"
+
+    monkeypatch.setattr(home_mod, "NotesDialog", FakeNotesDialog)
+
+    emitted: list = []
+    page.manifest_changed.connect(lambda: emitted.append(True))
+
+    page._on_cell_double_clicked(row_idx, _NOTES_COL)
+
+    assert Manifest.load(tmp_path).get("AM001").notes == "new note"
+    assert emitted == [True]
+
+
+def test_double_click_notes_column_cancel_does_not_change_manifest(
+    qapp, tmp_path: Path, monkeypatch
+):
+    import ebb_viewer.pages.home as home_mod
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        runs={},
+        notes="original note",
+    )
+    m.save()
+
+    page = _make_page(qapp, tmp_path)
+    row_idx = next(
+        i for i, (e, _combo, _r) in enumerate(page._table_rows) if e.animal_id == "AM001"
+    )
+
+    class FakeNotesDialog:
+        def __init__(self, *, animal_id, initial_text, parent=None):
+            pass
+
+        def exec(self):
+            return False  # Cancel
+
+        def text(self):
+            raise AssertionError("text() should not be called when cancelled")
+
+    monkeypatch.setattr(home_mod, "NotesDialog", FakeNotesDialog)
+
+    emitted: list = []
+    page.manifest_changed.connect(lambda: emitted.append(True))
+
+    page._on_cell_double_clicked(row_idx, _NOTES_COL)
+
+    assert Manifest.load(tmp_path).get("AM001").notes == "original note"
+    assert emitted == []
