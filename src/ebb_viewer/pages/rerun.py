@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ebb.io import sleepyrat_auth
 from ebb.preprocess.edf import spindle as spindle_preprocess
 from ebb_viewer.pages.spindle_upload import SleepyRatWorker
 from ebb_viewer.pipeline import sleepyrat_config
@@ -340,6 +341,12 @@ class RerunPage(QWidget):
         # time the user is initiating a new rerun batch.
         self._sr_workers = []
         self._sr_threads = []
+
+        if sleepyrat_auth.load_token() is None:
+            self._log(
+                "No cached SleepyRat credential — opening a browser tab for you to "
+                "approve access. Waiting for approval..."
+            )
 
         for rerun_combo, project_name, remote_folder in dlg.entries():
             out_dir = self.project_root / "spindle_outputs" / rerun_combo

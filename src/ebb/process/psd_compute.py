@@ -138,8 +138,9 @@ def estimate_psd(
         path:
             EDF whose PSD will be estimated.
         state_path:
-            SPINDLE-scored CSV file. The `rawstate` column drives state
-            masks; `noise_probs` drives the SPINDLE noise mask.
+            SPINDLE-scored CSV file. The `rawstate` column (or `state` in
+            newer outputs) drives state masks; `noise_probs` (or
+            `noise_prob`) drives the SPINDLE noise mask.
         swd_path:
             Optional `.mat` file of SWD timestamps to mask out.
         drink_path:

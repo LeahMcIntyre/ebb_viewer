@@ -12,19 +12,28 @@ from ebb.process.sleep_compute import (
     compute_sleep_bins_df_offset,
     compute_spindle_fractions,
     compute_whole_file_metrics,
+    read_rawstate_column,
     seconds_until_target,
 )
 
 
-def write_state_csv(path: Path, epochs: list[tuple[str, float]]) -> None:
-    """Write a spindle output CSV with rawstate and noise_probs columns.
+def write_state_csv(
+    path: Path, epochs: list[tuple[str, float]], *, new_format: bool = False
+) -> None:
+    """Write a spindle output CSV with state and noise-probability columns.
 
     Each epoch is (rawstate, noise_prob) where rawstate is one of w/n/r and
     noise_prob is in [0, 1].  An epoch is spindle-masked when noise_prob >= 0.5.
+
+    `new_format=True` writes the newer SleepyRat header (`state`,
+    `noise_prob`); the default writes the older header (`rawstate`,
+    `noise_probs`).
     """
+    state_col = "state" if new_format else "rawstate"
+    noise_col = "noise_prob" if new_format else "noise_probs"
     with path.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["rawstate", "noise_probs"])
+        w.writerow([state_col, noise_col])
         for raw, prob in epochs:
             w.writerow([raw, str(prob)])
 
@@ -34,7 +43,8 @@ def write_state_csv(path: Path, epochs: list[tuple[str, float]]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_single_animal_fractions(tmp_path: Path):
+@pytest.mark.parametrize("new_format", [False, True])
+def test_single_animal_fractions(tmp_path: Path, new_format: bool):
     # 2 clean wake, 1 spindle-wake, 3 clean NREM, 1 spindle-NREM, 0 REM
     write_state_csv(
         tmp_path / "Animal1_foo.csv",
@@ -47,6 +57,7 @@ def test_single_animal_fractions(tmp_path: Path):
             ("n", 0.1),
             ("n", 0.9),
         ],
+        new_format=new_format,
     )
     df = compute_spindle_fractions(tmp_path)
 
@@ -197,6 +208,29 @@ def test_missing_noise_probs_column_raises(tmp_path: Path):
         csv.writer(f).writerows([["rawstate"], ["w"]])
     with pytest.raises(ValueError, match="'noise_probs' column not found"):
         compute_spindle_fractions(tmp_path)
+
+
+def test_missing_both_state_columns_raises(tmp_path: Path):
+    p = tmp_path / "Animal1_foo.csv"
+    with p.open("w", newline="") as f:
+        csv.writer(f).writerows([["noise_prob"], ["0.1"]])
+    with pytest.raises(ValueError, match="'rawstate' column not found"):
+        compute_spindle_fractions(tmp_path)
+
+
+@pytest.mark.parametrize("new_format", [False, True])
+def test_read_rawstate_column_both_formats(tmp_path: Path, new_format: bool):
+    p = tmp_path / "Animal1_foo.csv"
+    write_state_csv(p, [("w", 0.1), ("n", 0.1), ("r", 0.1)], new_format=new_format)
+    assert read_rawstate_column(p) == ["w", "n", "r"]
+
+
+def test_read_rawstate_column_missing_raises(tmp_path: Path):
+    p = tmp_path / "Animal1_foo.csv"
+    with p.open("w", newline="") as f:
+        csv.writer(f).writerows([["noise_prob"], ["0.1"]])
+    with pytest.raises(ValueError, match="'rawstate' column not found"):
+        read_rawstate_column(p)
 
 
 def test_state_column_is_ordered_categorical(tmp_path: Path):

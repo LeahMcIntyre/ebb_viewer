@@ -7,13 +7,10 @@ Two single-file ops:
   `<stem>_SPINDLE.edf`.
 
 Plus `batch`, a generic driver that runs either single-file op across an
-input directory using a process pool, and `process_sleepyrat`, a higher-
-level helper that uploads, waits for processing, and downloads labels.
+input directory using a process pool.
 
 Output directories use `exist_ok=True` so re-running with the same target
-dir just (re-)writes the contained files. The exception is
-`process_sleepyrat`, which uses `exist_ok=False` deliberately — see its
-docstring.
+dir just (re-)writes the contained files.
 """
 
 from __future__ import annotations
@@ -31,7 +28,6 @@ from openseize.file_io import edf
 from openseize.resampling import resampling
 
 from ebb.core.concurrency import set_cores
-from ebb.io.sleepyrat import SleepyRatAPI
 
 
 def compute_trim_stop_samples(
@@ -171,60 +167,3 @@ def batch(
         print(f"Saved {len(paths)} files to {target} in {elapsed:.2f}s")
 
     return outs
-
-
-def process_sleepyrat(
-    edf_dir: Path,
-    project: str,
-    folder: str,
-    *,
-    threshold: float = 0.5,
-    outdir: Path | None = None,
-    username: str | None = None,
-    password: str | None = None,
-    base_url: str | None = None,
-) -> Path:
-    """High-level upload-process-download helper for the GUI.
-
-    Steps:
-        1. Log into SleepyRat (uses `SleepyRatAPI` defaults if creds omitted).
-        2. Upload all EDFs in `edf_dir` to `project/folder`.
-        3. Wait for processing to finish (polled).
-        4. Download labels CSV for every submission into `outdir`.
-
-    Args:
-        edf_dir: Directory of EDFs to upload.
-        project, folder: Remote SleepyRat location.
-        threshold: Score threshold passed through to `download_labels`.
-        outdir: Local target for label CSVs. Defaults to a sibling
-            `<edf_dir.stem>_outputs/` directory.
-        username, password, base_url: Override SleepyRatAPI defaults if set.
-
-    Note:
-        Unlike `standard`/`spindle`/`batch`, this uses `exist_ok=False` on
-        `outdir`. Re-running into an existing dir would mix new label CSVs
-        with stale ones — failing fast forces the caller to choose a fresh
-        path or delete the old one deliberately.
-    """
-    outdir = edf_dir.parent / f"{edf_dir.stem}_outputs" if outdir is None else Path(outdir)
-    outdir.mkdir(parents=True, exist_ok=False)
-
-    api_kwargs = {
-        k: v
-        for k, v in {"username": username, "password": password, "base_url": base_url}.items()
-        if v is not None
-    }
-    api = SleepyRatAPI(**api_kwargs)
-
-    # 1. Upload the EDF
-    print(f"[SleepyRat] Uploading {edf_dir.name} to {project}/{folder}...")
-    api.upload_dir(project, folder, edf_dir)
-
-    # 2. Wait for processing
-    print("[SleepyRat] Waiting for processing to finish...")
-    ok = api.wait_for_processing(project, folder)
-    if not ok:
-        raise RuntimeError(f"Processing did not finish within wait limit for {project}/{folder}")
-
-    api.download_labels_all(project, folder, outdir, threshold=threshold)
-    print(f"[SleepyRat] Labels downloaded to {outdir}")
