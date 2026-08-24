@@ -452,6 +452,266 @@ def estimate_psd(
     return result
 
 
+def estimate_psd_late_notch(
+    path: str | Path,
+    state_path: str | Path,
+    swd_path: str | Path | None = None,
+    drink_path: str | Path | None = None,
+    annotation_path: str | Path | None = None,
+    offset_path: str | Path | None = None,
+    channels: Sequence[int] | None = None,
+    winsize: int = 180,
+    radius: float = 0.5,
+    nstd: int = 5,
+    fs: float = 250,
+    chunksize: int = int(30e5),
+    labels: dict[str, Sequence[str]] | None = None,
+    verbose: bool = True,
+    noise_thresh: float = 0.5,
+    comm_value: int = _COMMUTATOR_VALUE_UV,
+    drink_pad: int = 2,
+    swd_pad: float = 0.0,
+    s_prob: float | None = None,
+    ann_keywords: list[str] | None = None,
+    ann_match_mode: str = "contains",
+    ann_pad_before_sec: float = 0.0,
+    ann_pad_after_sec: float = 0.0,
+    hour_windows: list[tuple[float, float]] | None = None,
+    selected_days: list[int] | None = None,
+    notch_halfwidth_hz: float = _NOTCH_HALFWIDTH_HZ,
+    notch_order: int = _NOTCH_ORDER,
+    **kwargs,
+) -> list[PSDResult]:
+    """Like `estimate_psd`, but the notch filter runs after the
+    amplitude-based artifact masks instead of before them.
+
+    In `estimate_psd`, the commutator and SD-threshold masks are computed
+    from the *notch-filtered* signal. Here, `comm_mask` and
+    `sd_threshold_mask` are computed from the true raw producer first; the
+    notch filter is applied to that same continuous producer only
+    afterward, right before the per-state loop that calls
+    `estimators.psd`. So artifact detection sees the unfiltered amplitudes,
+    and only the values actually going into each PSD are filtered.
+
+    This deliberately still filters the *continuous* producer, not the
+    masked one. `producer(pro, chunksize, axis=-1, mask=mask)` does not
+    zero out masked samples -- per openseize's docs, "Values that are True
+    will be produced and values that are False will be ignored," i.e. the
+    masked producer skips False samples and concatenates the rest. Filtering
+    that directly would feed a bidirectional (sosfiltfilt) filter an
+    artificial discontinuity at every point a mask removed samples, ringing
+    at each one. Filtering the continuous `pro` before masking (as done
+    here, just later than in `estimate_psd`) avoids that entirely.
+
+    See `estimate_psd` for the full parameter documentation -- every
+    argument here means the same thing.
+    """
+
+    path, state_path = Path(path), Path(state_path)
+    channels = list(channels) if channels is not None else [0, 1, 2]
+    if labels is None:
+        labels = {"wake": ["w"], "nrem": ["n"], "rem": ["r"]}
+    animal = parse_animal_id(path)
+    if verbose:
+        print(animal)
+    with edf.Reader(path) as reader:
+        assert_fs_matches(reader, fs, path=path)
+        # build a producer
+        reader.channels = list(channels)
+        pro = producer(reader, chunksize=chunksize, axis=-1)
+
+        # build state masks
+        state_masks = {}
+
+        if s_prob is not None:
+            for label, code in labels.items():
+                state_masks[label] = masking.state_prob(
+                    state_path, code[0], fs, winsize=4, sprob=s_prob
+                )
+        else:
+            for label, code in labels.items():
+                state_masks[label] = masking.state(state_path, code, fs, winsize=4)
+
+        # Wake sub-mask for mixed groups that lump wake with sleep states.
+        # SD thresholding should only gate the wake portion of such groups,
+        # since SD calibrates to wake amplitudes and would over-mask quieter
+        # NREM/REM samples if applied uniformly.
+        needs_wake_sub = any("w" in codes and len(codes) > 1 for codes in labels.values())
+        if needs_wake_sub:
+            if s_prob is not None:
+                wake_sub_mask = masking.state_prob(state_path, "w", fs, winsize=4, sprob=s_prob)
+            else:
+                wake_sub_mask = masking.state(state_path, ["w"], fs, winsize=4)
+        else:
+            wake_sub_mask = None
+
+        # Compute commutator artifact threshold mask from the raw (not yet
+        # notch-filtered) producer. ``value`` (µV) is surfaced as a
+        # user-editable param; radius / pad / min_to_pad remain hardcoded —
+        # see TODO "psd_compute: Commutator mask params should scale with
+        # user-set fs" for the fs-coupling cleanup needed before exposing
+        # them.
+        comm_mask = masking.commutator_threshold(
+            pro,
+            value=comm_value,
+            radius=_COMMUTATOR_RADIUS_SAMPLES,
+            pad=_COMMUTATOR_PAD_SAMPLES,
+            min_to_pad=_COMMUTATOR_MIN_TO_PAD,
+        )[0]
+
+        spindle_mask = masking.spindle_noise(
+            state_path, noise_thresh=noise_thresh, fs=fs, winsize=4, include=False
+        )
+
+        wsize, rad = (winsize * fs), (radius * fs)
+
+        comm_pro = producer(comm_mask, chunksize=_COMMUTATOR_MASK_CHUNKSIZE, axis=-1)
+        sd_threshold_mask = masking.sd_threshold(
+            pro,
+            [nstd],
+            winsize=wsize,
+            radius=rad,
+            mask_pro=comm_pro,
+        )[0]
+        if verbose:
+            print(f"{animal} SD threshold mask computed")
+
+        # Amplitude-based artifact masks are done. Now notch-filter the
+        # still-continuous producer before anything reaches estimators.psd —
+        # this is the only difference from estimate_psd's ordering.
+        notch = NotchButterworth(
+            fstop=(_NOTCH_CENTER_HZ - notch_halfwidth_hz, _NOTCH_CENTER_HZ + notch_halfwidth_hz),
+            fs=fs,
+            order=notch_order,
+        )
+        pro = notch(pro, chunksize, axis=-1, dephase=True)
+
+        # Compute SWD mask if path provided
+        if swd_path is not None:
+            swd_mask = masking.swd(path=swd_path, n_samples=pro.shape[-1], fs=fs, pad_sec=swd_pad)
+        else:
+            swd_mask = np.ones(pro.shape[-1], dtype=bool)
+
+        # Get offset and drink mask
+        if drink_path:
+            if verbose:
+                print(f"Drink Mask For Animal {animal}")
+            offset = (
+                masking.get_offset(drink_path, offset_path) if offset_path is not None else None
+            )
+            drink_mask = masking.drinking_mask(
+                drink_path, offset, fs=fs, pad_sec=drink_pad, n_samples=pro.shape[-1]
+            )
+        else:
+            drink_mask = np.ones(pro.shape[-1], dtype=bool)
+
+        # Build annotation mask if a path and keywords were provided
+        n_samples = pro.shape[-1]
+        _ann_keywords = ann_keywords or []
+        if annotation_path is not None and _ann_keywords:
+            ann_mask = keyword_mask(
+                annotation_path,
+                keywords=_ann_keywords,
+                size=n_samples,
+                fs=fs,
+                pad_before_sec=ann_pad_before_sec,
+                pad_after_sec=ann_pad_after_sec,
+                match_mode=ann_match_mode,
+            )
+        else:
+            ann_mask = np.ones(n_samples, dtype=bool)
+
+        # Build hour-window mask if requested
+        if hour_windows is not None:
+            rec_start = parse_edf_start_datetime(reader.header)
+            tod_mask, used_windows = masking.hour_window_mask(
+                rec_start,
+                n_samples,
+                fs,
+                hour_windows,
+                selected_days,
+            )
+            if verbose:
+                for ws, we in used_windows:
+                    print(f"  {animal}: {ws.strftime('%Y-%m-%d %H:%M')}–{we.strftime('%H:%M')}")
+        else:
+            tod_mask = np.ones(n_samples, dtype=bool)
+            used_windows = []
+
+        # Combine all artifact masks
+        artifact_mask = comm_mask & spindle_mask & swd_mask & drink_mask & ann_mask & tod_mask
+
+        metamask = metastores.MetaMask(threshold=artifact_mask, **state_masks)
+        # compute psd estimates for each mask combination
+        result = []
+        for combo_state, mask in metamask.combinations():
+            state_name = combo_state[1]
+            st_mask = state_masks[state_name]
+
+            if "threshold" not in combo_state:
+                # only compute psds for mask that include the threshold
+                continue
+
+            if not np.any(mask):
+                # some mice may not exhibit all behavior states
+                if verbose:
+                    print(f"mask {combo_state} has no data ... skipping")
+                continue
+
+            codes = labels[state_name]
+            if "w" in codes:
+                if len(codes) == 1:
+                    mask &= sd_threshold_mask
+                    sd_out = out_fraction(sd_threshold_mask, st_mask)
+                else:
+                    # Mixed group (wake + non-wake): apply SD threshold only to
+                    # the wake portion. `~wake_sub_mask | sd_threshold_mask`
+                    # passes every non-wake sample (so NREM/REM unaffected) and
+                    # passes wake samples only if they survive the SD threshold.
+                    # All three operands have length pro.shape[-1] by
+                    # construction, so the broadcast is unambiguous.
+                    mask &= ~wake_sub_mask | sd_threshold_mask
+                    sd_out = out_fraction(sd_threshold_mask, st_mask & wake_sub_mask)
+            else:
+                sd_out = 0.0
+
+            spindle_out = out_fraction(spindle_mask, st_mask)
+            comm_out = out_fraction(comm_mask, st_mask)
+            swd_out = out_fraction(swd_mask, st_mask)
+            ann_out = out_fraction(ann_mask, st_mask)
+
+            if verbose:
+                print(f"Computing PSD for producer with mask: {combo_state}")
+
+            masked_pro = producer(pro, chunksize, axis=-1, mask=mask)
+            cnt, freqs, psds = estimators.psd(masked_pro, fs=fs, **kwargs)
+
+            # `used_*` flags record whether each source was *configured*, not
+            # whether it actually masked any samples. To know the latter,
+            # check the corresponding `*_out_frac` field (0.0 = no samples
+            # excluded by that source within this state).
+            r = PSDResult(
+                path=path,
+                channels=channels,
+                behavior=combo_state,
+                n_estimates=int(cnt),
+                spindle_out_frac=float(spindle_out),
+                comm_out_frac=float(comm_out),
+                sd_out_frac=float(sd_out),
+                swd_out_frac=float(swd_out),
+                ann_out_frac=float(ann_out),
+                used_swd=swd_path is not None,
+                used_drink=drink_path is not None,
+                used_ann=bool(annotation_path is not None and _ann_keywords),
+                freqs=freqs,
+                psd=psds,
+                used_windows=[(ws.isoformat(), we.isoformat()) for ws, we in used_windows],
+            )
+
+            result.append(r)
+    return result
+
+
 def _star_call(fn_args):
     """Module-level unpacker for pool.imap — lambdas aren't picklable with spawn."""
     fn, args = fn_args
@@ -579,13 +839,14 @@ def batch_estimate(
     savepath: str | Path | None = None,
     progress_fn: Callable | None = None,
     ann_params: dict | None = None,
+    estimator_fn: Callable = estimate_psd,
     **kwargs,
 ) -> list[PSDResult]:
     """Concurrently estimate PSDs across every EDF in `eeg_dir`.
 
     Pairs each EDF with its SPINDLE CSV (required), SWD `.mat` (optional),
     drink `.npy` (optional, sparse), and annotation file (optional, sparse),
-    then fans `estimate_psd` calls out to a process pool.
+    then fans `estimator_fn` calls out to a process pool.
 
     Args:
         eeg_dir:
@@ -603,7 +864,7 @@ def batch_estimate(
         ncores:
             Worker count. None = use all available, capped by file count.
         verbose:
-            Forwarded to `estimate_psd` and used for the batch-level banner.
+            Forwarded to `estimator_fn` and used for the batch-level banner.
         savepath:
             If set, pickles results as a list of dicts here (used by the
             two-step pipeline; downstream `build_final_pkl` consumes these).
@@ -613,8 +874,13 @@ def batch_estimate(
             Optional dict with keys `ann_dir`, `keywords`, `match_mode`,
             `pad_before_sec`, `pad_after_sec`. Annotation files are matched
             to EDFs by animal ID.
+        estimator_fn:
+            Per-file function to call, e.g. `estimate_psd` (default) or
+            `estimate_psd_late_notch`. Must accept `(path, state_path,
+            swd_path, drink_path, annotation_path)` positionally, same as
+            both of those.
         **kwargs:
-            Forwarded to `estimate_psd`. UI-only keys in `_UI_ONLY_KWARGS`
+            Forwarded to `estimator_fn`. UI-only keys in `_UI_ONLY_KWARGS`
             are stripped first (so saved psd_params.json can be passed as-is).
 
     Returns:
@@ -653,7 +919,7 @@ def batch_estimate(
     print(msg)
 
     estimator = partial(
-        estimate_psd, hour_windows=hour_windows, selected_days=selected_days, **kwargs
+        estimator_fn, hour_windows=hour_windows, selected_days=selected_days, **kwargs
     )
     n = len(paired)
     if n == 0:
@@ -691,6 +957,17 @@ def batch_estimate(
 
     # flatten the list of list of PSDResult data instances
     return results
+
+
+def batch_estimate_late_notch(*args, **kwargs) -> list[PSDResult]:
+    """`batch_estimate`, but using `estimate_psd_late_notch` per file.
+
+    Artifact-detection masks (commutator, SD threshold) see the raw signal;
+    only the final per-state PSDs see the notch-filtered one. See
+    `estimate_psd_late_notch` for why. Same arguments as `batch_estimate`.
+    """
+    kwargs.pop("estimator_fn", None)  # this variant's whole point is fixing it
+    return batch_estimate(*args, estimator_fn=estimate_psd_late_notch, **kwargs)
 
 
 def build_run_final_pkl(project_root, run_name: str = "default") -> Path:
