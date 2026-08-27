@@ -1,14 +1,21 @@
 name: ebb-dev
 channels: [conda-forge]
 dependencies:
-  - python=3.10
-  - numpy == 1.22.3
+  - python=3.13
+  - numpy
   - scipy
   - pandas
   - matplotlib
   - scikit-learn
   - mne
+  - pyqtgraph
+  - pyqt6
+  - psutil
+  - requests
   - pip
+
   - pip:
       - fooof
-      - openseize
+      - openseize==1.3.0
+      - pytest
+      - ruff

@@ -1,11 +1,18 @@
-from .threshold import threshold, commutator_threshold, detect_sideband_mask
 from .annotations import artifact
-from .spindle import state, spindle_noise
-from .events import swd, drinking_mask, get_offset
+from .events import drinking_mask, get_offset, hour_window_mask, swd, time_of_day_mask
+from .spindle import spindle_noise, state, state_prob
+from .threshold import commutator_threshold, sd_threshold
 
 __all__ = [
-    "threshold", "commutator_threshold", "detect_sideband_mask",
+    "sd_threshold",
+    "commutator_threshold",
     "artifact",
-    "state", "spindle_noise",
-    "swd", "drinking_mask", "get_offset",
+    "state",
+    "state_prob",
+    "spindle_noise",
+    "swd",
+    "drinking_mask",
+    "get_offset",
+    "time_of_day_mask",
+    "hour_window_mask",
 ]

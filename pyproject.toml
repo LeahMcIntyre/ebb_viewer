@@ -12,13 +12,16 @@ dependencies = [
   "numpy",
   "scipy",
   "pandas",
-  "PyQt6",
+  "openpyxl",
   "openseize",
+  "specparam",
 ]
 
-# Command-line entry point to launch your viewer
+# Command-line entry points: pipeline GUI and standalone EEG viewer
 [project.scripts]
 ebb-viewer = "ebb_viewer.__main__:main"
+ebb-eeg-viewer = "ebb_viewer.edf_viewer.eeg_viewer:main"
+ebb-combine = "ebb.io.combine:main"
 
 [tool.setuptools]
 # Tell setuptools that all packages live under src/
@@ -30,3 +33,18 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+  "E", "W",   # pycodestyle errors/warnings
+  "F",        # pyflakes (dead imports, unused vars, undefined names)
+  "I",        # isort (import sorting)
+  "UP",       # pyupgrade (modern syntax)
+  "B",        # bugbear (common pitfalls)
+  "SIM",      # simplify (collapse trivially-simplifiable code)
+]
+ignore = ["E501"]  # line length handled by formatter

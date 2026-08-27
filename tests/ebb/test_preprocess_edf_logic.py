@@ -1,5 +1,7 @@
 import pytest
+
 from ebb.preprocess.edf import compute_trim_stop_samples
+
 
 def test_compute_trim_stop_picks_lower_bin():
     fs = 100
@@ -8,12 +10,14 @@ def test_compute_trim_stop_picks_lower_bin():
     stop = compute_trim_stop_samples(n, fs, trim_to_hours=[60, 80])
     assert stop == int(60 * 3600 * fs)
 
+
 def test_compute_trim_stop_picks_max_if_longer():
     fs = 100
     # 90 hours recording
     n = int(90 * 3600 * fs)
     stop = compute_trim_stop_samples(n, fs, trim_to_hours=[48, 72])
     assert stop == int(72 * 3600 * fs)
+
 
 def test_compute_trim_stop_raises_if_too_short():
     fs = 100
@@ -22,6 +26,7 @@ def test_compute_trim_stop_raises_if_too_short():
     with pytest.raises(ValueError):
         compute_trim_stop_samples(n, fs, trim_to_hours=[48, 72])
 
+
 def test_compute_trim_stop_zero_length():
     fs = 100
     # 0 hours recording
@@ -29,9 +34,26 @@ def test_compute_trim_stop_zero_length():
     with pytest.raises(ValueError):
         compute_trim_stop_samples(n, fs, trim_to_hours=[1, 2, 3])
 
+
 def test_compute_trim_stop_no_trim_hours():
     fs = 100
     # 50 hours recording
     n = int(50 * 3600 * fs)
     with pytest.raises(ValueError):
         compute_trim_stop_samples(n, fs, trim_to_hours=[])
+
+
+def test_compute_trim_stop_single_value():
+    fs = 100
+    # 50 hours recording, single trim target at 48h.
+    n = int(50 * 3600 * fs)
+    stop = compute_trim_stop_samples(n, fs, trim_to_hours=[48])
+    assert stop == int(48 * 3600 * fs)
+
+
+def test_compute_trim_stop_four_values_picks_largest_fit():
+    fs = 100
+    # 80 hours recording with 4 ascending targets — should pick 72.
+    n = int(80 * 3600 * fs)
+    stop = compute_trim_stop_samples(n, fs, trim_to_hours=[24, 48, 72, 96])
+    assert stop == int(72 * 3600 * fs)

@@ -1,18 +1,49 @@
-from PyQt6.QtWidgets import (
-    QVBoxLayout, QGroupBox, QGridLayout, QLabel, QCheckBox,
-    QPushButton, QHBoxLayout, QSpacerItem, QSizePolicy,
-    QMessageBox, QFormLayout, QLineEdit, QWidget
-)
-from PyQt6.QtGui import QFont
-from PyQt6.QtCore import Qt
-from pathlib import Path
-from typing import Optional
+"""Spindle Write page — pick a channel combo, write per-combo spindle EDFs.
 
-from ebb.preprocess.edf import batch, spindle
-# from ebb.preprocess.edf.spindle import preprocess_folder_spindle  # or wherever it lives
+Inputs: preprocessed EDFs in ``project_root/standard/``.
+Outputs: spindle-prep EDFs in ``project_root/spindle_edfs/<COMBO>/``.
+
+The user picks 1 or 2 of the EEG channels (Ch0/Ch1/Ch2 = LFC/RSC/LSC).
+Ch3 (EMG) is always included. The combo name is the underscore-joined
+labels (e.g. ``LFC_RSC``) and drives the output folder name.
+"""
+
+import time
+from pathlib import Path
+
+from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QFormLayout,
+    QFrame,
+    QGridLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+    QSizePolicy,
+    QSpacerItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ebb.preprocess.edf import batch as batch_preprocess
+from ebb.preprocess.edf import spindle
+from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.pipeline.theme import apply_primary_button
+from ebb_viewer.widgets.worker_helpers import launch_worker
 
 
 class SpindleWritePage(QWidget):
+    """Sidebar page #2 — write per-combo spindle EDFs for SleepyRat upload."""
+
+    navigate_to = pyqtSignal(str)
+
     CH_LABELS = {
         "Ch0": "LFC",
         "Ch1": "RSC",
@@ -25,7 +56,11 @@ class SpindleWritePage(QWidget):
         self.project_root = Path(project_root)
 
         # Will be updated by _refresh_standard_dir
-        self.standard_folder: Optional[Path] = None
+        self.standard_folder: Path | None = None
+
+        # Worker thread + worker instance — populated by _run_spindle_btn.
+        self._spindle_thread: QThread | None = None
+        self._spindle_worker: _SpindleWriteWorker | None = None
 
         self._build_ui()
         self._wire()
@@ -38,6 +73,18 @@ class SpindleWritePage(QWidget):
     # ---------------- UI ----------------
     def _build_ui(self):
         root = QVBoxLayout(self)
+
+        lbl = QLabel("Create Spindle EDFs")
+        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        desc = QLabel(
+            "Prepare standard EDFs for sleep staging by selecting the EEG channel combination to include. "
+            "EMG is always included. Output files are written to spindle_edfs/."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #555; font-size: 12px;")
+
+        root.addWidget(lbl)
+        root.addWidget(desc)
 
         # ----- Folder selection group -----
         folder_gb = QGroupBox("Folder Selection")
@@ -58,9 +105,7 @@ class SpindleWritePage(QWidget):
 
         # Target spindle EDF folder (editable but prefilled from project_root)
         self.target_name_edit = QLineEdit()
-        self.target_name_edit.setStyleSheet(
-            "QLineEdit { padding-top: 0px; padding-bottom: 0px; }"
-        )
+        self.target_name_edit.setStyleSheet("QLineEdit { padding-top: 0px; padding-bottom: 0px; }")
         self.target_name_edit.setReadOnly(True)
         top_form.addRow("Target Directory:", self.target_name_edit)
 
@@ -98,8 +143,7 @@ class SpindleWritePage(QWidget):
         grid.addWidget(self.cb_ch2, 1, 2)
 
         grid.addItem(
-            QSpacerItem(0, 6, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum),
-            2, 0, 1, 3
+            QSpacerItem(0, 6, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Minimum), 2, 0, 1, 3
         )
 
         self.cb_ch3 = QCheckBox(f"Ch3 — {self.CH_LABELS['Ch3']}")
@@ -107,7 +151,7 @@ class SpindleWritePage(QWidget):
         self.cb_ch3.setEnabled(False)
         self.cb_ch3.setToolTip("This channel is required and will always be processed.")
 
-        self.lbl_lock = QLabel("🔒 Always included — no selection required")
+        self.lbl_lock = QLabel("🔒")
         f = QFont()
         f.setPointSize(f.pointSize() - 1)
         self.lbl_lock.setFont(f)
@@ -128,11 +172,36 @@ class SpindleWritePage(QWidget):
         actions = QHBoxLayout()
         self.btn_apply = QPushButton("Run Spindle Preprocessor")
         self.btn_apply.setEnabled(False)
+        apply_primary_button(self.btn_apply)
         actions.addWidget(self.btn_apply)
 
         root.addWidget(folder_gb)
         root.addWidget(gb)
         root.addLayout(actions)
+
+        self.log_box = QPlainTextEdit()
+        self.log_box.setReadOnly(True)
+        self.log_box.setMaximumBlockCount(300)
+        self.log_box.setPlaceholderText("Status messages will appear here…")
+        root.addWidget(self.log_box)
+
+        # Post-run hint (hidden until a run succeeds)
+        self._hint_frame = QFrame()
+        self._hint_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        self._hint_frame.setStyleSheet(
+            "QFrame { background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; }"
+        )
+        hint_layout = QHBoxLayout(self._hint_frame)
+        hint_layout.setContentsMargins(10, 6, 10, 6)
+        hint_lbl = QLabel("✓ Done. Spindle EDFs written.")
+        hint_layout.addWidget(hint_lbl, 1)
+        btn_go_upload = QPushButton("→ Spindle Upload")
+        btn_go_upload.clicked.connect(lambda: self.navigate_to.emit("spindle_upload"))
+        hint_layout.addWidget(btn_go_upload)
+        self._hint_frame.setVisible(False)
+        root.addWidget(self._hint_frame)
+
+        root.addStretch()
 
     # ------------ Wiring / Signals ------------
     def _wire(self):
@@ -180,7 +249,7 @@ class SpindleWritePage(QWidget):
                 "No Standard EDF Folder",
                 "Standard folder is not set.\n\n"
                 "Make sure preprocessing has been run and a 'standard' folder "
-                "exists in your project root."
+                "exists in your project root.",
             )
             return
 
@@ -188,7 +257,7 @@ class SpindleWritePage(QWidget):
             QMessageBox.critical(
                 self,
                 "Standard Folder Missing",
-                f"Standard folder does not exist:\n{self.standard_folder}"
+                f"Standard folder does not exist:\n{self.standard_folder}",
             )
             return
 
@@ -196,44 +265,30 @@ class SpindleWritePage(QWidget):
         eeg_labels = self._current_eeg_labels()
         if not eeg_labels:
             QMessageBox.critical(
-                self,
-                "No Channels Selected",
-                "Please select at least one EEG channel."
+                self, "No Channels Selected", "Please select at least one EEG channel."
             )
             return
 
-        # Simple combo name, e.g. "LFC_RSC"
-        combo_name = "_".join(eeg_labels)
-
-        # Default target dir based on our canonical structure under project_root
+        # Target dir derived from combo name. target_name_edit is read-only and
+        # always shows the same derived value; we recompute it here for safety.
+        combo_name = "_".join(eeg_labels)  # e.g. "LFC_RSC"
         spindle_root = self.project_root / "spindle_edfs"
-        default_target = spindle_root / combo_name
+        target_dir = spindle_root / combo_name
 
-        # Allow user to override target path if they really want
-        target_text = self.target_name_edit.text().strip()
-        target_dir = Path(target_text) if target_text else default_target
-
-        # If the user cleared the field, confirm using default
-        if not target_text:
-            msg = (
-                "No target folder specified.\n\n"
-                f"Use default spindle folder for this combo?\n\n{default_target}"
-            )
+        existing = list(target_dir.glob("*_SPINDLE.edf")) if target_dir.is_dir() else []
+        if existing:
             btn = QMessageBox.question(
                 self,
-                "No Target Folder Selected",
-                msg
+                "Files Already Exist",
+                f"{len(existing)} spindle EDF(s) already exist in:\n{target_dir}\n\n"
+                "Re-running will overwrite them. Continue?",
             )
             if btn != QMessageBox.StandardButton.Yes:
                 return
-            self.target_name_edit.setText(str(default_target))
-            self.target_name_edit.setToolTip(str(default_target))
-            target_dir = default_target
 
-        # Ensure directories exist
         try:
             spindle_root.mkdir(parents=True, exist_ok=True)
-            target_dir.mkdir(parents=True, exist_ok=False)  # Don't overwrite existing
+            target_dir.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             QMessageBox.critical(
                 self,
@@ -242,22 +297,35 @@ class SpindleWritePage(QWidget):
             )
             return
 
-        try:
-            # adjust call as appropriate for your spindle module
-            batch(preprocessor=spindle,
-                dirpath=self.standard_folder,
-                target=target_dir,
-                channels=channels
-            )
-            QMessageBox.information(
-                self,
-                "Spindle Preprocessing",
-                f"Finished preprocessing files for spindle.\n"
-                f"Output folder:\n{target_dir}",
-            )
+        self.btn_apply.setEnabled(False)
+        self._hint_frame.setVisible(False)
 
-        except Exception as e:
-            QMessageBox.critical(self, "Spindle Preprocess failed", str(e))
+        self._spindle_thread = QThread(self)
+        self._spindle_worker = _SpindleWriteWorker(
+            standard_folder=self.standard_folder,
+            target_dir=target_dir,
+            channels=channels,
+        )
+        self._spindle_worker.log.connect(self._log)
+        launch_worker(
+            self._spindle_thread,
+            self._spindle_worker,
+            on_finished=self._on_spindle_done,
+            on_error=self._on_spindle_error,
+        )
+
+    def _on_spindle_error(self, msg: str) -> None:
+        self._validate()
+        QMessageBox.critical(self, "Spindle Preprocess failed", msg)
+
+    def _log(self, msg: str):
+        self.log_box.appendPlainText(msg)
+        QApplication.processEvents()
+
+    def _on_spindle_done(self):
+        Manifest.build_from_standard(self.project_root)
+        self._validate()
+        self._hint_frame.setVisible(True)
 
     # ------------ Validation ------------
     def _validate(self):
@@ -265,13 +333,13 @@ class SpindleWritePage(QWidget):
 
         if n == 2:
             # 1 EEG + EMG
-            self.lbl_status.setText("1 selected. You can apply.")
+            self.lbl_status.setText("1 EEG channel selected — ready to run.")
             self.lbl_status.setStyleSheet("color: #0a7f2e;")
             self._update_target_path()
 
         elif n == 3:
             # 2 EEG + EMG
-            self.lbl_status.setText("Perfect - Two selected. You can apply.")
+            self.lbl_status.setText("2 EEG channels selected — ready to run.")
             self.lbl_status.setStyleSheet("color: #0a7f2e;")
             self._update_target_path()
 
@@ -341,3 +409,39 @@ class SpindleWritePage(QWidget):
         self.combo_name_edit.setToolTip(combo_name)
         self.target_name_edit.setText(str(target))
         self.target_name_edit.setToolTip(str(target))
+
+
+class _SpindleWriteWorker(QObject):
+    """Off-thread driver for `batch_preprocess(spindle, ...)`."""
+
+    log = pyqtSignal(str)
+    finished = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self, *, standard_folder, target_dir, channels, parent=None):
+        super().__init__(parent)
+        self.standard_folder = standard_folder
+        self.target_dir = target_dir
+        self.channels = channels
+
+    def run(self):
+        try:
+            n = sum(1 for _ in self.standard_folder.glob("*.edf"))
+            if not n:
+                self.log.emit("No EDF files found in standard folder.")
+                self.finished.emit()
+                return
+            self.log.emit(f"Starting spindle preprocessing on {n} file(s)…")
+            t0 = time.perf_counter()
+            outs = batch_preprocess(
+                spindle,
+                self.standard_folder,
+                target=self.target_dir,
+                channels=self.channels,
+                verbose=True,
+            )
+            elapsed = time.perf_counter() - t0
+            self.log.emit(f"Done: {len(outs)} file(s) written — {elapsed:.2f}s")
+            self.finished.emit()
+        except Exception as e:
+            self.error.emit(str(e))

@@ -1,46 +1,90 @@
-# psd_matrix_page.py
-from typing import Dict, List, Tuple
+"""Channel × state grid of PSD plots for one animal, with manifest-flagging UI.
+
+Used in two modes:
+- **Pass 1 PSD review** (`drink_review=False`): pending = animals whose
+  ``psd_status[run_name]`` is unset; user flags ``ok`` or ``needs_drink_mask``.
+- **Pass 2 drink review** (`drink_review=True`): pending = animals whose
+  ``psd_status[run_name] == "drink_mask_applied"``; user verifies the mask
+  worked and flags ``ok``.
+"""
+
 import numpy as np
-
-from PyQt6.QtCore import Qt, QSize
-from PyQt6.QtGui import QAction, QKeySequence
-from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-    QToolBar, QToolButton, QSizePolicy, QStyle, QMenu
-)
 import pyqtgraph as pg
-from fooof.utils import interpolate_spectrum
+from specparam.utils import interpolate_spectrum
+from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtGui import QAction, QKeySequence, QShortcut
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QMenu,
+    QPushButton,
+    QSizePolicy,
+    QStyle,
+    QToolBar,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
+from ebb.process.state_presets import gather_states_from_store
 from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
 
-INVERSE_FILTER = np.array([2.485297985, 1.360646853, 1.145286775, 1.071699399, 1.038017048, 1.018656356, 1.007806318])
-FILTER_RANGE = [0.5, 3.5] #Filter applied in filter range (inclusive)
+# Inverse-filter coefficients applied in FILTER_RANGE Hz (inclusive) when the
+# Inverse Filter toggle is on, to compensate for hardware-induced amplitude
+# roll-off at low frequencies.
+# TODO: document coefficient source (preamp model + derivation).
+INVERSE_FILTER = np.array(
+    [2.485297985, 1.360646853, 1.145286775, 1.071699399, 1.038017048, 1.018656356, 1.007806318]
+)
+FILTER_RANGE = [0.5, 3.5]
+
 
 class PSDGridPage(QWidget):
+    """Channel × state PSD plot grid with toolbar, navigation, and flagging.
 
+    See module docstring for the Pass 1 / Pass 2 mode distinction.
+    """
 
+    DEFAULT_XRANGE: tuple[float, float] = (0.5, 110)
+
+    navigate_to = pyqtSignal(str)
+    manifest_changed = pyqtSignal()
 
     def __init__(
         self,
         parent=None,
         *,
-        store,                    # PSDStore-like: animals() -> List[str], states(animal) -> List[str], get(animal, state) -> Dict[ch,(f,y)]
-        channel_names: List[str], # e.g., ["LFC","RSC","LSC"]
-        states: List[str] = None  # e.g., ["wake","nrem","rem"]
+        store,  # PSDStore-like: animals() -> List[str], states(animal) -> List[str], get(animal, state) -> Dict[ch,(f,y)]
+        channel_names: list[str],  # e.g., ["LFC","RSC","LSC"]
+        states: list[str] = None,  # e.g., ["wake","nrem","rem"]
+        manifest=None,  # optional Manifest for per-animal flagging
+        run_channels: str | None = None,  # channel combo identifying which run this PSD belongs to
+        drink_review: bool = False,  # Pass 2 mode: pending = drink_mask_applied animals
+        run_name: str = "default",  # PSD run name for manifest flag scoping
+        project_root=None,  # Path for drink-mask hint
     ):
         super().__init__(parent)
         self.store = store
         self.channel_names = list(channel_names)
-        self.states = list(states or ["wake", "nrem", "rem"])
+        if states is None:
+            self.states = gather_states_from_store(store)
+        else:
+            self.states = list(states)
+        self.manifest = manifest
+        self.run_channels = run_channels
+        self.drink_review = drink_review
+        self._run_name = run_name
+        self._project_root = project_root
 
         # View preferences
-        self.xrange: Tuple[float, float] = (0.5, 110)  # default window to show
-        self.interp_range = [58,62]
+        self.xrange: tuple[float, float] = self.DEFAULT_XRANGE
+        self.interp_range = [58, 62]
         self.xlog = False
         self.ylog = True
         self.invfil = False
         self.interpolate = False
-
 
         # PyQtGraph global styling
         pg.setConfigOptions(antialias=True)
@@ -55,9 +99,8 @@ class PSDGridPage(QWidget):
         # Initial render
         if self.cmb_animal.count():
             self._render()
-
-        print("New PSD Window")
-
+        self._update_flag_status()
+        self._install_shortcuts()
 
     # ---------------- UI BUILDERS ----------------
 
@@ -72,12 +115,6 @@ class PSDGridPage(QWidget):
             QToolButton { padding: 3px 8px; }
         """)
 
-        """ # Left: export
-        act_export = QAction("Export PNG", self)
-        act_export.setShortcut(QKeySequence("Ctrl+E"))
-        act_export.triggered.connect(self._export_png)
-        tb.addAction(act_export)"""
-
         # Log-X toggle
         act_logx = _make_toggle(self, "Log-X", checked=self.xlog, slot=self._on_logx_toggled)
         tb.addAction(act_logx)
@@ -87,14 +124,17 @@ class PSDGridPage(QWidget):
         tb.addAction(act_logy)
 
         # Inverse Filter toggle
-        act_invfil = _make_toggle(self, "Inverse Filter", checked=self.invfil, slot=self._on_inverse_toggled)
+        act_invfil = _make_toggle(
+            self, "Inverse Filter", checked=self.invfil, slot=self._on_inverse_toggled
+        )
         tb.addAction(act_invfil)
 
-        act_invfil = _make_toggle(self, "Interpolate", checked=self.interpolate, slot=self._on_interpolate)
-        tb.addAction(act_invfil)
+        act_interp = _make_toggle(
+            self, "Interpolate", checked=self.interpolate, slot=self._on_interpolate
+        )
+        tb.addAction(act_interp)
 
         tb.addSeparator()
-
 
         act_xrange = QAction("Set X-Range", self)
         act_xrange.triggered.connect(self._on_set_xrange)
@@ -111,11 +151,16 @@ class PSDGridPage(QWidget):
         self.cmb_animal = QComboBox()
         self.cmb_animal.addItems(self.store.animals())
         self.cmb_animal.currentTextChanged.connect(self._render)
+        self.cmb_animal.currentTextChanged.connect(lambda _: self._update_flag_status())
         tb.addWidget(_labeled_combo(self, "Animal:", self.cmb_animal))
 
         tb.addSeparator()
-        tb.addWidget(_make_nav_button(self, "Prev", QStyle.StandardPixmap.SP_ArrowBack, self._prev_animal))
-        tb.addWidget(_make_nav_button(self, "Next", QStyle.StandardPixmap.SP_ArrowForward, self._next_animal))
+        tb.addWidget(
+            _make_nav_button(self, "Prev", QStyle.StandardPixmap.SP_ArrowBack, self._prev_animal)
+        )
+        tb.addWidget(
+            _make_nav_button(self, "Next", QStyle.StandardPixmap.SP_ArrowForward, self._next_animal)
+        )
 
         # (Optional) overflow menu
         more = QToolButton(self)
@@ -127,7 +172,76 @@ class PSDGridPage(QWidget):
         more.setMenu(m)
         tb.addWidget(more)
 
+        # Flag buttons (only useful when manifest is provided)
+        self._act_flag_sep = tb.addSeparator()
+        self._btn_flag_ok = QPushButton("✓ OK")
+        self._btn_flag_ok.setFixedHeight(26)
+        self._btn_flag_ok.setCheckable(True)
+        self._btn_flag_ok.setToolTip("Mark current animal's PSD as OK in manifest")
+        self._btn_flag_ok.clicked.connect(lambda checked: self._flag_psd_ok())
+        self._act_flag_ok = tb.addWidget(self._btn_flag_ok)
+
+        self._btn_flag_drink = QPushButton("Drink Mask")
+        self._btn_flag_drink.setFixedHeight(26)
+        self._btn_flag_drink.setCheckable(True)
+        self._btn_flag_drink.setToolTip("Flag current animal as needing a drink mask PSD rerun")
+        self._btn_flag_drink.clicked.connect(lambda checked: self._flag_drink_mask())
+        self._act_flag_drink = tb.addWidget(self._btn_flag_drink)
+
+        self._btn_flag_reset = QPushButton("↺ Reset")
+        self._btn_flag_reset.setFixedHeight(26)
+        self._btn_flag_reset.setToolTip("Clear PSD review status for the current animal")
+        self._btn_flag_reset.setEnabled(False)
+        self._btn_flag_reset.clicked.connect(lambda: self._reset_psd_status())
+        self._act_flag_reset = tb.addWidget(self._btn_flag_reset)
+
+        self._status_label = QLabel("")
+        self._status_label.setMinimumWidth(90)
+        self._act_status = tb.addWidget(self._status_label)
+
+        if self.manifest is None:
+            self._act_flag_sep.setVisible(False)
+            self._act_flag_ok.setVisible(False)
+            self._act_flag_drink.setVisible(False)
+            self._act_flag_reset.setVisible(False)
+            self._act_status.setVisible(False)
+
         self.root.addWidget(tb)
+
+        self._guidance_label = QFrame()
+        self._guidance_label.setStyleSheet("QFrame { background: #fff3cd; border-radius: 3px; }")
+        hint_layout = QHBoxLayout(self._guidance_label)
+        hint_layout.setContentsMargins(10, 5, 10, 5)
+        hint_lbl = QLabel(
+            "Place <code>drink_masks/&lt;animal_id&gt;.npy</code> in your project folder, "
+            "then run the drink mask rerun."
+        )
+        hint_lbl.setTextFormat(Qt.TextFormat.RichText)
+        hint_lbl.setWordWrap(True)
+        hint_lbl.setStyleSheet("color: #7a3c00; background: transparent;")
+        hint_layout.addWidget(hint_lbl, 1)
+        btn_go_drink = QPushButton("→ 8. Drink Mask")
+        btn_go_drink.setFixedHeight(26)
+        btn_go_drink.clicked.connect(lambda: self.navigate_to.emit("drink_mask"))
+        hint_layout.addWidget(btn_go_drink)
+        self._guidance_label.setVisible(False)
+        self.root.addWidget(self._guidance_label)
+
+        # Shown during Pass 1 when animal has an existing drink mask on disk
+        self._mask_hint_frame = QFrame()
+        self._mask_hint_frame.setStyleSheet("QFrame { background: #e8f4fd; border-radius: 3px; }")
+        mask_hint_layout = QHBoxLayout(self._mask_hint_frame)
+        mask_hint_layout.setContentsMargins(10, 5, 10, 5)
+        self._mask_hint_lbl = QLabel("")
+        self._mask_hint_lbl.setStyleSheet("color: #1a3a5c; background: transparent;")
+        self._mask_hint_lbl.setWordWrap(True)
+        mask_hint_layout.addWidget(self._mask_hint_lbl, 1)
+        self._btn_quick_flag_drink = QPushButton("Flag for drink mask")
+        self._btn_quick_flag_drink.setFixedHeight(26)
+        self._btn_quick_flag_drink.clicked.connect(self._flag_drink_mask)
+        mask_hint_layout.addWidget(self._btn_quick_flag_drink)
+        self._mask_hint_frame.setVisible(False)
+        self.root.addWidget(self._mask_hint_frame)
 
     def _build_grid(self):
         # Grid container
@@ -135,8 +249,8 @@ class PSDGridPage(QWidget):
         self.root.addWidget(self.glw, 1)
 
         # Subplot registry
-        self.plots: Dict[Tuple[str, str], pg.PlotItem] = {}
-        self.curves: Dict[Tuple[str, str], pg.PlotDataItem] = {}
+        self.plots: dict[tuple[str, str], pg.PlotItem] = {}
+        self.curves: dict[tuple[str, str], pg.PlotDataItem] = {}
 
         # Column header row (states)
         self.glw.addLabel("", row=0, col=0)  # corner cell
@@ -144,7 +258,7 @@ class PSDGridPage(QWidget):
             self.glw.addLabel(f"<b>{state.upper()}</b>", row=0, col=c, justify="center")
 
         # Build matrix: row = channel, col = state
-        self.first_plot = None
+        first_plot = None
         for r, ch in enumerate(self.channel_names, start=1):
             # Row header (channel name)
             self.glw.addLabel(f"<b>{ch}</b>", row=r, col=0, angle=0, justify="right")
@@ -153,7 +267,7 @@ class PSDGridPage(QWidget):
                 p.enableAutoRange(x=True, y=True)
                 p.showGrid(x=True, y=True, alpha=0.18)
                 p.setLabel("bottom", "Frequency (Hz)")
-                p.setLabel("left",   "Power (uV²/Hz)")
+                p.setLabel("left", "Power (uV²/Hz)")
                 p.setMouseEnabled(x=True, y=True)
                 p.setLogMode(self.xlog, self.ylog)  # start with your prefs
 
@@ -166,16 +280,28 @@ class PSDGridPage(QWidget):
                 self.curves[(ch, state)] = curve
 
                 # Link X across all cells
-                if self.first_plot is None:
-                    self.first_plot = p
+                if first_plot is None:
+                    first_plot = p
                 else:
-                    p.setXLink(self.first_plot)
+                    p.setXLink(first_plot)
 
+    # ---------------- SHORTCUTS ----------------
 
+    def _install_shortcuts(self):
+        ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        for key, slot in [
+            (Qt.Key.Key_Left, self._prev_animal),
+            (Qt.Key.Key_Right, self._next_animal),
+            ("O", self._flag_psd_ok),
+            ("D", self._flag_drink_mask),
+        ]:
+            sc = QShortcut(QKeySequence(key), self)
+            sc.setContext(ctx)
+            sc.activated.connect(slot)
 
     # ---------------- TOGGLES / NAV ----------------
 
-    def _on_interpolate(self, on:bool):
+    def _on_interpolate(self, on: bool):
         self.interpolate = bool(on)
         self._render()
 
@@ -187,7 +313,7 @@ class PSDGridPage(QWidget):
         self.ylog = bool(on)
         self._render()
 
-    def _on_inverse_toggled(self, on:bool):
+    def _on_inverse_toggled(self, on: bool):
         self.invfil = bool(on)
         self._render()
 
@@ -198,12 +324,10 @@ class PSDGridPage(QWidget):
             fmax=f_range[1],
             xrange=self.xrange,
             fres=self.store.freq_res(),
-            parent=self
+            parent=self,
         )
         if dlg.exec():  # QDialog.Accepted
-            xrange = dlg.values()
-            self.xrange = xrange
-            print(self.xrange)
+            self.xrange = dlg.values()
             self._render()
 
     def _on_set_interp_range(self):
@@ -214,7 +338,7 @@ class PSDGridPage(QWidget):
             xrange=self.interp_range,
             fres=self.store.freq_res(),
             title="Set Frequency Range to Interpolate Over (Line Noise)",
-            parent=self
+            parent=self,
         )
         if dlg.exec():  # QDialog.Accepted
             interp_range = dlg.values()
@@ -222,10 +346,9 @@ class PSDGridPage(QWidget):
             self._render()
 
     def _on_reset_zoom(self):
-        self.xrange = (0.5, 110)
+        self.xrange = self.DEFAULT_XRANGE
         self._render()
 
-        
     def _prev_animal(self):
         i = self.cmb_animal.currentIndex()
         if i > 0:
@@ -246,7 +369,9 @@ class PSDGridPage(QWidget):
 
         # Some animals might not have all states
         available = set(self.store.states(animal))
-        data_by_state = {s: (self.store.get(animal, s) if s in available else {}) for s in self.states}
+        data_by_state = {
+            s: (self.store.get(animal, s) if s in available else {}) for s in self.states
+        }
 
         # Clamp for log-x safety
         xmin, xmax = self.xrange
@@ -267,10 +392,9 @@ class PSDGridPage(QWidget):
                 y = np.asarray(y, float)
                 y_copy = y.copy()
 
-
                 # Apply inverse filter if toggle on
                 if self.invfil:
-                    filter_mask = (f>=FILTER_RANGE[0]) & (f<=FILTER_RANGE[1])
+                    filter_mask = (f >= FILTER_RANGE[0]) & (f <= FILTER_RANGE[1])
                     y_copy[filter_mask] = y_copy[filter_mask] * INVERSE_FILTER
 
                 if self.interpolate:
@@ -279,39 +403,147 @@ class PSDGridPage(QWidget):
                 # Data-space mask; ensure >0 for log axes
                 m = (f > 0.0) & (f >= xmin) & (f <= xmax)
                 if self.ylog:
-                    y = np.clip(y_copy, 1e-12, None)
+                    # Clip to a tiny positive floor so pyqtgraph's log mode
+                    # doesn't produce NaN gaps at zero/negative power bins.
+                    y_copy = np.clip(y_copy, 1e-12, None)
 
                 curve.setData(f[m], y_copy[m])
 
         # Apply same x-range to all
         for p in self.plots.values():
             p.setLogMode(self.xlog, self.ylog)
-            ylevels = [(10,0), (1,0)] if self.ylog else None
-            xlevels = [(10,0), (1,0)] if self.xlog else None
+            ylevels = [(10, 0), (1, 0)] if self.ylog else None
+            xlevels = [(10, 0), (1, 0)] if self.xlog else None
             p.getAxis("left").setTickSpacing(levels=ylevels)
             p.getAxis("bottom").setTickSpacing(levels=xlevels)
             p.getAxis("bottom").setTickDensity(density=0.8)
 
+    # ---------------- MANIFEST FLAGGING ----------------
 
-            
+    def _pending_animal_ids(self) -> set[str]:
+        if self.manifest is None:
+            return set()
+        if self.drink_review:
+            return {
+                entry.animal_id
+                for entry, _ in self.manifest.pending_drink_verification(self._run_name)
+            }
+        if self.run_channels is None:
+            return {
+                entry.animal_id for entry, _ in self.manifest.pending_psd_review(self._run_name)
+            }
+        return {
+            entry.animal_id
+            for entry, combo in self.manifest.pending_psd_review(self._run_name)
+            if combo == self.run_channels
+        }
 
+    def _manifest_animal_id(self) -> str | None:
+        """Strip _artifact/_drink suffixes from store key to get manifest animal_id."""
+        key = self.cmb_animal.currentText()
+        if not key:
+            return None
+        return key.replace("_artifact", "").replace("_drink", "")
 
+    def _resolve_combo(self, animal_id: str | None) -> str | None:
+        """Return the channel combo to use for manifest flagging."""
+        if self.run_channels is not None:
+            return self.run_channels
+        if animal_id is None:
+            return None
+        return self.store.source_combo(animal_id)
 
+    def _flag_psd_ok(self) -> None:
+        if self.manifest is None:
+            return
+        animal_id = self._manifest_animal_id()
+        combo = self._resolve_combo(animal_id)
+        if animal_id is None or combo is None:
+            return
+        self.manifest.flag_psd(animal_id, combo, "ok", self._run_name)
+        self._update_flag_status()
+        self.manifest_changed.emit()
 
+    def _flag_drink_mask(self) -> None:
+        if self.manifest is None:
+            return
+        animal_id = self._manifest_animal_id()
+        combo = self._resolve_combo(animal_id)
+        if animal_id is None or combo is None:
+            return
+        self.manifest.flag_psd(animal_id, combo, "needs_drink_mask", self._run_name)
+        self._update_flag_status()
+        self.manifest_changed.emit()
+
+    def _reset_psd_status(self) -> None:
+        if self.manifest is None:
+            return
+        animal_id = self._manifest_animal_id()
+        combo = self._resolve_combo(animal_id)
+        if animal_id is None or combo is None:
+            return
+        self.manifest.reset_psd_status(animal_id, combo, self._run_name)
+        self._update_flag_status()
+        self.manifest_changed.emit()
+
+    def _update_flag_status(self) -> None:
+        if self.manifest is None:
+            return
+        animal_id = self._manifest_animal_id()
+        combo = self._resolve_combo(animal_id)
+        run = self.manifest.get_run(animal_id, combo) if (animal_id and combo) else None
+        status = run.psd_status.get(self._run_name) if run else None
+
+        self._btn_flag_reset.setEnabled(status is not None)
+
+        # Drink-mask-on-disk hint: show during Pass 1 when status is not yet set
+        show_mask_hint = (
+            not self.drink_review
+            and status is None
+            and animal_id is not None
+            and self._project_root is not None
+            and (self._project_root / f"drink_masks/{animal_id}.npy").exists()
+        )
+        if show_mask_hint:
+            self._mask_hint_lbl.setText(
+                "⚠ drink mask on disk from a previous run — flag for drink mask?"
+            )
+            self._mask_hint_frame.setVisible(True)
+        else:
+            self._mask_hint_frame.setVisible(False)
+
+        if status == "ok":
+            self._btn_flag_ok.setChecked(True)
+            self._btn_flag_drink.setChecked(False)
+            self._status_label.setText("✓ OK")
+            self._status_label.setStyleSheet("color: green; font-weight: bold;")
+            self._guidance_label.setVisible(False)
+        elif status == "needs_drink_mask":
+            self._btn_flag_ok.setChecked(False)
+            self._btn_flag_drink.setChecked(True)
+            self._status_label.setText("⚠ Drink Mask")
+            self._status_label.setStyleSheet("color: orange; font-weight: bold;")
+            self._guidance_label.setVisible(self.manifest is not None)
+        elif animal_id in self._pending_animal_ids():
+            self._btn_flag_ok.setChecked(False)
+            self._btn_flag_drink.setChecked(False)
+            self._status_label.setText("pending")
+            self._status_label.setStyleSheet("color: gray;")
+            self._guidance_label.setVisible(False)
+        else:
+            self._btn_flag_ok.setChecked(False)
+            self._btn_flag_drink.setChecked(False)
+            self._status_label.setText("")
+            self._status_label.setStyleSheet("")
+            self._guidance_label.setVisible(False)
 
     def _clear_all(self):
         for curve in self.curves.values():
             curve.setData([], [])
 
 
-    # ---------------- EXPORT ----------------
-
-    def _export_png(self):
-        # TODO: Implement export of the entire grid or active view.
-        print("Export!")
-
-
 # ---------------- Toolbar helpers ----------------
+
 
 def _labeled_combo(parent, label_text: str, combo: QComboBox) -> QWidget:
     w = QWidget(parent)
@@ -325,10 +557,12 @@ def _labeled_combo(parent, label_text: str, combo: QComboBox) -> QWidget:
     h.addWidget(combo)
     return w
 
+
 def _toolbar_spacer(parent) -> QWidget:
     sp = QWidget(parent)
     sp.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
     return sp
+
 
 def _make_nav_button(parent, text: str, std_icon: QStyle.StandardPixmap, slot):
     btn = QToolButton(parent)
@@ -338,10 +572,9 @@ def _make_nav_button(parent, text: str, std_icon: QStyle.StandardPixmap, slot):
     btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
     return btn
 
+
 def _make_toggle(parent, text: str, checked: bool, slot):
     act = QAction(text, parent, checkable=True)
     act.setChecked(checked)
     act.toggled.connect(slot)
     return act
-
-
