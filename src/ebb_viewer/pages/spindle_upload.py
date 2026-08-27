@@ -650,9 +650,16 @@ class SleepyRatWorker(QObject):
         else:
             self.log.emit("All edf files already on SleepyRat, skipping upload and wait.")
 
+    def _ensure_remote_folder(self, api: SleepyRatAPI) -> None:
+        """Create the remote SleepyRat folder if it doesn't exist yet."""
+        if self.remote_folder not in api.folder_names(self.project):
+            self.log.emit(f"Creating new SleepyRat folder '{self.remote_folder}'...")
+            api.create_folder(self.project, self.remote_folder)
+
     def run(self):
         try:
             api = SleepyRatAPI()
+            self._ensure_remote_folder(api)
 
             if self.files is not None:
                 # Explicit file list (rerun path).
