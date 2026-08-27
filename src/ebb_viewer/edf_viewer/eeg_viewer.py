@@ -69,12 +69,20 @@ def _load_recording(edf_path: Path, csv_path: Path | None = None) -> Recording:
 
 
 def _load_state_df(csv_path: Path) -> pd.DataFrame | None:
-    """Load a SPINDLE-scored CSV and drop UI-only columns. Return None on parse error."""
+    """Load a SPINDLE-scored CSV and drop UI-only columns. Return None on parse error.
+
+    Older SPINDLE outputs carry both `rawstate` (clean) and `state`
+    (artifact-coded, redundant for display) plus `threshold`; those two are
+    dropped. Newer outputs have only `state` (already clean, same meaning
+    as old `rawstate`) and no `threshold`, so nothing is dropped.
+    """
     try:
         df = pd.read_csv(csv_path)
-        return df.drop(columns=["state", "threshold"], errors="ignore")
     except (OSError, pd.errors.ParserError):
         return None
+    if "rawstate" in df.columns:
+        df = df.drop(columns=["state", "threshold"], errors="ignore")
+    return df
 
 
 class AnnotationMaskDialog(QtWidgets.QDialog):

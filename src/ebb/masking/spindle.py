@@ -8,11 +8,13 @@ Returned masks follow the project convention: True = keep, False = mask.
 """
 
 import csv
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
+
+from ebb.io.spindle_csv import NOISE_COLUMNS, STATE_COLUMNS, resolve_column
 
 # SPINDLE encodes class probabilities under columns named `class_prob_{i}`
 # where i is the model's output index. The state-letter to index mapping
@@ -52,7 +54,7 @@ def state(
     """
     return _expand_spindle_column(
         path=path,
-        column_name="rawstate",
+        column_candidates=STATE_COLUMNS,
         fs=fs,
         winsize=winsize,
         value_fn=lambda s: s in labels,
@@ -87,7 +89,7 @@ def state_prob(
     state_mask = state(path, labels=[label], fs=fs, winsize=winsize, include=True)
     prob_mask = _expand_spindle_column(
         path=path,
-        column_name=_PROB_COLUMN[label],
+        column_candidates=(_PROB_COLUMN[label],),
         fs=fs,
         winsize=winsize,
         value_fn=lambda v: float(v) >= sprob,
@@ -113,7 +115,8 @@ def spindle_noise(
     Args:
         path: Path to a SPINDLE-scored CSV.
         noise_thresh: Probability threshold in [0, 1]. Samples in epochs
-            whose `noise_probs` is at or above this become False (when
+            whose noise probability (`noise_probs`, or `noise_prob` in
+            newer SPINDLE outputs) is at or above this become False (when
             `include=False`).
         fs: Sample rate of the target EEG data.
         winsize: SPINDLE epoch length in seconds.
@@ -125,7 +128,7 @@ def spindle_noise(
     """
     return _expand_spindle_column(
         path=path,
-        column_name="noise_probs",
+        column_candidates=NOISE_COLUMNS,
         fs=fs,
         winsize=winsize,
         value_fn=lambda v: float(v) >= noise_thresh,
@@ -135,7 +138,7 @@ def spindle_noise(
 
 def _expand_spindle_column(
     path: str | Path,
-    column_name: str,
+    column_candidates: Sequence[str],
     fs: int,
     winsize: int,
     value_fn: Callable[[str], bool],
@@ -145,16 +148,22 @@ def _expand_spindle_column(
 
     Each per-epoch boolean is repeated `fs * winsize` times so the result
     has one element per audio sample over the recording.
+
+    Args:
+        column_candidates: Column names to try, in priority order. The
+            first one present in the CSV header is used.
     """
     with open(path, newline="") as infile:
         reader = csv.reader(infile)
         header = next(reader)
 
-        if column_name not in header:
+        try:
+            column_name = resolve_column(header, column_candidates)
+        except ValueError as e:
             raise ValueError(
-                f"Spindle file format needs update. Expected a '{column_name}' "
-                "column in the CSV header."
-            )
+                f"Spindle file format needs update. Expected one of "
+                f"{list(column_candidates)} in the CSV header."
+            ) from e
 
         idx = header.index(column_name)
         values = [row[idx] for row in reader]

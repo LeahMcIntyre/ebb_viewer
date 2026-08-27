@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ebb.io import sleepyrat_auth
 from ebb.io.sleepyrat import SleepyRatAPI
 from ebb_viewer.pipeline import sleepyrat_config
 from ebb_viewer.pipeline.manifest import Manifest
@@ -72,6 +73,22 @@ class SpindleUploadPage(QWidget):
         if self._api is None:
             self._api = SleepyRatAPI()
         return self._api
+
+    def _warn_if_pairing_needed(self) -> None:
+        """Log a heads-up if this call is about to trigger first-time SleepyRat pairing.
+
+        Pairing opens a browser tab and blocks (off the GUI thread) until the
+        user approves it there, so this just sets expectations rather than
+        letting the wait look like a hang. `load_token` is a local file read,
+        safe to call synchronously here — true regardless of whether *this*
+        call path uses `self._api` or constructs its own `SleepyRatAPI`
+        (e.g. `SleepyRatWorker` always builds its own).
+        """
+        if sleepyrat_auth.load_token() is None:
+            self._log(
+                "No cached SleepyRat credential — opening a browser tab for you to "
+                "approve access. Waiting for approval..."
+            )
 
     def _spindle_root(self) -> Path:
         return self.project_root / "spindle_edfs"
@@ -327,9 +344,11 @@ class SpindleUploadPage(QWidget):
 
     def _fetch_folders(self, project: str):
         # Off-thread fetch so a slow/unreachable SleepyRat doesn't freeze the GUI.
-        api = self._ensure_api()
+        # `_ensure_api()` itself runs inside the worker (not here) since it may
+        # block on first-time SleepyRat pairing.
+        self._warn_if_pairing_needed()
         self._folders_thread = QThread(self)
-        self._folders_worker = _ApiFetchWorker(lambda: api.folder_names(project))
+        self._folders_worker = _ApiFetchWorker(lambda: self._ensure_api().folder_names(project))
         self._folders_worker.result.connect(
             lambda names: self._on_folders_fetched(project, names)
         )
@@ -383,12 +402,14 @@ class SpindleUploadPage(QWidget):
     # ------------- SleepyRat – project list -------------
     def _refresh_projects_clicked(self):
         # Off-thread fetch so a slow/unreachable SleepyRat doesn't freeze the GUI.
-        api = self._ensure_api()
+        # `_ensure_api()` itself runs inside the worker (not here) since it may
+        # block on first-time SleepyRat pairing.
+        self._warn_if_pairing_needed()
         self._log("Fetching SleepyRat projects...")
         self.btn_refresh_projects.setEnabled(False)
 
         self._projects_thread = QThread(self)
-        self._projects_worker = _ApiFetchWorker(api.project_names)
+        self._projects_worker = _ApiFetchWorker(lambda: self._ensure_api().project_names())
         self._projects_worker.result.connect(self._on_projects_fetched)
         self._projects_worker.error.connect(self._on_projects_error)
         launch_worker(
@@ -424,8 +445,6 @@ class SpindleUploadPage(QWidget):
         QMessageBox.critical(self, "SleepyRat Error", msg)
 
     def _new_project_clicked(self):
-        api = self._ensure_api()
-
         name, ok = QInputDialog.getText(
             self,
             "New SleepyRat Project",
@@ -442,20 +461,38 @@ class SpindleUploadPage(QWidget):
         )
         desc = (desc or "").strip()
 
+        # Off-thread so a slow/unreachable SleepyRat (or first-time pairing)
+        # doesn't freeze the GUI.
+        self._warn_if_pairing_needed()
         self._log(f"Creating SleepyRat project '{name}'...")
-        try:
-            api.create_project(name, description=desc)
-        except Exception as e:
-            self._log(f"ERROR creating project: {e}")
-            QMessageBox.critical(self, "SleepyRat Error", str(e))
-            return
+        self.btn_new_project.setEnabled(False)
 
-        # Refresh list and select the new project
+        self._new_project_thread = QThread(self)
+        self._new_project_worker = _ApiFetchWorker(
+            lambda: self._ensure_api().create_project(name, description=desc)
+        )
+        self._new_project_worker.result.connect(lambda _: self._on_new_project_created(name))
+        self._new_project_worker.error.connect(self._on_new_project_error)
+        launch_worker(
+            self._new_project_thread,
+            self._new_project_worker,
+            on_finished=lambda: self.btn_new_project.setEnabled(True),
+        )
+
+    def _on_new_project_created(self, name: str) -> None:
+        # Refresh list and select the new project. `_refresh_projects_clicked`
+        # kicks off its own async fetch, so the selection below only "sticks"
+        # once that fetch's result handler repopulates the combo — a
+        # pre-existing timing gap, not introduced here.
         self._refresh_projects_clicked()
         idx = self.project_combo.findText(name)
         if idx >= 0:
             self.project_combo.setCurrentIndex(idx)
         self._log(f"Project '{name}' created and selected.")
+
+    def _on_new_project_error(self, msg: str) -> None:
+        self._log(f"ERROR creating project: {msg}")
+        QMessageBox.critical(self, "SleepyRat Error", msg)
 
     # ------------- Run action -------------
     def _get_common_run_context(
@@ -554,6 +591,7 @@ class SpindleUploadPage(QWidget):
         if not self._check_output_dir(out_dir):
             return
         combo = self._current_combo_name()
+        self._warn_if_pairing_needed()
         self._launch_worker(
             project, remote_folder, out_dir, upload_dir=upload_dir, save_combo=combo
         )
@@ -656,7 +694,7 @@ class SleepyRatWorker(QObject):
             self.log.emit(f"Downloading {len(to_download)} sleep state csv(s) to {self.out_dir}...")
             for name in to_download:
                 out_path = self.out_dir / (Path(name).stem + "_labels.csv")
-                labels = api.download_labels(self.project, self.remote_folder, name, threshold=0.5)
+                labels = api.download_labels(self.project, self.remote_folder, name)
                 with open(out_path, "w") as f:
                     f.write(labels)
             self.log.emit("Done.")

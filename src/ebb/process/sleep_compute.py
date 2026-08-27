@@ -7,8 +7,10 @@ Two output families:
 - Per-state spindle masking (`compute_spindle_fractions`): how much of each
   state was masked out by SPINDLE's noise probability.
 
-CSV inputs are SPINDLE outputs with a `rawstate` column (`w`/`n`/`r`); the
-spindle-fraction function additionally requires a `noise_probs` column.
+CSV inputs are SPINDLE outputs with a `rawstate` column (`w`/`n`/`r`), or
+`state` in newer SPINDLE outputs; the spindle-fraction function additionally
+requires a noise-probability column (`noise_probs`, or `noise_prob` in
+newer outputs).
 
 Sample-rate convention: `compute_sleep_metrics_per_mouse` is rate-agnostic —
 the caller passes `sample_rate_hz` to match whatever rate `states` arrives at
@@ -27,6 +29,7 @@ import pandas as pd
 
 from ebb.core.naming import parse_animal_id
 from ebb.io.edf_header import read_edf_start_datetime
+from ebb.io.spindle_csv import NOISE_COLUMNS, STATE_COLUMNS, resolve_column
 
 # SPINDLE epoch length in seconds. Used to upsample 0.25 Hz epoch-rate state
 # arrays to 1 Hz second-rate when rotating to a fixed clock hour.
@@ -66,17 +69,23 @@ def seconds_until_target(start: datetime, h: int = 6) -> int:
 
 
 def read_rawstate_column(state_path: Path) -> list[str]:
-    """Read the ``rawstate`` column from a SPINDLE-scored CSV (one entry per epoch).
+    """Read the per-epoch state column from a SPINDLE-scored CSV.
+
+    Reads ``rawstate`` if present, else ``state`` (newer SPINDLE outputs
+    store the same clean `w`/`n`/`r` values under `state` instead).
 
     Raises:
-        ValueError: if the file is empty or has no ``rawstate`` column.
+        ValueError: if the file is empty or has neither column.
     """
     with open(state_path, newline="") as f:
         reader = csv.reader(f)
         header = next(reader, None)
-        if header is None or "rawstate" not in header:
+        if header is None:
             raise ValueError(f"'rawstate' column not found in {state_path.name}")
-        idx = header.index("rawstate")
+        try:
+            idx = header.index(resolve_column(header, STATE_COLUMNS))
+        except ValueError:
+            raise ValueError(f"'rawstate' column not found in {state_path.name}") from None
         return [row[idx] for row in reader if row]
 
 
@@ -487,10 +496,10 @@ def compute_spindle_fractions(
 ) -> pd.DataFrame:
     """Per-animal, per-state spindle mask fractions from SPINDLE output CSVs.
 
-    Reads the `rawstate` column (`w`/`n`/`r`) to determine sleep state and
-    the `noise_probs` column to determine whether each epoch is spindle-
-    masked. An epoch is counted as spindle-masked when its noise probability
-    is >= `noise_prob_threshold`.
+    Reads the `rawstate` (or `state`, in newer outputs) column (`w`/`n`/`r`)
+    to determine sleep state and the `noise_probs` (or `noise_prob`) column
+    to determine whether each epoch is spindle-masked. An epoch is counted
+    as spindle-masked when its noise probability is >= `noise_prob_threshold`.
 
     Returns:
         Long-form DataFrame with one row per (animal × state) plus a "Total"
@@ -503,12 +512,14 @@ def compute_spindle_fractions(
         with open(state_path) as f:
             reader = csv.reader(f)
             header = next(reader)
-            if "rawstate" not in header:
-                raise ValueError(f"'rawstate' column not found in {state_path.name}")
-            if "noise_probs" not in header:
-                raise ValueError(f"'noise_probs' column not found in {state_path.name}")
-            raw_idx = header.index("rawstate")
-            noise_idx = header.index("noise_probs")
+            try:
+                raw_idx = header.index(resolve_column(header, STATE_COLUMNS))
+            except ValueError:
+                raise ValueError(f"'rawstate' column not found in {state_path.name}") from None
+            try:
+                noise_idx = header.index(resolve_column(header, NOISE_COLUMNS))
+            except ValueError:
+                raise ValueError(f"'noise_probs' column not found in {state_path.name}") from None
 
             clean_counts: Counter = Counter()
             spindle_counts: Counter = Counter()

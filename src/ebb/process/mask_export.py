@@ -80,8 +80,9 @@ def build_state_intervals(
 ) -> list[IntervalRow]:
     """Read raw scorer states from a Spindle CSV; return one row per contiguous run.
 
-    Uses the ``rawstate`` column directly (no probability filtering — that is a
-    separate, optional step applied to ``clean_per_state`` exports).
+    Uses the ``rawstate`` column directly (``state`` in newer SPINDLE
+    outputs; no probability filtering — that is a separate, optional step
+    applied to ``clean_per_state`` exports).
 
     Args:
         state_path: Path to the Spindle scoring CSV.

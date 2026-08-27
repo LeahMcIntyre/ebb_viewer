@@ -521,7 +521,7 @@ class MaskParamsWidget(QWidget):
         self.dspin_noise.setSingleStep(0.05)
         self.dspin_noise.setValue(_DEFAULT_NOISE_THRESH)
         self.dspin_noise.setToolTip(
-            "Epochs with SleepyRat noise_probs ≥ this value are masked out. "
+            "Epochs with SleepyRat noise probability ≥ this value are masked out. "
             "Range 0–1; lower = stricter."
         )
         form.addRow("Spindle Noise Threshold:", self.dspin_noise)

@@ -188,9 +188,24 @@ def test_state_intervals_empty_csv(tmp_path):
 def test_state_intervals_missing_column_raises(tmp_path):
     csv_path = tmp_path / "bad.csv"
     with open(csv_path, "w", newline="") as f:
-        csv.writer(f).writerow(["state", "epoch"])
+        csv.writer(f).writerow(["epoch"])
     with pytest.raises(ValueError, match="rawstate"):
         build_state_intervals(csv_path, fs=FS, winsize=WINSIZE)
+
+
+def test_state_intervals_new_format_state_column(tmp_path):
+    """Newer SPINDLE outputs store the clean state under `state`, not `rawstate`."""
+    csv_path = tmp_path / "states.csv"
+    with open(csv_path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["state", "noise_prob"])
+        for rs in ["w", "w", "n"]:
+            w.writerow([rs, "0.0"])
+    rows = build_state_intervals(csv_path, fs=FS, winsize=WINSIZE)
+    assert [(r.start_sample, r.end_sample, r.label) for r in rows] == [
+        (0, 2000, "wake"),
+        (2000, 3000, "nrem"),
+    ]
 
 
 def test_state_intervals_winsize_affects_sample_boundaries(tmp_path):
