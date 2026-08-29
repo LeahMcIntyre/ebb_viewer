@@ -343,6 +343,8 @@ def _run_estimate_psd(labels, wake, nrem, rem, sd):
     # mismatch guard passes for the fs=10 call below.
     reader.header.samples_per_record = [10, 10, 10, 10]
 
+    notch_instance = MagicMock(side_effect=lambda pro_arg, *a, **kw: pro_arg)
+
     with (
         patch.object(psd_compute.edf, "Reader", return_value=reader),
         patch.object(psd_compute, "producer", side_effect=fake_producer),
@@ -355,6 +357,7 @@ def _run_estimate_psd(labels, wake, nrem, rem, sd):
         patch.object(
             psd_compute.estimators, "psd", return_value=(1, np.array([1.0]), np.zeros((3, 1)))
         ),
+        patch.object(psd_compute, "NotchButterworth", return_value=notch_instance),
     ):
         results = psd_compute.estimate_psd(
             path=Path("AM001_foo_PREPROCESSED.edf"),
