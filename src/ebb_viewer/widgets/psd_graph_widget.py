@@ -184,15 +184,23 @@ class PSDGridPage(QWidget):
             _make_nav_button(self, "Next", QStyle.StandardPixmap.SP_ArrowForward, self._next_animal)
         )
 
-        # (Optional) overflow menu
-        more = QToolButton(self)
-        more.setText("More")
-        more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        m = QMenu(more)
-        m.addAction("Reset zoom")
-        m.triggered.connect(self._on_reset_zoom)
-        more.setMenu(m)
-        tb.addWidget(more)
+        # Overflow menu. Also hosts "Edit Notes": the flag buttons/status
+        # label further right already get squeezed into the QToolBar's own
+        # overflow chevron on a normal-width window (this toolbar's
+        # sizeHint routinely exceeds the ~1000px default window), so a
+        # standalone Notes button placed after them would be invisible
+        # without hunting for that chevron. This button sits before the
+        # flag buttons, so it stays visible whenever they do.
+        self._btn_more = QToolButton(self)
+        self._btn_more.setText("More")
+        self._btn_more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        m = QMenu(self._btn_more)
+        act_reset_zoom = m.addAction("Reset zoom")
+        act_reset_zoom.triggered.connect(self._on_reset_zoom)
+        self._act_menu_notes = m.addAction("📝 Edit Notes")
+        self._act_menu_notes.triggered.connect(self._open_notes_dialog)
+        self._btn_more.setMenu(m)
+        tb.addWidget(self._btn_more)
 
         # Flag buttons (only useful when manifest is provided)
         self._act_flag_sep = tb.addSeparator()
@@ -217,12 +225,6 @@ class PSDGridPage(QWidget):
         self._btn_flag_reset.clicked.connect(lambda: self._reset_psd_status())
         self._act_flag_reset = tb.addWidget(self._btn_flag_reset)
 
-        self._btn_notes = QPushButton("📝")
-        self._btn_notes.setFixedHeight(26)
-        self._btn_notes.setToolTip("Edit notes")
-        self._btn_notes.clicked.connect(self._open_notes_dialog)
-        self._act_notes = tb.addWidget(self._btn_notes)
-
         self._status_label = QLabel("")
         self._status_label.setMinimumWidth(90)
         self._act_status = tb.addWidget(self._status_label)
@@ -232,7 +234,7 @@ class PSDGridPage(QWidget):
             self._act_flag_ok.setVisible(False)
             self._act_flag_drink.setVisible(False)
             self._act_flag_reset.setVisible(False)
-            self._act_notes.setVisible(False)
+            self._act_menu_notes.setVisible(False)
             self._act_status.setVisible(False)
 
         self.root.addWidget(tb)
@@ -543,8 +545,8 @@ class PSDGridPage(QWidget):
 
         entry = self.manifest.get(animal_id) if animal_id else None
         has_notes = bool(entry is not None and entry.notes.strip())
-        self._btn_notes.setStyleSheet("font-weight: bold;" if has_notes else "")
-        self._btn_notes.setToolTip(entry.notes if has_notes else "Edit notes")
+        self._btn_more.setText("More 📝" if has_notes else "More")
+        self._btn_more.setToolTip(entry.notes if has_notes else "")
 
         # Drink-mask-on-disk hint: show during Pass 1 when status is not yet set
         show_mask_hint = (
