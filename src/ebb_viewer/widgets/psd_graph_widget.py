@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 
 from ebb.process.state_presets import gather_states_from_store
 from ebb_viewer.pipeline import psd_params
+from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
 
 # Default interpolation range shown to bridge the line-noise gap in the PSD
@@ -216,6 +217,12 @@ class PSDGridPage(QWidget):
         self._btn_flag_reset.clicked.connect(lambda: self._reset_psd_status())
         self._act_flag_reset = tb.addWidget(self._btn_flag_reset)
 
+        self._btn_notes = QPushButton("📝")
+        self._btn_notes.setFixedHeight(26)
+        self._btn_notes.setToolTip("Edit notes")
+        self._btn_notes.clicked.connect(self._open_notes_dialog)
+        self._act_notes = tb.addWidget(self._btn_notes)
+
         self._status_label = QLabel("")
         self._status_label.setMinimumWidth(90)
         self._act_status = tb.addWidget(self._status_label)
@@ -225,6 +232,7 @@ class PSDGridPage(QWidget):
             self._act_flag_ok.setVisible(False)
             self._act_flag_drink.setVisible(False)
             self._act_flag_reset.setVisible(False)
+            self._act_notes.setVisible(False)
             self._act_status.setVisible(False)
 
         self.root.addWidget(tb)
@@ -507,6 +515,22 @@ class PSDGridPage(QWidget):
         self._update_flag_status()
         self.manifest_changed.emit()
 
+    def _open_notes_dialog(self) -> None:
+        """Open the notes editor for the current animal and persist any change."""
+        if self.manifest is None:
+            return
+        animal_id = self._manifest_animal_id()
+        if animal_id is None:
+            return
+        entry = self.manifest.get(animal_id)
+        initial = entry.notes if entry is not None else ""
+        dlg = NotesDialog(animal_id=animal_id, initial_text=initial, parent=self)
+        if not dlg.exec():
+            return
+        self.manifest.set_notes(animal_id, dlg.text())
+        self._update_flag_status()
+        self.manifest_changed.emit()
+
     def _update_flag_status(self) -> None:
         if self.manifest is None:
             return
@@ -516,6 +540,11 @@ class PSDGridPage(QWidget):
         status = run.psd_status.get(self._run_name) if run else None
 
         self._btn_flag_reset.setEnabled(status is not None)
+
+        entry = self.manifest.get(animal_id) if animal_id else None
+        has_notes = bool(entry is not None and entry.notes.strip())
+        self._btn_notes.setStyleSheet("font-weight: bold;" if has_notes else "")
+        self._btn_notes.setToolTip(entry.notes if has_notes else "Edit notes")
 
         # Drink-mask-on-disk hint: show during Pass 1 when status is not yet set
         show_mask_hint = (
