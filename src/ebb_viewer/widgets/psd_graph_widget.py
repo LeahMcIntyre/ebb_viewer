@@ -29,7 +29,17 @@ from PyQt6.QtWidgets import (
 )
 
 from ebb.process.state_presets import gather_states_from_store
+from ebb_viewer.pipeline import psd_params
 from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
+
+# Default interpolation range shown to bridge the line-noise gap in the PSD
+# plot. Widened to [56, 64] when the run's psd_params.json has
+# apply_notch=True, since the notch filter's stopband is 57-63 Hz (see
+# `_NOTCH_HALFWIDTH_HZ` in `ebb.process.psd_compute`) and the wider range
+# also covers its rolloff. Purely a display default — the user can still
+# override it via the interp-range toolbar action.
+_DEFAULT_INTERP_RANGE = [58, 62]
+_NOTCH_INTERP_RANGE = [56, 64]
 
 # Inverse-filter coefficients applied in FILTER_RANGE Hz (inclusive) when the
 # Inverse Filter toggle is on, to compensate for hardware-induced amplitude
@@ -80,7 +90,7 @@ class PSDGridPage(QWidget):
 
         # View preferences
         self.xrange: tuple[float, float] = self.DEFAULT_XRANGE
-        self.interp_range = [58, 62]
+        self.interp_range = self._default_interp_range()
         self.xlog = False
         self.ylog = True
         self.invfil = False
@@ -101,6 +111,17 @@ class PSDGridPage(QWidget):
             self._render()
         self._update_flag_status()
         self._install_shortcuts()
+
+    def _default_interp_range(self) -> list[float]:
+        """[56, 64] if this run's psd_params.json has apply_notch=True, else
+        the narrower non-notch default. Missing/unreadable params (e.g. a
+        run computed before the notch filter existed) are treated as
+        apply_notch=False, since no notch was ever applied for those runs."""
+        if self._project_root is not None:
+            params = psd_params.load(self._project_root, self._run_name)
+            if params is not None and params.get("apply_notch", False):
+                return list(_NOTCH_INTERP_RANGE)
+        return list(_DEFAULT_INTERP_RANGE)
 
     # ---------------- UI BUILDERS ----------------
 

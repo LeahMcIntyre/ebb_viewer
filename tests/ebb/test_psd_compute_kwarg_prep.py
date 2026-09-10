@@ -28,10 +28,16 @@ def test_prepare_kwargs_returns_tuple_of_four():
 
 def test_prepare_kwargs_passes_through_estimator_kwargs():
     kwargs, _, _, _ = _prepare_estimator_kwargs(
-        {"fs": 250, "winsize": 180, "nstd": 5, "noise_thresh": 0.5}
+        {"fs": 250, "winsize": 180, "nstd": 5, "noise_thresh": 0.5, "apply_notch": False}
     )
     # All of these are real estimate_psd kwargs and must survive.
-    assert kwargs == {"fs": 250, "winsize": 180, "nstd": 5, "noise_thresh": 0.5}
+    assert kwargs == {
+        "fs": 250,
+        "winsize": 180,
+        "nstd": 5,
+        "noise_thresh": 0.5,
+        "apply_notch": False,
+    }
 
 
 # ---------------------------------------------------------------------------
