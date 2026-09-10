@@ -157,6 +157,7 @@ def estimate_psd(
     ann_pad_after_sec: float = 0.0,
     hour_windows: list[tuple[float, float]] | None = None,
     selected_days: list[int] | None = None,
+    apply_notch: bool = True,
     notch_halfwidth_hz: float = _NOTCH_HALFWIDTH_HZ,
     notch_order: int = _NOTCH_ORDER,
     **kwargs,
@@ -166,9 +167,10 @@ def estimate_psd(
     After the amplitude-based artifact masks (commutator, SD-threshold) are
     computed from the raw signal, the producer is bidirectionally
     notch-filtered around 60 Hz (+/- `notch_halfwidth_hz`) to remove
-    power-line noise (see `NotchButterworth`) before any PSD is estimated.
-    Artifact detection therefore sees the true raw amplitudes, while only
-    the values actually going into each PSD are filtered.
+    power-line noise (see `NotchButterworth`) before any PSD is estimated,
+    unless `apply_notch` is False. Artifact detection therefore sees the
+    true raw amplitudes, while only the values actually going into each
+    PSD are filtered.
 
     For each label group in `labels`, builds a state mask (which samples
     belong to that group), intersects it with the combined artifact mask
@@ -232,6 +234,10 @@ def estimate_psd(
             midnight (`hour_end < hour_start`).
         selected_days:
             0-based calendar-day indices to keep, applied to `hour_windows`.
+        apply_notch:
+            If True (default), apply the 60 Hz notch filter described above.
+            If False, `notch_halfwidth_hz`/`notch_order` are ignored and the
+            producer is left unfiltered before PSD estimation.
         notch_halfwidth_hz:
             Half-bandwidth (Hz) of the 60 Hz notch, i.e. the stopband spans
             `60 - notch_halfwidth_hz` to `60 + notch_halfwidth_hz`. Defaults
@@ -318,12 +324,13 @@ def estimate_psd(
         # Amplitude-based artifact masks are done. Now notch-filter the
         # still-continuous producer before anything reaches estimators.psd,
         # so artifact detection above saw the true raw amplitudes.
-        notch = NotchButterworth(
-            fstop=(_NOTCH_CENTER_HZ - notch_halfwidth_hz, _NOTCH_CENTER_HZ + notch_halfwidth_hz),
-            fs=fs,
-            order=notch_order,
-        )
-        pro = notch(pro, chunksize, axis=-1, dephase=True)
+        if apply_notch:
+            notch = NotchButterworth(
+                fstop=(_NOTCH_CENTER_HZ - notch_halfwidth_hz, _NOTCH_CENTER_HZ + notch_halfwidth_hz),
+                fs=fs,
+                order=notch_order,
+            )
+            pro = notch(pro, chunksize, axis=-1, dephase=True)
 
         # Compute SWD mask if path provided
         if swd_path is not None:

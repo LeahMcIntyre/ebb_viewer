@@ -13,6 +13,7 @@ from ebb_viewer.widgets.mask_params_widget import (
     _annotation_subtitle,
     _drink_subtitle,
     _hour_window_subtitle,
+    _notch_subtitle,
     _sd_subtitle,
     _spindle_subtitle,
     _states_subtitle,
@@ -61,6 +62,7 @@ def test_to_params_returns_dict_with_expected_keys(qapp):
         "selected_days",
         "use_drink_mask",
         "drink_pad",
+        "apply_notch",
     }
     assert set(params.keys()) == expected_keys
 
@@ -81,6 +83,7 @@ def test_default_to_params_matches_estimate_psd_defaults(qapp):
     assert params["selected_days"] is None
     assert params["use_drink_mask"] is True
     assert params["drink_pad"] == 2
+    assert params["apply_notch"] is True
     # default states are wake/nrem/rem
     assert sorted(params["states"]) == sorted(["wake", "nrem", "rem"])
 
@@ -290,6 +293,22 @@ def test_drink_pad_round_trip(qapp):
 
 
 # ---------------------------------------------------------------------------
+# Notch filter section
+# ---------------------------------------------------------------------------
+
+
+def test_notch_filter_enabled_by_default(qapp):
+    w = _make_widget(qapp)
+    assert w.to_params()["apply_notch"] is True
+
+
+def test_notch_filter_can_be_disabled(qapp):
+    w = _make_widget(qapp)
+    w.chk_apply_notch.setChecked(False)
+    assert w.to_params()["apply_notch"] is False
+
+
+# ---------------------------------------------------------------------------
 # Full round-trip — the primary safety net
 # ---------------------------------------------------------------------------
 
@@ -318,6 +337,7 @@ def _full_params(tmp_path: Path) -> dict:
         "selected_days": [0, 1],
         "use_drink_mask": True,
         "drink_pad": 4,
+        "apply_notch": False,
     }
 
 
@@ -512,6 +532,14 @@ def test_drink_subtitle_on():
     assert _drink_subtitle({"use_drink_mask": True, "drink_pad": 2}) == "on · 2s pad"
 
 
+def test_notch_subtitle_off():
+    assert _notch_subtitle({"apply_notch": False}) == "off"
+
+
+def test_notch_subtitle_on():
+    assert _notch_subtitle({"apply_notch": True}) == "on"
+
+
 # ---------------------------------------------------------------------------
 # Live subtitle updates — the widget refreshes headers as the user edits.
 # ---------------------------------------------------------------------------
@@ -526,6 +554,7 @@ def test_subtitle_initialized_at_construction(qapp):
     assert w._sections["annotation"].subtitle() == "off"
     assert w._sections["hour_window"].subtitle() == "off"
     assert w._sections["drink"].subtitle() == "on · 2s pad"
+    assert w._sections["notch"].subtitle() == "on"
 
 
 def test_subtitle_updates_on_edit(qapp):
