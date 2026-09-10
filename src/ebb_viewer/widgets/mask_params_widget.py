@@ -62,6 +62,12 @@ _DEFAULT_SWD_PAD_S = 0
 # should scale with user-set fs".
 _DEFAULT_COMM_VALUE_UV = 2000
 
+# Matches `_NOTCH_CENTER_HZ` / `_NOTCH_HALFWIDTH_HZ` in
+# ``ebb.process.psd_compute`` — display-only for now (not yet a widget
+# control); `apply_notch` is the only notch param the widget exposes.
+_NOTCH_CENTER_HZ = 60.0
+_NOTCH_HALFWIDTH_HZ = 3.0
+
 # Project sampling rate hardcoded across the codebase; used by the
 # hour-window coverage preview to convert sample counts → seconds.
 _DEFAULT_FS = 250
@@ -538,14 +544,18 @@ class MaskParamsWidget(QWidget):
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(8, 4, 8, 8)
-        self.chk_apply_notch = QCheckBox("Apply 60 Hz notch filter")
+        lo = _NOTCH_CENTER_HZ - _NOTCH_HALFWIDTH_HZ
+        hi = _NOTCH_CENTER_HZ + _NOTCH_HALFWIDTH_HZ
+        self.chk_apply_notch = QCheckBox(f"Apply {lo:g}–{hi:g} Hz notch filter")
         self.chk_apply_notch.setChecked(True)
         v.addWidget(self.chk_apply_notch)
 
         hint = QLabel(
-            "Removes 60 Hz power-line noise before PSD estimation. Applied after "
-            "the amplitude-based artifact masks above, so artifact detection "
-            "still sees the true raw amplitudes."
+            f"Removes power-line noise in the {lo:g}–{hi:g} Hz band (centered on "
+            f"{_NOTCH_CENTER_HZ:g} Hz) before PSD estimation. Applied after the "
+            "amplitude-based artifact masks above, so artifact detection still "
+            "sees the true raw amplitudes. Range is fixed for now — not yet "
+            "user-configurable."
         )
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #555; font-size: 11px;")
@@ -1315,7 +1325,11 @@ def _spindle_subtitle(p: dict) -> str:
 
 
 def _notch_subtitle(p: dict) -> str:
-    return "on" if p.get("apply_notch", True) else "off"
+    if not p.get("apply_notch", True):
+        return "off"
+    lo = _NOTCH_CENTER_HZ - _NOTCH_HALFWIDTH_HZ
+    hi = _NOTCH_CENTER_HZ + _NOTCH_HALFWIDTH_HZ
+    return f"on · {lo:g}–{hi:g} Hz"
 
 
 def _swd_subtitle(p: dict) -> str:

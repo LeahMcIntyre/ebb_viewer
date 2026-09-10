@@ -537,7 +537,7 @@ def test_notch_subtitle_off():
 
 
 def test_notch_subtitle_on():
-    assert _notch_subtitle({"apply_notch": True}) == "on"
+    assert _notch_subtitle({"apply_notch": True}) == "on · 57–63 Hz"
 
 
 # ---------------------------------------------------------------------------
@@ -554,7 +554,7 @@ def test_subtitle_initialized_at_construction(qapp):
     assert w._sections["annotation"].subtitle() == "off"
     assert w._sections["hour_window"].subtitle() == "off"
     assert w._sections["drink"].subtitle() == "on · 2s pad"
-    assert w._sections["notch"].subtitle() == "on"
+    assert w._sections["notch"].subtitle() == "on · 57–63 Hz"
 
 
 def test_subtitle_updates_on_edit(qapp):

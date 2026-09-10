@@ -50,9 +50,11 @@ _COMMUTATOR_PAD_SAMPLES = 250  # 1 s @ 250 Hz: extend each event by this much
 _COMMUTATOR_MIN_TO_PAD = 10  # only events longer than this get the pad
 _COMMUTATOR_MASK_CHUNKSIZE = 45_000  # chunksize for streaming the comm mask
 
-# 60 Hz power-line notch: 8th-order Butterworth bandstop, 60 Hz +/- 2 Hz.
+# 60 Hz power-line notch: 8th-order Butterworth bandstop, 60 Hz +/- 3 Hz
+# (57-63 Hz) — the parameters validated against the Stxbp1 characterization
+# set (see line_noise branch's compute_stxbp1_char_notch_psds.py).
 _NOTCH_CENTER_HZ = 60.0
-_NOTCH_HALFWIDTH_HZ = 2.0
+_NOTCH_HALFWIDTH_HZ = 3.0
 _NOTCH_ORDER = 8
 
 
@@ -241,7 +243,7 @@ def estimate_psd(
         notch_halfwidth_hz:
             Half-bandwidth (Hz) of the 60 Hz notch, i.e. the stopband spans
             `60 - notch_halfwidth_hz` to `60 + notch_halfwidth_hz`. Defaults
-            to `_NOTCH_HALFWIDTH_HZ` (2 Hz).
+            to `_NOTCH_HALFWIDTH_HZ` (3 Hz, i.e. 57-63 Hz).
         notch_order:
             Order of the Butterworth notch filter. Defaults to `_NOTCH_ORDER`
             (8).
