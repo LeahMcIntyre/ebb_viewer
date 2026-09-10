@@ -43,6 +43,11 @@ def _norm_stem(path: "str | Path") -> str:
     return unicodedata.normalize("NFC", Path(path).stem).replace(" ", "_")
 
 
+def sanitize_sleepyrat_name(name: str) -> str:
+    """Normalize a SleepyRat project/remote-folder name — it can't contain spaces."""
+    return unicodedata.normalize("NFC", name).replace(" ", "_")
+
+
 class SpindleUploadPage(QWidget):
     """
     Upload spindle EDFs from project_root / 'spindle_edfs' / <combo>
@@ -320,7 +325,7 @@ class SpindleUploadPage(QWidget):
 
             if combo:
                 current = self.remote_folder_edit.currentText().strip()
-                auto_prefix = self.project_root.stem + "_"
+                auto_prefix = sanitize_sleepyrat_name(self.project_root.stem) + "_"
                 if not current or current.startswith(auto_prefix):
                     self.remote_folder_edit.setCurrentText(auto_prefix + combo)
 
@@ -500,7 +505,7 @@ class SpindleUploadPage(QWidget):
     ) -> tuple[str, str, Path | None, Path] | None:
         """Return (project, remote_folder, upload_dir, out_dir) or show errors and return None."""
         upload_dir = self._current_upload_dir()
-        remote_folder = self.remote_folder_edit.currentText().strip()
+        remote_folder = sanitize_sleepyrat_name(self.remote_folder_edit.currentText().strip())
 
         # SleepyRat project
         project = self.project_combo.currentText().strip()
