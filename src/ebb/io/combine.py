@@ -234,9 +234,12 @@ def combine_swd(
             # normalize to (N, 2)
             if swds.size == 0:
                 continue
-            if swds.ndim == 1 and swds.shape[0] == 2:
+            if swds.ndim == 1:
+                # squeeze_me collapses a single-event (1, K) row to (K,);
+                # restore the row dimension so the 2D branch below handles
+                # it uniformly.
                 swds = swds[np.newaxis, :]
-            elif swds.ndim == 2 and swds.shape[1] >= 2:
+            if swds.ndim == 2 and swds.shape[1] >= 2:
                 swds = swds[:, 0:2]
             else:
                 raise ValueError(f"Unexpected SWD array shape {swds.shape} in {path}")
