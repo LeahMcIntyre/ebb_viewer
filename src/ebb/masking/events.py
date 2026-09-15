@@ -166,15 +166,11 @@ def swd(
 
     # --- normalize shape to (N, 2) of [start_s, stop_s] ---
     if swds.ndim == 1:
-        # If it's exactly 2 values, assume a single [start, stop]
-        if swds.shape[0] == 2:
-            swds = swds[np.newaxis, :]
-        else:
-            raise ValueError(
-                f"Unexpected 1D swd array shape {swds.shape} in {path}; "
-                "expected length 2 for [start, stop]."
-            )
-    elif swds.ndim == 2:
+        # squeeze_me collapses a single-event (1, K) row to (K,); restore
+        # the row dimension so the 2D branch below can handle it uniformly.
+        swds = swds[np.newaxis, :]
+
+    if swds.ndim == 2:
         # Note: a (0, 2) "no events" array hits the `swds.size == 0` guard
         # above, so reaching here with shape[1] < 2 means malformed data.
         if swds.shape[1] >= 2:
