@@ -280,13 +280,16 @@ def combine_swd(
             if swds.size:
                 combined_swds.append(swds)
 
-        if not combined_swds:
+        if combined_swds:
+            out_swds = np.vstack(combined_swds)
+            out_swds = out_swds[np.argsort(out_swds[:, 0])]
+        else:
             if verbose:
-                print(f"No SWDs found in first {amount_hours}h for {swd_paths}")
-            continue
-
-        out_swds = np.vstack(combined_swds)
-        out_swds = out_swds[np.argsort(out_swds[:, 0])]
+                print(
+                    f"No SWDs found in first {amount_hours}h for {swd_paths}; "
+                    "writing an empty combined file."
+                )
+            out_swds = np.empty((0, 2))
 
         out_path = swd_paths[0].with_stem(swd_paths[0].stem + "_COMBINED")
         if out_path.exists() and not overwrite:
