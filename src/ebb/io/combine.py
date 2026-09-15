@@ -47,7 +47,12 @@ def locate(dirpath: str | Path, fs: float, expected_hours: float) -> list[Path]:
     return result
 
 
-def pair(paths: Sequence[Path], pattern: str | Pattern[str] = r"[^_]+") -> list[tuple[Path, ...]]:
+def pair(
+    paths: Sequence[Path],
+    pattern: str | Pattern[str] = r"[^_]+",
+    *,
+    require_all_paired: bool = True,
+) -> list[tuple[Path, ...]]:
     """Group files whose stems share the same token captured by `pattern`.
 
     The token is the regex match (the literal `m.group()`); two files belong
@@ -55,9 +60,16 @@ def pair(paths: Sequence[Path], pattern: str | Pattern[str] = r"[^_]+") -> list[
     Substring containment is intentionally avoided so that `"CW1"` does not
     silently group with `"CW10..."`.
 
+    Args:
+        require_all_paired: If True (default), every path must have at
+            least one companion sharing its token. If False, a path with
+            no companion becomes its own singleton group instead of
+            raising.
+
     Raises:
-        ValueError if `pattern` fails to match any path's stem, or if a
-        path's token has no companion in the input.
+        ValueError if `pattern` fails to match any path's stem, or (when
+        `require_all_paired` is True) if a path's token has no companion
+        in the input.
     """
     pat = re.compile(pattern) if isinstance(pattern, str) else pattern
 
@@ -76,7 +88,7 @@ def pair(paths: Sequence[Path], pattern: str | Pattern[str] = r"[^_]+") -> list[
             for other in cpaths
             if (m2 := pat.search(other.stem)) and m2.group() == token
         ]
-        if not matches:
+        if not matches and require_all_paired:
             raise ValueError(f"No match found for token {token!r} from {path.name}")
 
         for mm in matches:
@@ -186,6 +198,9 @@ def combine_swd(
 ) -> list[Path]:
     """Combine SWD timestamp .mat files corresponding to short EDFs.
 
+    Files with no companion sharing their token (an animal whose recording
+    never needed a restart) are left untouched.
+
     Returns a list of created combined MAT paths.
     """
     swd_dir = Path(swd_dir)
@@ -197,7 +212,7 @@ def combine_swd(
             print("No .mat files found.")
         return []
 
-    path_tuples = pair(short_files, pattern)
+    path_tuples = pair(short_files, pattern, require_all_paired=False)
     amount_sec = float(amount_hours) * 3600.0
 
     def extract_pnum(path: Path) -> int:
@@ -210,6 +225,11 @@ def combine_swd(
     created: list[Path] = []
 
     for tup in path_tuples:
+        if len(tup) < 2:
+            # No companion chunk: this animal's file is already complete,
+            # nothing to combine.
+            continue
+
         swd_paths = sorted(tup, key=extract_pnum)
 
         if verbose:
@@ -303,7 +323,9 @@ def combine_annotations(
     ``Start Time`` / ``End Time`` / other columns are written through
     unmodified. Mask code that reads the combined file via
     ``ebb.masking.annotations.keyword_mask`` only consults the time column,
-    so this preserves correctness.
+    so this preserves correctness. Files with no companion sharing their
+    token (an animal whose recording never needed a restart) are left
+    untouched.
 
     Args:
         ann_dir: Directory containing per-recording annotation .txt files.
@@ -329,7 +351,7 @@ def combine_annotations(
             print("No .txt annotation files found.")
         return []
 
-    path_tuples = pair(short_files, pattern)
+    path_tuples = pair(short_files, pattern, require_all_paired=False)
     amount_sec = float(amount_hours) * 3600.0
 
     def extract_pnum(path: Path) -> int:
@@ -341,6 +363,11 @@ def combine_annotations(
     created: list[Path] = []
 
     for tup in path_tuples:
+        if len(tup) < 2:
+            # No companion chunk: this animal's file is already complete,
+            # nothing to combine.
+            continue
+
         ann_paths = sorted(tup, key=extract_pnum)
 
         if verbose:
