@@ -377,9 +377,10 @@ def test_combine_swd_handles_1d_single_event(tmp_path: Path):
     assert np.allclose(out_swds, expected)
 
 
-def test_combine_swd_skips_group_when_no_events_within_window(tmp_path: Path):
+def test_combine_swd_writes_empty_file_when_no_events_within_window(tmp_path: Path):
     """If every event in every file of a group has start >= amount_sec, the
-    function emits nothing for that group (no combined output written)."""
+    function still writes a _COMBINED.mat for that group, with an empty
+    event array, rather than skipping the output."""
     p1 = tmp_path / "final_ts_ANIMAL_P001.mat"
     p2 = tmp_path / "final_ts_ANIMAL_P002.mat"
     # amount_sec at amount_hours=1 is 3600. Every event starts beyond that.
@@ -387,9 +388,13 @@ def test_combine_swd_skips_group_when_no_events_within_window(tmp_path: Path):
     savemat(p2, {"final_ts": np.array([[4000.0, 4010.0]])})
 
     created = combine_swd(tmp_path, amount_hours=1, verbose=False)
-    assert created == []
-    # And no _COMBINED.mat should have been left behind.
-    assert not any(p.name.endswith("_COMBINED.mat") for p in tmp_path.glob("*.mat"))
+    assert len(created) == 1
+    out_path = created[0]
+    assert out_path.name == "final_ts_ANIMAL_P001_COMBINED.mat"
+
+    data = loadmat(out_path, squeeze_me=True, struct_as_record=False)
+    out_swds = np.asarray(data["final_ts"])
+    assert out_swds.size == 0
 
 
 def test_combine_swd_three_file_group(tmp_path: Path):

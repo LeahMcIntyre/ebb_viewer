@@ -47,7 +47,12 @@ def locate(dirpath: str | Path, fs: float, expected_hours: float) -> list[Path]:
     return result
 
 
-def pair(paths: Sequence[Path], pattern: str | Pattern[str] = r"[^_]+") -> list[tuple[Path, ...]]:
+def pair(
+    paths: Sequence[Path],
+    pattern: str | Pattern[str] = r"[^_]+",
+    *,
+    require_all_paired: bool = True,
+) -> list[tuple[Path, ...]]:
     """Group files whose stems share the same token captured by `pattern`.
 
     The token is the regex match (the literal `m.group()`); two files belong
@@ -55,9 +60,16 @@ def pair(paths: Sequence[Path], pattern: str | Pattern[str] = r"[^_]+") -> list[
     Substring containment is intentionally avoided so that `"CW1"` does not
     silently group with `"CW10..."`.
 
+    Args:
+        require_all_paired: If True (default), every path must have at
+            least one companion sharing its token. If False, a path with
+            no companion becomes its own singleton group instead of
+            raising.
+
     Raises:
-        ValueError if `pattern` fails to match any path's stem, or if a
-        path's token has no companion in the input.
+        ValueError if `pattern` fails to match any path's stem, or (when
+        `require_all_paired` is True) if a path's token has no companion
+        in the input.
     """
     pat = re.compile(pattern) if isinstance(pattern, str) else pattern
 
@@ -76,7 +88,7 @@ def pair(paths: Sequence[Path], pattern: str | Pattern[str] = r"[^_]+") -> list[
             for other in cpaths
             if (m2 := pat.search(other.stem)) and m2.group() == token
         ]
-        if not matches:
+        if not matches and require_all_paired:
             raise ValueError(f"No match found for token {token!r} from {path.name}")
 
         for mm in matches:
@@ -183,8 +195,14 @@ def combine_swd(
     verbose: bool = True,
     label_preference: str = "final_ts",
     overwrite: bool = False,
+    move_short_files: bool = False,
+    short_dirname: str = "short_files",
 ) -> list[Path]:
     """Combine SWD timestamp .mat files corresponding to short EDFs.
+
+    Files with no companion sharing their token (an animal whose recording
+    never needed a restart) are left untouched, including by
+    `move_short_files`.
 
     Returns a list of created combined MAT paths.
     """
@@ -197,7 +215,7 @@ def combine_swd(
             print("No .mat files found.")
         return []
 
-    path_tuples = pair(short_files, pattern)
+    path_tuples = pair(short_files, pattern, require_all_paired=False)
     amount_sec = float(amount_hours) * 3600.0
 
     def extract_pnum(path: Path) -> int:
@@ -208,9 +226,16 @@ def combine_swd(
         return int(m.group(1))
 
     created: list[Path] = []
+    combined_inputs: list[Path] = []
 
     for tup in path_tuples:
+        if len(tup) < 2:
+            # No companion chunk: this animal's file is already complete,
+            # nothing to combine.
+            continue
+
         swd_paths = sorted(tup, key=extract_pnum)
+        combined_inputs.extend(swd_paths)
 
         if verbose:
             print(f"Combining SWD files: {[p.stem for p in swd_paths]}")
@@ -234,9 +259,12 @@ def combine_swd(
             # normalize to (N, 2)
             if swds.size == 0:
                 continue
-            if swds.ndim == 1 and swds.shape[0] == 2:
+            if swds.ndim == 1:
+                # squeeze_me collapses a single-event (1, K) row to (K,);
+                # restore the row dimension so the 2D branch below handles
+                # it uniformly.
                 swds = swds[np.newaxis, :]
-            elif swds.ndim == 2 and swds.shape[1] >= 2:
+            if swds.ndim == 2 and swds.shape[1] >= 2:
                 swds = swds[:, 0:2]
             else:
                 raise ValueError(f"Unexpected SWD array shape {swds.shape} in {path}")
@@ -252,13 +280,16 @@ def combine_swd(
             if swds.size:
                 combined_swds.append(swds)
 
-        if not combined_swds:
+        if combined_swds:
+            out_swds = np.vstack(combined_swds)
+            out_swds = out_swds[np.argsort(out_swds[:, 0])]
+        else:
             if verbose:
-                print(f"No SWDs found in first {amount_hours}h for {swd_paths}")
-            continue
-
-        out_swds = np.vstack(combined_swds)
-        out_swds = out_swds[np.argsort(out_swds[:, 0])]
+                print(
+                    f"No SWDs found in first {amount_hours}h for {swd_paths}; "
+                    "writing an empty combined file."
+                )
+            out_swds = np.empty((0, 2))
 
         out_path = swd_paths[0].with_stem(swd_paths[0].stem + "_COMBINED")
         if out_path.exists() and not overwrite:
@@ -272,6 +303,9 @@ def combine_swd(
 
         savemat(out_path, out_data)
         created.append(out_path)
+
+    if move_short_files and combined_inputs:
+        move_files(swd_dir / short_dirname, combined_inputs, exist_ok=True)
 
     return created
 
@@ -289,6 +323,8 @@ def combine_annotations(
     delimiter: str = "\t",
     verbose: bool = True,
     overwrite: bool = False,
+    move_short_files: bool = False,
+    short_dirname: str = "short_files",
 ) -> list[Path]:
     """Combine Pinnacle annotation .txt files corresponding to short EDFs.
 
@@ -300,7 +336,9 @@ def combine_annotations(
     ``Start Time`` / ``End Time`` / other columns are written through
     unmodified. Mask code that reads the combined file via
     ``ebb.masking.annotations.keyword_mask`` only consults the time column,
-    so this preserves correctness.
+    so this preserves correctness. Files with no companion sharing their
+    token (an animal whose recording never needed a restart) are left
+    untouched, including by `move_short_files`.
 
     Args:
         ann_dir: Directory containing per-recording annotation .txt files.
@@ -313,6 +351,10 @@ def combine_annotations(
         delimiter: CSV delimiter; Pinnacle uses tab.
         verbose: Print progress messages.
         overwrite: If True, replace existing *_COMBINED.txt outputs.
+        move_short_files: If True, move each group's original chunk files
+            (those actually combined) into `short_dirname`.
+        short_dirname: Subdirectory of `ann_dir` to move combined-away
+            chunk files into, when `move_short_files` is True.
 
     Returns:
         List of paths to the *_COMBINED.txt files written.
@@ -326,7 +368,7 @@ def combine_annotations(
             print("No .txt annotation files found.")
         return []
 
-    path_tuples = pair(short_files, pattern)
+    path_tuples = pair(short_files, pattern, require_all_paired=False)
     amount_sec = float(amount_hours) * 3600.0
 
     def extract_pnum(path: Path) -> int:
@@ -336,9 +378,16 @@ def combine_annotations(
         return int(m.group(1))
 
     created: list[Path] = []
+    combined_inputs: list[Path] = []
 
     for tup in path_tuples:
+        if len(tup) < 2:
+            # No companion chunk: this animal's file is already complete,
+            # nothing to combine.
+            continue
+
         ann_paths = sorted(tup, key=extract_pnum)
+        combined_inputs.extend(ann_paths)
 
         if verbose:
             print(f"Combining annotation files: {[p.stem for p in ann_paths]}")
@@ -410,6 +459,9 @@ def combine_annotations(
 
         created.append(out_path)
 
+    if move_short_files and combined_inputs:
+        move_files(ann_dir / short_dirname, combined_inputs, exist_ok=True)
+
     return created
 
 
@@ -438,6 +490,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_swd.add_argument("--amount-hours", type=float, default=24)
     p_swd.add_argument("--pattern", type=str, default=r"([^_]+)")
     p_swd.add_argument("--label-preference", type=str, default="final_ts")
+    p_swd.add_argument("--move-short-files", action="store_true")
+    p_swd.add_argument("--short-dirname", type=str, default="short_files")
     p_swd.add_argument("--overwrite", action="store_true")
     p_swd.add_argument("--quiet", action="store_true")
 
@@ -448,6 +502,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     p_ann.add_argument("--header-rows", type=int, default=6)
     p_ann.add_argument("--time-col", type=str, default="Time From Start")
     p_ann.add_argument("--delimiter", type=str, default="\t")
+    p_ann.add_argument("--move-short-files", action="store_true")
+    p_ann.add_argument("--short-dirname", type=str, default="short_files")
     p_ann.add_argument("--overwrite", action="store_true")
     p_ann.add_argument("--quiet", action="store_true")
 
@@ -474,6 +530,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             pattern=args.pattern,
             verbose=not args.quiet,
             label_preference=args.label_preference,
+            move_short_files=args.move_short_files,
+            short_dirname=args.short_dirname,
             overwrite=args.overwrite,
         )
         return 0
@@ -487,6 +545,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             time_col=args.time_col,
             delimiter=args.delimiter,
             verbose=not args.quiet,
+            move_short_files=args.move_short_files,
+            short_dirname=args.short_dirname,
             overwrite=args.overwrite,
         )
         return 0
