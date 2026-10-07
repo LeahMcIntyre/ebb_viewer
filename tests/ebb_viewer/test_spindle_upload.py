@@ -7,7 +7,13 @@ mocked out.
 
 from unittest.mock import MagicMock, patch
 
-from ebb_viewer.pages.spindle_upload import SleepyRatWorker
+from ebb_viewer.pages.spindle_upload import SleepyRatWorker, sanitize_sleepyrat_name
+
+
+def test_sanitize_sleepyrat_name_replaces_spaces():
+    assert sanitize_sleepyrat_name("My Project") == "My_Project"
+    assert sanitize_sleepyrat_name("no_spaces") == "no_spaces"
+    assert sanitize_sleepyrat_name("multi   space") == "multi___space"
 
 
 def _make_api(*, existing_folders=(), existing_submissions=()):

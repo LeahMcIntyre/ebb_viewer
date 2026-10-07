@@ -1,8 +1,6 @@
-"""Widget for editing mask + filter parameters in the Export Masks page.
+"""Widget for editing mask + filter parameters.
 
-Currently used only by `pages/export_masks.py`. The PSD compute page
-(`pages/psds.py`) keeps its own `MaskingSettingsDialog` — unifying the
-two is tracked as a Phase 3 cleanup TODO.
+Shared by both `pages/export_masks.py` and `pages/psds.py`.
 
 The widget owns its UI state and exposes:
 - :meth:`to_params` — current values as a JSON-serializable dict
@@ -63,6 +61,12 @@ _DEFAULT_SWD_PAD_S = 0
 # backend for now — see TODO entry "psd_compute: Commutator mask params
 # should scale with user-set fs".
 _DEFAULT_COMM_VALUE_UV = 2000
+
+# Matches `_NOTCH_CENTER_HZ` / `_NOTCH_HALFWIDTH_HZ` in
+# ``ebb.process.psd_compute`` — display-only for now (not yet a widget
+# control); `apply_notch` is the only notch param the widget exposes.
+_NOTCH_CENTER_HZ = 60.0
+_NOTCH_HALFWIDTH_HZ = 3.0
 
 # Project sampling rate hardcoded across the codebase; used by the
 # hour-window coverage preview to convert sample counts → seconds.
@@ -168,6 +172,7 @@ class MaskParamsWidget(QWidget):
             ),
             "use_drink_mask": self.chk_use_drink.isChecked(),
             "drink_pad": int(self.spin_drink_pad.value()),
+            "apply_notch": self.chk_apply_notch.isChecked(),
         }
 
     def from_params(self, params: dict) -> None:
@@ -242,6 +247,9 @@ class MaskParamsWidget(QWidget):
             self.spin_drink_pad.setValue(int(params.get("drink_pad", _DEFAULT_DRINK_PAD_S)))
             self._refresh_offset_csv_label()
 
+            # Notch filter
+            self.chk_apply_notch.setChecked(bool(params.get("apply_notch", True)))
+
         # Refresh live previews after the bulk update so labels reflect
         # the loaded state rather than the pre-load state.
         self._refresh_swd_status()
@@ -285,6 +293,7 @@ class MaskParamsWidget(QWidget):
         self._sections["commutator"].set_subtitle(_commutator_subtitle(p))
         self._sections["sd"].set_subtitle(_sd_subtitle(p))
         self._sections["spindle"].set_subtitle(_spindle_subtitle(p))
+        self._sections["notch"].set_subtitle(_notch_subtitle(p))
         self._sections["swd"].set_subtitle(_swd_subtitle(p))
         self._sections["annotation"].set_subtitle(_annotation_subtitle(p))
         self._sections["hour_window"].set_subtitle(_hour_window_subtitle(p))
@@ -335,6 +344,9 @@ class MaskParamsWidget(QWidget):
                 "Spindle Noise Mask (applied to all states)",
                 self._build_spindle_group(),
                 collapsed=True,
+            ),
+            "notch": CollapsibleSection(
+                "60 Hz Notch Filter", self._build_notch_group(), collapsed=True
             ),
             "drink": CollapsibleSection(
                 "Drink Mask", self._build_drink_group(), collapsed=False
@@ -526,6 +538,28 @@ class MaskParamsWidget(QWidget):
         )
         form.addRow("Spindle Noise Threshold:", self.dspin_noise)
         v.addLayout(form)
+        return w
+
+    def _build_notch_group(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setContentsMargins(8, 4, 8, 8)
+        lo = _NOTCH_CENTER_HZ - _NOTCH_HALFWIDTH_HZ
+        hi = _NOTCH_CENTER_HZ + _NOTCH_HALFWIDTH_HZ
+        self.chk_apply_notch = QCheckBox(f"Apply {lo:g}–{hi:g} Hz notch filter")
+        self.chk_apply_notch.setChecked(True)
+        v.addWidget(self.chk_apply_notch)
+
+        hint = QLabel(
+            f"Removes power-line noise in the {lo:g}–{hi:g} Hz band (centered on "
+            f"{_NOTCH_CENTER_HZ:g} Hz) before PSD estimation. Applied after the "
+            "amplitude-based artifact masks above, so artifact detection still "
+            "sees the true raw amplitudes. Range is fixed for now — not yet "
+            "user-configurable."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #555; font-size: 11px;")
+        v.addWidget(hint)
         return w
 
     def _build_swd_group(self) -> QWidget:
@@ -851,6 +885,7 @@ class MaskParamsWidget(QWidget):
         self.btn_add_window.clicked.connect(self._on_add_window_clicked)
 
         self.chk_use_drink.toggled.connect(self._emit_changed)
+        self.chk_apply_notch.toggled.connect(self._emit_changed)
 
     def _emit_changed(self, *_args) -> None:
         self.changed.emit()
@@ -878,6 +913,7 @@ class MaskParamsWidget(QWidget):
             self._hw_days_edit,
             self.chk_use_drink,
             self.spin_drink_pad,
+            self.chk_apply_notch,
         ]
         return sources
 
@@ -1286,6 +1322,14 @@ def _sd_subtitle(p: dict) -> str:
 
 def _spindle_subtitle(p: dict) -> str:
     return f"{p['noise_thresh']:.2f}"
+
+
+def _notch_subtitle(p: dict) -> str:
+    if not p.get("apply_notch", True):
+        return "off"
+    lo = _NOTCH_CENTER_HZ - _NOTCH_HALFWIDTH_HZ
+    hi = _NOTCH_CENTER_HZ + _NOTCH_HALFWIDTH_HZ
+    return f"on · {lo:g}–{hi:g} Hz"
 
 
 def _swd_subtitle(p: dict) -> str:

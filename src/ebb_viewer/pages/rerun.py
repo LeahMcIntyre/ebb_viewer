@@ -30,7 +30,7 @@ from PyQt6.QtWidgets import (
 
 from ebb.io import sleepyrat_auth
 from ebb.preprocess.edf import spindle as spindle_preprocess
-from ebb_viewer.pages.spindle_upload import SleepyRatWorker
+from ebb_viewer.pages.spindle_upload import SleepyRatWorker, sanitize_sleepyrat_name
 from ebb_viewer.pipeline import sleepyrat_config
 from ebb_viewer.pipeline.manifest import (
     Manifest,
@@ -325,7 +325,7 @@ class RerunPage(QWidget):
             seen.add(rerun_combo)
             saved = sleepyrat_config.get_combo(self.project_root, orig_combo)
             project = saved["project"] if saved else ""
-            folder = f"{self.project_root.stem}_{rerun_combo}"
+            folder = f"{sanitize_sleepyrat_name(self.project_root.stem)}_{rerun_combo}"
             rows.append((rerun_combo, project, folder))
 
         if not rows:
@@ -451,5 +451,6 @@ class _UploadDialog(QDialog):
     def entries(self) -> list[tuple[str, str, str]]:
         """Return [(rerun_combo, project, remote_folder), ...] as edited by the user."""
         return [
-            (combo, p.text().strip(), f.text().strip()) for combo, p, f in self._rows
+            (combo, p.text().strip(), sanitize_sleepyrat_name(f.text().strip()))
+            for combo, p, f in self._rows
         ]

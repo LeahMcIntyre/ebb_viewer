@@ -5,7 +5,10 @@ Two layers:
   `labels`), artifact masks (commutator threshold, SD threshold within
   wake, SPINDLE noise, SWD events, drink events, annotation keywords,
   time-of-day windows), combines them, and emits one `PSDResult` per
-  (state-group ∩ all-artifacts).
+  (state-group ∩ all-artifacts). The signal is notch-filtered around 60 Hz
+  after the amplitude-based artifact masks (commutator, SD threshold) are
+  computed, so artifact detection sees the true raw amplitudes while only
+  the values feeding each PSD are filtered.
 - `batch_estimate` / `rerun_with_drink_masks`: multiprocess drivers that
   pair EEG files with their state/SWD/drink/annotation companions and
   fan `estimate_psd` calls out to a process pool. The two functions
@@ -28,6 +31,7 @@ import numpy as np
 import numpy.typing as npt
 from openseize import producer
 from openseize.file_io import edf, path_utils
+from openseize.filtering import iir
 from openseize.spectra import estimators
 
 from ebb import masking
@@ -45,6 +49,36 @@ _COMMUTATOR_RADIUS_SAMPLES = 250  # 1 s @ 250 Hz: merge events closer than this
 _COMMUTATOR_PAD_SAMPLES = 250  # 1 s @ 250 Hz: extend each event by this much
 _COMMUTATOR_MIN_TO_PAD = 10  # only events longer than this get the pad
 _COMMUTATOR_MASK_CHUNKSIZE = 45_000  # chunksize for streaming the comm mask
+
+# 60 Hz power-line notch: 8th-order Butterworth bandstop, 60 Hz +/- 3 Hz
+# (57-63 Hz) — the parameters validated against the Stxbp1 characterization
+# set (see line_noise branch's compute_stxbp1_char_notch_psds.py).
+_NOTCH_CENTER_HZ = 60.0
+_NOTCH_HALFWIDTH_HZ = 3.0
+_NOTCH_ORDER = 8
+
+
+class NotchButterworth(iir.Butter):
+    """Fixed-order Butterworth bandstop, unlike `iir.Butter` which derives
+    order from `gpass`/`gstop` via `scipy.signal.buttord`.
+
+    `fpass` only needs to sit outside `fstop` so `iir.IIR.btype` resolves to
+    "bandstop"; it plays no role in the actual filter design once `order` is
+    overridden.
+    """
+
+    def __init__(self, fstop: tuple[float, float], fs: float, order: int, margin_hz: float = 2.0):
+        self._order = order
+        fpass = (fstop[0] - margin_hz, fstop[1] + margin_hz)
+        super().__init__(fpass=fpass, fstop=fstop, fs=fs)
+
+    @property
+    def ftype(self) -> str:
+        return "butter"
+
+    @property
+    def order(self) -> tuple[int, np.ndarray]:
+        return self._order, self.fstop
 
 # UI-only kwargs that may arrive from saved psd_params.json but must be
 # stripped before forwarding to `estimate_psd`.
@@ -125,9 +159,20 @@ def estimate_psd(
     ann_pad_after_sec: float = 0.0,
     hour_windows: list[tuple[float, float]] | None = None,
     selected_days: list[int] | None = None,
+    apply_notch: bool = True,
+    notch_halfwidth_hz: float = _NOTCH_HALFWIDTH_HZ,
+    notch_order: int = _NOTCH_ORDER,
     **kwargs,
 ) -> list[PSDResult]:
     """Estimate PSDs for one EDF, one PSDResult per (state-group ∩ artifacts).
+
+    After the amplitude-based artifact masks (commutator, SD-threshold) are
+    computed from the raw signal, the producer is bidirectionally
+    notch-filtered around 60 Hz (+/- `notch_halfwidth_hz`) to remove
+    power-line noise (see `NotchButterworth`) before any PSD is estimated,
+    unless `apply_notch` is False. Artifact detection therefore sees the
+    true raw amplitudes, while only the values actually going into each
+    PSD are filtered.
 
     For each label group in `labels`, builds a state mask (which samples
     belong to that group), intersects it with the combined artifact mask
@@ -191,6 +236,17 @@ def estimate_psd(
             midnight (`hour_end < hour_start`).
         selected_days:
             0-based calendar-day indices to keep, applied to `hour_windows`.
+        apply_notch:
+            If True (default), apply the 60 Hz notch filter described above.
+            If False, `notch_halfwidth_hz`/`notch_order` are ignored and the
+            producer is left unfiltered before PSD estimation.
+        notch_halfwidth_hz:
+            Half-bandwidth (Hz) of the 60 Hz notch, i.e. the stopband spans
+            `60 - notch_halfwidth_hz` to `60 + notch_halfwidth_hz`. Defaults
+            to `_NOTCH_HALFWIDTH_HZ` (3 Hz, i.e. 57-63 Hz).
+        notch_order:
+            Order of the Butterworth notch filter. Defaults to `_NOTCH_ORDER`
+            (8).
         **kwargs:
             Forwarded to openseize's `estimators.psd`.
 
@@ -266,6 +322,17 @@ def estimate_psd(
         )[0]
         if verbose:
             print(f"{animal} SD threshold mask computed")
+
+        # Amplitude-based artifact masks are done. Now notch-filter the
+        # still-continuous producer before anything reaches estimators.psd,
+        # so artifact detection above saw the true raw amplitudes.
+        if apply_notch:
+            notch = NotchButterworth(
+                fstop=(_NOTCH_CENTER_HZ - notch_halfwidth_hz, _NOTCH_CENTER_HZ + notch_halfwidth_hz),
+                fs=fs,
+                order=notch_order,
+            )
+            pro = notch(pro, chunksize, axis=-1, dephase=True)
 
         # Compute SWD mask if path provided
         if swd_path is not None:

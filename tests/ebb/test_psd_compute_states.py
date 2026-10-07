@@ -343,6 +343,8 @@ def _run_estimate_psd(labels, wake, nrem, rem, sd):
     # mismatch guard passes for the fs=10 call below.
     reader.header.samples_per_record = [10, 10, 10, 10]
 
+    notch_instance = MagicMock(side_effect=lambda pro_arg, *a, **kw: pro_arg)
+
     with (
         patch.object(psd_compute.edf, "Reader", return_value=reader),
         patch.object(psd_compute, "producer", side_effect=fake_producer),
@@ -355,6 +357,7 @@ def _run_estimate_psd(labels, wake, nrem, rem, sd):
         patch.object(
             psd_compute.estimators, "psd", return_value=(1, np.array([1.0]), np.zeros((3, 1)))
         ),
+        patch.object(psd_compute, "NotchButterworth", return_value=notch_instance),
     ):
         results = psd_compute.estimate_psd(
             path=Path("AM001_foo_PREPROCESSED.edf"),
@@ -522,3 +525,72 @@ def test_wake_submask_computed_for_mixed_wake_group():
     )
 
     assert captured["state_calls"] == [("w", "n", "r"), ("w",)]
+
+
+# ---------------------------------------------------------------------------
+# estimate_psd: apply_notch toggles the 60 Hz notch filter
+# ---------------------------------------------------------------------------
+
+
+def _run_estimate_psd_notch(apply_notch: bool):
+    """Invoke estimate_psd with all heavy deps mocked, returning the
+    NotchButterworth mock so callers can assert whether it was used."""
+    from ebb.process import psd_compute
+
+    n = 20
+    wake = np.ones(n, dtype=bool)
+    reader = MagicMock()
+    reader.__enter__ = MagicMock(return_value=reader)
+    reader.__exit__ = MagicMock(return_value=False)
+    reader.channels = []
+    reader.shape = (3, n)
+    reader.header.samples_per_record = [10, 10, 10, 10]
+
+    notch_instance = MagicMock(side_effect=lambda pro_arg, *a, **kw: pro_arg)
+    notch_cls = MagicMock(return_value=notch_instance)
+
+    def fake_producer(*args, **kwargs):
+        m = MagicMock()
+        m.shape = (n,)
+        return m
+
+    with (
+        patch.object(psd_compute.edf, "Reader", return_value=reader),
+        patch.object(psd_compute, "producer", side_effect=fake_producer),
+        patch.object(psd_compute.masking, "state", return_value=wake),
+        patch.object(
+            psd_compute.masking, "commutator_threshold", return_value=(np.ones(n, dtype=bool),)
+        ),
+        patch.object(psd_compute.masking, "spindle_noise", return_value=np.ones(n, dtype=bool)),
+        patch.object(psd_compute.masking, "sd_threshold", return_value=(np.ones(n, dtype=bool),)),
+        patch.object(
+            psd_compute.estimators, "psd", return_value=(1, np.array([1.0]), np.zeros((3, 1)))
+        ),
+        patch.object(psd_compute, "NotchButterworth", notch_cls),
+    ):
+        psd_compute.estimate_psd(
+            path=Path("AM001_foo_PREPROCESSED.edf"),
+            state_path=Path("AM001_states.csv"),
+            channels=[0, 1, 2],
+            labels={"wake": ["w"]},
+            fs=10,
+            chunksize=n,
+            verbose=False,
+            apply_notch=apply_notch,
+        )
+
+    return notch_cls, notch_instance
+
+
+def test_apply_notch_true_applies_notch_filter():
+    notch_cls, notch_instance = _run_estimate_psd_notch(apply_notch=True)
+
+    notch_cls.assert_called_once()
+    notch_instance.assert_called_once()
+
+
+def test_apply_notch_false_skips_notch_filter():
+    notch_cls, notch_instance = _run_estimate_psd_notch(apply_notch=False)
+
+    notch_cls.assert_not_called()
+    notch_instance.assert_not_called()

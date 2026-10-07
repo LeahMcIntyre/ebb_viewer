@@ -29,7 +29,18 @@ from PyQt6.QtWidgets import (
 )
 
 from ebb.process.state_presets import gather_states_from_store
+from ebb_viewer.pipeline import psd_params
+from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
+
+# Default interpolation range shown to bridge the line-noise gap in the PSD
+# plot. Widened to [56, 64] when the run's psd_params.json has
+# apply_notch=True, since the notch filter's stopband is 57-63 Hz (see
+# `_NOTCH_HALFWIDTH_HZ` in `ebb.process.psd_compute`) and the wider range
+# also covers its rolloff. Purely a display default — the user can still
+# override it via the interp-range toolbar action.
+_DEFAULT_INTERP_RANGE = [58, 62]
+_NOTCH_INTERP_RANGE = [56, 64]
 
 # Inverse-filter coefficients applied in FILTER_RANGE Hz (inclusive) when the
 # Inverse Filter toggle is on, to compensate for hardware-induced amplitude
@@ -80,7 +91,7 @@ class PSDGridPage(QWidget):
 
         # View preferences
         self.xrange: tuple[float, float] = self.DEFAULT_XRANGE
-        self.interp_range = [58, 62]
+        self.interp_range = self._default_interp_range()
         self.xlog = False
         self.ylog = True
         self.invfil = False
@@ -101,6 +112,17 @@ class PSDGridPage(QWidget):
             self._render()
         self._update_flag_status()
         self._install_shortcuts()
+
+    def _default_interp_range(self) -> list[float]:
+        """[56, 64] if this run's psd_params.json has apply_notch=True, else
+        the narrower non-notch default. Missing/unreadable params (e.g. a
+        run computed before the notch filter existed) are treated as
+        apply_notch=False, since no notch was ever applied for those runs."""
+        if self._project_root is not None:
+            params = psd_params.load(self._project_root, self._run_name)
+            if params is not None and params.get("apply_notch", False):
+                return list(_NOTCH_INTERP_RANGE)
+        return list(_DEFAULT_INTERP_RANGE)
 
     # ---------------- UI BUILDERS ----------------
 
@@ -162,15 +184,23 @@ class PSDGridPage(QWidget):
             _make_nav_button(self, "Next", QStyle.StandardPixmap.SP_ArrowForward, self._next_animal)
         )
 
-        # (Optional) overflow menu
-        more = QToolButton(self)
-        more.setText("More")
-        more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        m = QMenu(more)
-        m.addAction("Reset zoom")
-        m.triggered.connect(self._on_reset_zoom)
-        more.setMenu(m)
-        tb.addWidget(more)
+        # Overflow menu. Also hosts "Edit Notes": the flag buttons/status
+        # label further right already get squeezed into the QToolBar's own
+        # overflow chevron on a normal-width window (this toolbar's
+        # sizeHint routinely exceeds the ~1000px default window), so a
+        # standalone Notes button placed after them would be invisible
+        # without hunting for that chevron. This button sits before the
+        # flag buttons, so it stays visible whenever they do.
+        self._btn_more = QToolButton(self)
+        self._btn_more.setText("More")
+        self._btn_more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        m = QMenu(self._btn_more)
+        act_reset_zoom = m.addAction("Reset zoom")
+        act_reset_zoom.triggered.connect(self._on_reset_zoom)
+        self._act_menu_notes = m.addAction("📝 Edit Notes")
+        self._act_menu_notes.triggered.connect(self._open_notes_dialog)
+        self._btn_more.setMenu(m)
+        tb.addWidget(self._btn_more)
 
         # Flag buttons (only useful when manifest is provided)
         self._act_flag_sep = tb.addSeparator()
@@ -204,6 +234,7 @@ class PSDGridPage(QWidget):
             self._act_flag_ok.setVisible(False)
             self._act_flag_drink.setVisible(False)
             self._act_flag_reset.setVisible(False)
+            self._act_menu_notes.setVisible(False)
             self._act_status.setVisible(False)
 
         self.root.addWidget(tb)
@@ -486,6 +517,22 @@ class PSDGridPage(QWidget):
         self._update_flag_status()
         self.manifest_changed.emit()
 
+    def _open_notes_dialog(self) -> None:
+        """Open the notes editor for the current animal and persist any change."""
+        if self.manifest is None:
+            return
+        animal_id = self._manifest_animal_id()
+        if animal_id is None:
+            return
+        entry = self.manifest.get(animal_id)
+        initial = entry.notes if entry is not None else ""
+        dlg = NotesDialog(animal_id=animal_id, initial_text=initial, parent=self)
+        if not dlg.exec():
+            return
+        self.manifest.set_notes(animal_id, dlg.text())
+        self._update_flag_status()
+        self.manifest_changed.emit()
+
     def _update_flag_status(self) -> None:
         if self.manifest is None:
             return
@@ -495,6 +542,11 @@ class PSDGridPage(QWidget):
         status = run.psd_status.get(self._run_name) if run else None
 
         self._btn_flag_reset.setEnabled(status is not None)
+
+        entry = self.manifest.get(animal_id) if animal_id else None
+        has_notes = bool(entry is not None and entry.notes.strip())
+        self._btn_more.setText("More 📝" if has_notes else "More")
+        self._btn_more.setToolTip(entry.notes if has_notes else "")
 
         # Drink-mask-on-disk hint: show during Pass 1 when status is not yet set
         show_mask_hint = (
