@@ -295,17 +295,14 @@ def test_channel_gate_label_when_channels_are_sole_failure(qapp, tmp_path: Path)
     spindle = tmp_path / "spindle_outputs" / "LFC_RSC"
     spindle.mkdir(parents=True)
     (spindle / "AM001_LFC_RSC.csv").write_text("rawstate\n")
-    from ebb_viewer.pipeline.manifest import (
-        Manifest,
-        ManifestEntry,
-        RunEntry,
-    )
+    from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
 
     m = Manifest(tmp_path)
     m._entries["AM001"] = ManifestEntry(
         animal_id="AM001",
         preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={"LFC_RSC": RunEntry(sleep_qc="ok")},
+        has_spindle=True,
+        sleep_qc="ok",
     )
     m.save()
 
@@ -407,17 +404,14 @@ def test_page_widget_changed_propagates_to_gate_label(qapp, tmp_path: Path):
     spindle = tmp_path / "spindle_outputs" / "LFC_RSC"
     spindle.mkdir(parents=True)
     (spindle / "AM001_LFC_RSC.csv").write_text("rawstate\n")
-    from ebb_viewer.pipeline.manifest import (
-        Manifest,
-        ManifestEntry,
-        RunEntry,
-    )
+    from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
 
     m = Manifest(tmp_path)
     m._entries["AM001"] = ManifestEntry(
         animal_id="AM001",
         preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={"LFC_RSC": RunEntry(sleep_qc="ok")},
+        has_spindle=True,
+        sleep_qc="ok",
     )
     m.save()
 

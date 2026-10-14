@@ -641,8 +641,8 @@ def test_swd_status_count_matches_manifest(qapp, tmp_path: Path):
     for aid in ("AM001", "AM002"):
         (tmp_path / "swd" / f"{aid}.mat").write_text("")
     m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(animal_id="AM001", preprocessed_edf="", runs={})
-    m._entries["AM002"] = ManifestEntry(animal_id="AM002", preprocessed_edf="", runs={})
+    m._entries["AM001"] = ManifestEntry(animal_id="AM001", preprocessed_edf="")
+    m._entries["AM002"] = ManifestEntry(animal_id="AM002", preprocessed_edf="")
     m.save()
 
     w = _make_widget(qapp, tmp_path)
@@ -655,8 +655,8 @@ def test_swd_status_count_mismatch(qapp, tmp_path: Path):
     (tmp_path / "swd").mkdir()
     (tmp_path / "swd" / "AM001.mat").write_text("")
     m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(animal_id="AM001", preprocessed_edf="", runs={})
-    m._entries["AM002"] = ManifestEntry(animal_id="AM002", preprocessed_edf="", runs={})
+    m._entries["AM001"] = ManifestEntry(animal_id="AM001", preprocessed_edf="")
+    m._entries["AM002"] = ManifestEntry(animal_id="AM002", preprocessed_edf="")
     m.save()
 
     w = _make_widget(qapp, tmp_path)
@@ -681,8 +681,8 @@ def test_ann_status_shows_count_when_enabled(qapp, tmp_path: Path):
     ann_dir.mkdir()
     (ann_dir / "AM001_notes.txt").write_text("")
     m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(animal_id="AM001", preprocessed_edf="", runs={})
-    m._entries["AM002"] = ManifestEntry(animal_id="AM002", preprocessed_edf="", runs={})
+    m._entries["AM001"] = ManifestEntry(animal_id="AM001", preprocessed_edf="")
+    m._entries["AM002"] = ManifestEntry(animal_id="AM002", preprocessed_edf="")
     m.save()
 
     w = _make_widget(qapp, tmp_path)

@@ -36,23 +36,23 @@ Pages in pipeline order:
 1. `PreprocessPage` — raw EDFs → `standard/`
 2. `SpindleWritePage` — `standard/` → `spindle_edfs/<COMBO>/`
 3. `SpindleUploadPage` — upload/download via `SleepyRatWorker`
-4. `SleepQCGridPage` — per-animal, per-combo OK/Review/Rerun flagging
-5. `RerunPage` — queue of animals needing reruns; writes new spindle EDFs + upload
-6. `PSDPage` — computes PSDs, writes `psd/psds_<COMBO>.pkl`
-7. `PSDVisualizer` — review PSDs, flag drink mask artifacts
+4. `SleepQCGridPage` — per-animal OK/Review flagging
+5. `PSDPage` — computes PSDs, writes `psd/<RUN>/psds_<COMBO>.pkl`
+6. `PSDVisualizer` — review PSDs, flag drink mask artifacts
 
 ### Manifest
 
 `pipeline/manifest.py` is the authoritative pipeline state store. It persists to `project_root/manifest.json` (atomic write via `.tmp` rename).
 
 Key model:
-- `Manifest` — ordered dict of `ManifestEntry` objects, one per animal
-- `ManifestEntry` — holds `preprocessed_edf` path + `runs: dict[str, RunEntry]`
-- `RunEntry` — per (animal × channel combo): `sleep_qc`, `rerun_combo`, `psd_status`, `drink_mask`
+- `Manifest` — ordered dict of `ManifestEntry` objects, one per animal, plus the project-level `combo` (default `LFC_RSC`; stored at the top level of `manifest.json`)
+- `ManifestEntry` — `preprocessed_edf` path, `has_spindle`, `sleep_qc`, `psd_status`, `drink_mask`, `notes`. A project has exactly one channel combo, so there is no per-combo run state.
 
 `Manifest.build_from_standard(root)` is the standard constructor on the home page — it loads existing state and syncs new files from disk without overwriting existing flags.
 
-Valid statuses: `sleep_qc` ∈ `{None, "ok", "needs_review", "needs_rerun"}`; `psd_status` ∈ `{None, "ok", "needs_drink_mask", "drink_mask_applied"}`.
+Valid statuses: `sleep_qc` ∈ `{None, "ok", "needs_review"}`; `psd_status` ∈ `{None, "ok", "needs_drink_mask", "drink_mask_applied"}`.
+
+`manifest._entry_from_dict` still reads the pre-single-combo format (marked TEMPORARY) — delete it once existing projects have been re-saved.
 
 ### EDF viewer component
 
@@ -65,9 +65,7 @@ Valid statuses: `sleep_qc` ∈ `{None, "ok", "needs_review", "needs_rerun"}`; `p
 
 ### SleepyRat upload/download
 
-`SleepyRatWorker` (in `pages/spindle_upload.py`) is a `QThread` subclass with two modes:
-- `files=<list of Paths>` — upload exactly those files, no remote skip check (used by `RerunPage`)
-- `upload_dir=<Path>` — glob directory, skip files already on remote (used by `SpindleUploadPage`)
+`SleepyRatWorker` (in `pages/spindle_upload.py`) is a `QObject` worker that globs `upload_dir=<Path>`, skips files already on the remote, uploads the rest, and downloads label CSVs.
 
 The low-level HTTP calls live in `ebb/io/sleepyrat.py`.
 
@@ -76,7 +74,7 @@ The low-level HTTP calls live in `ebb/io/sleepyrat.py`.
 - `fs = 250` Hz (hardcoded in multiple places)
 - `ch_names = ("LFC", "RSC", "LSC", "EMG")`
 - EDF stem format: `AnimalID_..._PREPROCESSED.edf` — animal ID is the first `_`-delimited token
-- Channel combo strings (e.g. `"LFC_RSC"`) are used as directory names and dict keys throughout
+- The project's channel combo string (`Manifest.combo`, e.g. `"LFC_RSC"`) names the `spindle_edfs/`, `spindle_outputs/` and `psd/<RUN>/psds_<COMBO>.pkl` locations
 
 ## Working conventions
 
@@ -103,15 +101,3 @@ styling quirks. Read the relevant section before touching `pages/`,
 `pipeline/manifest.py`, or `ebb/process/psd_compute.py`. Skim it before
 running auto-formatters or aggressive simplifications — there are
 several seams that linters love to delete.
-
-## Non-obvious design intents
-
-### Sleep QC review mode: ✓ Accept on the *original* combo is intentional
-In `pages/sleep_qc_visualizer.py` `_update_legend_animal`, when review
-mode is on, every combo in `drawn_combos` (including the non-rerun
-original where `run.source_combo is None`) gets a `✓ Accept` button.
-This *looks* like a bug because clicking Accept on the original
-cascade-rejects the rerun the user just waited for — but it's the
-intended affordance. After seeing the rerun's metrics, the user may
-decide the original was fine and choose to keep it. Don't gate this
-button on `source_combo is not None`.

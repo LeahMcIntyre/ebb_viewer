@@ -7,7 +7,7 @@ Workflow:
   ``project_root/drink_masks/`` and (optionally) a single CSV with
   ``Animal,Offset`` columns to align video timestamps to the EEG start.
 - This page validates inputs, then runs ``rerun_with_drink_masks`` off-thread
-  to regenerate ``psds_drink.pkl`` and ``psds_channel_merged_drink.pkl`` for
+  to regenerate ``psds_drink.pkl`` and ``psds_<combo>_drink.pkl`` for
   the selected PSD run. On success it flags each animal
   ``drink_mask_applied`` in the manifest so Pass 2 review can pick them up.
 """
@@ -78,7 +78,7 @@ class DrinkMaskPage(QWidget):
         super().__init__(parent)
         self.project_root = Path(project_root)
         self._computing = False
-        self._pending_animal_combos: dict[str, str] = {}
+        self._pending_animal_ids: list[str] = []
         self._pending_run_name: str = ""
 
         self._build_ui()
@@ -206,7 +206,7 @@ class DrinkMaskPage(QWidget):
         animals_v.addWidget(self._lbl_status)
 
         self._table = QTableWidget(0, 3)
-        self._table.setHorizontalHeaderLabels(["Animal (Combo)", "PSD Status", "Mask"])
+        self._table.setHorizontalHeaderLabels(["Animal", "PSD Status", "Mask"])
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self._table.setColumnWidth(1, 130)
@@ -457,7 +457,7 @@ class DrinkMaskPage(QWidget):
             self.btn_apply.setText("Apply Drink Masks")
             return
 
-        ready_set = {(e.animal_id, c) for e, c in ready}
+        ready_set = {e.animal_id for e in ready}
         n_ready = len(ready)
         n_missing = len(flagged) - n_ready
 
@@ -470,12 +470,12 @@ class DrinkMaskPage(QWidget):
         self._lbl_status.setStyleSheet("color: #8a4400;" if n_missing else "color: #1a5c1a;")
 
         self._table.setRowCount(0)
-        for entry, combo in flagged:
-            is_ready = (entry.animal_id, combo) in ready_set
+        for entry in flagged:
+            is_ready = entry.animal_id in ready_set
             row = self._table.rowCount()
             self._table.insertRow(row)
             items = [
-                QTableWidgetItem(f"{entry.animal_id} ({combo})"),
+                QTableWidgetItem(entry.animal_id),
                 QTableWidgetItem("needs_drink_mask"),
                 QTableWidgetItem("✓ found" if is_ready else "✗ missing"),
             ]
@@ -519,18 +519,7 @@ class DrinkMaskPage(QWidget):
         if not to_rerun:
             return
 
-        # Build animal_combos defensively: the one-ok invariant means each
-        # animal_id should appear at most once across `to_rerun`, but a manifest
-        # bug could violate that and silently halve the work if we used a dict
-        # comprehension. Assert loudly instead.
-        animal_combos: dict[str, str] = {}
-        for entry, combo in to_rerun:
-            assert entry.animal_id not in animal_combos, (
-                f"Animal {entry.animal_id!r} appears twice in needs_drink_mask_rerun — "
-                "one-ok invariant violated"
-            )
-            animal_combos[entry.animal_id] = combo
-        self._pending_animal_combos = animal_combos
+        self._pending_animal_ids = [e.animal_id for e in to_rerun]
         self._pending_run_name = run_name
 
         offset_path = self._detect_offset_csv()
@@ -540,7 +529,7 @@ class DrinkMaskPage(QWidget):
         self._hint_frame.setVisible(False)
         self.btn_apply.setEnabled(False)
         self._log(
-            f"Starting drink mask rerun for {len(animal_combos)} animal(s) in run '{run_name}'…"
+            f"Starting drink mask rerun for {len(self._pending_animal_ids)} animal(s) in run '{run_name}'…"
         )
         if swd_dir:
             self._log(f"  SWD mask: {swd_dir}")
@@ -562,7 +551,8 @@ class DrinkMaskPage(QWidget):
             eeg_dir=standard_folder,
             spindle_root=self.project_root / "spindle_outputs",
             drink_dir=self._drink_masks_dir(),
-            animal_combos=animal_combos,
+            animal_ids=self._pending_animal_ids,
+            combo=manifest.combo,
             offset_path=offset_path,
             params=params,
             run_name=run_name,
@@ -577,18 +567,18 @@ class DrinkMaskPage(QWidget):
     def _on_done(self):
         # rerun_with_drink_masks is all-or-nothing: it raises on any per-animal
         # failure and we'd be in _on_error instead. Reaching here means every
-        # animal in _pending_animal_combos completed successfully.
+        # animal in _pending_animal_ids completed successfully.
         self._computing = False
         manifest = Manifest.load(self.project_root)
         run_name = self._pending_run_name
         failed = []
-        for animal_id, combo in self._pending_animal_combos.items():
+        for animal_id in self._pending_animal_ids:
             try:
-                manifest.flag_psd(animal_id, combo, "drink_mask_applied", run_name)
+                manifest.flag_psd(animal_id, "drink_mask_applied", run_name)
             except Exception as e:
-                failed.append(f"{animal_id} ({combo}): {e}")
+                failed.append(f"{animal_id}: {e}")
         manifest.save()
-        self._pending_animal_combos = {}
+        self._pending_animal_ids = []
         if failed:
             msg = "\n".join(failed)
             self._log(f"WARNING: {len(failed)} flag(s) failed:\n{msg}")
@@ -598,19 +588,19 @@ class DrinkMaskPage(QWidget):
                 f"{len(failed)} animal(s) could not be flagged:\n\n{msg}",
             )
         self._log(
-            "Drink mask rerun complete. psds_drink.pkl and psds_channel_merged_drink.pkl updated."
+            f"Drink mask rerun complete. psds_drink.pkl and psds_{manifest.combo}_drink.pkl updated."
         )
         self.manifest_changed.emit()
         self._hint_lbl.setText(
             f"✓ Drink masks applied for run '{run_name}'. Review the updated PSDs in "
-            f"PSD Visualizer (plot psd/{run_name}/psds_channel_merged_drink.pkl)."
+            f"PSD Visualizer (plot psd/{run_name}/psds_{manifest.combo}_drink.pkl)."
         )
         self._hint_frame.setVisible(True)
         self._refresh()
 
     def _on_error(self, msg: str):
         self._computing = False
-        self._pending_animal_combos = {}
+        self._pending_animal_ids = []
         self._log(f"ERROR in drink mask rerun: {msg}")
         QMessageBox.critical(self, "Drink Mask Rerun Error", msg)
         self._refresh()
@@ -633,7 +623,8 @@ class DrinkMaskRerunWorker(QObject):
         eeg_dir: Path,
         spindle_root: Path,
         drink_dir: Path,
-        animal_combos: dict,
+        animal_ids: list[str],
+        combo: str,
         offset_path,
         params: dict,
         run_name: str = "default",
@@ -646,7 +637,8 @@ class DrinkMaskRerunWorker(QObject):
         self.eeg_dir = Path(eeg_dir)
         self.spindle_root = Path(spindle_root)
         self.drink_dir = Path(drink_dir)
-        self.animal_combos = animal_combos
+        self.animal_ids = animal_ids
+        self.combo = combo
         self.offset_path = offset_path
         self.params = params
         self.run_name = run_name
@@ -660,7 +652,8 @@ class DrinkMaskRerunWorker(QObject):
                 eeg_dir=self.eeg_dir,
                 spindle_root=self.spindle_root,
                 drink_dir=self.drink_dir,
-                animal_combos=self.animal_combos,
+                animal_ids=self.animal_ids,
+                combo=self.combo,
                 offset_path=self.offset_path,
                 swd_dir=self.swd_dir,
                 ncores=None,
@@ -669,7 +662,7 @@ class DrinkMaskRerunWorker(QObject):
                 **{k: v for k, v in self.params.items() if k not in _UI_ONLY_PARAM_KEYS},
             )
             self.progress.emit("  → psds_drink.pkl updated.")
-            self.progress.emit("  → psds_channel_merged_drink.pkl regenerated.")
+            self.progress.emit(f"  → psds_{self.combo}_drink.pkl regenerated.")
             self.finished.emit()
         except Exception as e:
             self.error.emit(str(e))

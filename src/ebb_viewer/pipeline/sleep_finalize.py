@@ -77,14 +77,13 @@ def build_sleep_export(project_root: Path) -> SleepExportResult:
 
     for entry in manifest:
         animal = entry.animal_id
-        combo = manifest.ok_combo(animal)
-        if combo is None:
-            # Only flag animals that actually have runs; an entry with no runs
+        if entry.sleep_qc != "ok":
+            # Only flag animals that have spindle files; an entry without
             # isn't through sleep QC and shouldn't count as "missing ok".
-            if entry.runs:
+            if entry.has_spindle:
                 missing_ok.append(animal)
             continue
-        csv_path = _find_animal_csv(animal, combo, project_root)
+        csv_path = _find_animal_csv(animal, manifest.combo, project_root)
         if csv_path is None:
             missing_csv.append(animal)
             continue

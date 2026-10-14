@@ -44,7 +44,6 @@ class PSDStore:
         self.first_freqs: np.ndarray = np.empty(0)
 
         self.by_animal: dict[str, dict[str, dict[str, tuple[np.ndarray, np.ndarray]]]] = {}
-        self._source_combos: dict[str, str] = {}  # raw_animal_id -> source_combo
         self._load()
 
     def _load(self):
@@ -64,9 +63,6 @@ class PSDStore:
                 )
 
             animal = self.parse_animal(rec)
-            raw_animal = parse_animal_id(rec["path"])
-            if "source_combo" in rec:
-                self._source_combos[raw_animal] = rec["source_combo"]
 
             # behavior is stored as e.g. ('threshold', 'wake'); index 1 is the state.
             bhv = rec.get("behavior", (None, None))
@@ -103,7 +99,3 @@ class PSDStore:
 
     def freq_range(self):
         return [self.first_freqs[0], self.first_freqs[-1]]
-
-    def source_combo(self, animal_id: str) -> "str | None":
-        """Return the source_combo for animal_id if present in the PKL (final PKL only)."""
-        return self._source_combos.get(animal_id)

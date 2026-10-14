@@ -71,7 +71,6 @@ class PSDGridPage(QWidget):
         channel_names: list[str],  # e.g., ["LFC","RSC","LSC"]
         states: list[str] = None,  # e.g., ["wake","nrem","rem"]
         manifest=None,  # optional Manifest for per-animal flagging
-        run_channels: str | None = None,  # channel combo identifying which run this PSD belongs to
         drink_review: bool = False,  # Pass 2 mode: pending = drink_mask_applied animals
         run_name: str = "default",  # PSD run name for manifest flag scoping
         project_root=None,  # Path for drink-mask hint
@@ -84,7 +83,6 @@ class PSDGridPage(QWidget):
         else:
             self.states = list(states)
         self.manifest = manifest
-        self.run_channels = run_channels
         self.drink_review = drink_review
         self._run_name = run_name
         self._project_root = project_root
@@ -455,19 +453,8 @@ class PSDGridPage(QWidget):
         if self.manifest is None:
             return set()
         if self.drink_review:
-            return {
-                entry.animal_id
-                for entry, _ in self.manifest.pending_drink_verification(self._run_name)
-            }
-        if self.run_channels is None:
-            return {
-                entry.animal_id for entry, _ in self.manifest.pending_psd_review(self._run_name)
-            }
-        return {
-            entry.animal_id
-            for entry, combo in self.manifest.pending_psd_review(self._run_name)
-            if combo == self.run_channels
-        }
+            return {e.animal_id for e in self.manifest.pending_drink_verification(self._run_name)}
+        return {e.animal_id for e in self.manifest.pending_psd_review(self._run_name)}
 
     def _manifest_animal_id(self) -> str | None:
         """Strip _artifact/_drink suffixes from store key to get manifest animal_id."""
@@ -476,22 +463,13 @@ class PSDGridPage(QWidget):
             return None
         return key.replace("_artifact", "").replace("_drink", "")
 
-    def _resolve_combo(self, animal_id: str | None) -> str | None:
-        """Return the channel combo to use for manifest flagging."""
-        if self.run_channels is not None:
-            return self.run_channels
-        if animal_id is None:
-            return None
-        return self.store.source_combo(animal_id)
-
     def _flag_psd_ok(self) -> None:
         if self.manifest is None:
             return
         animal_id = self._manifest_animal_id()
-        combo = self._resolve_combo(animal_id)
-        if animal_id is None or combo is None:
+        if animal_id is None:
             return
-        self.manifest.flag_psd(animal_id, combo, "ok", self._run_name)
+        self.manifest.flag_psd(animal_id, "ok", self._run_name)
         self._update_flag_status()
         self.manifest_changed.emit()
 
@@ -499,10 +477,9 @@ class PSDGridPage(QWidget):
         if self.manifest is None:
             return
         animal_id = self._manifest_animal_id()
-        combo = self._resolve_combo(animal_id)
-        if animal_id is None or combo is None:
+        if animal_id is None:
             return
-        self.manifest.flag_psd(animal_id, combo, "needs_drink_mask", self._run_name)
+        self.manifest.flag_psd(animal_id, "needs_drink_mask", self._run_name)
         self._update_flag_status()
         self.manifest_changed.emit()
 
@@ -510,10 +487,9 @@ class PSDGridPage(QWidget):
         if self.manifest is None:
             return
         animal_id = self._manifest_animal_id()
-        combo = self._resolve_combo(animal_id)
-        if animal_id is None or combo is None:
+        if animal_id is None:
             return
-        self.manifest.reset_psd_status(animal_id, combo, self._run_name)
+        self.manifest.reset_psd_status(animal_id, self._run_name)
         self._update_flag_status()
         self.manifest_changed.emit()
 
@@ -537,13 +513,11 @@ class PSDGridPage(QWidget):
         if self.manifest is None:
             return
         animal_id = self._manifest_animal_id()
-        combo = self._resolve_combo(animal_id)
-        run = self.manifest.get_run(animal_id, combo) if (animal_id and combo) else None
-        status = run.psd_status.get(self._run_name) if run else None
+        entry = self.manifest.get(animal_id) if animal_id else None
+        status = entry.psd_status.get(self._run_name) if entry else None
 
         self._btn_flag_reset.setEnabled(status is not None)
 
-        entry = self.manifest.get(animal_id) if animal_id else None
         has_notes = bool(entry is not None and entry.notes.strip())
         self._btn_more.setText("More 📝" if has_notes else "More")
         self._btn_more.setToolTip(entry.notes if has_notes else "")

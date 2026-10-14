@@ -3,9 +3,9 @@
 Covers:
 - batch_estimate passes offset_path through to estimate_psd via kwargs
 - batch_estimate passes drink_dir through correctly
-- rerun_with_drink_masks validates source_combo, writes psds_drink.pkl,
-  regenerates psds_channel_merged_drink.pkl, never touches psds_channel_merged.pkl
-- rerun_with_drink_masks raises when psds_channel_merged.pkl missing or combo mismatches
+- rerun_with_drink_masks writes psds_drink.pkl,
+  regenerates psds_LFC_RSC_drink.pkl, never touches psds_LFC_RSC.pkl
+- rerun_with_drink_masks raises when psds_LFC_RSC.pkl is missing
 - rerun_with_drink_masks raises when no EDF files found for target animals
 - DrinkMaskRerunWorker.run calls rerun_with_drink_masks with correct args
 - BatchEstimateWorker.run passes drink_dir=None, embeds params in PKL, saves psd_params.json
@@ -25,10 +25,9 @@ from ebb.core.naming import parse_animal_id
 # ---------------------------------------------------------------------------
 
 
-def _make_psd_record(animal_id: str, combo: str = "LFC_RSC") -> dict:
+def _make_psd_record(animal_id: str) -> dict:
     return {
         "path": str(Path(f"{animal_id}_foo_PREPROCESSED.edf")),
-        "source_combo": combo,
         "channels": (0, 1),
         "behavior": ("threshold", "wake"),
         "n_estimates": 10,
@@ -387,13 +386,13 @@ def _setup_rerun_dirs(tmp_path, animals=("AM001", "AM002"), combo="LFC_RSC"):
 
 
 def test_rerun_writes_drink_pkl_and_final_drink_pkl(tmp_path):
-    """rerun_with_drink_masks writes psds_drink.pkl and psds_channel_merged_drink.pkl;
-    psds_channel_merged.pkl is not modified."""
+    """rerun_with_drink_masks writes psds_drink.pkl and psds_LFC_RSC_drink.pkl;
+    psds_LFC_RSC.pkl is not modified."""
     standard, spindle_out, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path)
 
-    # psds_channel_merged.pkl has both animals; AM002 is the target
+    # psds_LFC_RSC.pkl has both animals; AM002 is the target
     final_records = [_make_psd_record("AM001"), _make_psd_record("AM002")]
-    _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", final_records)
+    _write_pkl(psd_dir / "default" / "psds_LFC_RSC.pkl", final_records)
 
     new_record = _make_psd_record("AM002")
 
@@ -420,13 +419,14 @@ def test_rerun_writes_drink_pkl_and_final_drink_pkl(tmp_path):
             eeg_dir=standard,
             spindle_root=tmp_path / "spindle_outputs",
             drink_dir=drink_dir,
-            animal_combos={"AM002": "LFC_RSC"},
+            animal_ids=["AM002"],
+            combo="LFC_RSC",
             fs=250,
             channels=[0, 1],
         )
 
-    # psds_channel_merged.pkl is untouched
-    with open(psd_dir / "default" / "psds_channel_merged.pkl", "rb") as f:
+    # psds_LFC_RSC.pkl is untouched
+    with open(psd_dir / "default" / "psds_LFC_RSC.pkl", "rb") as f:
         final = pickle.load(f)
     assert [parse_animal_id(r["path"]) for r in final] == ["AM001", "AM002"]
 
@@ -435,7 +435,7 @@ def test_rerun_writes_drink_pkl_and_final_drink_pkl(tmp_path):
         drink = pickle.load(f)
     assert [parse_animal_id(r["path"]) for r in drink] == ["AM002"]
 
-    # psds_channel_merged_drink.pkl has AM001 (from merged) + AM002 (from drink)
+    # psds_LFC_RSC_drink.pkl has AM001 (from merged) + AM002 (from drink)
     with open(final_drink_pkl, "rb") as f:
         merged = pickle.load(f)
     ids = [parse_animal_id(r["path"]) for r in merged]
@@ -449,7 +449,7 @@ def test_rerun_accumulates_drink_pkl_across_sessions(tmp_path):
         tmp_path, animals=("AM001", "AM002")
     )
     final_records = [_make_psd_record("AM001"), _make_psd_record("AM002")]
-    _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", final_records)
+    _write_pkl(psd_dir / "default" / "psds_LFC_RSC.pkl", final_records)
 
     def run_rerun(animal_id):
         rec = _make_psd_record(animal_id)
@@ -476,7 +476,8 @@ def test_rerun_accumulates_drink_pkl_across_sessions(tmp_path):
                 eeg_dir=standard,
                 spindle_root=tmp_path / "spindle_outputs",
                 drink_dir=drink_dir,
-                animal_combos={animal_id: "LFC_RSC"},
+                animal_ids=[animal_id],
+                combo="LFC_RSC",
                 fs=250,
             )
 
@@ -490,39 +491,19 @@ def test_rerun_accumulates_drink_pkl_across_sessions(tmp_path):
 
 
 def test_rerun_raises_when_final_pkl_missing(tmp_path):
-    """FileNotFoundError raised when psds_channel_merged.pkl does not exist."""
+    """FileNotFoundError raised when psds_LFC_RSC.pkl does not exist."""
     standard, _, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path)
 
     from ebb.process.psd_compute import rerun_with_drink_masks
 
-    with pytest.raises(FileNotFoundError, match="psds_channel_merged.pkl"):
+    with pytest.raises(FileNotFoundError, match="psds_LFC_RSC.pkl"):
         rerun_with_drink_masks(
             psd_dir=psd_dir,
             eeg_dir=standard,
             spindle_root=tmp_path / "spindle_outputs",
             drink_dir=drink_dir,
-            animal_combos={"AM001": "LFC_RSC"},
-        )
-
-
-def test_rerun_raises_on_combo_mismatch(tmp_path):
-    """ValueError raised when source_combo in psds_channel_merged.pkl differs from manifest combo."""
-    standard, _, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path)
-    # AM001 is stored under LFC_RSC in psds_channel_merged.pkl
-    _write_pkl(
-        psd_dir / "default" / "psds_channel_merged.pkl",
-        [_make_psd_record("AM001", combo="LFC_RSC")],
-    )
-
-    from ebb.process.psd_compute import rerun_with_drink_masks
-
-    with pytest.raises(ValueError, match="Combo mismatch"):
-        rerun_with_drink_masks(
-            psd_dir=psd_dir,
-            eeg_dir=standard,
-            spindle_root=tmp_path / "spindle_outputs",
-            drink_dir=drink_dir,
-            animal_combos={"AM001": "RSC_LSC"},  # wrong combo
+            animal_ids=["AM001"],
+            combo="LFC_RSC",
         )
 
 
@@ -532,7 +513,7 @@ def test_rerun_injects_ann_kwargs_when_ann_params_provided(tmp_path):
     ann_dir = tmp_path / "annotations"
     ann_dir.mkdir()
 
-    _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", [_make_psd_record("AM001")])
+    _write_pkl(psd_dir / "default" / "psds_LFC_RSC.pkl", [_make_psd_record("AM001")])
 
     captured_kwargs = {}
 
@@ -562,7 +543,8 @@ def test_rerun_injects_ann_kwargs_when_ann_params_provided(tmp_path):
             eeg_dir=standard,
             spindle_root=tmp_path / "spindle_outputs",
             drink_dir=drink_dir,
-            animal_combos={"AM001": "LFC_RSC"},
+            animal_ids=["AM001"],
+            combo="LFC_RSC",
             ann_params={
                 "ann_dir": ann_dir,
                 "keywords": ["drink"],
@@ -581,7 +563,7 @@ def test_rerun_injects_ann_kwargs_when_ann_params_provided(tmp_path):
 def test_rerun_no_ann_kwargs_when_ann_params_none(tmp_path):
     """When ann_params is None, no annotation kwargs are added to the estimator."""
     standard, spindle_out, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path, animals=("AM001",))
-    _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", [_make_psd_record("AM001")])
+    _write_pkl(psd_dir / "default" / "psds_LFC_RSC.pkl", [_make_psd_record("AM001")])
 
     captured_kwargs = {}
 
@@ -601,7 +583,8 @@ def test_rerun_no_ann_kwargs_when_ann_params_none(tmp_path):
             eeg_dir=standard,
             spindle_root=tmp_path / "spindle_outputs",
             drink_dir=drink_dir,
-            animal_combos={"AM001": "LFC_RSC"},
+            animal_ids=["AM001"],
+            combo="LFC_RSC",
         )
 
     assert "ann_keywords" not in captured_kwargs
@@ -622,7 +605,7 @@ def test_rerun_extends_pairs_with_annotation_paths(tmp_path):
     ann_file.touch()
 
     _write_pkl(
-        psd_dir / "default" / "psds_channel_merged.pkl",
+        psd_dir / "default" / "psds_LFC_RSC.pkl",
         [
             _make_psd_record("AM001"),
             _make_psd_record("AM002"),
@@ -662,7 +645,8 @@ def test_rerun_extends_pairs_with_annotation_paths(tmp_path):
             eeg_dir=standard,
             spindle_root=tmp_path / "spindle_outputs",
             drink_dir=drink_dir,
-            animal_combos={"AM001": "LFC_RSC", "AM002": "LFC_RSC"},
+            animal_ids=["AM001", "AM002"],
+            combo="LFC_RSC",
             ann_params={
                 "ann_dir": ann_dir,
                 "keywords": ["event"],
@@ -683,7 +667,7 @@ def test_rerun_with_drink_masks_raises_when_no_edfs(tmp_path):
     _, _, drink_dir, psd_dir = _setup_rerun_dirs(tmp_path, animals=("AM001",))
     standard = tmp_path / "standard_empty"
     standard.mkdir()  # no EDFs
-    _write_pkl(psd_dir / "default" / "psds_channel_merged.pkl", [_make_psd_record("AM001")])
+    _write_pkl(psd_dir / "default" / "psds_LFC_RSC.pkl", [_make_psd_record("AM001")])
 
     from ebb.process.psd_compute import rerun_with_drink_masks
 
@@ -693,7 +677,8 @@ def test_rerun_with_drink_masks_raises_when_no_edfs(tmp_path):
             eeg_dir=standard,
             spindle_root=tmp_path / "spindle_outputs",
             drink_dir=drink_dir,
-            animal_combos={"AM001": "LFC_RSC"},
+            animal_ids=["AM001"],
+            combo="LFC_RSC",
         )
 
 
@@ -855,60 +840,6 @@ def test_batch_worker_saves_psd_params_json(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_build_final_pkl_warns_and_skips_when_combo_pkl_missing(tmp_path):
-    """Gap 1: build_final_pkl emits a warning and silently skips animals whose
-    combo PKL doesn't exist. The merged PKL is still written containing only
-    animals whose combo PKL is present.
-
-    build_final_pkl groups animals by combo, then loads each combo's PKL.
-    The warning fires when the PKL for a combo is entirely absent on disk.
-    """
-    import pickle
-    import warnings
-
-    from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
-
-    psd_dir = tmp_path / "psd"
-    psd_dir.mkdir()
-    (psd_dir / "default").mkdir()
-
-    # AM001 uses LFC_RSC (PKL will be present); AM002 uses RSC_LSC (PKL absent)
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001",
-        preprocessed_edf="standard/AM001_PREPROCESSED.edf",
-        runs={"LFC_RSC": RunEntry(sleep_qc="ok")},
-    )
-    m._entries["AM002"] = ManifestEntry(
-        animal_id="AM002",
-        preprocessed_edf="standard/AM002_PREPROCESSED.edf",
-        runs={"RSC_LSC": RunEntry(sleep_qc="ok")},
-    )
-    m.save()
-
-    # Only create PKL for LFC_RSC; RSC_LSC PKL is intentionally absent
-    am001_record = _make_psd_record("AM001", combo="LFC_RSC")
-    _write_pkl(psd_dir / "default" / "psds_LFC_RSC.pkl", [am001_record])
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter("always")
-        from ebb.process.psd_compute import build_final_pkl
-
-        out = build_final_pkl(tmp_path, m)
-
-    # Warning emitted for the missing RSC_LSC PKL
-    assert any("PKL not found" in str(warning.message) for warning in w), (
-        "Expected a warning about the missing per-combo PKL"
-    )
-
-    # Merged PKL written; AM001 present, AM002 absent (its combo PKL was missing)
-    with open(out, "rb") as f:
-        records = pickle.load(f)
-    animal_ids = {parse_animal_id(r["path"]) for r in records}
-    assert "AM001" in animal_ids
-    assert "AM002" not in animal_ids
-
-
 # ---------------------------------------------------------------------------
 # DrinkMaskRerunWorker (now in drink_mask.py)
 # ---------------------------------------------------------------------------
@@ -942,7 +873,8 @@ def test_drink_mask_rerun_worker_calls_rerun(tmp_path):
             eeg_dir=standard,
             spindle_root=tmp_path / "spindle_outputs",
             drink_dir=drink_dir,
-            animal_combos={"AM001": "LFC_RSC", "AM002": "LFC_RSC"},
+            animal_ids=["AM001", "AM002"],
+            combo="LFC_RSC",
             offset_path=None,
             params={"fs": 250, "winsize": 180, "radius": 0.5, "nstd": 5.0, "noise_thresh": 0.5},
         )
@@ -956,7 +888,8 @@ def test_drink_mask_rerun_worker_calls_rerun(tmp_path):
     assert c["eeg_dir"] == standard
     assert c["spindle_root"] == tmp_path / "spindle_outputs"
     assert c["drink_dir"] == drink_dir
-    assert c["animal_combos"] == {"AM001": "LFC_RSC", "AM002": "LFC_RSC"}
+    assert c["animal_ids"] == ["AM001", "AM002"]
+    assert c["combo"] == "LFC_RSC"
     assert c.get("offset_path") is None
 
 
@@ -985,7 +918,8 @@ def test_drink_mask_rerun_worker_injects_offset_path(tmp_path):
             eeg_dir=tmp_path / "standard",
             spindle_root=tmp_path / "spindle_outputs",
             drink_dir=drink_dir,
-            animal_combos={"AM001": "LFC_RSC"},
+            animal_ids=["AM001"],
+            combo="LFC_RSC",
             offset_path=offset_csv,
             params={"fs": 250, "winsize": 180, "radius": 0.5, "nstd": 5.0, "noise_thresh": 0.5},
         )
@@ -1018,7 +952,8 @@ def test_drink_worker_passes_ann_params_to_rerun(tmp_path):
             eeg_dir=tmp_path / "standard",
             spindle_root=tmp_path / "spindle_outputs",
             drink_dir=drink_dir,
-            animal_combos={"AM001": "LFC_RSC"},
+            animal_ids=["AM001"],
+            combo="LFC_RSC",
             offset_path=None,
             params={"fs": 250, "winsize": 180, "radius": 0.5, "nstd": 5.0, "noise_thresh": 0.5},
             ann_params={
@@ -1062,7 +997,8 @@ def test_drink_worker_passes_ann_params_none_when_not_provided(tmp_path):
             eeg_dir=tmp_path / "standard",
             spindle_root=tmp_path / "spindle_outputs",
             drink_dir=drink_dir,
-            animal_combos={"AM001": "LFC_RSC"},
+            animal_ids=["AM001"],
+            combo="LFC_RSC",
             offset_path=None,
             params={"fs": 250, "winsize": 180, "radius": 0.5, "nstd": 5.0, "noise_thresh": 0.5},
         )
@@ -1089,7 +1025,8 @@ def test_drink_mask_rerun_worker_emits_error_on_exception(tmp_path):
             eeg_dir=tmp_path / "standard",
             spindle_root=tmp_path / "spindle_outputs",
             drink_dir=tmp_path / "drink_masks",
-            animal_combos={"AM001": "LFC_RSC"},
+            animal_ids=["AM001"],
+            combo="LFC_RSC",
             offset_path=None,
             params={"fs": 250, "winsize": 180, "radius": 0.5, "nstd": 5.0, "noise_thresh": 0.5},
         )

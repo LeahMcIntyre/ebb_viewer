@@ -214,7 +214,7 @@ class FinalizePage(QWidget):
         root.addWidget(sleep_hdr)
 
         sleep_desc = QLabel(
-            "Consolidate each animal's accepted-combo sleep scoring into one "
+            "Consolidate each animal's accepted sleep scoring into one "
             "export bundle under sleep_export/: the chosen SPINDLE CSVs plus "
             "rotate-to-6AM binned metrics, per-day averages, and whole-recording "
             "summaries (as tidy CSVs and an Excel workbook)."
@@ -323,8 +323,9 @@ class FinalizePage(QWidget):
         layout.addWidget(status_lbl)
 
         # Source file that will be used
-        drink_src = psd_dir / "psds_channel_merged_drink.pkl"
-        base_src = psd_dir / "psds_channel_merged.pkl"
+        combo = Manifest.load(self.project_root).combo
+        drink_src = psd_dir / f"psds_{combo}_drink.pkl"
+        base_src = psd_dir / f"psds_{combo}.pkl"
         if drink_src.exists():
             src_text = f"Source: {drink_src.name} (drink masks applied)"
             src_style = "color: #1a5c8a;"
@@ -332,7 +333,7 @@ class FinalizePage(QWidget):
             src_text = f"Source: {base_src.name}"
             src_style = "color: #333;"
         else:
-            src_text = "Source: no merged PKL found yet"
+            src_text = "Source: no PSD PKL found yet"
             src_style = "color: gray;"
         src_lbl = QLabel(src_text)
         src_lbl.setStyleSheet(src_style + " font-size: 11px;")
@@ -396,24 +397,24 @@ class FinalizePage(QWidget):
             self._btn_export_sleep.setEnabled(False)
             return
 
-        with_runs = [e.animal_id for e in manifest if e.runs]
+        with_runs = [e.animal_id for e in manifest if e.has_spindle]
         if not with_runs:
             self._sleep_status_lbl.setText("No animals have sleep scoring yet.")
             self._sleep_status_lbl.setStyleSheet("color: gray;")
             self._btn_export_sleep.setEnabled(False)
             return
 
-        missing = [a for a in with_runs if manifest.ok_combo(a) is None]
+        missing = [a for a in with_runs if manifest.get(a).sleep_qc != "ok"]
         n_ok = len(with_runs) - len(missing)
         if missing:
             preview = ", ".join(missing[:8]) + ("…" if len(missing) > 8 else "")
             self._sleep_status_lbl.setText(
-                f"⚠ {n_ok} of {len(with_runs)} animals have an accepted combo. "
+                f"⚠ {n_ok} of {len(with_runs)} animals have accepted sleep QC. "
                 f"Not yet accepted: {preview}"
             )
             self._sleep_status_lbl.setStyleSheet("color: #8a4400;")
         else:
-            self._sleep_status_lbl.setText(f"✓ All {n_ok} animals have an accepted combo.")
+            self._sleep_status_lbl.setText(f"✓ All {n_ok} animals have accepted sleep QC.")
             self._sleep_status_lbl.setStyleSheet("color: #1a5c1a;")
         self._btn_export_sleep.setEnabled(n_ok > 0)
 
@@ -434,7 +435,7 @@ class FinalizePage(QWidget):
             "sleep_export.xlsx, and chosen_csvs/.",
         ]
         if result.missing_ok:
-            lines += ["", f"Skipped — no accepted combo: {', '.join(result.missing_ok)}"]
+            lines += ["", f"Skipped — sleep QC not accepted: {', '.join(result.missing_ok)}"]
         if result.missing_csv:
             lines += ["", f"Skipped — CSV missing on disk: {', '.join(result.missing_csv)}"]
         QMessageBox.information(self, "Sleep Data Exported", "\n".join(lines))
@@ -444,7 +445,7 @@ class FinalizePage(QWidget):
         from ebb.process.psd_compute import build_run_final_pkl
 
         try:
-            out = build_run_final_pkl(self.project_root, run_name)
+            out = build_run_final_pkl(self.project_root, Manifest.load(self.project_root).combo, run_name)
         except Exception as e:
             QMessageBox.critical(self, "Finalize Failed", str(e))
             return

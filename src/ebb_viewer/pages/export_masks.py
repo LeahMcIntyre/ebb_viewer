@@ -38,7 +38,7 @@ from ebb_viewer.pipeline import export_params, psd_params
 from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.pipeline.mask_export import (
     ExportResult,
-    default_pairs,
+    default_animals,
     export_run,
 )
 from ebb.io.edf_header import detect_fs_from_standard
@@ -63,7 +63,7 @@ DEFAULT_FS = 250
 class MaskExportWorker(QThread):
     """Runs ``export_run`` off the GUI thread; emits per-animal progress."""
 
-    progress = pyqtSignal(str, str, int, int)  # animal_id, combo, done, total
+    progress = pyqtSignal(str, int, int)  # animal_id, done, total
     finished_with_result = pyqtSignal(object)  # ExportResult
 
     def __init__(
@@ -72,7 +72,7 @@ class MaskExportWorker(QThread):
         out_dir: Path,
         manifest: Manifest,
         params: dict[str, Any],
-        pairs: list[tuple[str, str]],
+        animal_ids: list[str],
         parent: QWidget | None = None,
     ):
         super().__init__(parent)
@@ -80,7 +80,7 @@ class MaskExportWorker(QThread):
         self._out_dir = out_dir
         self._manifest = manifest
         self._params = params
-        self._pairs = pairs
+        self._animal_ids = animal_ids
 
     def run(self) -> None:
         result = export_run(
@@ -88,7 +88,7 @@ class MaskExportWorker(QThread):
             out_dir=self._out_dir,
             manifest=self._manifest,
             params=self._params,
-            pairs=self._pairs,
+            animal_ids=self._animal_ids,
             progress_cb=self.progress.emit,
         )
         self.finished_with_result.emit(result)
@@ -113,7 +113,7 @@ class ExportMasksPage(QWidget):
         self._loaded_snapshot: dict[str, Any] | None = None
         self._worker: MaskExportWorker | None = None
         self._last_out_dir: Path | None = None
-        self._row_for_pair: dict[tuple[str, str], int] = {}
+        self._row_for_animal: dict[str, int] = {}
 
         self._build_ui()
         self._refresh_animals()
@@ -445,8 +445,8 @@ class ExportMasksPage(QWidget):
         self.progress_bar.setVisible(False)
         v.addWidget(self.progress_bar)
 
-        self.tbl_status = QTableWidget(0, 4)
-        self.tbl_status.setHorizontalHeaderLabels(["Animal", "Combo", "Status", "Message"])
+        self.tbl_status = QTableWidget(0, 3)
+        self.tbl_status.setHorizontalHeaderLabels(["Animal", "Status", "Message"])
         self.tbl_status.horizontalHeader().setStretchLastSection(True)
         self.tbl_status.verticalHeader().setVisible(False)
         self.tbl_status.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
@@ -473,14 +473,14 @@ class ExportMasksPage(QWidget):
 
     def _refresh_animals(self) -> None:
         manifest = Manifest.load(self.project_root)
-        pairs = default_pairs(manifest)
+        animal_ids = default_animals(manifest)
         self.list_animals.blockSignals(True)
         self.list_animals.clear()
-        for animal_id, combo in pairs:
-            item = QListWidgetItem(f"{animal_id}   ({combo})")
+        for animal_id in animal_ids:
+            item = QListWidgetItem(animal_id)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked)
-            item.setData(Qt.ItemDataRole.UserRole, (animal_id, combo))
+            item.setData(Qt.ItemDataRole.UserRole, animal_id)
             self.list_animals.addItem(item)
         self.list_animals.blockSignals(False)
         self._update_animal_count()
@@ -499,7 +499,7 @@ class ExportMasksPage(QWidget):
         self._update_animal_count()
         self._update_export_button()
 
-    def _selected_pairs(self) -> list[tuple[str, str]]:
+    def _selected_animals(self) -> list[str]:
         out: list[tuple[str, str]] = []
         for i in range(self.list_animals.count()):
             item = self.list_animals.item(i)
@@ -508,7 +508,7 @@ class ExportMasksPage(QWidget):
         return out
 
     def _update_animal_count(self) -> None:
-        sel = len(self._selected_pairs())
+        sel = len(self._selected_animals())
         total = self.list_animals.count()
         self.lbl_animals_count.setText(f"{sel} of {total} selected")
 
@@ -711,7 +711,7 @@ class ExportMasksPage(QWidget):
 
     def _update_export_button(self) -> None:
         ok_dir, msg_dir = self._validate_dirname()
-        n_animals = len(self._selected_pairs())
+        n_animals = len(self._selected_animals())
         params_ok = bool(self.mask_widget.to_params().get("states"))
 
         ok = ok_dir and n_animals > 0 and params_ok
@@ -736,8 +736,8 @@ class ExportMasksPage(QWidget):
         if not ok_dir:
             QMessageBox.warning(self, "Cannot export", msg)
             return
-        pairs = self._selected_pairs()
-        if not pairs:
+        animal_ids = self._selected_animals()
+        if not animal_ids:
             return
 
         out_dir = self._out_dir()
@@ -752,10 +752,10 @@ class ExportMasksPage(QWidget):
             # Non-fatal: warn but still run the export.
             self.lbl_action_hint.setText(f"Note: couldn't save export config ({e}).")
 
-        self._populate_status_table(pairs)
+        self._populate_status_table(animal_ids)
         self._status_box.setVisible(True)
         self.progress_bar.setVisible(True)
-        self.progress_bar.setRange(0, len(pairs))
+        self.progress_bar.setRange(0, len(animal_ids))
         self.progress_bar.setValue(0)
         self.btn_open_folder.setEnabled(False)
         self._last_out_dir = out_dir
@@ -765,7 +765,7 @@ class ExportMasksPage(QWidget):
             out_dir=out_dir,
             manifest=manifest,
             params=params,
-            pairs=pairs,
+            animal_ids=animal_ids,
             parent=self,
         )
         self._worker.progress.connect(self._on_progress)
@@ -787,48 +787,46 @@ class ExportMasksPage(QWidget):
 
     # ----- Status table ------------------------------------------------
 
-    def _populate_status_table(self, pairs: list[tuple[str, str]]) -> None:
+    def _populate_status_table(self, animal_ids: list[str]) -> None:
         self.tbl_status.setRowCount(0)
-        self._row_for_pair = {}
-        for i, (animal_id, combo) in enumerate(pairs):
+        self._row_for_animal = {}
+        for i, animal_id in enumerate(animal_ids):
             self.tbl_status.insertRow(i)
             self.tbl_status.setItem(i, 0, QTableWidgetItem(animal_id))
-            self.tbl_status.setItem(i, 1, QTableWidgetItem(combo))
             status_item = QTableWidgetItem("⏳ queued")
             status_item.setForeground(QColor("#666"))
-            self.tbl_status.setItem(i, 2, status_item)
-            self.tbl_status.setItem(i, 3, QTableWidgetItem(""))
-            self._row_for_pair[(animal_id, combo)] = i
-        self.lbl_summary.setText(f"0 / {len(pairs)} complete")
+            self.tbl_status.setItem(i, 1, status_item)
+            self.tbl_status.setItem(i, 2, QTableWidgetItem(""))
+            self._row_for_animal[animal_id] = i
+        self.lbl_summary.setText(f"0 / {len(animal_ids)} complete")
 
     def _set_row_status(
         self,
         animal_id: str,
-        combo: str,
         status: str,
         color: str,
         message: str = "",
     ) -> None:
-        i = self._row_for_pair.get((animal_id, combo))
+        i = self._row_for_animal.get(animal_id)
         if i is None:
             return
-        item = self.tbl_status.item(i, 2)
+        item = self.tbl_status.item(i, 1)
         item.setText(status)
         item.setForeground(QColor(color))
         if message:
-            self.tbl_status.item(i, 3).setText(message)
+            self.tbl_status.item(i, 2).setText(message)
 
-    def _on_progress(self, animal_id: str, combo: str, done: int, total: int) -> None:
+    def _on_progress(self, animal_id: str, done: int, total: int) -> None:
         self.progress_bar.setValue(done)
         self.lbl_summary.setText(f"{done} / {total} complete")
 
     def _on_finished(self, result: ExportResult) -> None:
         for r in result.results:
             if r.status == "ok":
-                self._set_row_status(r.animal_id, r.combo, "✓ done", "#1d7c2c")
+                self._set_row_status(r.animal_id, "✓ done", "#1d7c2c")
             else:
                 msg = r.message.splitlines()[0] if r.message else "error"
-                self._set_row_status(r.animal_id, r.combo, "✗ error", "#b00", msg)
+                self._set_row_status(r.animal_id, "✗ error", "#b00", msg)
         ok_count = len(result.successes)
         fail_count = len(result.failures)
         total = len(result.results)

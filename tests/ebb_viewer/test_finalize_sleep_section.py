@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
-from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
+from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
 
 
 def _make_page(qapp, tmp_path: Path):
@@ -16,19 +16,20 @@ def _make_page(qapp, tmp_path: Path):
     return FinalizePage(project_root=tmp_path)
 
 
-def _seed(tmp_path: Path, runs: dict[str, dict[str, RunEntry]]) -> None:
+def _seed(tmp_path: Path, sleep_qc: dict[str, str | None]) -> None:
     m = Manifest(tmp_path)
-    for animal_id, combo_runs in runs.items():
+    for animal_id, status in sleep_qc.items():
         m._entries[animal_id] = ManifestEntry(
             animal_id=animal_id,
             preprocessed_edf=f"{animal_id}_PREPROCESSED.edf",
-            runs=combo_runs,
+            has_spindle=True,
+            sleep_qc=status,
         )
     m.save()
 
 
 def test_sleep_status_all_accepted(qapp, tmp_path: Path):
-    _seed(tmp_path, {"AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")}})
+    _seed(tmp_path, {"AM001": "ok"})
     page = _make_page(qapp, tmp_path)
     page._refresh_sleep_section()
     assert "✓" in page._sleep_status_lbl.text()
@@ -38,10 +39,7 @@ def test_sleep_status_all_accepted(qapp, tmp_path: Path):
 def test_sleep_status_flags_missing(qapp, tmp_path: Path):
     _seed(
         tmp_path,
-        {
-            "AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")},
-            "AM002": {"LFC_RSC": RunEntry(sleep_qc="needs_review")},
-        },
+        {"AM001": "ok", "AM002": "needs_review"},
     )
     page = _make_page(qapp, tmp_path)
     page._refresh_sleep_section()
@@ -52,7 +50,7 @@ def test_sleep_status_flags_missing(qapp, tmp_path: Path):
 
 
 def test_sleep_export_disabled_when_none_accepted(qapp, tmp_path: Path):
-    _seed(tmp_path, {"AM001": {"LFC_RSC": RunEntry(sleep_qc="needs_review")}})
+    _seed(tmp_path, {"AM001": "needs_review"})
     page = _make_page(qapp, tmp_path)
     page._refresh_sleep_section()
     assert not page._btn_export_sleep.isEnabled()
@@ -69,7 +67,7 @@ def test_sleep_export_writes_bundle(qapp, tmp_path: Path):
             w.writerow([s])
     (tmp_path / "standard").mkdir()
     (tmp_path / "standard" / "AM001_PREPROCESSED.edf").write_bytes(b"")
-    _seed(tmp_path, {"AM001": {"LFC_RSC": RunEntry(sleep_qc="ok")}})
+    _seed(tmp_path, {"AM001": "ok"})
 
     page = _make_page(qapp, tmp_path)
     fake_start = datetime(2024, 1, 1, 6, 0, 0)

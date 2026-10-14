@@ -3,11 +3,7 @@
 # parse_animal_id`) keep working.
 from ebb.core.naming import parse_animal_id
 
-__all__ = ["CHANNEL_COMBOS", "parse_animal_id", "drink_mask_rel"]
-
-
-# All valid channel combos used by the pipeline
-CHANNEL_COMBOS = ["LFC_RSC", "LFC_LSC", "RSC_LSC", "LFC", "RSC", "LSC"]
+__all__ = ["parse_animal_id", "drink_mask_rel"]
 
 
 def drink_mask_rel(animal_id: str) -> str:

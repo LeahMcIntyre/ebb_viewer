@@ -17,38 +17,15 @@ grounds that `pages/psds.py` never sets `offset_path`. It's a
 forward-compatibility seam used by the Drink Mask rerun path — leave
 it alone.
 
-### Cache eviction in `_poll()` during review mode
-The 10-second background poll in `SleepQCGridPage._poll` evicts cached
-combo data for combos in `pending_rerun_review()`. Evicting *mid-review*
-caused the second animal's rerun trace to disappear when navigating to
-it (cache was cleared before the next plot built). Fix lives in
-`_poll`: skip eviction when `self._review_mode` is True.
-
-### `needs_rerun_pending()` gating on `source_combo` alone
-Early version excluded a run from the pending queue as soon as
-`source_combo` was set. Caused vanishing items when the user cancelled
-an upload between Rerun page and Sleep QC: the EDF write set
-`source_combo`, the cancel meant no CSV, but the queue thought the
-animal was already past that stage. Fixed by gating on **CSV presence
-on disk**, not on `source_combo`.
-
-### Cancelled-upload race in Rerun page
-If the upload dialog is cancelled, the spindle_outputs CSV never lands,
-but the manifest is already half-set (`source_combo` stamped on the
-new run). The animal should re-appear in the rerun queue on next
-refresh — verified by the CSV-presence gate above. Don't try to "undo"
-the half-state at the manifest level.
-
 ### Launching multiple SleepyRatWorkers in a loop — keep ALL refs alive
 `SleepyRatWorker` has no Qt parent. If you spawn several in a tight
 Python loop and only stash the latest in a single `self._sr_worker`
 attribute, the earlier workers get Python-GC'd before
 `thread.started → worker.run` can dispatch — only the last worker
-actually runs. The original Rerun-page code looked like a single-slot
-attribute but worked because each iteration was bracketed by a
-modal `dlg.exec()` that spun the event loop. When the per-combo
-dialog was consolidated into one bulk dialog, the modal break went
-away and the bug surfaced. **Fix:** append each worker + thread to
+actually runs. A single-slot attribute only appears to work when each
+iteration is bracketed by a modal `dlg.exec()` that spins the event
+loop (the removed Rerun page did this until its per-combo dialogs were
+consolidated, and the bug surfaced). **Fix:** append each worker + thread to
 `list` attributes on the page so all live workers stay reachable
 from Python. Mirror this pattern any time a page may launch >1 worker
 in the same call. The threads themselves usually survive because they
@@ -58,44 +35,46 @@ have a Qt parent (the page), but the workers don't.
 
 ## Manifest semantics
 
-### One-ok invariant
-`flag_sleep_qc("ok")` cascade-rejects every sibling run for that
-animal. Un-okaying restores them via the `prev_sleep_qc` /
-`rejected_by` bookkeeping on each rejected sibling. **Never** poke at
-`sleep_qc` fields directly — always go through `flag_sleep_qc` so the
-cascade stays consistent. The integrity check in `Manifest.load`
-catches multi-ok states and auto-fixes them (with a warning), so
-violations are loud, but the right thing is to not write them at all.
+### `has_spindle` gates the filtered views
+`ManifestEntry.has_spindle` is set by `Manifest.build_from_standard`
+when a file for the animal exists in the project combo's
+`spindle_edfs/<combo>/` or `spindle_outputs/<combo>/`. Every filtered
+view (`pending_sleep_qc`, `ready_for_psd`, ...) requires it, so an
+animal with only a preprocessed EDF never shows up as "pending QC".
+New code that builds a `ManifestEntry` by hand (tests, importers) must
+set it or the entry is invisible to the views.
 
-### `source_combo` is forward state, not history
-`source_combo` is the backward pointer from a rerun row to the row
-that triggered it. It's used to filter `pending_rerun_review`. Don't
-treat its presence as "this animal's rerun is done" — that's gated
-separately on CSV presence + manifest status.
+### PSD status is only valid while `sleep_qc == "ok"`
+`flag_sleep_qc` clears `psd_status` and `drink_mask` when an animal
+leaves "ok", and `reset_sleep_qc` always clears them. `flag_psd`
+refuses to run on a non-ok animal. Go through these methods rather
+than assigning `entry.sleep_qc` directly.
 
-### `add_run` on an existing ok run
-`add_run` was originally happy to reset `sleep_qc` to None on an
-already-ok run when re-stamping `source_combo`. That violates the
-invariant silently. Current code guards against this — keep the
-`if run.sleep_qc != "ok"` check around the reset.
+### Project combo lives in `manifest.json`
+`Manifest.combo` (default `LFC_RSC`) is stored at the top level of
+`manifest.json` next to the `animals` dict. Path helpers
+(`spindle_edf_dir`, `spindle_output_dir`, `psd_path`) still take the
+combo explicitly — callers pass `manifest.combo`. Changing the combo
+on an existing project does **not** migrate flags: they belong to
+whichever combo was active when they were set.
 
-### Stamping `source_combo` from `spindle_edfs/`
-Earlier `build_from_standard` stamped `source_combo` from both
-`spindle_edfs/` and `spindle_outputs/` scans. The `spindle_edfs/` scan
-caused an item to disappear from the rerun queue the moment a user
-manually placed an EDF in that directory — *before* it had a CSV.
-Fixed by scanning only `spindle_outputs/`.
+### TEMPORARY: reading pre-single-combo manifests
+`manifest._entry_from_dict` still reads the old
+`{animal: {runs: {combo: ...}}}` format (takes the project combo's
+run, drops the rest, maps `needs_rerun`/`rejected` to unreviewed).
+`build_from_standard` rewrites such a file in the new format. Delete
+this branch (and its `test_legacy_*` tests) once existing projects
+have been re-saved.
 
 ---
 
 ## PSD compute / drink mask
 
-### `psds_channel_merged.pkl` is immutable after `build_final_pkl`
-Drink-mask reruns must **not** overwrite the per-combo PKLs or the
-channel-merged PKL. They land in `psds_drink.pkl` (accumulates,
-replace-per-animal) and the overlay is regenerated in
-`psds_channel_merged_drink.pkl`. The Finalize page picks the `_drink`
-variant when present, else the bare `_merged`.
+### `psds_<combo>.pkl` is immutable after Compute PSDs
+Drink-mask reruns must **not** overwrite `psds_<combo>.pkl`. They land in
+`psds_drink.pkl` (accumulates, replace-per-animal) and the overlay is
+regenerated in `psds_<combo>_drink.pkl`. The Finalize page picks the
+`_drink` variant when present, else the bare `psds_<combo>.pkl`.
 
 ### `rerun_with_drink_masks` and hour windows
 Forgetting to strip `hw_enabled` and explicitly pass `hour_windows` /
@@ -112,8 +91,8 @@ the input `animal_ids_set`.
 ### Drink-mask discovery by file presence, not manifest state
 The Export Masks pipeline and the PSD compute path discover drink
 masks by globbing `<project_root>/drink_masks/<animal_id>.npy`, not
-by reading the manifest's `run.drink_mask` field. The manifest field
-is cleared once an animal is flagged "ok" with no other run still at
+by reading the manifest's `drink_mask` field. The manifest field
+is cleared once an animal is flagged "ok" with no other PSD run still at
 `drink_mask_applied`, so the .npy file is the authoritative record.
 Same pattern for SWD: glob `swd/<animal_id>_*.mat`.
 
@@ -177,6 +156,3 @@ ordering.
 - **No legacy compat code** — delete migration shims rather than tidy
   them. Codified in `CLAUDE.md`.
 - **Branch off `dev`, never `main`** — codified in `CLAUDE.md`.
-- **Review-mode Accept on the original combo is intentional** — flagged
-  by the code-improvement advisor twice during the sweep as a bug;
-  it's not. Codified in `CLAUDE.md`.

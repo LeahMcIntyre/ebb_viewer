@@ -36,7 +36,7 @@ from ebb_viewer.edf_viewer.mask_builder import (
 from ebb_viewer.edf_viewer.masks_dock import MasksDock
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
-from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, parse_animal_id
+from ebb_viewer.pipeline.naming import parse_animal_id
 from ebb_viewer.widgets.drink_mask_dialog import DrinkMaskDialogue
 from ebb_viewer.widgets.sleep_viewer import SleepPopup
 from ebb_viewer.widgets.stft_viewer import STFTBoundsDialog, STFTPopup
@@ -198,7 +198,6 @@ class EegMainWindow(QtWidgets.QMainWindow):
     _QC_STYLES: dict[str, str] = {
         "ok": "color: green; font-weight: bold;",
         "needs_review": "color: #b8860b; font-weight: bold;",
-        "needs_rerun": "color: darkorange; font-weight: bold;",
     }
 
     def __init__(
@@ -207,7 +206,6 @@ class EegMainWindow(QtWidgets.QMainWindow):
         initial_dir: str = "",
         manifest=None,
         animal_id: str | None = None,
-        run_channels: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -215,7 +213,6 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.initial_dir = initial_dir
         self.manifest = manifest
         self.animal_id = animal_id
-        self.run_channels = run_channels  # channel combo for the spindle run being reviewed
 
         self.mask_set = build_default_masks(recording)
         self.state_set = None
@@ -257,11 +254,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self._build_actions()
         self._build_menus()
         self._build_toolbars()
-        if (
-            self.manifest is not None
-            and self.animal_id is not None
-            and self.run_channels is not None
-        ):
+        if self.manifest is not None and self.animal_id is not None:
             self._build_qc_toolbar()
         self._build_docks()
 
@@ -429,44 +422,29 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         qc_tb.addSeparator()
 
-        # Rerun combo: pick a different combo from the current run_channels
-        self._rerun_combo = QtWidgets.QComboBox()
-        self._rerun_combo.addItems(CHANNEL_COMBOS)
-        run = self.manifest.get_run(self.animal_id, self.run_channels)
-        if run and run.rerun_combo and run.rerun_combo in CHANNEL_COMBOS:
-            self._rerun_combo.setCurrentText(run.rerun_combo)
-        else:
-            others = [c for c in CHANNEL_COMBOS if c != self.run_channels]
-            if others:
-                self._rerun_combo.setCurrentText(others[0])
-        qc_tb.addWidget(self._rerun_combo)
-
-        self._act_rerun = QtGui.QAction("Needs Rerun", self)
-        self._act_rerun.setCheckable(True)
-        self._act_rerun.triggered.connect(self._flag_qc_rerun)
-        qc_tb.addAction(self._act_rerun)
+        self._act_review = QtGui.QAction("Needs Review", self)
+        self._act_review.setCheckable(True)
+        self._act_review.triggered.connect(self._flag_qc_review)
+        qc_tb.addAction(self._act_review)
 
         self._update_qc_status()
 
     def _flag_qc_ok(self) -> None:
-        self.manifest.flag_sleep_qc(self.animal_id, self.run_channels, "ok")
+        self.manifest.flag_sleep_qc(self.animal_id, "ok")
         self._update_qc_status()
 
-    def _flag_qc_rerun(self) -> None:
-        rerun_combo = self._rerun_combo.currentText()
-        self.manifest.flag_sleep_qc(
-            self.animal_id, self.run_channels, "needs_rerun", rerun_combo=rerun_combo
-        )
+    def _flag_qc_review(self) -> None:
+        self.manifest.flag_sleep_qc(self.animal_id, "needs_review")
         self._update_qc_status()
 
     def _update_qc_status(self) -> None:
-        run = self.manifest.get_run(self.animal_id, self.run_channels)
-        status = run.sleep_qc if run else None
+        entry = self.manifest.get(self.animal_id)
+        status = entry.sleep_qc if entry else None
         txt = (status or "unflagged").replace("_", " ")
-        self._qc_status_label.setText(f"QC [{self.run_channels}]: {txt}")
+        self._qc_status_label.setText(f"QC: {txt}")
         self._qc_status_label.setStyleSheet(self._QC_STYLES.get(status, ""))
         self._act_ok.setChecked(status == "ok")
-        self._act_rerun.setChecked(status == "needs_rerun")
+        self._act_review.setChecked(status == "needs_review")
 
     def _on_mask_rebuild(self, mask) -> None:
         name = mask.name
@@ -657,7 +635,6 @@ def launch_edf_window(
     csv_path: Path | None = None,
     manifest=None,
     animal_id: str | None = None,
-    run_channels: str | None = None,
     initial_dir: str = "",
 ) -> EegMainWindow:
     """Load an EDF file and return a configured (not yet shown) EegMainWindow.
@@ -671,7 +648,6 @@ def launch_edf_window(
         initial_dir=initial_dir,
         manifest=manifest,
         animal_id=animal_id,
-        run_channels=run_channels,
     )
     win.setWindowTitle(f"{edf_path.stem} — EEG Viewer")
     return win

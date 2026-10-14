@@ -23,10 +23,9 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _make_psd_record(animal_id: str, combo: str = "LFC_RSC") -> dict:
+def _make_psd_record(animal_id: str) -> dict:
     return {
         "path": str(Path(f"{animal_id}_foo_PREPROCESSED.edf")),
-        "source_combo": combo,
         "channels": (0, 1),
         "behavior": ("threshold", "wake"),
         "n_estimates": 10,
@@ -246,8 +245,8 @@ def _setup_drink_rerun_dirs(tmp_path):
     (combo_dir / "AM001_states.csv").touch()
     (drink_dir / "AM001_drink.npy").touch()
 
-    # psds_channel_merged.pkl — source_combo matches
-    with open(psd_dir / "psds_channel_merged.pkl", "wb") as f:
+    # psds_LFC_RSC.pkl
+    with open(psd_dir / "psds_LFC_RSC.pkl", "wb") as f:
         pickle.dump([_make_psd_record("AM001")], f)
 
     return dict(
@@ -271,7 +270,8 @@ def test_rerun_with_drink_masks_translates_states_to_labels(tmp_path):
 
         rerun_with_drink_masks(
             **dirs,
-            animal_combos={"AM001": "LFC_RSC"},
+            animal_ids=["AM001"],
+            combo="LFC_RSC",
             run_name="default",
             states=["wake", "nrem"],
         )
@@ -293,7 +293,8 @@ def test_rerun_with_drink_masks_no_states_no_labels(tmp_path):
 
         rerun_with_drink_masks(
             **dirs,
-            animal_combos={"AM001": "LFC_RSC"},
+            animal_ids=["AM001"],
+            combo="LFC_RSC",
             run_name="default",
         )
 

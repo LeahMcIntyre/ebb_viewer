@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from ebb.core.naming import parse_animal_id
-from ebb.process.psd_compute import build_final_pkl, match_paths, out_fraction
+from ebb.process.psd_compute import build_run_final_pkl, match_paths, out_fraction
 
 # Direct test cases for parse_animal_id moved to tests/ebb/test_naming.py.
 
@@ -61,7 +61,7 @@ def test_match_paths_extra_eeg_raises():
 
     This documents the error that batch_estimate's pre-filtering is designed to
     prevent: if you pass all EDFs from standard/ but only a subset of state
-    CSVs (e.g. a rerun combo), re_match raises ValueError.
+    CSVs, re_match raises ValueError.
     """
     eeg = [
         Path("AM0001_x_PROCESSED.edf"),
@@ -130,139 +130,41 @@ def test_match_paths_swd_missing_raises():
 
 
 # ---------------------------------------------------------------------------
-# build_final_pkl
+# build_run_final_pkl
 # ---------------------------------------------------------------------------
 
 
-def _make_psd_record(animal_id: str, combo: str) -> dict:
-    """Minimal PSD record as produced by batch_estimate."""
-    return {
-        "path": str(Path(f"{animal_id}_foo_PREPROCESSED.edf")),
-        "channels": (0, 1),
-        "behavior": ("threshold", "wake"),
-        "n_estimates": 10,
-        "spindle_out_frac": 0.1,
-        "comm_out_frac": 0.05,
-        "sd_out_frac": 0.02,
-        "swd_out_frac": 0.0,
-        "used_swd": False,
-        "used_drink": False,
-        "freqs": [0.5, 1.0, 2.0],
-        "psd": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
-    }
-
-
-def _write_combo_pkl(psd_dir: Path, combo: str, records: list) -> Path:
-    psd_dir.mkdir(parents=True, exist_ok=True)
-    p = psd_dir / f"psds_{combo}.pkl"
-    with open(p, "wb") as f:
+def _write_pkl(path: Path, records: list) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "wb") as f:
         pickle.dump(records, f)
-    return p
 
 
-class _FakeRun:
-    def __init__(self, sleep_qc):
-        self.sleep_qc = sleep_qc
+def test_build_run_final_pkl_uses_base_when_no_drink(tmp_path):
+    psd_dir = tmp_path / "psd" / "default"
+    _write_pkl(psd_dir / "psds_LFC_RSC.pkl", ["base"])
+
+    out = build_run_final_pkl(tmp_path, "LFC_RSC")
+
+    assert out == psd_dir / "psds_final.pkl"
+    with open(out, "rb") as f:
+        assert pickle.load(f) == ["base"]
 
 
-class _FakeEntry:
-    def __init__(self, animal_id, ok_combo):
-        self.animal_id = animal_id
-        self.runs = {ok_combo: _FakeRun("ok")} if ok_combo else {}
+def test_build_run_final_pkl_prefers_drink_overlay(tmp_path):
+    psd_dir = tmp_path / "psd" / "default"
+    _write_pkl(psd_dir / "psds_LFC_RSC.pkl", ["base"])
+    _write_pkl(psd_dir / "psds_LFC_RSC_drink.pkl", ["drink"])
 
-
-class _FakeManifest:
-    def __init__(self, entries):
-        self._entries = entries
-
-    def __iter__(self):
-        return iter(self._entries)
-
-
-def test_build_final_pkl_basic(tmp_path):
-    psd_run_dir = tmp_path / "psd" / "default"
-
-    _write_combo_pkl(
-        psd_run_dir,
-        "LFC_RSC",
-        [
-            _make_psd_record("AM001", "LFC_RSC"),
-            _make_psd_record("AM002", "LFC_RSC"),
-        ],
-    )
-
-    manifest = _FakeManifest(
-        [
-            _FakeEntry("AM001", "LFC_RSC"),
-            _FakeEntry("AM002", "LFC_RSC"),
-        ]
-    )
-
-    out = build_final_pkl(tmp_path, manifest)
-    assert out == psd_run_dir / "psds_channel_merged.pkl"
-    assert out.exists()
+    out = build_run_final_pkl(tmp_path, "LFC_RSC")
 
     with open(out, "rb") as f:
-        records = pickle.load(f)
-
-    assert len(records) == 2
-    animal_ids = {parse_animal_id(r["path"]) for r in records}
-    assert animal_ids == {"AM001", "AM002"}
-    for r in records:
-        assert r["source_combo"] == "LFC_RSC"
+        assert pickle.load(f) == ["drink"]
 
 
-def test_build_final_pkl_filters_to_ok_combo(tmp_path):
-    """Only animals with ok sleep_qc are included."""
-    psd_run_dir = tmp_path / "psd" / "default"
-
-    _write_combo_pkl(
-        psd_run_dir,
-        "LFC_RSC",
-        [
-            _make_psd_record("AM001", "LFC_RSC"),
-            _make_psd_record("AM002", "LFC_RSC"),
-        ],
-    )
-
-    # AM002 has no ok combo
-    manifest = _FakeManifest(
-        [
-            _FakeEntry("AM001", "LFC_RSC"),
-            _FakeEntry("AM002", None),
-        ]
-    )
-
-    out = build_final_pkl(tmp_path, manifest)
-    with open(out, "rb") as f:
-        records = pickle.load(f)
-
-    assert len(records) == 1
-    assert parse_animal_id(records[0]["path"]) == "AM001"
-
-
-def test_build_final_pkl_multiple_combos(tmp_path):
-    """Animals from different ok combos are consolidated."""
-    psd_run_dir = tmp_path / "psd" / "default"
-
-    _write_combo_pkl(psd_run_dir, "LFC_RSC", [_make_psd_record("AM001", "LFC_RSC")])
-    _write_combo_pkl(psd_run_dir, "LSC_RSC", [_make_psd_record("AM002", "LSC_RSC")])
-
-    manifest = _FakeManifest(
-        [
-            _FakeEntry("AM001", "LFC_RSC"),
-            _FakeEntry("AM002", "LSC_RSC"),
-        ]
-    )
-
-    out = build_final_pkl(tmp_path, manifest)
-    with open(out, "rb") as f:
-        records = pickle.load(f)
-
-    assert len(records) == 2
-    by_animal = {parse_animal_id(r["path"]): r for r in records}
-    assert by_animal["AM001"]["source_combo"] == "LFC_RSC"
-    assert by_animal["AM002"]["source_combo"] == "LSC_RSC"
+def test_build_run_final_pkl_raises_when_nothing_computed(tmp_path):
+    with pytest.raises(FileNotFoundError, match="Compute PSDs"):
+        build_run_final_pkl(tmp_path, "LFC_RSC")
 
 
 # ---------------------------------------------------------------------------
@@ -397,15 +299,3 @@ def test_batch_estimate_extends_pairs_with_annotation_paths(tmp_path):
     am002_args = next(a for a in called_with if "AM002" in str(a[0]))
     assert am001_args[4] == ann_file
     assert am002_args[4] is None
-
-
-def test_build_final_pkl_missing_combo_pkl_warns(tmp_path):
-    """Missing per-combo PKL emits a warning and skips that combo."""
-    manifest = _FakeManifest([_FakeEntry("AM001", "LFC_RSC")])
-
-    with pytest.warns(UserWarning, match="PKL not found"):
-        out = build_final_pkl(tmp_path, manifest)
-
-    with open(out, "rb") as f:
-        records = pickle.load(f)
-    assert records == []

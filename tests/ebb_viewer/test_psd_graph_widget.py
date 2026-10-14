@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ebb_viewer.pipeline import psd_params
-from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
+from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
 from ebb_viewer.widgets.psd_graph_widget import (
     _DEFAULT_INTERP_RANGE,
     _NOTCH_INTERP_RANGE,
@@ -42,7 +42,6 @@ def _make_page(
     run_name: str = "default",
     store=None,
     manifest=None,
-    run_channels: str | None = None,
 ) -> PSDGridPage:
     return PSDGridPage(
         store=store or _FakeStore(),
@@ -51,7 +50,6 @@ def _make_page(
         run_name=run_name,
         project_root=project_root,
         manifest=manifest,
-        run_channels=run_channels,
     )
 
 
@@ -60,7 +58,8 @@ def _seed_manifest(tmp_path: Path, animal_id: str = "AM001") -> Manifest:
     m._entries[animal_id] = ManifestEntry(
         animal_id=animal_id,
         preprocessed_edf=f"{animal_id}_PREPROCESSED.edf",
-        runs={"LFC_RSC": RunEntry(sleep_qc="ok")},
+        has_spindle=True,
+        sleep_qc="ok",
     )
     m.save()
     return m
@@ -130,7 +129,7 @@ def test_notes_menu_action_hidden_without_manifest(qapp):
 
 def test_notes_menu_action_visible_with_manifest(qapp, tmp_path: Path):
     manifest = _seed_manifest(tmp_path)
-    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
+    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest)
     assert w._act_menu_notes.isVisible() is True
 
 
@@ -138,7 +137,7 @@ def test_open_notes_dialog_accept_persists_and_emits(qapp, tmp_path: Path):
     import ebb_viewer.widgets.psd_graph_widget as pgw_mod
 
     manifest = _seed_manifest(tmp_path)
-    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
+    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest)
     emitted: list = []
     w.manifest_changed.connect(lambda: emitted.append(True))
 
@@ -154,7 +153,7 @@ def test_open_notes_dialog_prefills_existing_text(qapp, tmp_path: Path):
 
     manifest = _seed_manifest(tmp_path)
     manifest.set_notes("AM001", "existing note")
-    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
+    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest)
 
     captured: dict = {}
 
@@ -174,7 +173,7 @@ def test_open_notes_dialog_cancel_does_not_change_manifest(qapp, tmp_path: Path)
 
     manifest = _seed_manifest(tmp_path)
     manifest.set_notes("AM001", "original note")
-    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
+    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest)
     emitted: list = []
     w.manifest_changed.connect(lambda: emitted.append(True))
 
@@ -188,13 +187,13 @@ def test_open_notes_dialog_cancel_does_not_change_manifest(qapp, tmp_path: Path)
 def test_more_button_marked_when_note_present(qapp, tmp_path: Path):
     manifest = _seed_manifest(tmp_path)
     manifest.set_notes("AM001", "has a note")
-    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
+    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest)
     assert w._btn_more.text() == "More 📝"
     assert w._btn_more.toolTip() == "has a note"
 
 
 def test_more_button_plain_when_no_note(qapp, tmp_path: Path):
     manifest = _seed_manifest(tmp_path)
-    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
+    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest)
     assert w._btn_more.text() == "More"
     assert w._btn_more.toolTip() == ""

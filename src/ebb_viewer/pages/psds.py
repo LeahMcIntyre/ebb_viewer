@@ -1,13 +1,13 @@
 """PSD compute page — wraps :func:`ebb.process.psd_compute.batch_estimate`.
 
 Drives the initial PSD computation step of the pipeline. Each run produces
-one ``psds_<combo>.pkl`` per channel combination plus a merged
-``psds_channel_merged.pkl`` consumed by the visualizer.
+one ``psds_<combo>.pkl`` for the project's channel combo plus a merged
+consumed by the visualizer.
 
 The page is structured as:
 
 1. Folder selection + run name (PSD-specific)
-2. Spindle output combos table (read-only summary)
+2. Spindle output summary for the project combo (read-only)
 3. ``MaskParamsWidget`` — shared editor for state-group selection,
    SD/spindle/SWD/annotation/hour-window mask params (same widget the
    Export Masks page uses, with ``show_drink_mask=False`` since the PSD
@@ -52,9 +52,9 @@ from PyQt6.QtWidgets import (
 
 from ebb.core.naming import parse_animal_id
 from ebb.io.edf_header import detect_fs_from_standard
-from ebb.process.psd_compute import batch_estimate, build_final_pkl
+from ebb.process.psd_compute import batch_estimate
 from ebb_viewer.pipeline import psd_params
-from ebb_viewer.pipeline.manifest import Manifest, merged_psd_path
+from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
 from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget
 from ebb_viewer.widgets.no_scroll_spinbox import NoScrollSpinBox
@@ -136,9 +136,8 @@ class PSDPage(QWidget):
         lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
         desc = QLabel(
             "Compute power spectral densities from sleep-scored EDF files. "
-            "A separate PSD file is produced for each channel combination. "
-            "Each animal must have exactly one combination marked 'ok' in Sleep QC — "
-            "those ok runs are then merged into a single combined file per combo for downstream analysis."
+            "Every animal must be marked 'ok' in Sleep QC — "
+            "their PSDs are then merged into a single combined file for downstream analysis."
         )
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #555; font-size: 12px;")
@@ -211,7 +210,7 @@ class PSDPage(QWidget):
         setup_v.addWidget(self.folder_gb)
 
         # Spindle Output Combos (Setup)
-        self.combo_gb = QGroupBox("Spindle Output Combos")
+        self.combo_gb = QGroupBox("Spindle Output")
         combo_v = QVBoxLayout(self.combo_gb)
 
         btn_row = QHBoxLayout()
@@ -221,7 +220,7 @@ class PSDPage(QWidget):
         combo_v.addLayout(btn_row)
 
         self.combo_table = QTableWidget(0, 4)
-        self.combo_table.setHorizontalHeaderLabels(["Combo", "CSVs", "Ok Runs", "PKL Status"])
+        self.combo_table.setHorizontalHeaderLabels(["Combo", "CSVs", "Ok Animals", "PKL Status"])
         self.combo_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.combo_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self.combo_table.setColumnWidth(1, 60)
@@ -235,10 +234,6 @@ class PSDPage(QWidget):
         # instead of always reserving ~150 px — most projects have 1–3 combos.
         self.combo_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         combo_v.addWidget(self.combo_table)
-
-        self._merged_pkl_label = QLabel()
-        self._merged_pkl_label.setStyleSheet("font-size: 10px; color: #555; padding-top: 2px;")
-        combo_v.addWidget(self._merged_pkl_label)
 
         setup_v.addWidget(self.combo_gb)
 
@@ -574,52 +569,34 @@ class PSDPage(QWidget):
         psd_dir = self.project_root / "psd"
         manifest = Manifest.load(self.project_root)
 
-        # Count ok runs per combo across all animals
-        ok_runs_per_combo: dict[str, int] = {}
-        for entry in manifest:
-            for combo, run in entry.runs.items():
-                if run.sleep_qc == "ok":
-                    ok_runs_per_combo[combo] = ok_runs_per_combo.get(combo, 0) + 1
+        combo = manifest.combo
+        ok_count = len(manifest.ready_for_psd())
 
         self.combo_table.blockSignals(True)
         self.combo_table.setRowCount(0)
 
         run_name = self._run_name()
-        if spindle_root.is_dir():
-            for combo_dir in sorted(p for p in spindle_root.iterdir() if p.is_dir()):
-                combo = combo_dir.name
-                csv_count = len(list(combo_dir.glob("*.csv")))
-                ok_count = ok_runs_per_combo.get(combo, 0)
-                pkl_path = psd_dir / run_name / f"psds_{combo}.pkl"
-                pkl_status = "✓ exists" if pkl_path.exists() else "missing"
+        combo_dir = spindle_root / combo
+        csv_count = len(list(combo_dir.glob("*.csv"))) if combo_dir.is_dir() else 0
+        pkl_path = psd_dir / run_name / f"psds_{combo}.pkl"
+        pkl_status = "✓ exists" if pkl_path.exists() else "missing"
 
-                row = self.combo_table.rowCount()
-                self.combo_table.insertRow(row)
-                self.combo_table.setItem(row, 0, QTableWidgetItem(combo))
-                self.combo_table.setItem(row, 1, QTableWidgetItem(str(csv_count)))
+        self.combo_table.insertRow(0)
+        self.combo_table.setItem(0, 0, QTableWidgetItem(combo))
+        self.combo_table.setItem(0, 1, QTableWidgetItem(str(csv_count)))
 
-                ok_item = QTableWidgetItem(str(ok_count) if ok_count else "—")
-                if ok_count > 0:
-                    ok_item.setForeground(QColor("#2a7a2a"))
-                self.combo_table.setItem(row, 2, ok_item)
+        ok_item = QTableWidgetItem(str(ok_count) if ok_count else "—")
+        if ok_count > 0:
+            ok_item.setForeground(QColor("#2a7a2a"))
+        self.combo_table.setItem(0, 2, ok_item)
 
-                status_item = QTableWidgetItem(pkl_status)
-                if pkl_status.startswith("✓"):
-                    status_item.setForeground(QColor("#2a7a2a"))
-                self.combo_table.setItem(row, 3, status_item)
+        status_item = QTableWidgetItem(pkl_status)
+        if pkl_status.startswith("✓"):
+            status_item.setForeground(QColor("#2a7a2a"))
+        self.combo_table.setItem(0, 3, status_item)
 
         self.combo_table.blockSignals(False)
         self._autofit_combo_table_height()
-
-        merged = merged_psd_path(self.project_root, run_name)
-        if merged.exists():
-            self._merged_pkl_label.setText("Channel merged PKL: ✓ exists")
-            self._merged_pkl_label.setStyleSheet(
-                "font-size: 10px; color: #2a7a2a; padding-top: 2px;"
-            )
-        else:
-            self._merged_pkl_label.setText("Channel merged PKL: not yet built")
-            self._merged_pkl_label.setStyleSheet("font-size: 10px; color: #555; padding-top: 2px;")
 
         self._validate(manifest)
 
@@ -636,35 +613,24 @@ class PSDPage(QWidget):
             return
 
         spindle_root = self.project_root / "spindle_outputs"
-        combos = (
-            sorted(
-                sd.name for sd in spindle_root.iterdir() if sd.is_dir() and any(sd.glob("*.csv"))
-            )
-            if spindle_root.is_dir()
-            else []
-        )
-        if not combos:
+        manifest = Manifest.load(self.project_root)
+        combo = manifest.combo
+        if not any((spindle_root / combo).glob("*.csv")):
             QMessageBox.warning(
-                self, "No Combos Found", "No spindle output combos with CSVs found."
+                self, "No Spindle Output", f"No spindle CSVs found in spindle_outputs/{combo}/."
             )
             return
 
-        manifest = Manifest.load(self.project_root)
-
         # Pre-flight: warn about ok animals with no state CSV (they'll be silently skipped)
-        for combo in combos:
-            csv_animal_ids = {parse_animal_id(p) for p in (spindle_root / combo).glob("*.csv")}
-            ok_animals = [
-                entry.animal_id
-                for entry in manifest
-                if any(c == combo and r.sleep_qc == "ok" for c, r in entry.runs.items())
-            ]
-            missing = [a for a in ok_animals if a not in csv_animal_ids]
-            if missing:
-                self._log(
-                    f"⚠ {combo}: no state CSV for {', '.join(missing)}"
-                    f" — {'this animal' if len(missing) == 1 else 'these animals'} will be skipped"
-                )
+        csv_animal_ids = {parse_animal_id(p) for p in (spindle_root / combo).glob("*.csv")}
+        missing = [
+            e.animal_id for e in manifest.ready_for_psd() if e.animal_id not in csv_animal_ids
+        ]
+        if missing:
+            self._log(
+                f"⚠ {combo}: no state CSV for {', '.join(missing)}"
+                f" — {'this animal' if len(missing) == 1 else 'these animals'} will be skipped"
+            )
 
         # Pull all mask + filter params from the widget; channels + fs stay
         # on the page. The widget includes a few keys that the underlying
@@ -677,11 +643,7 @@ class PSDPage(QWidget):
         if widget_params.get("use_swd_mask"):
             swd_dir = self.project_root / "swd"
             swd_animal_ids = {parse_animal_id(p) for p in swd_dir.glob("*.mat")}
-            all_ok_animals = {
-                entry.animal_id
-                for entry in manifest
-                if any(r.sleep_qc == "ok" for r in entry.runs.values())
-            }
+            all_ok_animals = {entry.animal_id for entry in manifest.ready_for_psd()}
             missing_swd = sorted(all_ok_animals - swd_animal_ids)
             if missing_swd:
                 QMessageBox.warning(
@@ -721,7 +683,7 @@ class PSDPage(QWidget):
         psd_run_dir = self.project_root / "psd" / run_name
         psd_run_dir.mkdir(parents=True, exist_ok=True)
         pairs: list[tuple[Path, Path]] = [
-            (spindle_root / combo, psd_run_dir / f"psds_{combo}.pkl") for combo in combos
+            (spindle_root / combo, psd_run_dir / f"psds_{combo}.pkl")
         ]
 
         # Compose params for the worker: widget params + page-owned
@@ -754,8 +716,7 @@ class PSDPage(QWidget):
         # loaded above for the pre-flight checks rather than re-reading.
         try:
             for entry in manifest:
-                for run in entry.runs.values():
-                    run.psd_status.pop(run_name, None)
+                entry.psd_status.pop(run_name, None)
             manifest.save()
         except (OSError, ValueError) as e:
             self._log(f"⚠ Could not clear stale PSD review flags: {e}")
@@ -763,7 +724,7 @@ class PSDPage(QWidget):
         self._computing = True
         self._hint_frame.setVisible(False)
         self.btn_run_pipeline.setEnabled(False)
-        self._log(f"Running PSD pipeline for {len(combos)} combo(s): {', '.join(combos)}")
+        self._log(f"Running PSD pipeline for combo: {combo}")
 
         self.psd_thread = QThread(self)
         self.psd_worker = BatchEstimateWorker(
@@ -782,28 +743,6 @@ class PSDPage(QWidget):
             on_finished=self._on_psd_done,
             on_error=self._on_psd_error,
         )
-
-    def _build_final_pkl(self) -> None:
-        try:
-            run_name = self._run_name()
-            manifest = Manifest.load(self.project_root)
-            out = build_final_pkl(self.project_root, manifest, run_name)
-            self._log(f"Built channel merged PKL: {out}")
-            drink_pkl = self.project_root / "psd" / run_name / "psds_drink.pkl"
-            if drink_pkl.exists():
-                self._log(
-                    "Note: previously applied drink masks are preserved in psds_drink.pkl."
-                    " If PSD parameters changed since the last drink mask run,"
-                    " re-apply them on the Drink Mask page."
-                )
-            self.manifest_changed.emit()
-            self._hint_lbl.setText("✓ Channel merged PKL built — ready for PSD review.")
-            self._hint_btn_viz.setVisible(True)
-            self._hint_frame.setVisible(True)
-            self._refresh_combo_table()
-        except (OSError, ValueError, RuntimeError) as e:
-            self._log(f"ERROR building final PKL: {e}")
-            QMessageBox.critical(self, "Build Final PKL Error", str(e))
 
     # ---------- Channels API ----------
 
@@ -848,9 +787,7 @@ class PSDPage(QWidget):
         all_ready = n_animals > 0 and n_ready == n_animals
 
         spindle_root = self.project_root / "spindle_outputs"
-        has_combos = spindle_root.is_dir() and any(
-            sd.is_dir() and any(sd.glob("*.csv")) for sd in spindle_root.iterdir()
-        )
+        has_combos = any((spindle_root / manifest.combo).glob("*.csv"))
 
         # Annotation mask gate — same shape as the legacy dialog: if
         # annotation masking is enabled, dir + keywords must be valid.
@@ -884,12 +821,12 @@ class PSDPage(QWidget):
             else:
                 self._gate_label.setText(
                     f"{n_not_ready} animal{'s' if n_not_ready != 1 else ''} "
-                    "not ready — each needs exactly 1 ok run"
+                    "not ready — each needs sleep QC marked ok"
                 )
             self._summary_label.setText("")
         elif not has_combos:
             self._gate_label.setText(
-                "No spindle output combos found — complete upload/download first"
+                f"No spindle output found for {manifest.combo} — complete upload/download first"
             )
             self._summary_label.setText("")
         elif not ann_ok:
@@ -909,23 +846,28 @@ class PSDPage(QWidget):
             self._summary_label.setText("")
         else:
             self._gate_label.setText("")
-            # Build summary: "LFC_RSC (8 animals), LFC_LSC (5 animals) → psds_channel_merged.pkl"
-            ok_per_combo: dict[str, int] = {}
-            for entry in manifest:
-                for combo, run in entry.runs.items():
-                    if run.sleep_qc == "ok":
-                        ok_per_combo[combo] = ok_per_combo.get(combo, 0) + 1
-            parts = [
-                f"{c} ({n} animal{'s' if n != 1 else ''})" for c, n in sorted(ok_per_combo.items())
-            ]
-            self._summary_label.setText(", ".join(parts) + " → psds_channel_merged.pkl")
+            # Build summary: "LFC_RSC (8 animals) → psds_LFC_RSC.pkl"
+            self._summary_label.setText(
+                f"{manifest.combo} ({n_ready} animal{'s' if n_ready != 1 else ''})"
+                f" → psds_{manifest.combo}.pkl"
+            )
 
     def _on_psd_done(self) -> None:
         self._computing = False
         self._log("PSD computation finished.")
+        run_name = self._run_name()
+        drink_pkl = self.project_root / "psd" / run_name / "psds_drink.pkl"
+        if drink_pkl.exists():
+            self._log(
+                "Note: previously applied drink masks are preserved in psds_drink.pkl."
+                " If PSD parameters changed since the last drink mask run,"
+                " re-apply them on the Drink Mask page."
+            )
+        self.manifest_changed.emit()
+        self._hint_lbl.setText("✓ PSDs computed — ready for PSD review.")
+        self._hint_btn_viz.setVisible(True)
+        self._hint_frame.setVisible(True)
         self._refresh_combo_table()
-        self._log("Building channel-merged PKL…")
-        self._build_final_pkl()
 
     def _on_psd_error(self, msg: str) -> None:
         self._computing = False

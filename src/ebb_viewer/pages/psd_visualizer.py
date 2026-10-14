@@ -1,10 +1,11 @@
 """PSD Visualizer page — pick a PSD run/pkl and review per-animal PSDs.
 
 Two review passes are supported:
-- Pass 1 ("psds_channel_merged.pkl"): flag each animal OK or needs-drink-mask.
-- Pass 2 ("psds_channel_merged_drink.pkl"): verify drink masks worked.
+- Pass 1 ("psds_<combo>.pkl"): flag each animal OK or needs-drink-mask.
+- Pass 2 ("psds_<combo>_drink.pkl"): verify drink masks worked.
 
-Non-merged per-combo pkls can also be opened for ad-hoc viewing (no flagging).
+Other pkls (e.g. psds_drink.pkl, psds_final.pkl) can be opened for ad-hoc viewing
+(no flagging).
 """
 
 from pathlib import Path
@@ -29,8 +30,6 @@ from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.widgets.psd_graph_widget import PSDGridPage
 
-# Pkl stems treated as "final" merged views eligible for manifest flagging.
-_FINAL_VIEW_STEMS = frozenset({"psds_channel_merged", "psds_channel_merged_drink"})
 _CHANNEL_NAMES = ["LFC", "RSC", "LSC"]
 
 
@@ -165,9 +164,10 @@ class PSDVisualizer(QWidget):
             self.cmb_file.addItem(p.name, str(p))
         self.cmb_file.blockSignals(False)
 
-        # Auto-select priority: psds_channel_merged_drink.pkl > psds_channel_merged.pkl
-        merged_drink_idx = self.cmb_file.findText("psds_channel_merged_drink.pkl")
-        merged_idx = self.cmb_file.findText("psds_channel_merged.pkl")
+        # Auto-select priority: psds_<combo>_drink.pkl > psds_<combo>.pkl
+        combo = Manifest.load(self.project_root).combo
+        merged_drink_idx = self.cmb_file.findText(f"psds_{combo}_drink.pkl")
+        merged_idx = self.cmb_file.findText(f"psds_{combo}.pkl")
         if merged_drink_idx >= 0:
             self.cmb_file.setCurrentIndex(merged_drink_idx)
         elif merged_idx >= 0:
@@ -230,18 +230,13 @@ class PSDVisualizer(QWidget):
             return
 
         stem = Path(psd_file).stem
-        is_final_view = stem in _FINAL_VIEW_STEMS
-        is_drink_review = stem == "psds_channel_merged_drink"
-        if is_final_view:
-            run_channels = None
-        elif stem.startswith("psds_"):
-            run_channels = stem[len("psds_") :]
-        else:
-            run_channels = stem
+        combo = Manifest.load(self.project_root).combo
+        is_final_view = stem in (f"psds_{combo}", f"psds_{combo}_drink")
+        is_drink_review = stem == f"psds_{combo}_drink"
         run_name = self._current_run_name()
 
         fname = Path(psd_file).name
-        if stem == "psds_channel_merged":
+        if stem == f"psds_{combo}":
             lbl_text = f"Reviewing: {fname} (Pass 1 — flag original PSDs)  [run: {run_name}]"
         elif is_drink_review:
             lbl_text = f"Reviewing: {fname} (Pass 2 — verify drink masks)  [run: {run_name}]"
@@ -257,7 +252,6 @@ class PSDVisualizer(QWidget):
             channel_names=_CHANNEL_NAMES,
             states=None,  # derived from pkl contents (see PSDGridPage)
             manifest=Manifest.load(self.project_root) if is_final_view else None,
-            run_channels=run_channels,
             drink_review=is_drink_review,
             run_name=run_name,
             project_root=self.project_root,

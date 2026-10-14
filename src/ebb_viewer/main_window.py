@@ -32,7 +32,6 @@ from ebb_viewer.pages.home import HomePage
 from ebb_viewer.pages.preprocess import PreprocessPage
 from ebb_viewer.pages.psd_visualizer import PSDVisualizer
 from ebb_viewer.pages.psds import PSDPage
-from ebb_viewer.pages.rerun import RerunPage
 from ebb_viewer.pages.sleep_qc_visualizer import SleepQCGridPage
 from ebb_viewer.pages.spindle import SpindleWritePage
 from ebb_viewer.pages.spindle_upload import SpindleUploadPage
@@ -51,28 +50,23 @@ _NAV: list[tuple[str, int] | None] = [
     ("3. Spindle Upload", 3),
     None,
     ("4. Sleep QC", 4),
-    ("5. Spindle Rerun", 5),
     None,
-    ("6. PSD Computation", 6),
-    ("7. PSD Visualizer", 7),
-    ("8. Drink Mask", 8),
-    ("9. Finalize", 9),
+    ("5. PSD Computation", 5),
+    ("6. PSD Visualizer", 6),
+    ("7. Drink Mask", 7),
+    ("8. Finalize", 8),
     None,
-    ("10. Export Masks", 10),
+    ("9. Export Masks", 9),
 ]
 
 # Sidebar rows that carry pending-work badges → manifest method name.
 # Row 0: Home — animals flagged for EDF review.
-# Row 6: Sleep QC — animals with a downloaded rerun awaiting decision.
-# Row 7: Spindle Rerun — animals with rerun queued but EDF not yet written.
-# Row 10: PSD Visualizer — PSDs flagged for review (incl. drink verification).
-# Row 11: Drink Mask — animals flagged needs_drink_mask.
+# Row 9: PSD Visualizer — PSDs flagged for review (incl. drink verification).
+# Row 10: Drink Mask — animals flagged needs_drink_mask.
 _BADGE_ROWS: dict[int, str] = {
     0: "needs_review",
-    6: "pending_rerun_review",
-    7: "needs_rerun_pending",
-    10: "pending_psd_review",
-    11: "needs_drink_mask",
+    9: "pending_psd_review",
+    10: "needs_drink_mask",
 }
 
 # Page-name keys emitted via navigate_to → sidebar row index.
@@ -82,11 +76,10 @@ _PAGE_ROWS: dict[str, int] = {
     "spindle_write": 3,
     "spindle_upload": 4,
     "sleep_qc": 6,
-    "rerun": 7,
-    "psd_compute": 9,
-    "psd_review": 10,
-    "drink_mask": 11,
-    "finalize": 12,
+    "psd_compute": 8,
+    "psd_review": 9,
+    "drink_mask": 10,
+    "finalize": 11,
 }
 
 
@@ -135,7 +128,6 @@ class MainWindow(QMainWindow):
         self.spindle_write_page = SpindleWritePage(parent=self, project_root=self.project_root)
         self.spindle_upload_page = SpindleUploadPage(parent=self, project_root=self.project_root)
         self.sleep_qc_page = SleepQCGridPage(parent=self, project_root=self.project_root)
-        self.rerun_page = RerunPage(parent=self, project_root=self.project_root)
         self.psd_page = PSDPage(parent=self, project_root=self.project_root)
         self.psd_visualizer_page = PSDVisualizer(parent=self, project_root=self.project_root)
         self.drink_mask_page = DrinkMaskPage(parent=self, project_root=self.project_root)
@@ -149,7 +141,6 @@ class MainWindow(QMainWindow):
             self.spindle_write_page,
             self.spindle_upload_page,
             self.sleep_qc_page,
-            self.rerun_page,
             self.psd_page,
             self.psd_visualizer_page,
             self.drink_mask_page,
@@ -178,7 +169,6 @@ class MainWindow(QMainWindow):
         for page in (
             self.home_page,
             self.sleep_qc_page,
-            self.rerun_page,
             self.psd_page,
             self.drink_mask_page,
         ):
@@ -191,7 +181,6 @@ class MainWindow(QMainWindow):
             self.spindle_write_page,
             self.spindle_upload_page,
             self.sleep_qc_page,
-            self.rerun_page,
             self.psd_page,
             self.psd_visualizer_page,
             self.drink_mask_page,
@@ -243,8 +232,6 @@ class MainWindow(QMainWindow):
 
         counts = {
             "needs_review": len(manifest.needs_review()),
-            "pending_rerun_review": len(manifest.pending_rerun_review()),
-            "needs_rerun_pending": len(manifest.needs_rerun_pending()),
             "pending_psd_review": len(manifest.all_pending_psd_review())
             + len(manifest.all_pending_drink_verification()),
             "needs_drink_mask": len(manifest.all_needs_drink_mask()),

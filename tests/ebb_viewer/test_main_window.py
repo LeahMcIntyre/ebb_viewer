@@ -1,6 +1,6 @@
 """Smoke test for ``main_window.MainWindow``.
 
-The window wires together all 11 sidebar pages plus the badge timer and
+The window wires together all 10 sidebar pages plus the badge timer and
 the navigate_to signal mesh. A successful construct exercises the
 sidebar layout, the stack mapping, and every page's ``__init__``.
 """
@@ -14,8 +14,8 @@ def test_main_window_constructs_on_empty_project(qapp, tmp_path: Path):
     from ebb_viewer.main_window import MainWindow
 
     win = MainWindow(project_root=tmp_path)
-    # Sidebar should contain 11 navigable rows + 4 separators = 15 items.
-    assert win.pagelist.count() == 15
+    # Sidebar should contain 10 navigable rows + 4 separators = 14 items.
+    assert win.pagelist.count() == 14
     # Initially showing the home page (stack index 0).
     assert win.stacklayout.currentIndex() == 0
     # All page attributes were created.
@@ -25,7 +25,6 @@ def test_main_window_constructs_on_empty_project(qapp, tmp_path: Path):
         "spindle_write_page",
         "spindle_upload_page",
         "sleep_qc_page",
-        "rerun_page",
         "psd_page",
         "psd_visualizer_page",
         "drink_mask_page",
