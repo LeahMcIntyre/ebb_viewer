@@ -351,3 +351,16 @@ restored sibling (mirroring what un-okaying does to the run itself).
 - **Drink Mask page: highlight missing .npy files**: The ✓/✗ in the table is subtle. Show `"Missing mask file"` in orange for animals where the `.npy` hasn't been placed yet.
 - **`SleepyRatAPI.wait_for_processing` should use `logging` instead of `print`**: Currently prints poll-status to stdout. Could move to a module-level logger, but doing this well requires deciding on log-level config and how Qt worker threads route log output to the GUI — likely larger than it sounds. Defer until a broader logging story is decided.
 - **Clear hint banners on PSD run switch**: When the active PSD run is changed (e.g., switching from one named run to another in the PSD page UI), any state-overlap or compute-status hint banners from the previous run can stick around and mislead. Make the page reset/hide all hint banners as part of the run-switch handler so each run starts visually clean.
+
+## Sleep walkthrough notebook: flexible time handling
+
+### research: allow "from start" and "per day" analysis
+`research/sleep_walkthrough.ipynb` currently rotates each recording to a
+fixed clock hour (default 6 AM) and averages across days (`hour_of_day`
+fold). Add options so users can instead:
+- skip the rotation and bin from the recording's first sample
+  (no `start_times.csv` needed in that mode), and
+- keep each day separate rather than averaging (the unfolded
+  `sleep_bins` table, one row per animal x bin x state).
+Likely shape: `ROTATE_TO_HOUR = 6 | None` and `AVERAGE_DAYS = True | False`
+config flags, with the walkthrough text explaining each mode.
