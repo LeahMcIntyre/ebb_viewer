@@ -306,7 +306,9 @@ class PSDGridPage(QWidget):
     # ---------------- SHORTCUTS ----------------
 
     def _install_shortcuts(self):
-        ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        # Window-wide (while this page is visible) so the shortcuts work even
+        # when focus is on the sidebar or the Plot PSDs button.
+        ctx = Qt.ShortcutContext.WindowShortcut
         for key, slot in [
             (Qt.Key.Key_Left, self._prev_animal),
             (Qt.Key.Key_Right, self._next_animal),
