@@ -17,7 +17,6 @@ from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMenu,
     QPushButton,
     QSizePolicy,
     QStyle,
@@ -147,22 +146,24 @@ class PSDGridPage(QWidget):
         tb.addAction(
             _make_toggle(self, "Interpolate", checked=self.interpolate, slot=self._on_interpolate)
         )
+        tb.addSeparator()
+
+        for text, slot in (
+            ("Set X-Range", self._on_set_xrange),
+            ("Set Interp-Range", self._on_set_interp_range),
+            ("Reset zoom", self._on_reset_zoom),
+        ):
+            act = QAction(text, self)
+            act.triggered.connect(slot)
+            tb.addAction(act)
+
         tb.addWidget(_toolbar_spacer(self))
 
-        # Less-used actions. Also hosts "Edit Notes".
-        self._btn_more = QToolButton(self)
-        self._btn_more.setText("More")
-        self._btn_more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        m = QMenu(self._btn_more)
-        m.addAction("Set X-Range…").triggered.connect(self._on_set_xrange)
-        m.addAction("Set Interp-Range…").triggered.connect(self._on_set_interp_range)
-        m.addAction("Reset zoom").triggered.connect(self._on_reset_zoom)
-        m.addSeparator()
-        self._act_menu_notes = m.addAction("📝 Edit Notes")
-        self._act_menu_notes.triggered.connect(self._open_notes_dialog)
-        self._act_menu_notes.setVisible(self.manifest is not None)
-        self._btn_more.setMenu(m)
-        tb.addWidget(self._btn_more)
+        # Notes (manifest only). Text/tooltip reflect whether a note exists.
+        self._act_notes = QAction("📝 Notes", self)
+        self._act_notes.triggered.connect(self._open_notes_dialog)
+        self._act_notes.setVisible(self.manifest is not None)
+        tb.addAction(self._act_notes)
 
         self.root.addWidget(tb)
         self._build_review_bar()
@@ -531,8 +532,8 @@ class PSDGridPage(QWidget):
 
         entry = self.manifest.get(animal_id) if animal_id else None
         has_notes = bool(entry is not None and entry.notes.strip())
-        self._btn_more.setText("More 📝" if has_notes else "More")
-        self._btn_more.setToolTip(entry.notes if has_notes else "")
+        self._act_notes.setText("📝 Notes •" if has_notes else "📝 Notes")
+        self._act_notes.setToolTip(entry.notes if has_notes else "Edit notes for this animal")
 
         # Drink-mask-on-disk hint: show during Pass 1 when status is not yet set
         show_mask_hint = (

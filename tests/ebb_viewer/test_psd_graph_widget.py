@@ -125,13 +125,13 @@ def test_interp_range_stays_narrow_when_apply_notch_key_missing(qapp, tmp_path: 
 
 def test_notes_menu_action_hidden_without_manifest(qapp):
     w = _make_page(qapp, manifest=None)
-    assert w._act_menu_notes.isVisible() is False
+    assert w._act_notes.isVisible() is False
 
 
 def test_notes_menu_action_visible_with_manifest(qapp, tmp_path: Path):
     manifest = _seed_manifest(tmp_path)
     w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
-    assert w._act_menu_notes.isVisible() is True
+    assert w._act_notes.isVisible() is True
 
 
 def test_open_notes_dialog_accept_persists_and_emits(qapp, tmp_path: Path):
@@ -185,16 +185,16 @@ def test_open_notes_dialog_cancel_does_not_change_manifest(qapp, tmp_path: Path)
     assert emitted == []
 
 
-def test_more_button_marked_when_note_present(qapp, tmp_path: Path):
+def test_notes_button_marked_when_note_present(qapp, tmp_path: Path):
     manifest = _seed_manifest(tmp_path)
     manifest.set_notes("AM001", "has a note")
     w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
-    assert w._btn_more.text() == "More 📝"
-    assert w._btn_more.toolTip() == "has a note"
+    assert w._act_notes.text() == "📝 Notes •"
+    assert w._act_notes.toolTip() == "has a note"
 
 
-def test_more_button_plain_when_no_note(qapp, tmp_path: Path):
+def test_notes_button_plain_when_no_note(qapp, tmp_path: Path):
     manifest = _seed_manifest(tmp_path)
     w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
-    assert w._btn_more.text() == "More"
-    assert w._btn_more.toolTip() == ""
+    assert w._act_notes.text() == "📝 Notes"
+    assert w._act_notes.toolTip() == "Edit notes for this animal"
