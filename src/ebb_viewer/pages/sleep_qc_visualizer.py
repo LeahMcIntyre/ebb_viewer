@@ -375,6 +375,9 @@ class SleepQCGridPage(QWidget):
         self.grid = pg.GraphicsLayoutWidget()
         self.grid.setBackground("w")
         self.grid.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # Floor so the plots stay legible; below this the page scrolls
+        # (MainWindow wraps every page in a QScrollArea).
+        self.grid.setMinimumSize(560, 420)
 
         for si, state in enumerate(self.STATE_ORDER):
             for mi, (metric, metric_label) in enumerate(self.METRIC_ORDER):
@@ -391,6 +394,7 @@ class SleepQCGridPage(QWidget):
 
         self._frac_widget = SpindleFractionPlot()
         self._frac_widget.setVisible(True)
+        self._frac_widget.setMinimumSize(560, 300)
         layout.addWidget(self._frac_widget, stretch=1)
 
         self.grid.setVisible(False)
