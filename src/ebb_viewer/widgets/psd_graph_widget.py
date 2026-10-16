@@ -252,7 +252,7 @@ class PSDGridPage(QWidget):
         fh.addWidget(self._btn_flag_ok)
 
         for btn in (self._btn_flag_ok, self._btn_flag_drink):
-            btn.setMinimumSize(130, 36)
+            btn.setMinimumSize(105, 28)
             btn.setStyleSheet(_FLAG_BUTTON_QSS)
         self._btn_flag_ok.setProperty("flag", "ok")
         self._btn_flag_drink.setProperty("flag", "drink")
@@ -584,7 +584,7 @@ class PSDGridPage(QWidget):
 
 
 _FLAG_BUTTON_QSS = """
-    QPushButton { font-weight: bold; font-size: 13px; padding: 4px 14px; }
+    QPushButton { font-weight: bold; padding: 2px 10px; }
     QPushButton[flag="ok"]:checked { background: #2e8b57; color: white; }
     QPushButton[flag="drink"]:checked { background: #e08a00; color: white; }
 """
