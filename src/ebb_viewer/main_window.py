@@ -92,13 +92,15 @@ _PAGE_ROWS: dict[str, int] = {
 }
 
 
-def _scrollable(page: QWidget) -> QScrollArea:
+def _scrollable(page: QWidget, always_show_vbar: bool = False) -> QScrollArea:
     """Wrap ``page`` so scroll bars appear when the window is smaller than
     the page's minimum size. ``widgetResizable`` keeps the page filling the
     viewport otherwise, so pages that already fit look unchanged."""
     area = QScrollArea()
     area.setWidgetResizable(True)
     area.setFrameShape(QFrame.Shape.NoFrame)
+    if always_show_vbar:
+        area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
     area.setWidget(page)
     return area
 
@@ -171,7 +173,7 @@ class MainWindow(QMainWindow):
         )
         self._pages = pages_in_stack_order
         for w in pages_in_stack_order:
-            self.stacklayout.addWidget(_scrollable(w))
+            self.stacklayout.addWidget(_scrollable(w, always_show_vbar=w is self.sleep_qc_page))
 
         # Build the sidebar list (rows + separators) from _NAV.
         self._row_to_stack: dict[int, int] = {}
