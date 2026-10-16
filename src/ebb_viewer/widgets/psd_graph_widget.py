@@ -252,7 +252,7 @@ class PSDGridPage(QWidget):
         fh.addWidget(self._btn_flag_ok)
 
         for btn in (self._btn_flag_ok, self._btn_flag_drink):
-            btn.setMinimumSize(105, 28)
+            btn.setMinimumHeight(28)
             btn.setStyleSheet(_FLAG_BUTTON_QSS)
         self._btn_flag_ok.setProperty("flag", "ok")
         self._btn_flag_drink.setProperty("flag", "drink")
