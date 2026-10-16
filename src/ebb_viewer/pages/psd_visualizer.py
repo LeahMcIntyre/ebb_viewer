@@ -269,3 +269,6 @@ class PSDVisualizer(QWidget):
             self.psd_page.manifest_changed.connect(self._check_done_hint)
             self._check_done_hint()
         self.root.addWidget(self.psd_page)
+        # The page's keyboard shortcuts (O / D / arrows) only fire while focus
+        # is inside it; otherwise focus stays on the "Plot PSDs" button.
+        self.psd_page.setFocus()
