@@ -10,15 +10,13 @@ Used in two modes:
 
 import numpy as np
 import pyqtgraph as pg
-from specparam.utils import interpolate_spectrum
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMenu,
     QPushButton,
     QSizePolicy,
     QStyle,
@@ -27,6 +25,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from specparam.utils import interpolate_spectrum
 
 from ebb.process.state_presets import gather_states_from_store
 from ebb_viewer.pipeline import psd_params
@@ -127,117 +126,47 @@ class PSDGridPage(QWidget):
     # ---------------- UI BUILDERS ----------------
 
     def _build_tool_bar(self):
+        # View options live in a short QToolBar; everything review-related
+        # lives in a plain widget row (``_build_review_bar``) so the OK /
+        # Drink Mask buttons can never be pushed into a toolbar overflow
+        # chevron on a narrow window.
         tb = QToolBar(self)
         tb.setMovable(False)
         tb.setFloatable(False)
-        tb.setIconSize(QSize(18, 18))
-        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         tb.setStyleSheet("""
             QToolBar { padding: 4px; spacing: 8px; }
             QToolButton { padding: 3px 8px; }
         """)
 
-        # Log-X toggle
-        act_logx = _make_toggle(self, "Log-X", checked=self.xlog, slot=self._on_logx_toggled)
-        tb.addAction(act_logx)
-
-        # Log-Y toggle
-        act_logy = _make_toggle(self, "Log-Y", checked=self.ylog, slot=self._on_logy_toggled)
-        tb.addAction(act_logy)
-
-        # Inverse Filter toggle
-        act_invfil = _make_toggle(
-            self, "Inverse Filter", checked=self.invfil, slot=self._on_inverse_toggled
+        tb.addAction(_make_toggle(self, "Log-X", checked=self.xlog, slot=self._on_logx_toggled))
+        tb.addAction(_make_toggle(self, "Log-Y", checked=self.ylog, slot=self._on_logy_toggled))
+        tb.addAction(
+            _make_toggle(self, "Inverse Filter", checked=self.invfil, slot=self._on_inverse_toggled)
         )
-        tb.addAction(act_invfil)
-
-        act_interp = _make_toggle(
-            self, "Interpolate", checked=self.interpolate, slot=self._on_interpolate
+        tb.addAction(
+            _make_toggle(self, "Interpolate", checked=self.interpolate, slot=self._on_interpolate)
         )
-        tb.addAction(act_interp)
-
         tb.addSeparator()
 
-        act_xrange = QAction("Set X-Range", self)
-        act_xrange.triggered.connect(self._on_set_xrange)
-        tb.addAction(act_xrange)
+        for text, slot in (
+            ("Set X-Range", self._on_set_xrange),
+            ("Set Interp-Range", self._on_set_interp_range),
+            ("Reset zoom", self._on_reset_zoom),
+        ):
+            act = QAction(text, self)
+            act.triggered.connect(slot)
+            tb.addAction(act)
 
-        act_irange = QAction("Set Interp-Range", self)
-        act_irange.triggered.connect(self._on_set_interp_range)
-        tb.addAction(act_irange)
-
-        # Middle spacer
         tb.addWidget(_toolbar_spacer(self))
 
-        # Right: animal selector + nav
-        self.cmb_animal = QComboBox()
-        self.cmb_animal.addItems(self.store.animals())
-        self.cmb_animal.currentTextChanged.connect(self._render)
-        self.cmb_animal.currentTextChanged.connect(lambda _: self._update_flag_status())
-        tb.addWidget(_labeled_combo(self, "Animal:", self.cmb_animal))
-
-        tb.addSeparator()
-        tb.addWidget(
-            _make_nav_button(self, "Prev", QStyle.StandardPixmap.SP_ArrowBack, self._prev_animal)
-        )
-        tb.addWidget(
-            _make_nav_button(self, "Next", QStyle.StandardPixmap.SP_ArrowForward, self._next_animal)
-        )
-
-        # Overflow menu. Also hosts "Edit Notes": the flag buttons/status
-        # label further right already get squeezed into the QToolBar's own
-        # overflow chevron on a normal-width window (this toolbar's
-        # sizeHint routinely exceeds the ~1000px default window), so a
-        # standalone Notes button placed after them would be invisible
-        # without hunting for that chevron. This button sits before the
-        # flag buttons, so it stays visible whenever they do.
-        self._btn_more = QToolButton(self)
-        self._btn_more.setText("More")
-        self._btn_more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        m = QMenu(self._btn_more)
-        act_reset_zoom = m.addAction("Reset zoom")
-        act_reset_zoom.triggered.connect(self._on_reset_zoom)
-        self._act_menu_notes = m.addAction("📝 Edit Notes")
-        self._act_menu_notes.triggered.connect(self._open_notes_dialog)
-        self._btn_more.setMenu(m)
-        tb.addWidget(self._btn_more)
-
-        # Flag buttons (only useful when manifest is provided)
-        self._act_flag_sep = tb.addSeparator()
-        self._btn_flag_ok = QPushButton("✓ OK")
-        self._btn_flag_ok.setFixedHeight(26)
-        self._btn_flag_ok.setCheckable(True)
-        self._btn_flag_ok.setToolTip("Mark current animal's PSD as OK in manifest")
-        self._btn_flag_ok.clicked.connect(lambda checked: self._flag_psd_ok())
-        self._act_flag_ok = tb.addWidget(self._btn_flag_ok)
-
-        self._btn_flag_drink = QPushButton("Drink Mask")
-        self._btn_flag_drink.setFixedHeight(26)
-        self._btn_flag_drink.setCheckable(True)
-        self._btn_flag_drink.setToolTip("Flag current animal as needing a drink mask PSD rerun")
-        self._btn_flag_drink.clicked.connect(lambda checked: self._flag_drink_mask())
-        self._act_flag_drink = tb.addWidget(self._btn_flag_drink)
-
-        self._btn_flag_reset = QPushButton("↺ Reset")
-        self._btn_flag_reset.setFixedHeight(26)
-        self._btn_flag_reset.setToolTip("Clear PSD review status for the current animal")
-        self._btn_flag_reset.setEnabled(False)
-        self._btn_flag_reset.clicked.connect(lambda: self._reset_psd_status())
-        self._act_flag_reset = tb.addWidget(self._btn_flag_reset)
-
-        self._status_label = QLabel("")
-        self._status_label.setMinimumWidth(90)
-        self._act_status = tb.addWidget(self._status_label)
-
-        if self.manifest is None:
-            self._act_flag_sep.setVisible(False)
-            self._act_flag_ok.setVisible(False)
-            self._act_flag_drink.setVisible(False)
-            self._act_flag_reset.setVisible(False)
-            self._act_menu_notes.setVisible(False)
-            self._act_status.setVisible(False)
+        # Notes (manifest only). Text/tooltip reflect whether a note exists.
+        self._act_notes = QAction("📝 Notes", self)
+        self._act_notes.triggered.connect(self._open_notes_dialog)
+        self._act_notes.setVisible(self.manifest is not None)
+        tb.addAction(self._act_notes)
 
         self.root.addWidget(tb)
+        self._build_review_bar()
 
         self._guidance_label = QFrame()
         self._guidance_label.setStyleSheet("QFrame { background: #fff3cd; border-radius: 3px; }")
@@ -273,6 +202,64 @@ class PSDGridPage(QWidget):
         mask_hint_layout.addWidget(self._btn_quick_flag_drink)
         self._mask_hint_frame.setVisible(False)
         self.root.addWidget(self._mask_hint_frame)
+
+    def _build_review_bar(self):
+        """Animal selector, prev/next and the OK / Drink Mask flag buttons."""
+        bar = QWidget(self)
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(4, 0, 4, 0)
+        h.setSpacing(8)
+
+        self.cmb_animal = QComboBox()
+        self.cmb_animal.addItems(self.store.animals())
+        self.cmb_animal.currentTextChanged.connect(self._render)
+        self.cmb_animal.currentTextChanged.connect(lambda _: self._update_flag_status())
+        h.addWidget(_labeled_combo(self, "Animal:", self.cmb_animal))
+        h.addWidget(
+            _make_nav_button(self, "Prev", QStyle.StandardPixmap.SP_ArrowBack, self._prev_animal)
+        )
+        h.addWidget(
+            _make_nav_button(self, "Next", QStyle.StandardPixmap.SP_ArrowForward, self._next_animal)
+        )
+        h.addStretch(1)
+
+        # Flag controls (only useful when a manifest is provided)
+        self._flag_controls = QWidget(bar)
+        fh = QHBoxLayout(self._flag_controls)
+        fh.setContentsMargins(0, 0, 0, 0)
+        fh.setSpacing(8)
+
+        self._status_label = QLabel("")
+        self._status_label.setMinimumWidth(90)
+        fh.addWidget(self._status_label)
+
+        self._btn_flag_reset = QPushButton("↺ Reset")
+        self._btn_flag_reset.setToolTip("Clear PSD review status for the current animal")
+        self._btn_flag_reset.setEnabled(False)
+        self._btn_flag_reset.clicked.connect(lambda: self._reset_psd_status())
+        fh.addWidget(self._btn_flag_reset)
+
+        self._btn_flag_drink = QPushButton("Drink Mask  (D)")
+        self._btn_flag_drink.setCheckable(True)
+        self._btn_flag_drink.setToolTip("Flag current animal as needing a drink mask PSD rerun")
+        self._btn_flag_drink.clicked.connect(lambda checked: self._flag_drink_mask())
+        fh.addWidget(self._btn_flag_drink)
+
+        self._btn_flag_ok = QPushButton("✓ OK  (O)")
+        self._btn_flag_ok.setCheckable(True)
+        self._btn_flag_ok.setToolTip("Mark current animal's PSD as OK in manifest")
+        self._btn_flag_ok.clicked.connect(lambda checked: self._flag_psd_ok())
+        fh.addWidget(self._btn_flag_ok)
+
+        for btn in (self._btn_flag_ok, self._btn_flag_drink):
+            btn.setMinimumHeight(28)
+            btn.setStyleSheet(_FLAG_BUTTON_QSS)
+        self._btn_flag_ok.setProperty("flag", "ok")
+        self._btn_flag_drink.setProperty("flag", "drink")
+
+        h.addWidget(self._flag_controls)
+        self._flag_controls.setVisible(self.manifest is not None)
+        self.root.addWidget(bar)
 
     def _build_grid(self):
         # Grid container
@@ -319,7 +306,9 @@ class PSDGridPage(QWidget):
     # ---------------- SHORTCUTS ----------------
 
     def _install_shortcuts(self):
-        ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        # Window-wide (while this page is visible) so the shortcuts work even
+        # when focus is on the sidebar or the Plot PSDs button.
+        ctx = Qt.ShortcutContext.WindowShortcut
         for key, slot in [
             (Qt.Key.Key_Left, self._prev_animal),
             (Qt.Key.Key_Right, self._next_animal),
@@ -545,8 +534,8 @@ class PSDGridPage(QWidget):
 
         entry = self.manifest.get(animal_id) if animal_id else None
         has_notes = bool(entry is not None and entry.notes.strip())
-        self._btn_more.setText("More 📝" if has_notes else "More")
-        self._btn_more.setToolTip(entry.notes if has_notes else "")
+        self._act_notes.setText("📝 Notes •" if has_notes else "📝 Notes")
+        self._act_notes.setToolTip(entry.notes if has_notes else "Edit notes for this animal")
 
         # Drink-mask-on-disk hint: show during Pass 1 when status is not yet set
         show_mask_hint = (
@@ -592,6 +581,13 @@ class PSDGridPage(QWidget):
     def _clear_all(self):
         for curve in self.curves.values():
             curve.setData([], [])
+
+
+_FLAG_BUTTON_QSS = """
+    QPushButton { font-weight: bold; padding: 2px 10px; }
+    QPushButton[flag="ok"]:checked { background: #2e8b57; color: white; }
+    QPushButton[flag="drink"]:checked { background: #e08a00; color: white; }
+"""
 
 
 # ---------------- Toolbar helpers ----------------
