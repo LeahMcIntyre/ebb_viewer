@@ -20,6 +20,7 @@ the caller passes `sample_rate_hz` to match whatever rate `states` arrives at
 import csv
 import warnings
 from collections import Counter
+from collections.abc import Mapping, Sequence
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -87,6 +88,13 @@ def read_rawstate_column(state_path: Path) -> list[str]:
         except ValueError:
             raise ValueError(f"'rawstate' column not found in {state_path.name}") from None
         return [row[idx] for row in reader if row]
+
+
+def _states_for(animal: str, state_path: Path, states_by_animal) -> list[str]:
+    """Epoch states for one animal: the override if given, else the CSV column."""
+    if states_by_animal is not None and animal in states_by_animal:
+        return list(states_by_animal[animal])
+    return read_rawstate_column(state_path)
 
 
 def _bouts_for_state(mask, sample_rate_hz):
@@ -181,15 +189,18 @@ def compute_sleep_metrics_per_mouse(
 def compute_sleep_bins_df(
     state_dir: str | Path,
     bin_hours: int = 2,
+    states_by_animal: Mapping[str, Sequence[str]] | None = None,
 ) -> pd.DataFrame:
     """Aggregate per-bin metrics across every SPINDLE CSV in `state_dir`.
 
     Each CSV's states are kept at the SPINDLE epoch rate (0.25 Hz).
+    `states_by_animal` (animal ID -> per-epoch states) replaces the CSV state
+    column for the animals it contains, e.g. with reclassified states.
     """
     sleep_dfs = []
     for state_path in Path(state_dir).glob("*.csv"):
         animal = parse_animal_id(state_path)
-        states = read_rawstate_column(state_path)
+        states = _states_for(animal, state_path, states_by_animal)
         df_mouse = compute_sleep_metrics_per_mouse(
             states, mouse_id=animal, bin_hours=bin_hours, sample_rate_hz=0.25
         )
@@ -204,6 +215,7 @@ def compute_sleep_bins_df_offset(
     begin_hr: int = 6,
     spindle_epoch_sec: int = DEFAULT_SPINDLE_EPOCH_SEC,
     tz: ZoneInfo | None = None,
+    states_by_animal: Mapping[str, Sequence[str]] | None = None,
 ) -> pd.DataFrame:
     """Like `compute_sleep_bins_df`, but rotates each animal's state array so
     that bin 0 starts at `begin_hr:00` clock time.
@@ -234,6 +246,9 @@ def compute_sleep_bins_df_offset(
     next ``begin_hr`` boundary) cannot be rotated and are skipped with a
     ``UserWarning``. Use ``compute_sleep_bins_df_clock_aligned`` to include
     those animals at their true circadian position.
+
+    ``states_by_animal`` (animal ID -> per-epoch states) replaces the CSV
+    state column for the animals it contains, e.g. with reclassified states.
     """
     edf_by_animal = {parse_animal_id(p): p for p in Path(edf_dir).glob("*PROCESSED.edf")}
 
@@ -253,7 +268,7 @@ def compute_sleep_bins_df_offset(
         if tz is not None:
             rec_start = rec_start.replace(tzinfo=tz)
 
-        states = read_rawstate_column(state_path)
+        states = _states_for(animal, state_path, states_by_animal)
         # SPINDLE epoch-rate (0.25 Hz) → per-second by repeating each epoch
         # spindle_epoch_sec times.
         expanded_states = [s for s in states for _ in range(spindle_epoch_sec)]
@@ -363,6 +378,7 @@ def compute_sleep_bins_df_clock_aligned(
     begin_hr: int = 6,
     spindle_epoch_sec: int = DEFAULT_SPINDLE_EPOCH_SEC,
     tz: ZoneInfo | None = None,
+    states_by_animal: Mapping[str, Sequence[str]] | None = None,
 ) -> pd.DataFrame:
     """Per-animal sleep bins, placed at their true circadian position.
 
@@ -394,7 +410,7 @@ def compute_sleep_bins_df_clock_aligned(
         if tz is not None:
             rec_start = rec_start.replace(tzinfo=tz)
 
-        states = read_rawstate_column(state_path)
+        states = _states_for(animal, state_path, states_by_animal)
         expanded_states = [s for s in states for _ in range(spindle_epoch_sec)]
         if not expanded_states:
             warnings.warn(
@@ -493,6 +509,7 @@ def compute_whole_file_metrics(
 def compute_spindle_fractions(
     state_dir: str | Path,
     noise_prob_threshold: float = 0.5,
+    states_by_animal: Mapping[str, Sequence[str]] | None = None,
 ) -> pd.DataFrame:
     """Per-animal, per-state spindle mask fractions from SPINDLE output CSVs.
 
@@ -500,6 +517,9 @@ def compute_spindle_fractions(
     to determine sleep state and the `noise_probs` (or `noise_prob`) column
     to determine whether each epoch is spindle-masked. An epoch is counted
     as spindle-masked when its noise probability is >= `noise_prob_threshold`.
+    `states_by_animal` (animal ID -> per-epoch states, same length as the CSV)
+    replaces the CSV state column for the animals it contains, so epochs are
+    counted under their reclassified state.
 
     Returns:
         Long-form DataFrame with one row per (animal × state) plus a "Total"
@@ -521,10 +541,11 @@ def compute_spindle_fractions(
             except ValueError:
                 raise ValueError(f"'noise_probs' column not found in {state_path.name}") from None
 
+            override = states_by_animal.get(animal) if states_by_animal is not None else None
             clean_counts: Counter = Counter()
             spindle_counts: Counter = Counter()
-            for row in reader:
-                raw = row[raw_idx]
+            for i, row in enumerate(reader):
+                raw = row[raw_idx] if override is None else override[i]
                 if raw not in _VALID_RAW_STATES:
                     continue
                 if float(row[noise_idx]) >= noise_prob_threshold:

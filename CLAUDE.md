@@ -36,7 +36,7 @@ Pages in pipeline order:
 1. `PreprocessPage` — raw EDFs → `standard/`
 2. `SpindleWritePage` — `standard/` → `spindle_edfs/<COMBO>/`
 3. `SpindleUploadPage` — upload/download via `SleepyRatWorker`
-4. `SleepQCGridPage` — per-animal OK/Review flagging
+4. `SleepQCGridPage` — per-animal OK/Review flagging. The Reclassify button recomputes both views (Spindle Mask and Sleep) from NREM-reclassified states (`ebb.process.nrem_reclass`: gap fill, plus an EMG gate on files where gap fill fragments NREM). View-only; nothing is written to disk.
 5. `PSDPage` — computes PSDs, writes `psd/<RUN>/psds_<COMBO>.pkl`
 6. `PSDVisualizer` — review PSDs, flag drink mask artifacts
 
