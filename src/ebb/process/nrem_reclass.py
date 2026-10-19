@@ -37,10 +37,11 @@ from ebb.core.naming import parse_animal_id
 from ebb.io.edf_header import read_edf_start_datetime
 from ebb.io.spindle_csv import (
     NOISE_COLUMNS,
+    FINAL_COLUMN,
     RECLASS_COLUMN,
     STATE_COLUMNS,
     resolve_column,
-    write_column,
+    write_columns,
 )
 
 DEFAULT_NOISE_THRESHOLD = 0.5
@@ -264,14 +265,17 @@ def reclassify_dir_to_csv(
     on_animal: Callable[[str, NremReclass], None] | None = None,
     **kwargs,
 ) -> dict[str, NremReclass]:
-    """Reclassify every CSV in ``state_dir`` and write ``reclass_state`` into it.
+    """Reclassify every CSV in ``state_dir`` and write ``reclass_state`` and ``final_state``.
 
     ``on_animal`` is called after each file is written (for progress logging).
     """
     out: dict[str, NremReclass] = {}
     for animal, csv_path, edf_path in _paired_files(state_dir, edf_dir):
         result = reclassify_file(csv_path, edf_path, **kwargs)
-        write_column(csv_path, RECLASS_COLUMN, result.final_state)
+        write_columns(
+            csv_path,
+            {RECLASS_COLUMN: result.final_state, FINAL_COLUMN: result.final_state},
+        )
         out[animal] = result
         if on_animal is not None:
             on_animal(animal, result)
