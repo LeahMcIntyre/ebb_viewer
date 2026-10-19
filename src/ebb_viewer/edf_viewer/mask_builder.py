@@ -13,6 +13,7 @@ from openseize import producer as make_producer
 
 from ebb import masking
 from ebb.masking.annotations import keyword_mask
+from ebb.process.nrem_reclass import GAP_RADIUS, NremReclass, reclassify_file
 from ebb_viewer.edf_viewer.masks import Mask, MaskSet, ParamSpec
 from ebb_viewer.edf_viewer.recording import Recording
 
@@ -76,6 +77,7 @@ _STATE_COLORS = {
     "nrem": (70, 130, 200, 255),
     "rem": (200, 70, 70, 255),
 }
+_EPOCH_SEC = 4  # SPINDLE epoch length
 _STATE_LABELS = {
     "wake": ["w"],
     "nrem": ["n"],
@@ -199,6 +201,25 @@ def load_state_masks(csv_path, fs: int) -> MaskSet:
         arr = masking.state(csv_path, labels, fs=fs, winsize=4, include=True)
         mask_set.add(Mask.from_bool(name, _STATE_COLORS[name], arr))
     return mask_set
+
+
+def load_reclassified_state_masks(
+    csv_path, edf_path, fs: int, radius: int = GAP_RADIUS
+) -> tuple[MaskSet, NremReclass]:
+    """Like `load_state_masks`, with the NREM reclassification applied.
+
+    Runs `ebb.process.nrem_reclass.reclassify_file` (gap fill, plus the EMG
+    gate when it fragments NREM) and expands its per-epoch `final_state`
+    to sample resolution. The `NremReclass` is returned so the caller can
+    report whether the gate applied.
+    """
+    result = reclassify_file(csv_path, edf_path, radius=radius)
+    samples_per_epoch = fs * _EPOCH_SEC
+    mask_set = MaskSet()
+    for name, labels in _STATE_LABELS.items():
+        arr = np.repeat(np.isin(result.final_state, labels), samples_per_epoch)
+        mask_set.add(Mask.from_bool(name, _STATE_COLORS[name], arr))
+    return mask_set, result
 
 
 def _annotation_param_specs() -> dict:
