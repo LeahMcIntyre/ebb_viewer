@@ -38,6 +38,7 @@ from ebb import masking
 from ebb.core import concurrency, metastores
 from ebb.core.naming import parse_animal_id
 from ebb.io.edf_header import assert_fs_matches, parse_edf_start_datetime
+from ebb.io.spindle_csv import ANALYSIS_STATE_COLUMNS
 from ebb.masking.annotations import keyword_mask
 from ebb.process.state_presets import labels_from_presets
 
@@ -158,6 +159,7 @@ def estimate_psd(
     ann_pad_after_sec: float = 0.0,
     hour_windows: list[tuple[float, float]] | None = None,
     selected_days: list[int] | None = None,
+    state_columns: Sequence[str] = ANALYSIS_STATE_COLUMNS,
     apply_notch: bool = True,
     notch_halfwidth_hz: float = _NOTCH_HALFWIDTH_HZ,
     notch_order: int = _NOTCH_ORDER,
@@ -182,9 +184,9 @@ def estimate_psd(
         path:
             EDF whose PSD will be estimated.
         state_path:
-            SPINDLE-scored CSV file. The `rawstate` column (or `state` in
-            newer outputs) drives state masks; `noise_probs` (or
-            `noise_prob`) drives the SPINDLE noise mask.
+            SPINDLE-scored CSV file. The `state_columns` column drives state
+            masks (by default the reclassified `final_state`); `noise_probs`
+            (or `noise_prob`) drives the SPINDLE noise mask.
         swd_path:
             Optional `.mat` file of SWD timestamps to mask out.
         drink_path:
@@ -243,6 +245,12 @@ def estimate_psd(
         notch_order:
             Order of the Butterworth notch filter. Defaults to `_NOTCH_ORDER`
             (8).
+        state_columns:
+            CSV column(s) the state masks are read from. Defaults to the
+            reclassified `final_state` (`NotReclassifiedError` if absent). A
+            script with no Reclassify step can opt out explicitly by passing
+            `ebb.io.spindle_csv.STATE_COLUMNS` to read the original SPINDLE
+            states (`rawstate`, else `state`).
         **kwargs:
             Forwarded to openseize's `estimators.psd`.
 
@@ -268,7 +276,9 @@ def estimate_psd(
         state_masks = {}
 
         for label, code in labels.items():
-            state_masks[label] = masking.state(state_path, code, fs, winsize=4)
+            state_masks[label] = masking.state(
+                state_path, code, fs, winsize=4, columns=state_columns
+            )
 
         # Wake sub-mask for mixed groups that lump wake with sleep states.
         # SD thresholding should only gate the wake portion of such groups,
@@ -276,7 +286,9 @@ def estimate_psd(
         # NREM/REM samples if applied uniformly.
         needs_wake_sub = any("w" in codes and len(codes) > 1 for codes in labels.values())
         if needs_wake_sub:
-            wake_sub_mask = masking.state(state_path, ["w"], fs, winsize=4)
+            wake_sub_mask = masking.state(
+                state_path, ["w"], fs, winsize=4, columns=state_columns
+            )
         else:
             wake_sub_mask = None
 
