@@ -37,6 +37,32 @@ RECLASS_COLUMN = "reclass_state"
 # swd_reclassification where that is non-blank. Not part of STATE_COLUMNS, which is
 # the *input* to reclassification (reading final_state there would break re-runs).
 FINAL_COLUMN = "final_state"
+# What analysis (PSDs, masks, sleep metrics, exports) reads. Forced to final_state so
+# every project goes through the same path; the original states stay available via
+# STATE_COLUMNS for the "original" comparison views only.
+ANALYSIS_STATE_COLUMNS = (FINAL_COLUMN,)
+
+
+class NotReclassifiedError(ValueError):
+    """A spindle CSV has no ``final_state`` column: the Reclassify step hasn't run on it."""
+
+    def __init__(self, name: str):
+        super().__init__(
+            f"{name} has no {FINAL_COLUMN!r} column. Run the Reclassify step "
+            "(sidebar: 4. Reclassify) before this step."
+        )
+
+
+def read_analysis_states(csv_path: str | Path) -> list[str]:
+    """Per-epoch states for analysis: the ``final_state`` column.
+
+    Raises:
+        NotReclassifiedError: if the CSV lacks ``final_state``.
+    """
+    try:
+        return read_state_column(csv_path, FINAL_COLUMN)
+    except ValueError as e:
+        raise NotReclassifiedError(Path(csv_path).name) from e
 ORIGINAL_DIRNAME = "_original"
 
 

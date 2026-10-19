@@ -12,9 +12,9 @@ from ebb.io.sleep_export import _average_bins_across_days, export_sleep
 def _write_rawstate_csv(path: Path, states: list[str]) -> None:
     with path.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["rawstate"])
+        w.writerow(["rawstate", "final_state"])
         for s in states:
-            w.writerow([s])
+            w.writerow([s, s])
 
 
 def _make_project(tmp_path: Path, states: list[str]) -> tuple[Path, Path]:

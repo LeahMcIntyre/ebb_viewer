@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from ebb.io.spindle_csv import NotReclassifiedError
 from ebb.process.sleep_compute import (
     compute_sleep_bins_df_clock_aligned,
     compute_sleep_bins_df_offset,
@@ -33,9 +34,9 @@ def write_state_csv(
     noise_col = "noise_prob" if new_format else "noise_probs"
     with path.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow([state_col, noise_col])
+        w.writerow([state_col, noise_col, "final_state"])
         for raw, prob in epochs:
-            w.writerow([raw, str(prob)])
+            w.writerow([raw, str(prob), raw])
 
 
 # ---------------------------------------------------------------------------
@@ -198,14 +199,14 @@ def test_missing_rawstate_column_raises(tmp_path: Path):
     p = tmp_path / "Animal1_foo.csv"
     with p.open("w", newline="") as f:
         csv.writer(f).writerows([["noise_probs"], ["0.1"]])
-    with pytest.raises(ValueError, match="'rawstate' column not found"):
+    with pytest.raises(NotReclassifiedError, match="final_state"):
         compute_spindle_fractions(tmp_path)
 
 
 def test_missing_noise_probs_column_raises(tmp_path: Path):
     p = tmp_path / "Animal1_foo.csv"
     with p.open("w", newline="") as f:
-        csv.writer(f).writerows([["rawstate"], ["w"]])
+        csv.writer(f).writerows([["final_state"], ["w"]])
     with pytest.raises(ValueError, match="'noise_probs' column not found"):
         compute_spindle_fractions(tmp_path)
 
@@ -214,7 +215,7 @@ def test_missing_both_state_columns_raises(tmp_path: Path):
     p = tmp_path / "Animal1_foo.csv"
     with p.open("w", newline="") as f:
         csv.writer(f).writerows([["noise_prob"], ["0.1"]])
-    with pytest.raises(ValueError, match="'rawstate' column not found"):
+    with pytest.raises(NotReclassifiedError, match="final_state"):
         compute_spindle_fractions(tmp_path)
 
 
@@ -263,7 +264,7 @@ def test_header_only_csv_gives_zero_counts(tmp_path: Path):
     """A CSV with only a header row yields zero counts and NaN fraction."""
     p = tmp_path / "Animal1_foo.csv"
     with p.open("w", newline="") as f:
-        csv.writer(f).writerow(["rawstate", "noise_probs"])
+        csv.writer(f).writerow(["rawstate", "noise_probs", "final_state"])
     df = compute_spindle_fractions(tmp_path)
 
     total = df[(df["mouse_id"] == "Animal1") & (df["state"] == "Total")].iloc[0]
@@ -340,9 +341,9 @@ def test_seconds_until_target_dst_fall_back():
 def _write_rawstate_csv(path: Path, states: list[str]) -> None:
     with path.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["rawstate"])
+        w.writerow(["rawstate", "final_state"])
         for s in states:
-            w.writerow([s])
+            w.writerow([s, s])
 
 
 def _write_fake_edf(path: Path) -> None:
@@ -705,3 +706,11 @@ def test_whole_file_metrics_empty_dir(tmp_path: Path):
     df = compute_whole_file_metrics(tmp_path)
     assert df.empty
     assert "bouts_per_hour" in df.columns
+
+
+def test_analysis_functions_require_final_state(tmp_path: Path):
+    """No silent fallback to the original states for CSVs that were never reclassified."""
+    with (tmp_path / "Animal1_foo.csv").open("w", newline="") as f:
+        csv.writer(f).writerows([["rawstate", "noise_probs"], ["w", "0.1"]])
+    with pytest.raises(NotReclassifiedError, match="Reclassify"):
+        compute_spindle_fractions(tmp_path)

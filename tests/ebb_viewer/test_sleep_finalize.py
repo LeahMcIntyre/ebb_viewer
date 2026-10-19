@@ -13,9 +13,9 @@ def _write_rawstate_csv(path: Path, states: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["rawstate"])
+        w.writerow(["rawstate", "final_state"])
         for s in states:
-            w.writerow([s])
+            w.writerow([s, s])
 
 
 def _seed(

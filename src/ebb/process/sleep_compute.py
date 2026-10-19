@@ -30,7 +30,14 @@ import pandas as pd
 
 from ebb.core.naming import parse_animal_id
 from ebb.io.edf_header import read_edf_start_datetime
-from ebb.io.spindle_csv import NOISE_COLUMNS, STATE_COLUMNS, resolve_column
+from ebb.io.spindle_csv import (
+    FINAL_COLUMN,
+    NOISE_COLUMNS,
+    STATE_COLUMNS,
+    NotReclassifiedError,
+    read_analysis_states,
+    resolve_column,
+)
 
 # SPINDLE epoch length in seconds. Used to upsample 0.25 Hz epoch-rate state
 # arrays to 1 Hz second-rate when rotating to a fixed clock hour.
@@ -70,7 +77,10 @@ def seconds_until_target(start: datetime, h: int = 6) -> int:
 
 
 def read_rawstate_column(state_path: Path) -> list[str]:
-    """Read the per-epoch state column from a SPINDLE-scored CSV.
+    """Read the ORIGINAL per-epoch state column from a SPINDLE-scored CSV.
+
+    For the "original states" comparison views only; analysis reads
+    ``final_state`` via ``read_analysis_states``.
 
     Reads ``rawstate`` if present, else ``state`` (newer SPINDLE outputs
     store the same clean `w`/`n`/`r` values under `state` instead).
@@ -91,10 +101,10 @@ def read_rawstate_column(state_path: Path) -> list[str]:
 
 
 def _states_for(animal: str, state_path: Path, states_by_animal) -> list[str]:
-    """Epoch states for one animal: the override if given, else the CSV column."""
+    """Epoch states for one animal: the override if given, else ``final_state``."""
     if states_by_animal is not None and animal in states_by_animal:
         return list(states_by_animal[animal])
-    return read_rawstate_column(state_path)
+    return read_analysis_states(state_path)
 
 
 def _bouts_for_state(mask, sample_rate_hz):
@@ -455,7 +465,7 @@ def compute_whole_file_metrics(
     - ``n_hours`` / ``n_days``: recording length, so any other per-time
       normalization is a downstream division.
 
-    States are read from the SPINDLE ``rawstate`` column at epoch rate; no
+    States are read from the ``final_state`` column at epoch rate; no
     EDF pairing or clock alignment is needed. Every animal gets one row per
     ``w``/``n``/``r`` state even if a state never occurs (zero-filled).
 
@@ -469,7 +479,7 @@ def compute_whole_file_metrics(
     rows: list[dict] = []
     for state_path in sorted(Path(state_dir).glob("*.csv")):
         animal = parse_animal_id(state_path)
-        states = np.asarray(read_rawstate_column(state_path))
+        states = np.asarray(read_analysis_states(state_path))
         n_epochs = len(states)
         n_hours = n_epochs * spindle_epoch_sec / 3600.0
         for raw in _RAW_STATE_TO_NAME:
@@ -513,8 +523,8 @@ def compute_spindle_fractions(
 ) -> pd.DataFrame:
     """Per-animal, per-state spindle mask fractions from SPINDLE output CSVs.
 
-    Reads the `rawstate` (or `state`, in newer outputs) column (`w`/`n`/`r`)
-    to determine sleep state and the `noise_probs` (or `noise_prob`) column
+    Reads the `final_state` column (`w`/`n`/`r`; raises `NotReclassifiedError`
+    if absent) to determine sleep state and the `noise_probs` (or `noise_prob`) column
     to determine whether each epoch is spindle-masked. An epoch is counted
     as spindle-masked when its noise probability is >= `noise_prob_threshold`.
     `states_by_animal` (animal ID -> per-epoch states, same length as the CSV)
@@ -532,16 +542,17 @@ def compute_spindle_fractions(
         with open(state_path) as f:
             reader = csv.reader(f)
             header = next(reader)
-            try:
-                raw_idx = header.index(resolve_column(header, STATE_COLUMNS))
-            except ValueError:
-                raise ValueError(f"'rawstate' column not found in {state_path.name}") from None
+            override = states_by_animal.get(animal) if states_by_animal is not None else None
+            raw_idx = None
+            if override is None:
+                if FINAL_COLUMN not in header:
+                    raise NotReclassifiedError(state_path.name)
+                raw_idx = header.index(FINAL_COLUMN)
             try:
                 noise_idx = header.index(resolve_column(header, NOISE_COLUMNS))
             except ValueError:
                 raise ValueError(f"'noise_probs' column not found in {state_path.name}") from None
 
-            override = states_by_animal.get(animal) if states_by_animal is not None else None
             clean_counts: Counter = Counter()
             spindle_counts: Counter = Counter()
             for i, row in enumerate(reader):

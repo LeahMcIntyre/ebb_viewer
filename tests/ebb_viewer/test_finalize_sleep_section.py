@@ -62,9 +62,9 @@ def test_sleep_export_writes_bundle(qapp, tmp_path: Path):
     csv_path.parent.mkdir(parents=True)
     with csv_path.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["rawstate"])
+        w.writerow(["rawstate", "final_state"])
         for s in ["w"] * (24 * per_hr):
-            w.writerow([s])
+            w.writerow([s, s])
     (tmp_path / "standard").mkdir()
     (tmp_path / "standard" / "AM001_PREPROCESSED.edf").write_bytes(b"")
     _seed(tmp_path, {"AM001": "ok"})

@@ -4,6 +4,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from ebb.io.spindle_csv import STATE_COLUMNS, NotReclassifiedError
 from ebb.masking import spindle_noise, state
 
 
@@ -13,9 +14,9 @@ def write_spindle_csv(path: Path, rawstates, *, new_format: bool = False):
     noise_col = "noise_prob" if new_format else "noise_probs"
     with path.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow([state_col, noise_col])
+        w.writerow([state_col, noise_col, "final_state"])
         for rs in rawstates:
-            w.writerow([rs, "0.0"])
+            w.writerow([rs, "0.0", rs])
 
 
 @pytest.mark.parametrize("new_format", [False, True])
@@ -46,9 +47,9 @@ def write_noise_csv(path: Path, noise_probs, *, new_format: bool = False):
     noise_col = "noise_prob" if new_format else "noise_probs"
     with path.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow([state_col, noise_col])
+        w.writerow([state_col, noise_col, "final_state"])
         for v in noise_probs:
-            w.writerow(["w", str(v)])
+            w.writerow(["w", str(v), "w"])
 
 
 @pytest.mark.parametrize("new_format", [False, True])
@@ -84,5 +85,24 @@ def test_state_prefers_rawstate_over_artifact_coded_state(tmp_path: Path):
 
     fs = 250
     winsize = 4
-    mask = state(p, labels=["w"], fs=fs, winsize=winsize, include=True)
+    mask = state(p, labels=["w"], fs=fs, winsize=winsize, include=True, columns=STATE_COLUMNS)
     assert mask.all()
+
+
+def test_state_defaults_to_final_state_over_original_columns(tmp_path: Path):
+    p = tmp_path / "spindle.csv"
+    with p.open("w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["rawstate", "final_state"])
+        w.writerows([["n", "w"], ["n", "n"]])
+    mask = state(p, labels=["w"], fs=1, winsize=1)
+    assert mask.tolist() == [True, False]
+
+
+def test_state_without_final_state_raises_not_reclassified(tmp_path: Path):
+    p = tmp_path / "spindle.csv"
+    write_spindle_csv(p, ["w"])
+    # strip final_state
+    p.write_text("rawstate,noise_probs\nw,0.0\n")
+    with pytest.raises(NotReclassifiedError, match="Reclassify"):
+        state(p, labels=["w"], fs=1, winsize=1)

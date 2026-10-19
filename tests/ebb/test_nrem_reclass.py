@@ -22,10 +22,10 @@ def _flips(spec: str, radius: int = 1) -> str:
 def _write_csv(path: Path, epochs: list[tuple[str, float]], threshold: float | None = 0.5) -> None:
     with path.open("w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["index", "state", "noise_probs", "rawstate", "threshold"])
+        w.writerow(["index", "state", "noise_probs", "rawstate", "threshold", "final_state"])
         for i, (state, noise) in enumerate(epochs):
             thr = "" if (i > 0 or threshold is None) else str(threshold)
-            w.writerow([i, state, noise, state, thr])
+            w.writerow([i, state, noise, state, thr, state])
 
 
 # --- gap fill -----------------------------------------------------------

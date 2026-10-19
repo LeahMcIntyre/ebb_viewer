@@ -13,7 +13,7 @@ from openseize import producer as make_producer
 
 from ebb import masking
 from ebb.masking.annotations import keyword_mask
-from ebb.io.spindle_csv import FINAL_COLUMN, read_state_column
+from ebb.io.spindle_csv import FINAL_COLUMN, STATE_COLUMNS, read_state_column
 from ebb_viewer.edf_viewer.masks import Mask, MaskSet, ParamSpec
 from ebb_viewer.edf_viewer.recording import Recording
 
@@ -195,10 +195,10 @@ def rebuild_drink_mask(drink_path, fs: int, meta: dict) -> Mask:
 
 
 def load_state_masks(csv_path, fs: int) -> MaskSet:
-    """Build a MaskSet of Wake / NREM / REM spans from a SleepyRat CSV."""
+    """Build a MaskSet of Wake / NREM / REM spans from a SleepyRat CSV (original states)."""
     mask_set = MaskSet()
     for name, labels in _STATE_LABELS.items():
-        arr = masking.state(csv_path, labels, fs=fs, winsize=4, include=True)
+        arr = masking.state(csv_path, labels, fs=fs, winsize=4, include=True, columns=STATE_COLUMNS)
         mask_set.add(Mask.from_bool(name, _STATE_COLORS[name], arr))
     return mask_set
 

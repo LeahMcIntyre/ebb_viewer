@@ -13,6 +13,7 @@ from matplotlib.backends.backend_qtagg import (
 from matplotlib.figure import Figure
 from PyQt6 import QtWidgets
 
+from ebb.io.spindle_csv import NotReclassifiedError, read_analysis_states
 from ebb.process.sleep_compute import compute_sleep_metrics_per_mouse, read_rawstate_column
 
 
@@ -45,7 +46,10 @@ class SleepPopup(QtWidgets.QDialog):
         self.fig.clear()
         axarr = [self.fig.add_subplot(3, 3, i + 1) for i in range(9)]
 
-        states = read_rawstate_column(state_path)
+        try:  # display only: fall back to the originals for files not yet reclassified
+            states = read_analysis_states(state_path)
+        except NotReclassifiedError:
+            states = read_rawstate_column(state_path)
         adf = compute_sleep_metrics_per_mouse(states, bin_hours=bin_hours, sample_rate_hz=0.25)
 
         for j, (metric, metric_label) in enumerate(self.METRIC_ORDER):
