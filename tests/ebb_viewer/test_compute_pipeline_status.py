@@ -64,7 +64,7 @@ def test_step5_active_when_all_qc_resolved(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s5 = statuses[4]
+    s5 = statuses[5]
     assert s5.kind == "active"
     assert "marked ok" in s5.description
 
@@ -80,7 +80,7 @@ def test_step5_blocked_when_review_pending_and_ok_exists(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s5 = statuses[4]
+    s5 = statuses[5]
     assert s5.kind == "blocked"
     assert "1" in s5.description
 
@@ -97,7 +97,7 @@ def test_step5_blocked_message_includes_not_ready_count(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s5 = statuses[4]
+    s5 = statuses[5]
     assert s5.kind == "blocked"
     assert "2" in s5.description
 
@@ -112,7 +112,7 @@ def test_step5_blocked_when_no_ok_animals(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s5 = statuses[4]
+    s5 = statuses[5]
     assert s5.kind == "blocked"
 
 
@@ -127,7 +127,7 @@ def test_step5_done_when_final_pkl_exists(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s5 = statuses[4]
+    s5 = statuses[5]
     assert s5.kind == "done"
 
 
@@ -155,7 +155,7 @@ def test_step7_blocked_when_no_final_pkl(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    assert statuses[6].kind == "blocked"
+    assert statuses[7].kind == "blocked"
 
 
 def test_step7_attention_when_drink_mask_needed(tmp_path):
@@ -169,7 +169,7 @@ def test_step7_attention_when_drink_mask_needed(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s7 = statuses[6]
+    s7 = statuses[7]
     assert s7.kind == "attention"
     assert "2" in s7.description
 
@@ -184,7 +184,7 @@ def test_step7_done_when_drink_masks_applied(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s7 = statuses[6]
+    s7 = statuses[7]
     assert s7.kind == "done"
     assert "1" in s7.description
 
@@ -199,7 +199,7 @@ def test_step7_done_none_needed_when_all_ok(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s7 = statuses[6]
+    s7 = statuses[7]
     assert s7.kind == "done"
     assert "no drink masks needed" in s7.description.lower()
 
@@ -219,7 +219,7 @@ def test_step6_blocked_when_merged_pkl_absent_despite_reviewed_animals(tmp_path)
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    assert statuses[5].kind == "blocked"
+    assert statuses[6].kind == "blocked"
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +237,7 @@ def test_step6_not_done_when_animal_needs_drink_mask(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    assert statuses[5].kind != "done"
+    assert statuses[6].kind != "done"
 
 
 def test_step6_done_when_all_reviewed_no_pending_work(tmp_path):
@@ -250,4 +250,43 @@ def test_step6_done_when_all_reviewed_no_pending_work(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    assert statuses[5].kind == "done"
+    assert statuses[6].kind == "done"
+
+
+# ---------------------------------------------------------------------------
+# Step 4: Reclassify (index 3, between Spindle Upload and Sleep QC)
+# ---------------------------------------------------------------------------
+
+
+def test_reclassify_blocked_until_spindle_outputs_exist(tmp_path):
+    m = _make_manifest(tmp_path, {"A001": {}})
+    statuses = compute_pipeline_status(tmp_path, m)
+    assert len(statuses) == 8
+    assert statuses[3].kind == "blocked"
+
+
+def test_reclassify_active_when_outputs_exist_but_none_reclassified(tmp_path):
+    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
+    m = _make_manifest(tmp_path, {"A001": {}})
+    assert compute_pipeline_status(tmp_path, m)[3].kind == "active"
+
+
+def test_reclassify_attention_when_only_some_animals_done(tmp_path):
+    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
+    m = _make_manifest(
+        tmp_path, {"A001": dict(reclass_gate_applied=False), "A002": {}, "A003": {}}
+    )
+    s = compute_pipeline_status(tmp_path, m)[3]
+    assert s.kind == "attention"
+    assert "2 of 3" in s.description
+
+
+def test_reclassify_done_reports_gate_count(tmp_path):
+    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
+    m = _make_manifest(
+        tmp_path,
+        {"A001": dict(reclass_gate_applied=True), "A002": dict(reclass_gate_applied=False)},
+    )
+    s = compute_pipeline_status(tmp_path, m)[3]
+    assert s.kind == "done"
+    assert "2 reclassified" in s.description and "gate on 1" in s.description
