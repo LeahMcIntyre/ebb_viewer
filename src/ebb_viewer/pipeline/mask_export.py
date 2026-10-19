@@ -160,8 +160,7 @@ def clean_mask_for_state(
             uniformly across states (commutator, spindle noise, drink, hour
             window, etc.). True = clean.
         sd_threshold_mask: SD-threshold mask, True = OK.
-        wake_sub_mask: True = wake sample (rawstate or rawstate ∩ sprob,
-            depending on caller). Required when ``codes`` lumps wake with
+        wake_sub_mask: True = wake sample. Required when ``codes`` lumps wake with
             other states; ignored otherwise.
 
     Returns:
@@ -239,7 +238,6 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
     sd_radius_s = float(_coerce_param(params, "radius", 0.5))
     nstd = float(_coerce_param(params, "nstd", 5))
     noise_thresh = float(_coerce_param(params, "noise_thresh", 0.5))
-    s_prob = params.get("s_prob")  # None means "no sprob filtering"
     drink_pad = int(_coerce_param(params, "drink_pad", 2))
     chunksize = int(_coerce_param(params, "chunksize", int(30e5)))
     state_keys = params.get("states") or list(DEFAULT_STATES)
@@ -255,34 +253,15 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
         rec_start = parse_edf_start_datetime(reader.header)
 
         # --- state masks ---
-        # Lumped groups can't be filtered with the single-class sprob; OR the
-        # per-code filtered masks together instead.
-        state_masks_filtered: dict[str, np.ndarray] = {}
-        for label, codes in labels.items():
-            if s_prob is None:
-                state_masks_filtered[label] = masking.state(
-                    paths.state, codes, fs, winsize=epoch_winsize
-                )
-            elif len(codes) == 1:
-                state_masks_filtered[label] = masking.state_prob(
-                    paths.state, codes[0], fs, winsize=epoch_winsize, sprob=s_prob
-                )
-            else:
-                parts = [
-                    masking.state_prob(paths.state, c, fs, winsize=epoch_winsize, sprob=s_prob)
-                    for c in codes
-                ]
-                state_masks_filtered[label] = np.any(parts, axis=0)
+        state_masks_filtered: dict[str, np.ndarray] = {
+            label: masking.state(paths.state, codes, fs, winsize=epoch_winsize)
+            for label, codes in labels.items()
+        }
 
         # --- wake sub-mask for mixed-wake groups ---
         needs_wake_sub = any("w" in codes and len(codes) > 1 for codes in labels.values())
         if needs_wake_sub:
-            if s_prob is not None:
-                wake_sub_mask = masking.state_prob(
-                    paths.state, "w", fs, winsize=epoch_winsize, sprob=s_prob
-                )
-            else:
-                wake_sub_mask = masking.state(paths.state, ["w"], fs, winsize=epoch_winsize)
+            wake_sub_mask = masking.state(paths.state, ["w"], fs, winsize=epoch_winsize)
         else:
             wake_sub_mask = None
 

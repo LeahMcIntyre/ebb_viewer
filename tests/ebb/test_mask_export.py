@@ -381,7 +381,7 @@ def test_write_intervals_csv_creates_parent_dirs(tmp_path):
 
 def test_write_meta_json_roundtrips(tmp_path):
     path = tmp_path / "meta.json"
-    meta = {"fs": 250, "winsize": 4, "params": {"sd_nstd": 5, "sprob": 0.9}}
+    meta = {"fs": 250, "winsize": 4, "params": {"sd_nstd": 5}}
     write_meta_json(path, meta)
     assert json.loads(path.read_text()) == meta
 

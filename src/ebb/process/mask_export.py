@@ -177,8 +177,7 @@ def clean_per_state_intervals(
     Args:
         state_masks: Dict mapping state name (e.g. ``"wake"``, ``"nrem"``) to
             its 1-D boolean mask. ``True`` means the sample belongs to that
-            state. May reflect ``rawstate`` only or rawstate filtered by
-            ``s_prob`` — the caller decides.
+            state.
         artifact_combined: Single 1-D boolean mask, ``True`` where the sample
             is *clean* (i.e. NOT in any artifact). Typically the AND of all
             individual artifact masks (commutator, SD, drink, ...) using PSD's
