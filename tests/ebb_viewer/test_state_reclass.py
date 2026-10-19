@@ -3,43 +3,29 @@ import pytest
 from PyQt6.QtCore import QPointF, Qt
 from PyQt6.QtGui import QMouseEvent
 
-from ebb.process.nrem_reclass import NremReclass
-from ebb_viewer.edf_viewer import mask_builder
 from ebb_viewer.edf_viewer.mask_builder import load_reclassified_state_masks
 from ebb_viewer.edf_viewer.masks import Mask, MaskSet
 from ebb_viewer.edf_viewer.state_legend import ReclassPill
 
 
-def _fake_result(final: list[str], gate: bool = False) -> NremReclass:
-    arr = np.array(final)
-    return NremReclass(arr, arr, arr, gate, 0, 0)
-
-
-def test_reclassified_masks_expand_final_state_per_epoch(monkeypatch):
+def test_reclassified_masks_expand_final_state_per_epoch(tmp_path):
     fs = 10
-    monkeypatch.setattr(
-        mask_builder, "reclassify_file", lambda *a, **k: _fake_result(["w", "n", "r", "w"])
-    )
+    csv = tmp_path / "A_x.csv"
+    csv.write_text("state,final_state\nn,w\nn,n\nn,r\nn,w\n")
 
-    masks, result = load_reclassified_state_masks("x.csv", "x.edf", fs)
+    masks = load_reclassified_state_masks(csv, fs)
 
     epoch = fs * 4
     assert masks.get("wake").spans == [(0, epoch), (3 * epoch, 4 * epoch)]
     assert masks.get("nrem").spans == [(epoch, 2 * epoch)]
     assert masks.get("rem").spans == [(2 * epoch, 3 * epoch)]
-    assert result.gate_applied is False
 
 
-def test_reclassified_masks_forward_radius(monkeypatch):
-    seen = {}
-
-    def fake(csv, edf, *, radius):
-        seen["radius"] = radius
-        return _fake_result(["w"])
-
-    monkeypatch.setattr(mask_builder, "reclassify_file", fake)
-    load_reclassified_state_masks("x.csv", "x.edf", 10, radius=3)
-    assert seen["radius"] == 3
+def test_reclassified_masks_require_final_state_column(tmp_path):
+    csv = tmp_path / "A_x.csv"
+    csv.write_text("state\nn\n")
+    with pytest.raises(ValueError, match="final_state"):
+        load_reclassified_state_masks(csv, 10)
 
 
 @pytest.fixture

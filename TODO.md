@@ -1,9 +1,9 @@
 # TODO
 
-### Sleep QC: read `final_state` instead of reclassifying on the fly (next refactor)
+### Sleep QC: read `final_state` instead of reclassifying on the fly (DONE on feature/sleep-qc-final-state; steps 1-6 implemented, step 7 still open)
 The Reclassify page (stage 4) now writes `reclass_state` and `final_state` into each `spindle_outputs/<combo>/*.csv` and records `reclass_gate_applied` per animal in the manifest. `final_state` is the one resolved per-epoch state downstream code should read: `reclass_state`, overridden by `swd_reclassification` where that is non-blank once the SWD page exists. Without SWD review it is a plain copy of `reclass_state`, so analysis code is identical either way.
 
-Sleep QC (`pages/sleep_qc_visualizer.py`) keeps its **Reclassify toggle** (raw vs reclassified), but the toggle now reads the column instead of computing:
+Sleep QC (`pages/sleep_qc_visualizer.py`) now opens on the reclassified states (`final_state`) by default; a **Show original** toggle (formerly Reclassify) swaps to the original SPINDLE states. It reads the column instead of computing, and the EDF viewer's R pill starts lit too:
 1. Add `read_state_column(path, column)` next to `read_rawstate_column` in `ebb/process/sleep_compute.py`. `_ensure_reclass` builds `{animal: states}` from each CSV's `final_state` and passes it through the existing `states_by_animal` seam of `_compute_tables`. The raw view stays the default (`rawstate`/`state` via `STATE_COLUMNS`).
 2. Delete the compute path: the `reclassify_dir` call, `spin_gap`, `_gap_radius`, `_on_gap_radius_changed`, `_reclass_cache`, and the `GAP_RADIUS`/`NremReclass`/`reclassify_dir` imports. Gap radius is fixed at 1 in the Reclassify page.
 3. Source the EMG-gate tag (`_gated_animals`, `_gate_tag_html`, `lbl_reclass`) from `manifest.reclass_gate_applied` rather than `NremReclass.gate_applied`.

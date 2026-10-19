@@ -76,7 +76,7 @@ class StateLegend(QtWidgets.QWidget):
 
 
 class ReclassPill(QtWidgets.QWidget):
-    """Small checkable "R" pill that toggles the NREM reclassification display.
+    """Small checkable "R" pill: lit = reclassified states shown, dim = originals.
 
     Sits right of the state bar. Disabled (dimmed, click ignored) until
     ``set_available(True)``; ``toggled`` fires only on user clicks.

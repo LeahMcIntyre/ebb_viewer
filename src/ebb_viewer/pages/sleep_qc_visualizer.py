@@ -38,7 +38,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ebb.process.nrem_reclass import GAP_RADIUS, NremReclass, reclassify_dir
+from ebb.core.naming import parse_animal_id
+from ebb.io.spindle_csv import FINAL_COLUMN, read_state_column
 from ebb.process.sleep_compute import (
     compute_sleep_bins_df,
     compute_sleep_bins_df_clock_aligned,
@@ -105,18 +106,17 @@ class SleepQCGridPage(QWidget):
         self._data: tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame] | None = None
         # (n_csvs, newest mtime) of the output folder when _data was loaded.
         self._data_sig: tuple[int, float] | None = None
-        # Same four tables recomputed from NREM-reclassified states. Built
-        # lazily the first time Reclassify is switched on for a given CSV
-        # folder state, and dropped whenever _data is reloaded.
+        # Same four tables computed from each CSV's ``final_state`` column (written
+        # by the Reclassify page). Built lazily the first time Reclassify is
+        # switched on for a given CSV folder state, and dropped whenever _data
+        # is reloaded.
         self._data_reclass: (
             tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame] | None
         ) = None
-        self._reclass: dict[str, NremReclass] = {}
-        self._reclass_mode: bool = False
-        # Gap-fill radius in epochs; results are cached per radius so flipping
-        # between values doesn't recompute (EMG reads are the slow part).
-        self._gap_radius: int = GAP_RADIUS
-        self._reclass_cache: dict[int, tuple[tuple, dict[str, NremReclass]]] = {}
+        # Animals whose CSV has a ``final_state`` column (the rest stay raw).
+        self._reclassed: set[str] = set()
+        # Reclassified (final_state) is the default view; the button shows the originals.
+        self._show_original: bool = False
         self._axis_mode: str = "clock"
         self._mouse_ids: list[str] = []
         self._current_page: int = 0
@@ -309,25 +309,15 @@ class SleepQCGridPage(QWidget):
         top.addWidget(view_wrap)
 
         top.addSpacing(8)
-        self.btn_reclass = QPushButton("Reclassify")
-        self.btn_reclass.setCheckable(True)
-        self.btn_reclass.setChecked(False)
-        self.btn_reclass.setToolTip(
-            "Apply the NREM reclassification algorithm (gap fill, plus an EMG "
-            "gate for files where it fragments NREM) to the plots in both views. "
+        self.btn_original = QPushButton("Show original")
+        self.btn_original.setCheckable(True)
+        self.btn_original.setChecked(False)
+        self.btn_original.setToolTip(
+            "Plot the original SPINDLE states in both views instead of the reclassified "
+            "states (the final_state column written by the Reclassify step). "
             "Nothing is written to disk."
         )
-        top.addWidget(self.btn_reclass)
-        self.spin_gap = QSpinBox()
-        self.spin_gap.setPrefix("Gap ")
-        self.spin_gap.setRange(1, 5)
-        self.spin_gap.setValue(GAP_RADIUS)
-        self.spin_gap.setToolTip(
-            "Gap-fill radius in epochs: a clean NREM epoch flips to Wake when an "
-            "artifact-flagged epoch lies within this many epochs on both sides. "
-            "Default 1."
-        )
-        top.addWidget(self.spin_gap)
+        top.addWidget(self.btn_original)
 
         top.addSpacing(12)
         top.addWidget(_vsep(self))
@@ -438,8 +428,7 @@ class SleepQCGridPage(QWidget):
         self.btn_median.toggled.connect(self._on_median_toggled)
         self.btn_view_sleep.clicked.connect(lambda: self._set_spindle_mask_mode(False))
         self.btn_spindle.clicked.connect(lambda: self._set_spindle_mask_mode(True))
-        self.btn_reclass.toggled.connect(self._on_reclass_toggled)
-        self.spin_gap.valueChanged.connect(self._on_gap_radius_changed)
+        self.btn_original.toggled.connect(self._on_original_toggled)
         self._frac_widget.animal_clicked.connect(self._on_frac_animal_selected)
         self._frac_widget.review_requested.connect(self._on_frac_review_requested)
 
@@ -502,7 +491,7 @@ class SleepQCGridPage(QWidget):
         if current_animal is self._DEFAULT_ANIMAL:
             current_animal = self.cmb_animal.currentText() or None
         title = (
-            f"{self._combo} (reclassified, gap {self._gap_radius})"
+            f"{self._combo} (reclassified)"
             if self._reclass_active
             else self._combo
         )
@@ -546,8 +535,9 @@ class SleepQCGridPage(QWidget):
         if self._data is not None and sig == self._data_sig:
             return False
         self._load_data(sig)
-        if self._reclass_mode and not self._ensure_reclass():
-            self._set_reclass_mode(False)
+        self._ensure_reclass()
+        self.btn_original.setEnabled(self._data_reclass is not None)
+        self._update_reclass_label()
         return True
 
     def _compute_tables(
@@ -576,8 +566,7 @@ class SleepQCGridPage(QWidget):
         """Compute and cache the sleep metrics for the project combo."""
         self._data = None
         self._data_reclass = None
-        self._reclass = {}
-        self._reclass_cache = {}
+        self._reclassed = set()
         self._outliers = None
         self._mouse_ids = []
         self._data_sig = sig
@@ -598,54 +587,45 @@ class SleepQCGridPage(QWidget):
     # ------------------------------------------------------------------
     @property
     def _reclass_active(self) -> bool:
-        return self._reclass_mode and self._data_reclass is not None
+        return not self._show_original and self._data_reclass is not None
 
     def _ensure_reclass(self) -> bool:
         """Build the reclassified tables if missing. Returns True when available."""
         if self._data_reclass is not None:
             return True
-        cached = self._reclass_cache.get(self._gap_radius)
-        if cached is not None:
-            self._data_reclass, self._reclass = cached
-            self._outliers = None
-            return True
         d = self._csv_dir()
         if self._data is None or not d.is_dir():
             return False
+        states: dict[str, list[str]] = {}
+        for path in sorted(d.glob("*.csv")):
+            try:
+                states[parse_animal_id(path)] = read_state_column(path, FINAL_COLUMN)
+            except ValueError:
+                continue  # not reclassified yet: this animal stays raw
+        if not states:
+            return False  # nothing reclassified: stay on the original states (label says so)
         QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore", UserWarning)  # missing EDFs: already reported
-                reclass = reclassify_dir(
-                    d, self.project_root / "standard", radius=self._gap_radius
-                )
-            states = {a: r.final_state for a, r in reclass.items()}
             tables = self._compute_tables(d, states)
         except Exception as e:
-            QGuiApplication.restoreOverrideCursor()
             QMessageBox.critical(
-                self, "Error reclassifying NREM", f"Could not reclassify {self._combo}:\n{e}"
+                self, "Error loading reclassified states", f"Could not read {self._combo}:\n{e}"
             )
             return False
-        QGuiApplication.restoreOverrideCursor()
-        self._reclass = reclass
+        finally:
+            QGuiApplication.restoreOverrideCursor()
+        self._reclassed = set(states)
         self._data_reclass = tables
-        self._reclass_cache[self._gap_radius] = (tables, reclass)
         self._outliers = None
         return True
-
-    def _set_reclass_mode(self, on: bool) -> None:
-        self._reclass_mode = on
-        self.btn_reclass.blockSignals(True)
-        self.btn_reclass.setChecked(on)
-        self.btn_reclass.blockSignals(False)
-        self._update_reclass_label()
 
     def _gated_animals(self) -> set[str]:
         """Animals whose reclassification applied the EMG gate (empty unless Reclassify is on)."""
         if not self._reclass_active:
             return set()
-        return {a for a, r in self._reclass.items() if r.gate_applied}
+        return {
+            a for a in self._reclassed if (e := self._manifest.get(a)) and e.reclass_gate_applied
+        }
 
     def _gate_tag_html(self, animal: str) -> str:
         """Legend tag for an animal the EMG gate was applied to, else ''."""
@@ -657,37 +637,35 @@ class SleepQCGridPage(QWidget):
         )
 
     def _update_reclass_label(self) -> None:
-        if not self._reclass_active:
+        """Say which states are plotted; loud when the Reclassify step hasn't been run."""
+        if self._data is None:
             self.lbl_reclass.setVisible(False)
             return
-        gated = sorted(a for a, r in self._reclass.items() if r.gate_applied)
-        missing = len(self._mouse_ids) - len(self._reclass)
-        text = f"Gap {self._gap_radius}; EMG gate on {len(gated)} of {len(self._reclass)} files"
+        if self._data_reclass is None:
+            text = "Not reclassified (run the Reclassify step); showing original states"
+            self.lbl_reclass.setStyleSheet("color: #d97706; font-weight: bold;")
+            self.lbl_reclass.setText(text)
+            self.lbl_reclass.setToolTip("")
+            self.lbl_reclass.setVisible(True)
+            return
+        self.lbl_reclass.setStyleSheet("color: gray;")
+        if self._show_original:
+            self.lbl_reclass.setText("Showing original SPINDLE states")
+            self.lbl_reclass.setToolTip("")
+            self.lbl_reclass.setVisible(True)
+            return
+        gated = sorted(self._gated_animals())
+        missing = len(self._mouse_ids) - len(self._reclassed)
+        text = f"EMG gate on {len(gated)} of {len(self._reclassed)} reclassified files"
         if missing:
-            text += f"; {missing} without EDF kept raw"
+            text += f"; {missing} not reclassified (run Reclassify), kept original"
         self.lbl_reclass.setText(text)
         self.lbl_reclass.setToolTip("EMG gate applied to: " + (", ".join(gated) or "none"))
         self.lbl_reclass.setVisible(True)
 
-    def _on_gap_radius_changed(self, radius: int) -> None:
-        self._gap_radius = radius
-        self._data_reclass = None  # re-pick from the per-radius cache, or compute
-        self._reclass = {}
-        if not self._reclass_mode:
-            return
-        if not self._ensure_reclass():
-            self._set_reclass_mode(False)
+    def _on_original_toggled(self, checked: bool) -> None:
+        self._show_original = checked
         self._update_reclass_label()
-        self._outliers = None
-        self._refresh_views()
-
-    def _on_reclass_toggled(self, checked: bool) -> None:
-        if checked:
-            self._ensure_data()
-            if not self._ensure_reclass():
-                self._set_reclass_mode(False)
-                return
-        self._set_reclass_mode(checked)
         self._outliers = None
         self._refresh_views()
 

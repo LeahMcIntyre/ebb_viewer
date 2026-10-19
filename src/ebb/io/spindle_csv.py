@@ -40,6 +40,22 @@ FINAL_COLUMN = "final_state"
 ORIGINAL_DIRNAME = "_original"
 
 
+def read_state_column(csv_path: str | Path, column: str) -> list[str]:
+    """Read one named per-epoch state column (e.g. ``final_state``) from a CSV.
+
+    Raises:
+        ValueError: if the file is empty or lacks ``column``.
+    """
+    path = Path(csv_path)
+    with open(path, newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None or column not in header:
+            raise ValueError(f"{column!r} column not found in {path.name}")
+        idx = header.index(column)
+        return [row[idx] for row in reader if row]
+
+
 def has_column(csv_path: str | Path, name: str) -> bool:
     """True if the CSV header contains ``name``."""
     with open(csv_path, newline="") as f:
