@@ -86,16 +86,18 @@ _STEP_LABELS = [
     "1. Preprocess",
     "2. Spindle EDFs",
     "3. Spindle Upload",
-    "4. Sleep QC",
-    "5. PSD Computation",
-    "6. PSD Review",
-    "7. Drink Mask",
+    "4. Reclassify",
+    "5. Sleep QC",
+    "6. PSD Computation",
+    "7. PSD Review",
+    "8. Drink Mask",
 ]
 
 _STEP_PAGE_NAMES = [
     "preprocess",
     "spindle_write",
     "spindle_upload",
+    "reclassify",
     "sleep_qc",
     "psd_compute",
     "psd_review",
@@ -123,11 +125,11 @@ def compute_pipeline_status(
     *,
     psd_runs: list[str] | None = None,
 ) -> list[StepStatus]:
-    """Derive the 7 pipeline-step statuses driving the home-page guide.
+    """Derive the 8 pipeline-step statuses driving the home-page guide.
 
     Pure logic (no Qt). Reads ``manifest`` plus filesystem state under
     ``project_root`` (``standard/``, ``spindle_edfs/``, ``spindle_outputs/``,
-    ``psd/``). Returns the steps in pipeline order — preprocess → drink mask.
+    ``psd/``). Returns the steps in pipeline order — preprocess → drink mask (reclassify sits between upload and sleep QC).
 
     Args:
         psd_runs: Optional pre-computed result of ``psd_params.list_runs``.
@@ -180,7 +182,24 @@ def compute_pipeline_status(
     else:
         s3 = StepStatus("blocked", "Requires step 2")
 
-    # --- Step 4: Sleep QC ---
+    # --- Step 4: Reclassify ---
+    n_spindle = sum(1 for e in manifest if e.has_spindle)
+    n_reclassed = sum(1 for e in manifest if e.has_spindle and e.reclass_gate_applied is not None)
+    n_gated = sum(1 for e in manifest if e.reclass_gate_applied)
+    if not step3_done:
+        s_reclass = StepStatus("blocked", "Requires step 3")
+    elif n_spindle > 0 and n_reclassed == n_spindle:
+        s_reclass = StepStatus(
+            "done", f"{n_reclassed} reclassified (EMG gate on {n_gated})"
+        )
+    elif n_reclassed > 0:
+        s_reclass = StepStatus(
+            "attention", f"{n_spindle - n_reclassed} of {n_spindle} animals not reclassified"
+        )
+    else:
+        s_reclass = StepStatus("active", "Ready — reclassify NREM before Sleep QC")
+
+    # --- Step 5: Sleep QC ---
     if step3_done and n_pending_qc == 0 and n_review == 0 and n_ok > 0:
         s4 = StepStatus("done", f"{n_ok} animal{'s' if n_ok != 1 else ''} marked ok")
     elif step3_done and (n_review > 0 or n_pending_qc > 0):
@@ -217,7 +236,7 @@ def compute_pipeline_status(
             "blocked", f"{n_not_ready} animal{'s' if n_not_ready != 1 else ''} not yet ready"
         )
     else:
-        s5 = StepStatus("blocked", "Requires all animals to be marked ok (step 4)")
+        s5 = StepStatus("blocked", "Requires all animals to be marked ok (step 5)")
 
     # --- Step 6: PSD Review ---
     n_needs_drink = len(manifest.all_needs_drink_mask())
@@ -235,13 +254,13 @@ def compute_pipeline_status(
     elif any_psd_pkl:
         s6 = StepStatus("active", "Ready — open PSD Review page")
     else:
-        s6 = StepStatus("blocked", "Requires computed PSDs (step 5)")
+        s6 = StepStatus("blocked", "Requires computed PSDs (step 6)")
 
     # --- Step 7: Drink Mask ---
     # n_needs_drink already computed above
     n_drink_applied = sum(1 for e in manifest if "drink_mask_applied" in e.psd_status.values())
     if not any_psd_pkl:
-        s7 = StepStatus("blocked", "Requires computed PSDs (step 5)")
+        s7 = StepStatus("blocked", "Requires computed PSDs (step 6)")
     elif n_needs_drink > 0:
         s7 = StepStatus(
             "attention",
@@ -255,7 +274,7 @@ def compute_pipeline_status(
     else:
         s7 = StepStatus("done", "No drink masks needed")
 
-    return [s1, s2, s3, s4, s5, s6, s7]
+    return [s1, s2, s3, s_reclass, s4, s5, s6, s7]
 
 
 def _any_file_for_animal(root: Path, subdir: str, channels: str, animal_id: str) -> bool:
