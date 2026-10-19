@@ -26,11 +26,26 @@ def _project(tmp_path: Path, *, reclassified=True, swd=True) -> Path:
     return tmp_path
 
 
-def test_find_swd_file_globs_by_animal_prefix(tmp_path):
+def test_find_swd_file_accepts_the_names_used_in_real_projects(tmp_path):
+    swd = tmp_path / "swd"
+    swd.mkdir()
+    for name in (
+        "Mice-1256.mat",  # bare animal ID
+        "JK1011_P063_DEL_ts.mat",  # animal_..._DEL_ts
+        "A10_swd.mat",
+    ):
+        (swd / name).touch()
+
+    assert find_swd_file(tmp_path, "Mice-1256").name == "Mice-1256.mat"
+    assert find_swd_file(tmp_path, "JK1011").name == "JK1011_P063_DEL_ts.mat"
+    assert find_swd_file(tmp_path, "A10").name == "A10_swd.mat"
+
+
+def test_find_swd_file_does_not_confuse_prefix_animals_or_missing_dir(tmp_path):
+    assert find_swd_file(tmp_path, "A1") is None  # no swd/ folder
     (tmp_path / "swd").mkdir()
-    (tmp_path / "swd" / "A1_swd.mat").touch()
     (tmp_path / "swd" / "A10_swd.mat").touch()
-    assert find_swd_file(tmp_path, "A1").name == "A1_swd.mat"
+    assert find_swd_file(tmp_path, "A1") is None  # A10 is a different animal
     assert find_swd_file(tmp_path, "A2") is None
 
 

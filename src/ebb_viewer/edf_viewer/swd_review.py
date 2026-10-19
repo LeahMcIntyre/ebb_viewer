@@ -33,7 +33,7 @@ from ebb_viewer.edf_viewer.trace_view import TraceView
 
 _SWD_COLOR = (178, 170, 248, 80)
 _SELECTED_COLOR = (255, 235, 59, 90)
-_REVIEW_WIN_SEC = 20.0
+_REVIEW_WIN_SEC = 10.0
 _STATE_NAMES = {"w": "Wake", "n": "NREM", "r": "REM"}
 _KEY_TO_STATE = {Qt.Key.Key_W: "w", Qt.Key.Key_N: "n", Qt.Key.Key_R: "r"}
 

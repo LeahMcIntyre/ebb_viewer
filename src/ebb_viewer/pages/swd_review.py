@@ -1,12 +1,13 @@
 """SWD Review page — optional per-project review of epochs that overlap SWDs.
 
-Inputs: ``spindle_outputs/<combo>/*.csv`` (after Reclassify) and
-``swd/<animal_id>_*.mat`` SWD intervals.
+Inputs: ``spindle_outputs/<combo>/*.csv`` (after Reclassify) and the SWD interval
+``.mat`` files in ``swd/`` (``find_swd_file`` shows the accepted names).
 Outputs: ``swd_reclassification`` and an updated ``final_state`` in each reviewed CSV,
 and ``swd_reviewed`` per animal in the manifest. Off by default: the checkbox is a
 project-level opt-in (``Manifest.swd_review_enabled``).
 """
 
+import re
 from pathlib import Path
 
 from PyQt6.QtCore import pyqtSignal
@@ -31,9 +32,22 @@ from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
 _COLUMNS = ("Animal", "SWD file", "SWD epochs", "Reviewed", "")
 
 
+# Same rule PSD compute uses to pair SWD files with animals (psd_compute.match_paths): an
+# optional "<letters/digits>ts_" prefix, then the animal ID up to the next "_".
+_SWD_ANIMAL = re.compile(r"^(?:[A-Za-z0-9]*ts_)?([^_]+)")
+
+
 def find_swd_file(project_root: Path, animal_id: str) -> Path | None:
-    """First ``swd/<animal_id>_*.mat`` (sorted), or None."""
-    return next(iter(sorted((Path(project_root) / "swd").glob(f"{animal_id}_*.mat"))), None)
+    """The ``swd/*.mat`` file for ``animal_id`` (first, sorted), or None.
+
+    Matches ``Mice-1256.mat`` and ``JK1011_P063_DEL_ts.mat``, but not another animal whose ID merely starts with the same characters (A1 vs A10).
+    """
+    swd_dir = Path(project_root) / "swd"
+    for mat in sorted(swd_dir.glob("*.mat")) if swd_dir.is_dir() else []:
+        m = _SWD_ANIMAL.match(mat.stem)
+        if m and m.group(1) == animal_id:
+            return mat
+    return None
 
 
 class SwdReviewPage(QWidget):
