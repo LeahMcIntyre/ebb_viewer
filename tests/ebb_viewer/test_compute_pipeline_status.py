@@ -265,17 +265,25 @@ def test_reclassify_blocked_until_spindle_outputs_exist(tmp_path):
     assert statuses[3].kind == "blocked"
 
 
+def _write_csv(tmp_path: Path, name: str, *, final_state: bool) -> None:
+    d = tmp_path / "spindle_outputs" / "LFC_RSC"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / name).write_text("state,final_state\nw,w\n" if final_state else "state\nw\n")
+
+
 def test_reclassify_active_when_outputs_exist_but_none_reclassified(tmp_path):
     _setup_filesystem(tmp_path, combos=["LFC_RSC"])
+    _write_csv(tmp_path, "A001_labels.csv", final_state=False)
     m = _make_manifest(tmp_path, {"A001": {}})
     assert compute_pipeline_status(tmp_path, m)[3].kind == "active"
 
 
-def test_reclassify_attention_when_only_some_animals_done(tmp_path):
+def test_reclassify_attention_when_some_csvs_lack_final_state(tmp_path):
     _setup_filesystem(tmp_path, combos=["LFC_RSC"])
-    m = _make_manifest(
-        tmp_path, {"A001": dict(reclass_gate_applied=False), "A002": {}, "A003": {}}
-    )
+    _write_csv(tmp_path, "A001_labels.csv", final_state=True)
+    _write_csv(tmp_path, "A002_labels.csv", final_state=False)
+    _write_csv(tmp_path, "A003_labels.csv", final_state=False)
+    m = _make_manifest(tmp_path, {"A001": {}, "A002": {}, "A003": {}})
     s = compute_pipeline_status(tmp_path, m)[3]
     assert s.kind == "attention"
     assert "2 of 3" in s.description
@@ -283,6 +291,8 @@ def test_reclassify_attention_when_only_some_animals_done(tmp_path):
 
 def test_reclassify_done_reports_gate_count(tmp_path):
     _setup_filesystem(tmp_path, combos=["LFC_RSC"])
+    _write_csv(tmp_path, "A001_labels.csv", final_state=True)
+    _write_csv(tmp_path, "A002_labels.csv", final_state=True)
     m = _make_manifest(
         tmp_path,
         {"A001": dict(reclass_gate_applied=True), "A002": dict(reclass_gate_applied=False)},
@@ -290,3 +300,11 @@ def test_reclassify_done_reports_gate_count(tmp_path):
     s = compute_pipeline_status(tmp_path, m)[3]
     assert s.kind == "done"
     assert "2 reclassified" in s.description and "gate on 1" in s.description
+
+
+def test_reclassify_ignores_stale_manifest_flag_when_csv_lost_its_column(tmp_path):
+    """Re-downloading a CSV from SleepyRat drops final_state; the manifest flag is stale."""
+    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
+    _write_csv(tmp_path, "A001_labels.csv", final_state=False)
+    m = _make_manifest(tmp_path, {"A001": dict(reclass_gate_applied=True)})
+    assert compute_pipeline_status(tmp_path, m)[3].kind == "active"
