@@ -13,7 +13,7 @@ from openseize import producer as make_producer
 
 from ebb import masking
 from ebb.masking.annotations import keyword_mask
-from ebb.process.nrem_reclass import GAP_RADIUS, NremReclass, reclassify_file
+from ebb.io.spindle_csv import FINAL_COLUMN, read_state_column
 from ebb_viewer.edf_viewer.masks import Mask, MaskSet, ParamSpec
 from ebb_viewer.edf_viewer.recording import Recording
 
@@ -203,23 +203,23 @@ def load_state_masks(csv_path, fs: int) -> MaskSet:
     return mask_set
 
 
-def load_reclassified_state_masks(
-    csv_path, edf_path, fs: int, radius: int = GAP_RADIUS
-) -> tuple[MaskSet, NremReclass]:
-    """Like `load_state_masks`, with the NREM reclassification applied.
+def load_reclassified_state_masks(csv_path, fs: int) -> MaskSet:
+    """Like `load_state_masks`, from the CSV's ``final_state`` column.
 
-    Runs `ebb.process.nrem_reclass.reclassify_file` (gap fill, plus the EMG
-    gate when it fragments NREM) and expands its per-epoch `final_state`
-    to sample resolution. The `NremReclass` is returned so the caller can
-    report whether the gate applied.
+    ``final_state`` is written by the Reclassify step (NREM gap fill + EMG gate,
+    plus any SWD overrides). Its per-epoch labels are expanded to sample
+    resolution.
+
+    Raises:
+        ValueError: if the CSV has no ``final_state`` column.
     """
-    result = reclassify_file(csv_path, edf_path, radius=radius)
+    final_state = np.array(read_state_column(csv_path, FINAL_COLUMN))
     samples_per_epoch = fs * _EPOCH_SEC
     mask_set = MaskSet()
     for name, labels in _STATE_LABELS.items():
-        arr = np.repeat(np.isin(result.final_state, labels), samples_per_epoch)
+        arr = np.repeat(np.isin(final_state, labels), samples_per_epoch)
         mask_set.add(Mask.from_bool(name, _STATE_COLORS[name], arr))
-    return mask_set, result
+    return mask_set
 
 
 def _annotation_param_specs() -> dict:

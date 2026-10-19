@@ -335,3 +335,13 @@ def test_rerun_after_reclass_reads_original_states_not_final(tmp_path, start_at_
     second = nr.reclassify_dir_to_csv(states, edfs, **kw)["A"]
 
     assert second.rawstate.tolist() == first.rawstate.tolist() == [e[0] for e in epochs]
+
+
+def test_read_state_column(tmp_path):
+    from ebb.io.spindle_csv import read_state_column
+
+    p = tmp_path / "A_x.csv"
+    p.write_text("state,final_state\nw,n\n\nn,r\n")
+    assert read_state_column(p, "final_state") == ["n", "r"]
+    with pytest.raises(ValueError, match="nope"):
+        read_state_column(p, "nope")

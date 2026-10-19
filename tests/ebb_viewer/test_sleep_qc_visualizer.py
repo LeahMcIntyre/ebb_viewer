@@ -352,13 +352,13 @@ def test_open_notes_dialog_cancel_does_not_change_manifest(qapp, tmp_path: Path)
 
 
 # ---------------------------------------------------------------------------
-# Reclassify toggle
+# Reclassified-by-default view + "Show original" toggle (reads final_state)
 # ---------------------------------------------------------------------------
 
 
-def _patch_compute(sqv_mod, raw_df, reclass_df, reclass_result):
-    """Make the compute functions return ``reclass_df`` when given reclassified
-    states and ``raw_df`` otherwise; ``reclassify_dir`` returns ``reclass_result``."""
+def _patch_compute(sqv_mod, raw_df, reclass_df):
+    """Make the compute functions return ``reclass_df`` when given per-animal
+    states and ``raw_df`` otherwise."""
 
     def pick(*_a, states_by_animal=None, **_k):
         return raw_df if states_by_animal is None else reclass_df
@@ -369,139 +369,112 @@ def _patch_compute(sqv_mod, raw_df, reclass_df, reclass_result):
         compute_sleep_bins_df_offset=MagicMock(side_effect=pick),
         compute_sleep_bins_df_clock_aligned=MagicMock(side_effect=pick),
         compute_spindle_fractions=MagicMock(side_effect=pick),
-        reclassify_dir=MagicMock(return_value=reclass_result),
     )
 
 
-def _reclass_result(gate: bool):
-    import numpy as np
-
-    from ebb.process.nrem_reclass import NremReclass
-
-    s = np.array(["n", "w"])
-    return NremReclass(
-        rawstate=s,
-        gapfill_state=s,
-        final_state=s,
-        gate_applied=gate,
-        bouts_before=1,
-        bouts_after=2,
-    )
-
-
-def _setup_reclass_page(qapp, tmp_path: Path):
+def _setup_reclass_page(qapp, tmp_path: Path, gates: dict[str, bool] | None = None):
+    """CSVs with a ``final_state`` column + manifest gate flags, one per animal in ``gates``."""
     import ebb_viewer.pages.sleep_qc_visualizer as sqv_mod
 
+    gates = {"AM001": False} if gates is None else gates
     out = tmp_path / "spindle_outputs" / "LFC_RSC"
     out.mkdir(parents=True)
-    (out / "AM001_a.csv").write_text("x")
+    for animal in gates:
+        (out / f"{animal}_a.csv").write_text("state,final_state\nw,n\nn,w\n")
+    m = _seed_manifest(tmp_path, dict.fromkeys(gates))
+    for animal, gate in gates.items():
+        m._entries[animal].reclass_gate_applied = gate
+    m.save()
     raw = pd.DataFrame({"mouse_id": ["AM001"], "state": ["w"], "tag": ["raw"]})
     rec = pd.DataFrame({"mouse_id": ["AM001"], "state": ["w"], "tag": ["reclass"]})
     return sqv_mod, raw, rec
 
 
-def test_reclassify_button_swaps_data_for_both_views(qapp, tmp_path: Path):
-    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path)
-    with _patch_compute(sqv_mod, raw, rec, {"AM001": _reclass_result(gate=True)}):
+def _reclass_calls(sqv_mod) -> list:
+    """``states_by_animal`` of each reclassified (non-raw) compute call."""
+    return [
+        c.kwargs["states_by_animal"]
+        for c in sqv_mod.compute_spindle_fractions.call_args_list
+        if c.kwargs.get("states_by_animal") is not None
+    ]
+
+
+def test_reclassified_is_default_and_show_original_swaps_both_views(qapp, tmp_path: Path):
+    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path, {"AM001": True})
+    with _patch_compute(sqv_mod, raw, rec):
         page = _make_page(qapp, tmp_path)
         page._ensure_data()
-        assert page._get_df()["tag"].iloc[0] == "raw"
-        assert page._get_frac_df()["tag"].iloc[0] == "raw"
-
-        page.btn_reclass.setChecked(True)  # fires _on_reclass_toggled
-        assert page._reclass_active
+        assert page._reclass_active  # reclassified without touching anything
+        assert not page.btn_original.isChecked() and page.btn_original.isEnabled()
         assert page._get_df()["tag"].iloc[0] == "reclass"  # Sleep view
         assert page._get_frac_df()["tag"].iloc[0] == "reclass"  # Spindle Mask view
         assert not page.lbl_reclass.isHidden()
         assert "1 of 1" in page.lbl_reclass.text()
         assert "AM001" in page.lbl_reclass.toolTip()
 
-        page.btn_reclass.setChecked(False)
-        assert page._get_df()["tag"].iloc[0] == "raw"
-        assert page.lbl_reclass.isHidden()
-
-
-def test_reclassify_computed_once_and_not_written(qapp, tmp_path: Path):
-    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path)
-    csv_path = tmp_path / "spindle_outputs" / "LFC_RSC" / "AM001_a.csv"
-    with _patch_compute(sqv_mod, raw, rec, {"AM001": _reclass_result(gate=False)}):
-        page = _make_page(qapp, tmp_path)
-        page._ensure_data()
-        page.btn_reclass.setChecked(True)
-        page.btn_reclass.setChecked(False)
-        page.btn_reclass.setChecked(True)
-        assert sqv_mod.reclassify_dir.call_count == 1
-    assert csv_path.read_text() == "x"
-
-
-def test_reclassify_failure_leaves_button_off(qapp, tmp_path: Path):
-    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path)
-    with (
-        _patch_compute(sqv_mod, raw, rec, {}),
-        patch.object(sqv_mod, "reclassify_dir", side_effect=ValueError("bad csv")),
-        patch.object(sqv_mod.QMessageBox, "critical") as critical,
-    ):
-        page = _make_page(qapp, tmp_path)
-        page._ensure_data()
-        page.btn_reclass.setChecked(True)
-        assert critical.called
-        assert not page.btn_reclass.isChecked()
+        page.btn_original.setChecked(True)  # fires _on_original_toggled
         assert not page._reclass_active
         assert page._get_df()["tag"].iloc[0] == "raw"
+        assert page._get_frac_df()["tag"].iloc[0] == "raw"
+        assert "original" in page.lbl_reclass.text().lower()
+
+        page.btn_original.setChecked(False)
+        assert page._get_df()["tag"].iloc[0] == "reclass"
+
+
+def test_final_state_read_once_and_writes_nothing(qapp, tmp_path: Path):
+    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path)
+    csv_path = tmp_path / "spindle_outputs" / "LFC_RSC" / "AM001_a.csv"
+    before = csv_path.read_text()
+    with _patch_compute(sqv_mod, raw, rec):
+        page = _make_page(qapp, tmp_path)
+        page._ensure_data()
+        page.btn_original.setChecked(True)
+        page.btn_original.setChecked(False)
+        page.btn_original.setChecked(True)
+        assert _reclass_calls(sqv_mod) == [{"AM001": ["n", "w"]}]
+    assert csv_path.read_text() == before
+
+
+def test_animals_without_final_state_stay_original_and_are_reported(qapp, tmp_path: Path):
+    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path)
+    (tmp_path / "spindle_outputs" / "LFC_RSC" / "AM002_a.csv").write_text("state\nw\n")
+    with _patch_compute(sqv_mod, raw, rec):
+        page = _make_page(qapp, tmp_path)
+        page._ensure_data()
+        page._mouse_ids = ["AM001", "AM002"]
+        page._update_reclass_label()
+        assert list(_reclass_calls(sqv_mod)[0]) == ["AM001"]  # AM002 falls back to original
+        assert "1 not reclassified" in page.lbl_reclass.text()
+
+
+def test_no_final_state_column_falls_back_with_loud_label(qapp, tmp_path: Path):
+    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path, {})
+    out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    (out / "AM001_a.csv").write_text("state\nw\n")  # no final_state column
+    with _patch_compute(sqv_mod, raw, rec):
+        page = _make_page(qapp, tmp_path)
+        page._ensure_data()
+        assert not page._reclass_active
+        assert not page.btn_original.isEnabled()  # nothing to compare against
+        assert page._get_df()["tag"].iloc[0] == "raw"
+        assert not page.lbl_reclass.isHidden()
+        assert "Not reclassified" in page.lbl_reclass.text()
 
 
 def test_reclassified_data_dropped_and_rebuilt_when_csvs_change(qapp, tmp_path: Path):
     sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path)
     out = tmp_path / "spindle_outputs" / "LFC_RSC"
-    with _patch_compute(sqv_mod, raw, rec, {"AM001": _reclass_result(gate=False)}):
+    with _patch_compute(sqv_mod, raw, rec):
         page = _make_page(qapp, tmp_path)
         page._ensure_data()
-        page.btn_reclass.setChecked(True)
-        assert sqv_mod.reclassify_dir.call_count == 1
+        assert len(_reclass_calls(sqv_mod)) == 1
 
-        (out / "AM002_a.csv").write_text("x")  # new CSV lands while Reclassify is on
+        (out / "AM002_a.csv").write_text("state,final_state\nw,w\n")  # new CSV lands
         assert page._ensure_data() is True
-        assert page.btn_reclass.isChecked() and page._reclass_active
-        assert sqv_mod.reclassify_dir.call_count == 2  # rebuilt for the new folder state
-
-
-def test_gap_radius_recomputes_once_per_radius(qapp, tmp_path: Path):
-    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path)
-    with _patch_compute(sqv_mod, raw, rec, {"AM001": _reclass_result(gate=False)}):
-        page = _make_page(qapp, tmp_path)
-        page._ensure_data()
-        assert page.spin_gap.value() == 1
-
-        page.btn_reclass.setChecked(True)
-        radii = lambda: [c.kwargs["radius"] for c in sqv_mod.reclassify_dir.call_args_list]  # noqa: E731
-        assert radii() == [1]
-        assert "Gap 1" in page.lbl_reclass.text()
-
-        page.spin_gap.setValue(2)
-        assert radii() == [1, 2]
-        assert "Gap 2" in page.lbl_reclass.text()
         assert page._reclass_active
-
-        page.spin_gap.setValue(1)  # cached: no recompute
-        page.spin_gap.setValue(2)
-        assert radii() == [1, 2]
-
-
-def test_gap_radius_changed_while_off_is_applied_on_next_toggle(qapp, tmp_path: Path):
-    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path)
-    with _patch_compute(sqv_mod, raw, rec, {"AM001": _reclass_result(gate=False)}):
-        page = _make_page(qapp, tmp_path)
-        page._ensure_data()
-        page.btn_reclass.setChecked(True)  # computes radius 1
-        page.btn_reclass.setChecked(False)
-
-        page.spin_gap.setValue(2)  # nothing shown, nothing computed yet
-        assert [c.kwargs["radius"] for c in sqv_mod.reclassify_dir.call_args_list] == [1]
-        assert not page._reclass_active
-
-        page.btn_reclass.setChecked(True)  # must use radius 2, not the stale radius-1 tables
-        assert [c.kwargs["radius"] for c in sqv_mod.reclassify_dir.call_args_list] == [1, 2]
-        assert "Gap 2" in page.lbl_reclass.text()
+        calls = _reclass_calls(sqv_mod)
+        assert len(calls) == 2 and set(calls[1]) == {"AM001", "AM002"}  # rebuilt
 
 
 # ---------------------------------------------------------------------------
@@ -515,37 +488,27 @@ def _legend_texts(page) -> str:
     return " ".join(lbl.text() for lbl in page.findChildren(QLabel))
 
 
-def test_gated_animals_empty_until_reclassify_on(qapp, tmp_path: Path):
-    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path)
-    result = {"AM001": _reclass_result(gate=True), "AM002": _reclass_result(gate=False)}
-    with _patch_compute(sqv_mod, raw, rec, result):
+def test_gated_animals_empty_while_showing_original(qapp, tmp_path: Path):
+    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path, {"AM001": True, "AM002": False})
+    with _patch_compute(sqv_mod, raw, rec):
         page = _make_page(qapp, tmp_path)
         page._ensure_data()
-        assert page._gated_animals() == set()
-        assert page._gate_tag_html("AM001") == ""
-
-        page.btn_reclass.setChecked(True)
         assert page._gated_animals() == {"AM001"}
         assert "EMG gate" in page._gate_tag_html("AM001")
         assert page._gate_tag_html("AM002") == ""
 
-        page.btn_reclass.setChecked(False)
+        page.btn_original.setChecked(True)
         assert page._gated_animals() == set()
+        assert page._gate_tag_html("AM001") == ""
 
 
 def test_legend_rows_tag_gated_animals_in_group_and_animal_views(qapp, tmp_path: Path):
-    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path)
-    with _patch_compute(sqv_mod, raw, rec, {"AM001": _reclass_result(gate=True)}):
+    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path, {"AM001": True})
+    with _patch_compute(sqv_mod, raw, rec):
         page = _make_page(qapp, tmp_path)
         page._ensure_data()
         page._get_spindle_outlier_animals = lambda: set()
-        _seed_one_animal(tmp_path)
-        page._refresh_manifest()
 
-        page._update_legend_group(["AM001"], {"AM001": "#123456"})
-        assert "[EMG gate]" not in _legend_texts(page)
-
-        page.btn_reclass.setChecked(True)
         page._update_legend_group(["AM001"], {"AM001": "#123456"})
         assert "[EMG gate]" in _legend_texts(page)
 
@@ -553,6 +516,14 @@ def test_legend_rows_tag_gated_animals_in_group_and_animal_views(qapp, tmp_path:
         page.cmb_animal.setCurrentText("AM001")
         page._update_legend_animal()
         assert "[EMG gate]" in _legend_texts(page)
+
+        page.btn_original.setChecked(True)
+        page._update_legend_group(["AM001"], {"AM001": "#123456"})
+        page._update_legend_animal()
+        from PyQt6.QtCore import QCoreApplication, QEvent
+
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)  # drop old rows
+        assert "[EMG gate]" not in _legend_texts(page)
 
 
 def test_spindle_fraction_plot_marks_gated_animals(qapp):
@@ -581,16 +552,16 @@ def test_spindle_fraction_plot_marks_gated_animals(qapp):
 
 
 def test_frac_title_mentions_gate_only_when_gated(qapp, tmp_path: Path):
-    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path)
-    with _patch_compute(sqv_mod, raw, rec, {"AM001": _reclass_result(gate=True)}):
+    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path, {"AM001": True})
+    with _patch_compute(sqv_mod, raw, rec):
         page = _make_page(qapp, tmp_path)
         page._ensure_data()
         page._frac_widget.set_data = MagicMock()
         page._refresh_frac_plot(current_animal=None)
-        assert "EMG gate" not in page._frac_widget.set_data.call_args.kwargs["title"]
-
-        page.btn_reclass.setChecked(True)
-        page._frac_widget.set_data = MagicMock()
-        page._refresh_frac_plot(current_animal=None)
         kw = page._frac_widget.set_data.call_args.kwargs
         assert "orange ring" in kw["title"] and kw["gated"] == {"AM001"}
+
+        page.btn_original.setChecked(True)
+        page._frac_widget.set_data = MagicMock()
+        page._refresh_frac_plot(current_animal=None)
+        assert "EMG gate" not in page._frac_widget.set_data.call_args.kwargs["title"]

@@ -36,3 +36,28 @@ def test_run_completes_and_records_gate(qapp, tmp_path: Path, monkeypatch):
 
     assert page._thread is None
     assert Manifest.load(tmp_path).get("A1").reclass_gate_applied is True
+
+
+def test_rerun_warns_when_sleep_qc_already_flagged_and_can_cancel(qapp, tmp_path: Path, monkeypatch):
+    from PyQt6.QtWidgets import QMessageBox
+
+    from ebb_viewer.pages import reclassify as rc
+
+    out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    out.mkdir(parents=True)
+    (out / "A1_x.csv").write_text("state,noise_prob\nn,0\n")
+    (tmp_path / "standard").mkdir()
+    (tmp_path / "standard" / "A1_PREPROCESSED.edf").touch()
+    m = Manifest.build_from_standard(tmp_path)
+    m._entries["A1"].sleep_qc = "ok"
+    m.save()
+
+    called = []
+    monkeypatch.setattr(rc, "reclassify_dir_to_csv", lambda *a, **k: called.append(1) or {})
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.No)
+
+    page = rc.ReclassifyPage(project_root=tmp_path)
+    page._run()
+
+    assert page._thread is None and not called  # cancelled before starting
+    assert Manifest.load(tmp_path).get("A1").sleep_qc == "ok"  # flags never reset

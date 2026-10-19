@@ -141,6 +141,18 @@ class ReclassifyPage(QWidget):
     # ---------------- run ----------------
     def _run(self) -> None:
         state_dir, edf_dir = self._dirs()
+        # Warn only: re-running changes the states that earlier Sleep QC flags were
+        # judged on, but those flags are left as they are.
+        flagged = [e.animal_id for e in Manifest.load(self.project_root) if e.sleep_qc]
+        if flagged:
+            reply = QMessageBox.question(
+                self,
+                "Sleep QC already started",
+                f"{len(flagged)} animal(s) already have Sleep QC flags. Re-running changes the "
+                "states they were reviewed on. The flags are not reset. Continue?",
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
         worker = self._worker = _ReclassWorker(state_dir, edf_dir)
         worker.progress.connect(self._on_progress)
         self._thread = QThread(self)
