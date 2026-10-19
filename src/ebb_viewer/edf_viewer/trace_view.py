@@ -329,6 +329,12 @@ class TraceView(QtWidgets.QWidget):
         pw = self.plots[0]
         left_g = pw.mapToGlobal(QPoint(int(rect.left()), 0))
         right_g = pw.mapToGlobal(QPoint(int(rect.right()), 0))
+        # Pin the legend to the dead space left of the plot so its content
+        # (swatches + reclass pill) can't push the bar off the trace's left edge.
+        dead = self._state_row.mapFromGlobal(left_g).x()
+        if dead > 0 and self.state_legend.width() != dead:
+            self.state_legend.setFixedWidth(dead)
+            self._state_row.layout().activate()
         self.state_bar.sync_viewport(
             self.state_bar.mapFromGlobal(left_g).x(),
             self.state_bar.mapFromGlobal(right_g).x(),
