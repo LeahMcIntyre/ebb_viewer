@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QGuiApplication
 from PyQt6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -40,6 +40,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ebb.process.nrem_reclass import GAP_RADIUS, NremReclass, reclassify_dir
 from ebb.process.sleep_compute import (
     compute_sleep_bins_df,
     compute_sleep_bins_df_clock_aligned,
@@ -119,6 +120,16 @@ class SleepQCGridPage(QWidget):
         self._data_cache: dict[
             str, tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]
         ] = {}
+        # Reclassified counterparts of _data_cache, keyed (combo, gap radius) so
+        # flipping the Gap spinner back to a value doesn't recompute (the EMG
+        # reads are the slow part). Built lazily while Reclassify is on and
+        # evicted with the combo's raw data. Value: (tables, animal -> NremReclass).
+        self._reclass_cache: dict[
+            tuple[str, int],
+            tuple[tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame], dict],
+        ] = {}
+        self._reclass_mode: bool = False
+        self._gap_radius: int = GAP_RADIUS
         self._axis_mode: str = "clock"
         self._mouse_ids: list[str] = []
         self._current_page: int = 0
@@ -172,8 +183,7 @@ class SleepQCGridPage(QWidget):
         # fully refreshed when the user exits and re-enters review mode.
         if not self._review_mode:
             for _, combo in self._manifest.pending_rerun_review():
-                self._data_cache.pop(combo, None)
-                self._outlier_cache.pop(combo, None)
+                self._evict_combo(combo)
         # Refresh the combo dropdown if new spindle_outputs directories have appeared
         # (e.g. a download completed while this page was already visible).
         if self._discover_combos() != self._available_combos:
@@ -186,8 +196,7 @@ class SleepQCGridPage(QWidget):
         # Evict any cached combo that has a pending rerun — new files may have been
         # downloaded since the last time this combo was loaded.
         for _, combo in self._manifest.pending_rerun_review():
-            self._data_cache.pop(combo, None)
-            self._outlier_cache.pop(combo, None)
+            self._evict_combo(combo)
         self._highlighted_animal = None
         self._update_reruns_badge()
         self._refresh_combos()
@@ -370,6 +379,14 @@ class SleepQCGridPage(QWidget):
         top.addWidget(self._sleep_mode_controls)
         top.addStretch(1)
 
+        # Reclassify status sits left of the VIEW cluster so its changing width
+        # is absorbed by the stretch above rather than shifting the buttons.
+        self.lbl_reclass = QLabel("")
+        self.lbl_reclass.setStyleSheet("color: gray;")
+        self.lbl_reclass.setVisible(False)
+        top.addWidget(self.lbl_reclass)
+        top.addSpacing(12)
+
         # VIEW cluster — same flush-pair treatment as Group/Animal.
         top.addWidget(_section_label("VIEW"))
         self.btn_spindle = QPushButton("Spindle Mask")
@@ -386,6 +403,27 @@ class SleepQCGridPage(QWidget):
         view_wrap = QWidget()
         view_wrap.setLayout(view_row)
         top.addWidget(view_wrap)
+
+        top.addSpacing(8)
+        self.btn_reclass = QPushButton("Reclassify")
+        self.btn_reclass.setCheckable(True)
+        self.btn_reclass.setChecked(False)
+        self.btn_reclass.setToolTip(
+            "Apply the NREM reclassification algorithm (gap fill, plus an EMG "
+            "gate for files where it fragments NREM) to the plots in both views. "
+            "Nothing is written to disk."
+        )
+        top.addWidget(self.btn_reclass)
+        self.spin_gap = QSpinBox()
+        self.spin_gap.setPrefix("Gap ")
+        self.spin_gap.setRange(1, 5)
+        self.spin_gap.setValue(GAP_RADIUS)
+        self.spin_gap.setToolTip(
+            "Gap-fill radius in epochs: a clean NREM epoch flips to Wake when an "
+            "artifact-flagged epoch lies within this many epochs on both sides. "
+            "Default 1."
+        )
+        top.addWidget(self.spin_gap)
 
         top.addSpacing(12)
         top.addWidget(_vsep(self))
@@ -511,6 +549,8 @@ class SleepQCGridPage(QWidget):
         self.btn_median.toggled.connect(self._on_median_toggled)
         self.btn_view_sleep.clicked.connect(lambda: self._set_spindle_mask_mode(False))
         self.btn_spindle.clicked.connect(lambda: self._set_spindle_mask_mode(True))
+        self.btn_reclass.toggled.connect(self._on_reclass_toggled)
+        self.spin_gap.valueChanged.connect(self._on_gap_radius_changed)
         self._frac_widget.animal_clicked.connect(self._on_frac_animal_selected)
         self._frac_widget.review_requested.connect(self._on_frac_review_requested)
 
@@ -587,7 +627,13 @@ class SleepQCGridPage(QWidget):
         df_frac = self._get_frac_df(combo)
         if current_animal is self._DEFAULT_ANIMAL:
             current_animal = self.cmb_animal.currentText() or None
-        self._frac_widget.set_data(df_frac, title=combo, current_animal=current_animal)
+        title = f"{combo} (reclassified, gap {self._gap_radius})" if self._reclass_mode else combo
+        gated = self._gated_animals(combo)
+        if gated:
+            title += f" - orange ring = EMG gate applied ({len(gated)})"
+        self._frac_widget.set_data(
+            df_frac, title=title, current_animal=current_animal, gated=gated
+        )
 
     def _on_frac_animal_selected(self, mouse_id: str) -> None:
         """Dot clicked or dismissed — update the highlight without leaving the spindle mask view."""
@@ -646,8 +692,7 @@ class SleepQCGridPage(QWidget):
         # Re-discover combo dirs and evict stale cache for pending rerun combos.
         new_combos = self._discover_combos()
         for _, combo in self._manifest.pending_rerun_review():
-            self._data_cache.pop(combo, None)
-            self._outlier_cache.pop(combo, None)
+            self._evict_combo(combo)
         self._available_combos = new_combos
         self._ensure_all_combos_loaded()
         # Always show sleep data in review mode, not the spindle fraction plot.
@@ -709,26 +754,136 @@ class SleepQCGridPage(QWidget):
         if not d.is_dir():
             return False
         try:
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always", UserWarning)
-                df_start = compute_sleep_bins_df(d)
-                df_rotate = compute_sleep_bins_df_offset(
-                    d, self.project_root / "standard", tz=_RECORDING_TZ
-                )
-                df_clock = compute_sleep_bins_df_clock_aligned(
-                    d, self.project_root / "standard", tz=_RECORDING_TZ
-                )
-                df_frac = compute_spindle_fractions(d)
+            self._data_cache[combo] = self._compute_tables(combo, d)
         except Exception as e:
             QMessageBox.critical(
                 self, "Error loading sleep metrics", f"Could not load {combo}:\n{e}"
             )
             return False
-        self._record_skip_warnings(combo, caught)
-        self._data_cache[combo] = (df_start, df_rotate, df_clock, df_frac)
         # Fresh fraction data → drop any cached outlier set for this combo.
         self._outlier_cache.pop(combo, None)
         return True
+
+    def _compute_tables(
+        self, combo: str, d: Path, states_by_animal=None
+    ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+        """The four metric tables for combo dir ``d``; ``states_by_animal``
+        swaps in reclassified states."""
+        std = self.project_root / "standard"
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", UserWarning)
+            tables = (
+                compute_sleep_bins_df(d, states_by_animal=states_by_animal),
+                compute_sleep_bins_df_offset(
+                    d, std, tz=_RECORDING_TZ, states_by_animal=states_by_animal
+                ),
+                compute_sleep_bins_df_clock_aligned(
+                    d, std, tz=_RECORDING_TZ, states_by_animal=states_by_animal
+                ),
+                compute_spindle_fractions(d, states_by_animal=states_by_animal),
+            )
+        if states_by_animal is None:  # same skips either way; report them once
+            self._record_skip_warnings(combo, caught)
+        return tables
+
+    def _evict_combo(self, combo: str) -> None:
+        """Drop everything cached for ``combo`` so the next access reloads it."""
+        self._data_cache.pop(combo, None)
+        self._outlier_cache.pop(combo, None)
+        for key in [k for k in self._reclass_cache if k[0] == combo]:
+            del self._reclass_cache[key]
+
+    # ------------------------------------------------------------------
+    # NREM reclassification
+    # ------------------------------------------------------------------
+    def _reclass_entry(self, combo: str):
+        """(tables, animal -> NremReclass) for ``combo`` at the current gap radius,
+        built on first use. None unless Reclassify is on and the build succeeds."""
+        if not self._reclass_mode or combo not in self._data_cache:
+            return None
+        key = (combo, self._gap_radius)
+        if key in self._reclass_cache:
+            return self._reclass_cache[key]
+        d = self.project_root / "spindle_outputs" / combo
+        if not d.is_dir():
+            return None
+        QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)  # missing EDFs: already reported
+                reclass = reclassify_dir(d, self.project_root / "standard", radius=self._gap_radius)
+            states = {a: r.final_state for a, r in reclass.items()}
+            tables = self._compute_tables(combo, d, states)
+        except Exception as e:
+            QGuiApplication.restoreOverrideCursor()
+            QMessageBox.critical(
+                self, "Error reclassifying NREM", f"Could not reclassify {combo}:\n{e}"
+            )
+            self._reclass_mode = False
+            self.btn_reclass.blockSignals(True)
+            self.btn_reclass.setChecked(False)
+            self.btn_reclass.blockSignals(False)
+            return None
+        QGuiApplication.restoreOverrideCursor()
+        self._reclass_cache[key] = (tables, reclass)
+        return self._reclass_cache[key]
+
+    def _active_tables(self, combo: str):
+        """The raw tables for ``combo``, or the reclassified ones while Reclassify is on."""
+        entry = self._reclass_entry(combo)
+        if entry is not None:
+            return entry[0]
+        return self._data_cache.get(combo)
+
+    def _gated_animals(self, combo: str) -> set[str]:
+        """Animals whose reclassification applied the EMG gate (empty unless Reclassify is on)."""
+        entry = self._reclass_entry(combo)
+        if entry is None:
+            return set()
+        return {a for a, r in entry[1].items() if r.gate_applied}
+
+    def _gate_tag_html(self, animal: str, combo: str) -> str:
+        """Legend tag for an animal the EMG gate was applied to, else ''."""
+        if animal not in self._gated_animals(combo):
+            return ""
+        return (
+            '<span style="color:#d97706;font-size:9px;font-style:italic;" '
+            'title="Gap fill fragmented NREM, so flips were EMG-gated">[EMG gate]</span>'
+        )
+
+    def _update_reclass_label(self) -> None:
+        combo = self.cmb_combo.currentText()
+        entry = self._reclass_entry(combo) if combo else None
+        if entry is None:
+            self.lbl_reclass.setVisible(False)
+            return
+        reclass = entry[1]
+        gated = sorted(a for a, r in reclass.items() if r.gate_applied)
+        missing = len(self._mouse_ids) - len(reclass)
+        text = f"Gap {self._gap_radius}; EMG gate on {len(gated)} of {len(reclass)} files"
+        if missing > 0:
+            text += f"; {missing} without EDF kept raw"
+        self.lbl_reclass.setText(text)
+        self.lbl_reclass.setToolTip("EMG gate applied to: " + (", ".join(gated) or "none"))
+        self.lbl_reclass.setVisible(True)
+
+    def _on_reclass_changed(self) -> None:
+        self._outlier_cache.clear()  # outliers come from the active fraction tables
+        self._update_reclass_label()
+        if self.btn_spindle.isChecked():
+            self._refresh_frac_plot()
+            self._render_group()
+        else:
+            self._update_all_plots()
+
+    def _on_reclass_toggled(self, checked: bool) -> None:
+        self._reclass_mode = checked
+        self._on_reclass_changed()
+
+    def _on_gap_radius_changed(self, radius: int) -> None:
+        self._gap_radius = radius
+        if self._reclass_mode:
+            self._on_reclass_changed()
 
     def _record_skip_warnings(self, combo: str, caught: list) -> None:
         """Collect skip warnings from a compute batch (missing-EDF and
@@ -820,6 +975,7 @@ class SleepQCGridPage(QWidget):
         self._update_page_controls()
         if self.btn_spindle.isChecked():
             self._frac_widget.clear_selection()
+        self._update_reclass_label()
         self._update_all_plots()
 
     # ------------------------------------------------------------------
@@ -960,14 +1116,14 @@ class SleepQCGridPage(QWidget):
     # Plotting helpers
     # ------------------------------------------------------------------
     def _get_df(self, combo: str) -> pd.DataFrame | None:
-        entry = self._data_cache.get(combo)
+        entry = self._active_tables(combo)
         if entry is None:
             return None
         df_start, df_rotate, df_clock, _df_frac = entry
         return {"start": df_start, "rotate": df_rotate, "clock": df_clock}[self._axis_mode]
 
     def _get_frac_df(self, combo: str) -> pd.DataFrame | None:
-        entry = self._data_cache.get(combo)
+        entry = self._active_tables(combo)
         return entry[3] if entry is not None else None
 
     @staticmethod
@@ -1393,6 +1549,11 @@ class SleepQCGridPage(QWidget):
                 )
                 outlier_lbl.setTextFormat(Qt.TextFormat.RichText)
                 row_l.addWidget(outlier_lbl)
+            gate_tag = self._gate_tag_html(mid, combo)
+            if gate_tag:
+                gate_lbl = QLabel(gate_tag)
+                gate_lbl.setTextFormat(Qt.TextFormat.RichText)
+                row_l.addWidget(gate_lbl)
 
             btn_notes = QPushButton("📝")
             btn_notes.setFixedHeight(24)
@@ -1438,6 +1599,9 @@ class SleepQCGridPage(QWidget):
             base_text = f"{combo}  ← rerun of {source_combo}" if source_combo else combo
             if animal and animal in self._get_spindle_outlier_animals(combo):
                 base_text += ' <span style="color:#c0392b;font-size:9px;font-style:italic;">[spindle outlier]</span>'
+            gate_tag = self._gate_tag_html(animal, combo) if animal else ""
+            if gate_tag:
+                base_text += " " + gate_tag
             combo_label = QLabel(base_text)
             combo_label.setTextFormat(Qt.TextFormat.RichText)
             if source_combo:
@@ -1536,7 +1700,7 @@ class SleepQCGridPage(QWidget):
 
     def _get_animal_fractions(self, animal: str, combo: str) -> dict[str, float] | None:
         """Return {state: fraction} for one animal from the cache, or None if unavailable."""
-        entry = self._data_cache.get(combo)
+        entry = self._active_tables(combo)
         if entry is None:
             return None
         df_frac = entry[3]
@@ -1766,6 +1930,7 @@ class SpindleFractionPlot(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._selected_animal: str | None = None
+        self._gated: set[str] = set()  # animals to ring (EMG gate applied)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1810,7 +1975,11 @@ class SpindleFractionPlot(QWidget):
         df: pd.DataFrame | None,
         title: str = "",
         current_animal: str | None = None,
+        gated: set[str] | None = None,
     ) -> None:
+        self._gated = set(gated or ())
+        gate_pen = pg.mkPen((230, 140, 0), width=2.2)
+        no_pen = pg.mkPen(None)
         pi = self._pw.getPlotItem()
         pi.clear()
         pi.setTitle(title, size="11pt")
@@ -1887,7 +2056,7 @@ class SpindleFractionPlot(QWidget):
                     xs[regular],
                     fracs[regular],
                     data=mids[regular],
-                    pen=pg.mkPen(None),
+                    pen=[gate_pen if m in self._gated else no_pen for m in mids[regular]],
                     brush=pg.mkBrush(110, 110, 110, 180),
                     size=7,
                 )
@@ -1901,7 +2070,7 @@ class SpindleFractionPlot(QWidget):
                     xs[outl],
                     fracs[outl],
                     data=mids[outl],
-                    pen=pg.mkPen(None),
+                    pen=[gate_pen if m in self._gated else no_pen for m in mids[outl]],
                     brush=pg.mkBrush(210, 70, 50, 210),
                     size=7,
                 )
@@ -1920,7 +2089,10 @@ class SpindleFractionPlot(QWidget):
                     xs[is_current],
                     fracs[is_current],
                     data=mids[is_current],
-                    pen=pg.mkPen((30, 80, 200), width=1.5),
+                    pen=[
+                        gate_pen if m in self._gated else pg.mkPen((30, 80, 200), width=1.5)
+                        for m in mids[is_current]
+                    ],
                     brush=pg.mkBrush(50, 110, 220, 220),
                     size=10,
                 )
@@ -1938,7 +2110,8 @@ class SpindleFractionPlot(QWidget):
             return
         mid = str(spots[0].data())
         self._selected_animal = mid
-        self._strip_lbl.setText(f"Selected: {mid}")
+        gate_note = " (EMG gate applied)" if mid in self._gated else ""
+        self._strip_lbl.setText(f"Selected: {mid}{gate_note}")
         self._btn_review.setText("Flag for Review")
         self._btn_review.setEnabled(True)
         self._btn_review.setToolTip("")
