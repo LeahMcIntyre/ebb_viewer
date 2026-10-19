@@ -597,3 +597,16 @@ def test_reclass_gate_roundtrip(tmp_path):
     assert m2.get("AM001").reclass_gate_applied is True
     assert m2.get("AM002").reclass_gate_applied is False
     assert m2.get("GHOST") is None
+
+
+def test_swd_review_fields_roundtrip(tmp_path):
+    m = _make_manifest(tmp_path, {"AM001": dict(), "AM002": dict()})
+    assert m.swd_review_enabled is False and m.get("AM001").swd_reviewed is False
+
+    m.set_swd_review_enabled(True)
+    m.set_swd_reviewed("AM001")
+    m2 = _reload(m)
+
+    assert m2.swd_review_enabled is True
+    assert m2.get("AM001").swd_reviewed is True
+    assert m2.get("AM002").swd_reviewed is False
