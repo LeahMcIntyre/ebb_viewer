@@ -21,7 +21,7 @@ from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
 
 from ebb_viewer.edf_viewer.masks import MaskSet
 from ebb_viewer.edf_viewer.state_bar import StateBar
-from ebb_viewer.edf_viewer.state_legend import StateLegend
+from ebb_viewer.edf_viewer.state_legend import ReclassPill, StateLegend
 
 pg.setConfigOption("background", "w")
 pg.setConfigOption("foreground", "k")
@@ -122,6 +122,7 @@ class TraceView(QtWidgets.QWidget):
         # State bar + legend (both hidden until set_state_masks is called)
         self.state_bar = StateBar(self)
         self.state_legend = StateLegend(self)
+        self.reclass_pill = ReclassPill(self)
 
         self._build_ui()
         # Fit base_y from the initial window so _apply_y has a real range to
@@ -150,6 +151,9 @@ class TraceView(QtWidgets.QWidget):
         _row_hb.addWidget(self.state_legend)
         _row_hb.addWidget(self.state_bar, 1)
         grid.addWidget(self._state_row, 0, 0, 1, 2)
+        # Column 2 only exists to hold the reclass pill beside the state bar; the
+        # plots stay in column 1, so the pill never overlaps the trace area.
+        grid.addWidget(self.reclass_pill, 0, 2)
 
         for i in range(self.nch):
             col_left = QtWidgets.QWidget()
@@ -329,12 +333,6 @@ class TraceView(QtWidgets.QWidget):
         pw = self.plots[0]
         left_g = pw.mapToGlobal(QPoint(int(rect.left()), 0))
         right_g = pw.mapToGlobal(QPoint(int(rect.right()), 0))
-        # Pin the legend to the dead space left of the plot so its content
-        # (swatches + reclass pill) can't push the bar off the trace's left edge.
-        dead = self._state_row.mapFromGlobal(left_g).x()
-        if dead > 0 and self.state_legend.width() != dead:
-            self.state_legend.setFixedWidth(dead)
-            self._state_row.layout().activate()
         self.state_bar.sync_viewport(
             self.state_bar.mapFromGlobal(left_g).x(),
             self.state_bar.mapFromGlobal(right_g).x(),
@@ -430,6 +428,7 @@ class TraceView(QtWidgets.QWidget):
         self.state_bar.set_state_masks(state_set, self.fs)
         self.state_legend.rebuild(state_set)
         self._state_row.setVisible(True)
+        self.reclass_pill.setVisible(True)
         self._set_window(self.start)
 
     def refresh_overlays(self) -> None:
