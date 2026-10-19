@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ebb.io.spindle_csv import FINAL_COLUMN, has_column
 from ebb_viewer.edf_viewer.eeg_viewer import launch_edf_window
 from ebb_viewer.pipeline import psd_params as _psd_params
 from ebb_viewer.pipeline.manifest import (
@@ -183,18 +184,19 @@ def compute_pipeline_status(
         s3 = StepStatus("blocked", "Requires step 2")
 
     # --- Step 4: Reclassify ---
-    n_spindle = sum(1 for e in manifest if e.has_spindle)
-    n_reclassed = sum(1 for e in manifest if e.has_spindle and e.reclass_gate_applied is not None)
+    # Ground truth is the CSVs themselves (a final_state column), not the manifest:
+    # re-downloading a CSV from SleepyRat drops the column but leaves the manifest flag.
+    csvs = list(spindle_output_dir(manifest.combo, root).glob("*.csv"))
+    n_csvs = len(csvs)
+    n_reclassed = sum(1 for p in csvs if has_column(p, FINAL_COLUMN))
     n_gated = sum(1 for e in manifest if e.reclass_gate_applied)
     if not step3_done:
         s_reclass = StepStatus("blocked", "Requires step 3")
-    elif n_spindle > 0 and n_reclassed == n_spindle:
-        s_reclass = StepStatus(
-            "done", f"{n_reclassed} reclassified (EMG gate on {n_gated})"
-        )
+    elif n_reclassed == n_csvs:
+        s_reclass = StepStatus("done", f"{n_reclassed} reclassified (EMG gate on {n_gated})")
     elif n_reclassed > 0:
         s_reclass = StepStatus(
-            "attention", f"{n_spindle - n_reclassed} of {n_spindle} animals not reclassified"
+            "attention", f"{n_csvs - n_reclassed} of {n_csvs} CSVs not reclassified"
         )
     else:
         s_reclass = StepStatus("active", "Ready — reclassify NREM before Sleep QC")
