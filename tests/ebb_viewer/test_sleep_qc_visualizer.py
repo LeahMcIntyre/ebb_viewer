@@ -53,7 +53,7 @@ def test_ensure_data_reloads_only_when_csvs_change(qapp, tmp_path: Path):
 
     out = tmp_path / "spindle_outputs" / "LFC_RSC"
     out.mkdir(parents=True)
-    (out / "AM001_a.csv").write_text("x")
+    (out / "AM001_a.csv").write_text("state\nw\n")
     df = pd.DataFrame({"mouse_id": ["AM002", "AM001"], "state": ["w", "w"]})
     compute = MagicMock(return_value=df)
 
@@ -71,7 +71,7 @@ def test_ensure_data_reloads_only_when_csvs_change(qapp, tmp_path: Path):
         assert page._ensure_data() is False  # nothing changed on disk
         assert compute.call_count == 1
 
-        (out / "AM002_a.csv").write_text("x")
+        (out / "AM002_a.csv").write_text("state\nw\n")
         assert page._ensure_data() is True
         assert compute.call_count == 2
 
@@ -356,12 +356,23 @@ def test_open_notes_dialog_cancel_does_not_change_manifest(qapp, tmp_path: Path)
 # ---------------------------------------------------------------------------
 
 
+# Fixture CSVs: original state is ["w", "n"], final_state is ["n", "w"] (see
+# _setup_reclass_page), so the compute call that received final_state is identifiable.
+_FINAL = ["n", "w"]
+
+
+def _is_reclass(states_by_animal) -> bool:
+    return states_by_animal is not None and any(
+        list(v) == _FINAL for v in states_by_animal.values()
+    )
+
+
 def _patch_compute(sqv_mod, raw_df, reclass_df):
-    """Make the compute functions return ``reclass_df`` when given per-animal
-    states and ``raw_df`` otherwise."""
+    """Make the compute functions return ``reclass_df`` when given states that include
+    final_state and ``raw_df`` for the original states."""
 
     def pick(*_a, states_by_animal=None, **_k):
-        return raw_df if states_by_animal is None else reclass_df
+        return reclass_df if _is_reclass(states_by_animal) else raw_df
 
     return patch.multiple(
         sqv_mod,
@@ -395,7 +406,7 @@ def _reclass_calls(sqv_mod) -> list:
     return [
         c.kwargs["states_by_animal"]
         for c in sqv_mod.compute_spindle_fractions.call_args_list
-        if c.kwargs.get("states_by_animal") is not None
+        if _is_reclass(c.kwargs.get("states_by_animal"))
     ]
 
 
@@ -432,7 +443,7 @@ def test_final_state_read_once_and_writes_nothing(qapp, tmp_path: Path):
         page.btn_original.setChecked(True)
         page.btn_original.setChecked(False)
         page.btn_original.setChecked(True)
-        assert _reclass_calls(sqv_mod) == [{"AM001": ["n", "w"]}]
+        assert _reclass_calls(sqv_mod) == [{"AM001": _FINAL}]
     assert csv_path.read_text() == before
 
 
@@ -444,7 +455,8 @@ def test_animals_without_final_state_stay_original_and_are_reported(qapp, tmp_pa
         page._ensure_data()
         page._mouse_ids = ["AM001", "AM002"]
         page._update_reclass_label()
-        assert list(_reclass_calls(sqv_mod)[0]) == ["AM001"]  # AM002 falls back to original
+        states = _reclass_calls(sqv_mod)[0]
+        assert states["AM001"] == _FINAL and states["AM002"] == ["w"]  # AM002: original states
         assert "1 not reclassified" in page.lbl_reclass.text()
 
 
@@ -565,3 +577,25 @@ def test_frac_title_mentions_gate_only_when_gated(qapp, tmp_path: Path):
         page._frac_widget.set_data = MagicMock()
         page._refresh_frac_plot(current_animal=None)
         assert "EMG gate" not in page._frac_widget.set_data.call_args.kwargs["title"]
+
+
+def test_unreclassified_project_loads_original_states_without_error(qapp, tmp_path: Path):
+    """No CSV has final_state: the page must not raise NotReclassifiedError, and the
+    compute functions get the original states explicitly."""
+    import ebb_viewer.pages.sleep_qc_visualizer as sqv_mod
+
+    out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    out.mkdir(parents=True)
+    (out / "AM001_a.csv").write_text("state,noise_prob\nw,0.0\nn,0.0\n")
+    _seed_one_animal(tmp_path)
+    df = pd.DataFrame({"mouse_id": ["AM001"], "state": ["w"], "tag": ["raw"]})
+    with (
+        _patch_compute(sqv_mod, df, df),
+        patch.object(sqv_mod.QMessageBox, "critical") as critical,
+    ):
+        page = _make_page(qapp, tmp_path)
+        page._ensure_data()
+        assert not critical.called
+        sent = sqv_mod.compute_spindle_fractions.call_args.kwargs["states_by_animal"]
+        assert sent == {"AM001": ["w", "n"]}
+        assert not page._reclass_active

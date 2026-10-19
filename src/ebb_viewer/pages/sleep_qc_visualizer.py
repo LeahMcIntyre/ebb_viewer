@@ -41,6 +41,7 @@ from PyQt6.QtWidgets import (
 from ebb.core.naming import parse_animal_id
 from ebb.io.spindle_csv import FINAL_COLUMN, read_state_column
 from ebb.process.sleep_compute import (
+    read_rawstate_column,
     compute_sleep_bins_df,
     compute_sleep_bins_df_clock_aligned,
     compute_sleep_bins_df_offset,
@@ -541,10 +542,11 @@ class SleepQCGridPage(QWidget):
         return True
 
     def _compute_tables(
-        self, d: Path, states_by_animal=None
+        self, d: Path, states_by_animal, *, record_skips: bool = False
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        """The four metric tables for the CSV folder ``d``; ``states_by_animal``
-        swaps in reclassified states."""
+        """The four metric tables for the CSV folder ``d``. ``states_by_animal`` must
+        cover every CSV: the compute functions default to ``final_state`` and raise
+        for animals that lack it, so this page always passes states explicitly."""
         std = self.project_root / "standard"
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always", UserWarning)
@@ -558,7 +560,7 @@ class SleepQCGridPage(QWidget):
                 ),
                 compute_spindle_fractions(d, states_by_animal=states_by_animal),
             )
-        if states_by_animal is None:  # same skips either way; report them once
+        if record_skips:  # same skips either way; report them once
             self._record_skip_warnings(caught)
         return tables
 
@@ -574,7 +576,8 @@ class SleepQCGridPage(QWidget):
         if not d.is_dir():
             return
         try:
-            self._data = self._compute_tables(d)
+            originals = {parse_animal_id(p): read_rawstate_column(p) for p in sorted(d.glob("*.csv"))}
+            self._data = self._compute_tables(d, originals, record_skips=True)
         except Exception as e:
             QMessageBox.critical(
                 self, "Error loading sleep metrics", f"Could not load {self._combo}:\n{e}"
@@ -596,13 +599,18 @@ class SleepQCGridPage(QWidget):
         d = self._csv_dir()
         if self._data is None or not d.is_dir():
             return False
+        # Every CSV is passed explicitly: final_state where present, else the original
+        # states (those animals are counted as "not reclassified" in the label).
         states: dict[str, list[str]] = {}
+        reclassed: set[str] = set()
         for path in sorted(d.glob("*.csv")):
+            animal = parse_animal_id(path)
             try:
-                states[parse_animal_id(path)] = read_state_column(path, FINAL_COLUMN)
+                states[animal] = read_state_column(path, FINAL_COLUMN)
+                reclassed.add(animal)
             except ValueError:
-                continue  # not reclassified yet: this animal stays raw
-        if not states:
+                states[animal] = read_rawstate_column(path)
+        if not reclassed:
             return False  # nothing reclassified: stay on the original states (label says so)
         QGuiApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
@@ -614,7 +622,7 @@ class SleepQCGridPage(QWidget):
             return False
         finally:
             QGuiApplication.restoreOverrideCursor()
-        self._reclassed = set(states)
+        self._reclassed = reclassed
         self._data_reclass = tables
         self._outliers = None
         return True

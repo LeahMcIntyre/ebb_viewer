@@ -22,7 +22,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ebb.core.arraytools import discretize_bool
-from ebb.process.sleep_compute import read_rawstate_column
+from ebb.io.spindle_csv import read_analysis_states
 
 RAWSTATE_TO_NAME: dict[str, str] = {"w": "wake", "n": "nrem", "r": "rem"}
 
@@ -78,10 +78,10 @@ def build_state_intervals(
     winsize: float = 4.0,
     code_to_name: dict[str, str] | None = None,
 ) -> list[IntervalRow]:
-    """Read raw scorer states from a Spindle CSV; return one row per contiguous run.
+    """Read the reclassified states from a Spindle CSV; one row per contiguous run.
 
-    Uses the ``rawstate`` column directly (``state`` in newer SPINDLE
-    outputs; no probability filtering — that is a separate, optional step
+    Uses the ``final_state`` column (``NotReclassifiedError`` if absent; no
+    probability filtering — that is a separate, optional step
     applied to ``clean_per_state`` exports).
 
     Args:
@@ -99,7 +99,7 @@ def build_state_intervals(
         exclusive.
     """
     mapping = dict(RAWSTATE_TO_NAME) if code_to_name is None else code_to_name
-    raws = read_rawstate_column(Path(state_path))
+    raws = read_analysis_states(Path(state_path))
     if not raws:
         return []
 
