@@ -14,8 +14,6 @@ Sleep QC (`pages/sleep_qc_visualizer.py`) now opens on the reclassified states (
 
 **Open: script override for the reclassification requirement.** Someone calling the PSD estimation from a script (no GUI, no Reclassify step) can't use it today: `masking.state` raises `NotReclassifiedError` for any CSV without `final_state`. Add an explicit opt-out for library use, e.g. a `columns=STATE_COLUMNS` argument threaded through `psd_compute` / `batch_estimate` (`masking.state` already accepts `columns`), or a `state_column` parameter on the PSD entry points. It must be explicit and off by default so the GUI pipeline keeps its single `final_state` path and never falls back silently.
 
-**Open:** `masking.state_prob` (the `s_prob` filter in PSD compute and mask export) thresholds SPINDLE's `class_prob_*` columns, which ignore reclassification. With an `s_prob` set, reclassified epochs are not honored. Decide how class-probability filtering should combine with `final_state` (e.g. require both).
-
 Tests: toggle uses the column (no EDF needed), missing-column warning, gate tag from the manifest, toggle disabled with no columns.
 
 ### sleep_export: Decide whether to keep `chosen_csvs/` (single-combo branch)

@@ -21,12 +21,6 @@ from ebb.io.spindle_csv import (
     resolve_column,
 )
 
-# SPINDLE encodes class probabilities under columns named `class_prob_{i}`
-# where i is the model's output index. The state-letter to index mapping
-# below mirrors SPINDLE's training: 0=wake, 1=NREM, 2=REM.
-_PROB_COLUMN = {"w": "class_prob_0", "n": "class_prob_1", "r": "class_prob_2"}
-
-
 def state(
     path: str | Path,
     labels: list[str],
@@ -70,42 +64,6 @@ def state(
         value_fn=lambda s: s in labels,
         include=include,
     )
-
-
-def state_prob(
-    path: str | Path,
-    label: str,
-    fs: int = 250,
-    winsize: int = 4,
-    sprob: float = 0.9,
-) -> npt.NDArray[np.bool_]:
-    """Returns a mask **selecting** samples whose epoch is `label` *and* whose
-    class probability is at least `sprob`.
-
-    True marks samples in confidently-labeled epochs (the ones you want to
-    keep). Use this when you want to be stricter than `state` — e.g. only
-    take wake epochs SPINDLE was very confident about.
-
-    Args:
-        path: Path to a SPINDLE-scored CSV.
-        label: Single state letter to match (`"w"`, `"n"`, or `"r"`).
-        fs: Sample rate of the target EEG data.
-        winsize: SPINDLE epoch length in seconds.
-        sprob: Class-probability threshold an epoch must clear.
-
-    Returns:
-        A 1-D boolean mask True where state matches AND probability passes.
-    """
-    state_mask = state(path, labels=[label], fs=fs, winsize=winsize, include=True)
-    prob_mask = _expand_spindle_column(
-        path=path,
-        column_candidates=(_PROB_COLUMN[label],),
-        fs=fs,
-        winsize=winsize,
-        value_fn=lambda v: float(v) >= sprob,
-        include=True,
-    )
-    return state_mask & prob_mask
 
 
 def spindle_noise(

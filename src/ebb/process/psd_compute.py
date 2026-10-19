@@ -152,7 +152,6 @@ def estimate_psd(
     noise_thresh: float = 0.5,
     comm_value: int = _COMMUTATOR_VALUE_UV,
     drink_pad: int = 2,
-    s_prob: float | None = None,
     ann_keywords: list[str] | None = None,
     ann_match_mode: str = "contains",
     ann_pad_before_sec: float = 0.0,
@@ -225,9 +224,6 @@ def estimate_psd(
             Pad each drink event by this many seconds on each side. (The
             unit is seconds despite the unsuffixed name; preserved for
             backwards compatibility.)
-        s_prob:
-            If set, restricts state masks to epochs whose class probability
-            >= `s_prob` (uses `masking.state_prob` instead of `masking.state`).
         ann_keywords, ann_match_mode, ann_pad_before_sec, ann_pad_after_sec:
             Annotation-mask params (see `ebb.masking.annotations.keyword_mask`).
         hour_windows:
@@ -271,14 +267,8 @@ def estimate_psd(
         # build state masks
         state_masks = {}
 
-        if s_prob is not None:
-            for label, code in labels.items():
-                state_masks[label] = masking.state_prob(
-                    state_path, code[0], fs, winsize=4, sprob=s_prob
-                )
-        else:
-            for label, code in labels.items():
-                state_masks[label] = masking.state(state_path, code, fs, winsize=4)
+        for label, code in labels.items():
+            state_masks[label] = masking.state(state_path, code, fs, winsize=4)
 
         # Wake sub-mask for mixed groups that lump wake with sleep states.
         # SD thresholding should only gate the wake portion of such groups,
@@ -286,10 +276,7 @@ def estimate_psd(
         # NREM/REM samples if applied uniformly.
         needs_wake_sub = any("w" in codes and len(codes) > 1 for codes in labels.values())
         if needs_wake_sub:
-            if s_prob is not None:
-                wake_sub_mask = masking.state_prob(state_path, "w", fs, winsize=4, sprob=s_prob)
-            else:
-                wake_sub_mask = masking.state(state_path, ["w"], fs, winsize=4)
+            wake_sub_mask = masking.state(state_path, ["w"], fs, winsize=4)
         else:
             wake_sub_mask = None
 
