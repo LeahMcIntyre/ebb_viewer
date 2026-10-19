@@ -1,9 +1,9 @@
 """Reclassify page — NREM gap fill + EMG gate, written into the spindle CSVs.
 
 Inputs: ``spindle_outputs/<combo>/*.csv`` and preprocessed EDFs in ``standard/``.
-Outputs: a ``reclass_state`` column added to each CSV (the SleepyRat original is
-copied once to ``spindle_outputs/<combo>/_original/``), and whether the EMG gate
-was applied recorded per animal in the manifest.
+Outputs: ``reclass_state`` and ``final_state`` columns added to each CSV (the
+SleepyRat original is copied once to ``spindle_outputs/<combo>/_original/``), and
+whether the EMG gate was applied recorded per animal in the manifest.
 """
 
 from pathlib import Path
@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ebb.core.naming import parse_animal_id
-from ebb.io.spindle_csv import RECLASS_COLUMN, has_column
+from ebb.io.spindle_csv import FINAL_COLUMN, RECLASS_COLUMN, has_column
 from ebb.process.nrem_reclass import GAP_RADIUS, NremReclass, reclassify_dir_to_csv
 from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
 from ebb_viewer.pipeline.theme import apply_primary_button
@@ -79,7 +79,7 @@ class ReclassifyPage(QWidget):
         desc = QLabel(
             f"Gap-fills NREM epochs next to artifacts (radius {GAP_RADIUS}) and applies the EMG "
             f"gate where gap fill fragments light-period NREM. The result is added to each "
-            f"spindle CSV as a '{RECLASS_COLUMN}' column; the original CSVs are kept in an "
+            f"spindle CSV as '{RECLASS_COLUMN}' and '{FINAL_COLUMN}' columns; the original CSVs are kept in an "
             f"'_original' folder. Safe to re-run."
         )
         desc.setWordWrap(True)

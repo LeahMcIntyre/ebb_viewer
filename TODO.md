@@ -1,5 +1,19 @@
 # TODO
 
+### Sleep QC: read `final_state` instead of reclassifying on the fly (next refactor)
+The Reclassify page (stage 4) now writes `reclass_state` and `final_state` into each `spindle_outputs/<combo>/*.csv` and records `reclass_gate_applied` per animal in the manifest. `final_state` is the one resolved per-epoch state downstream code should read: `reclass_state`, overridden by `swd_reclassification` where that is non-blank once the SWD page exists. Without SWD review it is a plain copy of `reclass_state`, so analysis code is identical either way.
+
+Sleep QC (`pages/sleep_qc_visualizer.py`) keeps its **Reclassify toggle** (raw vs reclassified), but the toggle now reads the column instead of computing:
+1. Add `read_state_column(path, column)` next to `read_rawstate_column` in `ebb/process/sleep_compute.py`. `_ensure_reclass` builds `{animal: states}` from each CSV's `final_state` and passes it through the existing `states_by_animal` seam of `_compute_tables`. The raw view stays the default (`rawstate`/`state` via `STATE_COLUMNS`).
+2. Delete the compute path: the `reclassify_dir` call, `spin_gap`, `_gap_radius`, `_on_gap_radius_changed`, `_reclass_cache`, and the `GAP_RADIUS`/`NremReclass`/`reclassify_dir` imports. Gap radius is fixed at 1 in the Reclassify page.
+3. Source the EMG-gate tag (`_gated_animals`, `_gate_tag_html`, `lbl_reclass`) from `manifest.reclass_gate_applied` rather than `NremReclass.gate_applied`.
+4. Missing column: animals whose CSV has no `final_state` stay raw in reclass view, and `lbl_reclass` warns "N animal(s) not reclassified, run Reclassify". The toggle is disabled if no animal has it.
+5. Stale-results warning (no reset): if a CSV's `final_state` is newer than the CSV mtime recorded when QC flags were set, or the manifest has `sleep_qc` flags and Reclassify is re-run, show a warning only. Do not touch `sleep_qc` flags.
+6. EDF viewer reclass pill (`eeg_viewer.py`, `mask_builder.load_reclassified_state_masks`): read `final_state` from the CSV instead of recomputing.
+7. Downstream steps (PSD compute, masks, sleep export, `sleep_viewer.py`) still read `rawstate` through `STATE_COLUMNS`. Switching them to `final_state` is a separate decision. Do NOT add `final_state` to `STATE_COLUMNS`: `read_states_and_noise` uses it as the *input* to reclassification, so re-runs would read their own output.
+
+Tests: toggle uses the column (no EDF needed), missing-column warning, gate tag from the manifest, toggle disabled with no columns.
+
 ### sleep_export: Decide whether to keep `chosen_csvs/` (single-combo branch)
 With one project combo (`feature/single-combo`), `build_sleep_export` no longer needs to pick a CSV per animal across combo folders, so copying CSVs into `sleep_export/chosen_csvs/` is no longer needed for that purpose. It still does two things: it limits the export to ok animals (`export_sleep` takes a directory and exports every CSV in it), and it leaves a record of exactly which CSVs went into an export. Option A: remove it — change `ebb.io.sleep_export.export_sleep` to take a list of CSV paths, have `build_sleep_export` pass the ok animals' CSVs straight from `spindle_outputs/<combo>/`, and drop the folder, its rebuild-from-scratch step, the "chosen_csvs/" text on the Finalize page, and the related tests. Option B: keep it as the export's provenance record. Undecided — revisit after trying the single-combo branch for a while.
 

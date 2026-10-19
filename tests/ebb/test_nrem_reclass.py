@@ -288,6 +288,7 @@ def test_reclassify_dir_to_csv_adds_column_and_backs_up_original(tmp_path, start
     with (states / "A_x.csv").open(newline="") as f:
         rows = list(csv.DictReader(f))
     assert [r["reclass_state"] for r in rows] == out["A"].final_state.tolist()
+    assert [r["final_state"] for r in rows] == out["A"].final_state.tolist()
     assert list(rows[0])[:5] == ["index", "state", "noise_probs", "rawstate", "threshold"]
     assert (states / "_original" / "A_x.csv").read_text() == original
 
@@ -312,8 +313,25 @@ def test_reclassify_dir_to_csv_is_idempotent(tmp_path, start_at_8am):
 
 
 def test_write_column_rejects_length_mismatch(tmp_path):
-    from ebb.io.spindle_csv import write_column
+    from ebb.io.spindle_csv import write_columns
 
     _write_csv(tmp_path / "A_x.csv", [("n", 0.0), ("w", 0.0)])
     with pytest.raises(ValueError, match="rows"):
-        write_column(tmp_path / "A_x.csv", "reclass_state", ["n"])
+        write_columns(tmp_path / "A_x.csv", {"reclass_state": ["n"]})
+
+
+def test_rerun_after_reclass_reads_original_states_not_final(tmp_path, start_at_8am):
+    """final_state/reclass_state must never feed back in as the input states."""
+    states = tmp_path / "states"
+    edfs = tmp_path / "edfs"
+    states.mkdir()
+    edfs.mkdir()
+    epochs = _fragmenting_epochs()
+    _write_csv(states / "A_x.csv", epochs)
+    (edfs / "A_PREPROCESSED.edf").touch()
+    kw = dict(rms_fn=lambda p: np.full(len(epochs), 100.0))
+
+    first = nr.reclassify_dir_to_csv(states, edfs, **kw)["A"]
+    second = nr.reclassify_dir_to_csv(states, edfs, **kw)["A"]
+
+    assert second.rawstate.tolist() == first.rawstate.tolist() == [e[0] for e in epochs]

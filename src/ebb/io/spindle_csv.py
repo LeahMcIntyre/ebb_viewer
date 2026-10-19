@@ -10,7 +10,7 @@ since old-format files already exist on disk alongside new ones.
 
 import csv
 import shutil
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 # Order matters: `rawstate` must win when both are present (old format),
@@ -33,6 +33,10 @@ def resolve_column(header: Sequence[str], candidates: Sequence[str]) -> str:
 
 
 RECLASS_COLUMN = "reclass_state"
+# The resolved per-epoch state downstream steps read: reclass_state, overridden by
+# swd_reclassification where that is non-blank. Not part of STATE_COLUMNS, which is
+# the *input* to reclassification (reading final_state there would break re-runs).
+FINAL_COLUMN = "final_state"
 ORIGINAL_DIRNAME = "_original"
 
 
@@ -43,8 +47,8 @@ def has_column(csv_path: str | Path, name: str) -> bool:
     return name in header
 
 
-def write_column(csv_path: str | Path, name: str, values: Sequence[str]) -> None:
-    """Add (or replace) column ``name`` in a CSV, one value per data row.
+def write_columns(csv_path: str | Path, columns: Mapping[str, Sequence[str]]) -> None:
+    """Add (or replace) columns in a CSV, one value per data row.
 
     The first time a file is rewritten, the untouched original is copied to
     ``<dir>/_original/`` (never overwritten, so re-runs keep the SleepyRat file).
@@ -56,22 +60,24 @@ def write_column(csv_path: str | Path, name: str, values: Sequence[str]) -> None
     if not rows:
         raise ValueError(f"empty CSV: {path.name}")
     header, data = rows[0], rows[1:]
-    if len(data) != len(values):
-        raise ValueError(f"{path.name}: {len(data)} rows but {len(values)} values for {name!r}")
+    for name, values in columns.items():
+        if len(data) != len(values):
+            raise ValueError(f"{path.name}: {len(data)} rows but {len(values)} values for {name!r}")
 
     backup = path.parent / ORIGINAL_DIRNAME / path.name
     if not backup.exists():
         backup.parent.mkdir(exist_ok=True)
         shutil.copy2(path, backup)
 
-    if name in header:
-        idx = header.index(name)
-        for row, v in zip(data, values, strict=True):
-            row[idx] = str(v)
-    else:
-        header.append(name)
-        for row, v in zip(data, values, strict=True):
-            row.append(str(v))
+    for name, values in columns.items():
+        if name in header:
+            idx = header.index(name)
+            for row, v in zip(data, values, strict=True):
+                row[idx] = str(v)
+        else:
+            header.append(name)
+            for row, v in zip(data, values, strict=True):
+                row.append(str(v))
 
     tmp = path.with_suffix(".csv.tmp")
     with open(tmp, "w", newline="") as f:
