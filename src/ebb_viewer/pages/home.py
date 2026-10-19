@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 
 from ebb.io.spindle_csv import FINAL_COLUMN, has_column
 from ebb_viewer.edf_viewer.eeg_viewer import launch_edf_window
+from ebb_viewer.pages.swd_review import find_swd_file
 from ebb_viewer.pipeline import psd_params as _psd_params
 from ebb_viewer.pipeline.manifest import (
     Manifest,
@@ -75,7 +76,7 @@ _SLEEP_QC_LABEL: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Pipeline guide
 # ---------------------------------------------------------------------------
-StepKind = Literal["done", "attention", "active", "blocked"]
+StepKind = Literal["done", "attention", "active", "blocked", "off"]
 
 
 class StepStatus(NamedTuple):
@@ -88,6 +89,7 @@ _STEP_LABELS = [
     "2. Spindle EDFs",
     "3. Spindle Upload",
     "4. Reclassify",
+    "4b. SWD Review",
     "5. Sleep QC",
     "6. PSD Computation",
     "7. PSD Review",
@@ -99,18 +101,20 @@ _STEP_PAGE_NAMES = [
     "spindle_write",
     "spindle_upload",
     "reclassify",
+    "swd_review",
     "sleep_qc",
     "psd_compute",
     "psd_review",
     "drink_mask",
 ]
 
-_GUIDE_ICON = {"done": "✓", "attention": "⚠", "active": "→", "blocked": "○"}
+_GUIDE_ICON = {"done": "✓", "attention": "⚠", "active": "→", "blocked": "○", "off": "–"}
 _GUIDE_ICON_COLOR = {
     "done": "#3a7d44",
     "attention": "#b06000",
     "active": "#1a5fa8",
     "blocked": "#999999",
+    "off": "#999999",
 }
 _GUIDE_ROW_HIGHLIGHT = "#eef4fc"
 
@@ -126,7 +130,7 @@ def compute_pipeline_status(
     *,
     psd_runs: list[str] | None = None,
 ) -> list[StepStatus]:
-    """Derive the 8 pipeline-step statuses driving the home-page guide.
+    """Derive the 9 pipeline-step statuses driving the home-page guide.
 
     Pure logic (no Qt). Reads ``manifest`` plus filesystem state under
     ``project_root`` (``standard/``, ``spindle_edfs/``, ``spindle_outputs/``,
@@ -200,6 +204,23 @@ def compute_pipeline_status(
         )
     else:
         s_reclass = StepStatus("active", "Ready — reclassify NREM before Sleep QC")
+
+    # --- Step 4b: SWD Review (optional, project opt-in) ---
+    if not manifest.swd_review_enabled:
+        s_swd = StepStatus("off", "Not enabled (optional)")
+    elif s_reclass.kind != "done":
+        s_swd = StepStatus("blocked", "Requires Reclassify (step 4)")
+    else:
+        with_swd = [e for e in manifest if e.has_spindle and find_swd_file(root, e.animal_id)]
+        n_reviewed = sum(1 for e in with_swd if e.swd_reviewed)
+        if not with_swd:
+            s_swd = StepStatus("attention", "No SWD files found in swd/")
+        elif n_reviewed == len(with_swd):
+            s_swd = StepStatus("done", f"{n_reviewed} animal{'s' if n_reviewed != 1 else ''} reviewed")
+        elif n_reviewed > 0:
+            s_swd = StepStatus("attention", f"{n_reviewed} of {len(with_swd)} animals reviewed")
+        else:
+            s_swd = StepStatus("active", "Ready — review SWD epochs")
 
     # --- Step 5: Sleep QC ---
     if step3_done and n_pending_qc == 0 and n_review == 0 and n_ok > 0:
@@ -276,7 +297,7 @@ def compute_pipeline_status(
     else:
         s7 = StepStatus("done", "No drink masks needed")
 
-    return [s1, s2, s3, s_reclass, s4, s5, s6, s7]
+    return [s1, s2, s3, s_reclass, s_swd, s4, s5, s6, s7]
 
 
 def _any_file_for_animal(root: Path, subdir: str, channels: str, animal_id: str) -> bool:

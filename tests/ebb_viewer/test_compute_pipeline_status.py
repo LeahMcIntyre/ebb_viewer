@@ -64,7 +64,7 @@ def test_step5_active_when_all_qc_resolved(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s5 = statuses[5]
+    s5 = statuses[6]
     assert s5.kind == "active"
     assert "marked ok" in s5.description
 
@@ -80,7 +80,7 @@ def test_step5_blocked_when_review_pending_and_ok_exists(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s5 = statuses[5]
+    s5 = statuses[6]
     assert s5.kind == "blocked"
     assert "1" in s5.description
 
@@ -97,7 +97,7 @@ def test_step5_blocked_message_includes_not_ready_count(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s5 = statuses[5]
+    s5 = statuses[6]
     assert s5.kind == "blocked"
     assert "2" in s5.description
 
@@ -112,7 +112,7 @@ def test_step5_blocked_when_no_ok_animals(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s5 = statuses[5]
+    s5 = statuses[6]
     assert s5.kind == "blocked"
 
 
@@ -127,7 +127,7 @@ def test_step5_done_when_final_pkl_exists(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s5 = statuses[5]
+    s5 = statuses[6]
     assert s5.kind == "done"
 
 
@@ -155,7 +155,7 @@ def test_step7_blocked_when_no_final_pkl(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    assert statuses[7].kind == "blocked"
+    assert statuses[8].kind == "blocked"
 
 
 def test_step7_attention_when_drink_mask_needed(tmp_path):
@@ -169,7 +169,7 @@ def test_step7_attention_when_drink_mask_needed(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s7 = statuses[7]
+    s7 = statuses[8]
     assert s7.kind == "attention"
     assert "2" in s7.description
 
@@ -184,7 +184,7 @@ def test_step7_done_when_drink_masks_applied(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s7 = statuses[7]
+    s7 = statuses[8]
     assert s7.kind == "done"
     assert "1" in s7.description
 
@@ -199,7 +199,7 @@ def test_step7_done_none_needed_when_all_ok(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    s7 = statuses[7]
+    s7 = statuses[8]
     assert s7.kind == "done"
     assert "no drink masks needed" in s7.description.lower()
 
@@ -219,7 +219,7 @@ def test_step6_blocked_when_merged_pkl_absent_despite_reviewed_animals(tmp_path)
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    assert statuses[6].kind == "blocked"
+    assert statuses[7].kind == "blocked"
 
 
 # ---------------------------------------------------------------------------
@@ -237,7 +237,7 @@ def test_step6_not_done_when_animal_needs_drink_mask(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    assert statuses[6].kind != "done"
+    assert statuses[7].kind != "done"
 
 
 def test_step6_done_when_all_reviewed_no_pending_work(tmp_path):
@@ -250,7 +250,7 @@ def test_step6_done_when_all_reviewed_no_pending_work(tmp_path):
         },
     )
     statuses = compute_pipeline_status(tmp_path, m)
-    assert statuses[6].kind == "done"
+    assert statuses[7].kind == "done"
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +261,7 @@ def test_step6_done_when_all_reviewed_no_pending_work(tmp_path):
 def test_reclassify_blocked_until_spindle_outputs_exist(tmp_path):
     m = _make_manifest(tmp_path, {"A001": {}})
     statuses = compute_pipeline_status(tmp_path, m)
-    assert len(statuses) == 8
+    assert len(statuses) == 9
     assert statuses[3].kind == "blocked"
 
 
@@ -308,3 +308,61 @@ def test_reclassify_ignores_stale_manifest_flag_when_csv_lost_its_column(tmp_pat
     _write_csv(tmp_path, "A001_labels.csv", final_state=False)
     m = _make_manifest(tmp_path, {"A001": dict(reclass_gate_applied=True)})
     assert compute_pipeline_status(tmp_path, m)[3].kind == "active"
+
+
+# ---------------------------------------------------------------------------
+# Step 4b: SWD Review (index 4, optional)
+# ---------------------------------------------------------------------------
+
+
+def _reclassified_project(tmp_path, animals: dict, *, swd_for=()):
+    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
+    for name in animals:
+        _write_csv(tmp_path, f"{name}_labels.csv", final_state=True)
+    (tmp_path / "swd").mkdir(exist_ok=True)
+    for name in swd_for:
+        (tmp_path / "swd" / f"{name}_swd.mat").touch()
+    m = _make_manifest(tmp_path, animals)
+    return m
+
+
+def test_swd_review_off_by_default(tmp_path):
+    m = _reclassified_project(tmp_path, {"A001": dict(reclass_gate_applied=False)})
+    s = compute_pipeline_status(tmp_path, m)[4]
+    assert s.kind == "off" and "Not enabled" in s.description
+
+
+def test_swd_review_blocked_until_reclassified(tmp_path):
+    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
+    m = _make_manifest(tmp_path, {"A001": {}})
+    m.swd_review_enabled = True
+    assert compute_pipeline_status(tmp_path, m)[4].kind == "blocked"
+
+
+def test_swd_review_progress_states(tmp_path):
+    animals = {"A001": dict(reclass_gate_applied=False), "A002": dict(reclass_gate_applied=False)}
+    m = _reclassified_project(tmp_path, animals, swd_for=["A001", "A002"])
+    m.swd_review_enabled = True
+    assert compute_pipeline_status(tmp_path, m)[4].kind == "active"
+
+    m.get("A001").swd_reviewed = True
+    s = compute_pipeline_status(tmp_path, m)[4]
+    assert s.kind == "attention" and "1 of 2" in s.description
+
+    m.get("A002").swd_reviewed = True
+    assert compute_pipeline_status(tmp_path, m)[4].kind == "done"
+
+
+def test_swd_review_attention_when_no_swd_files(tmp_path):
+    m = _reclassified_project(tmp_path, {"A001": dict(reclass_gate_applied=False)})
+    m.swd_review_enabled = True
+    s = compute_pipeline_status(tmp_path, m)[4]
+    assert s.kind == "attention" and "No SWD files" in s.description
+
+
+def test_swd_review_only_counts_animals_that_have_swd_files(tmp_path):
+    animals = {"A001": dict(reclass_gate_applied=False), "A002": dict(reclass_gate_applied=False)}
+    m = _reclassified_project(tmp_path, animals, swd_for=["A001"])  # A002 has none
+    m.swd_review_enabled = True
+    m.get("A001").swd_reviewed = True
+    assert compute_pipeline_status(tmp_path, m)[4].kind == "done"

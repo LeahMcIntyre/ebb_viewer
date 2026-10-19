@@ -80,7 +80,7 @@ class ReclassifyPage(QWidget):
             f"Gap-fills NREM epochs next to artifacts (radius {GAP_RADIUS}) and applies the EMG "
             f"gate where gap fill fragments light-period NREM. The result is added to each "
             f"spindle CSV as '{RECLASS_COLUMN}' and '{FINAL_COLUMN}' columns; the original CSVs are kept in an "
-            f"'_original' folder. Safe to re-run."
+            f"'_original' folder. Safe to re-run; any SWD review you saved is kept and re-applied."
         )
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #555; font-size: 12px;")
