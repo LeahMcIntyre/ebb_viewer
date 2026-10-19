@@ -203,6 +203,34 @@ def load_state_masks(csv_path, fs: int) -> MaskSet:
     return mask_set
 
 
+def state_masks_from_epochs(states, fs: int) -> MaskSet:
+    """Wake / NREM / REM MaskSet from per-epoch state labels.
+
+    Spans come from runs over the epoch array (O(epochs), not O(samples)), so a
+    state bar can be rebuilt after every edit. Labels other than w/n/r (blank,
+    artifact codes) belong to no mask.
+    """
+    states = np.asarray(states)
+    samples_per_epoch = int(fs) * _EPOCH_SEC
+    mask_set = MaskSet()
+    for name, labels in _STATE_LABELS.items():
+        hit = np.r_[False, np.isin(states, labels), False].astype(np.int8)
+        edges = np.diff(hit)
+        starts = np.flatnonzero(edges == 1)
+        stops = np.flatnonzero(edges == -1)
+        mask_set.add(
+            Mask(
+                name=name,
+                color=_STATE_COLORS[name],
+                spans=[
+                    (int(a) * samples_per_epoch, int(b) * samples_per_epoch)
+                    for a, b in zip(starts, stops, strict=True)
+                ],
+            )
+        )
+    return mask_set
+
+
 def load_reclassified_state_masks(csv_path, fs: int) -> MaskSet:
     """Like `load_state_masks`, from the CSV's ``final_state`` column.
 
@@ -213,13 +241,7 @@ def load_reclassified_state_masks(csv_path, fs: int) -> MaskSet:
     Raises:
         ValueError: if the CSV has no ``final_state`` column.
     """
-    final_state = np.array(read_state_column(csv_path, FINAL_COLUMN))
-    samples_per_epoch = fs * _EPOCH_SEC
-    mask_set = MaskSet()
-    for name, labels in _STATE_LABELS.items():
-        arr = np.repeat(np.isin(final_state, labels), samples_per_epoch)
-        mask_set.add(Mask.from_bool(name, _STATE_COLORS[name], arr))
-    return mask_set
+    return state_masks_from_epochs(read_state_column(csv_path, FINAL_COLUMN), fs)
 
 
 def _annotation_param_specs() -> dict:

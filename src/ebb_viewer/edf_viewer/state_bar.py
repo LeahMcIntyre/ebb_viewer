@@ -30,6 +30,8 @@ class StateBar(QtWidgets.QWidget):
         # system.  Set by TraceView via sync_viewport() after layout.
         self._vb_left: int = 0
         self._vb_right: int = 100
+        # Optional (t0, t1) seconds outlined on the bar (e.g. the epoch under review).
+        self._highlight: tuple[float, float] | None = None
 
         self.setFixedHeight(self.HEIGHT)
         self.setVisible(False)
@@ -51,6 +53,11 @@ class StateBar(QtWidgets.QWidget):
         self._state_set = state_set
         self._fs = fs
         self.setVisible(True)
+
+    def set_highlight(self, span: tuple[float, float] | None) -> None:
+        """Outline ``span`` (seconds) on the bar, or clear it with ``None``."""
+        self._highlight = span
+        self.update()
 
     def update_window(self, t_start: float, t_stop: float) -> None:
         self._t_start = t_start
@@ -87,5 +94,14 @@ class StateBar(QtWidgets.QWidget):
                 x2 = self._vb_left + int((t_b - self._t_start) / t_range * px_range)
                 if x2 > x1:
                     painter.drawRect(x1, 0, x2 - x1, self.height())
+
+        if self._highlight is not None:
+            h0, h1 = self._highlight
+            if h1 > self._t_start and h0 < self._t_stop:
+                x1 = self._vb_left + int((max(h0, self._t_start) - self._t_start) / t_range * px_range)
+                x2 = self._vb_left + int((min(h1, self._t_stop) - self._t_start) / t_range * px_range)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.setPen(QtGui.QPen(QtGui.QColor(0, 0, 0), 2))
+                painter.drawRect(x1, 1, max(x2 - x1, 2), self.height() - 2)
 
         painter.end()

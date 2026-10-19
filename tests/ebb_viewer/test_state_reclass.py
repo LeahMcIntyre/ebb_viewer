@@ -93,3 +93,22 @@ def test_pill_sits_right_of_state_bar_without_moving_the_plots(qapp):
     plot_right = tv.plots[0].mapTo(tv, tv.plots[0].rect().topRight()).x()
     assert tv.reclass_pill.x() >= bar_right
     assert plot_right <= bar_right + 1
+
+
+def test_state_masks_from_epochs_merges_runs_and_ignores_other_labels():
+    from ebb_viewer.edf_viewer.mask_builder import state_masks_from_epochs
+
+    fs = 10
+    epoch = fs * 4
+    masks = state_masks_from_epochs(["w", "w", "", "n", "n", "n", "x", "r"], fs)
+
+    assert masks.get("wake").spans == [(0, 2 * epoch)]
+    assert masks.get("nrem").spans == [(3 * epoch, 6 * epoch)]
+    assert masks.get("rem").spans == [(7 * epoch, 8 * epoch)]  # '' and 'x' belong to no mask
+
+
+def test_state_masks_from_epochs_empty():
+    from ebb_viewer.edf_viewer.mask_builder import state_masks_from_epochs
+
+    masks = state_masks_from_epochs([], 10)
+    assert all(masks.get(n).spans == [] for n in ("wake", "nrem", "rem"))
