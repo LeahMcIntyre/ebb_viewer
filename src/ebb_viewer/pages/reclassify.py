@@ -1,0 +1,167 @@
+"""Reclassify page — NREM gap fill + EMG gate, written into the spindle CSVs.
+
+Inputs: ``spindle_outputs/<combo>/*.csv`` and preprocessed EDFs in ``standard/``.
+Outputs: a ``reclass_state`` column added to each CSV (the SleepyRat original is
+copied once to ``spindle_outputs/<combo>/_original/``), and whether the EMG gate
+was applied recorded per animal in the manifest.
+"""
+
+from pathlib import Path
+
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
+from PyQt6.QtWidgets import (
+    QHeaderView,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ebb.core.naming import parse_animal_id
+from ebb.io.spindle_csv import RECLASS_COLUMN, has_column
+from ebb.process.nrem_reclass import GAP_RADIUS, NremReclass, reclassify_dir_to_csv
+from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
+from ebb_viewer.pipeline.theme import apply_primary_button
+from ebb_viewer.widgets.worker_helpers import launch_worker
+
+_COLUMNS = ("Animal", "Reclassified", "EMG gate", "NREM bouts (light) before → after")
+
+
+class _ReclassWorker(QObject):
+    """Runs ``reclassify_dir_to_csv`` off the GUI thread."""
+
+    progress = pyqtSignal(str, object)  # animal_id, NremReclass
+    finished = pyqtSignal(dict)  # {animal_id: NremReclass}
+    error = pyqtSignal(str)
+
+    def __init__(self, state_dir: Path, edf_dir: Path):
+        super().__init__()
+        self._state_dir = state_dir
+        self._edf_dir = edf_dir
+
+    def run(self) -> None:
+        try:
+            results = reclassify_dir_to_csv(
+                self._state_dir,
+                self._edf_dir,
+                on_animal=lambda a, r: self.progress.emit(a, r),
+            )
+        except Exception as e:  # surfaced in a dialog; the thread must not die silently
+            self.error.emit(str(e))
+            return
+        self.finished.emit(results)
+
+
+class ReclassifyPage(QWidget):
+    """Sidebar page — reclassify NREM and write ``reclass_state`` into the CSVs."""
+
+    manifest_changed = pyqtSignal()
+    navigate_to = pyqtSignal(str)
+
+    def __init__(self, parent=None, *, project_root: Path):
+        super().__init__(parent)
+        self.project_root = Path(project_root)
+        # Keep the worker referenced: unparented, it is GC'd before thread.started → run.
+        self._thread: QThread | None = None
+        self._worker: _ReclassWorker | None = None
+        self._bouts: dict[str, tuple[int, int]] = {}  # this session's before/after
+        self._build_ui()
+        self._refresh()
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+
+        title = QLabel("Reclassify NREM")
+        title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        desc = QLabel(
+            f"Gap-fills NREM epochs next to artifacts (radius {GAP_RADIUS}) and applies the EMG "
+            f"gate where gap fill fragments light-period NREM. The result is added to each "
+            f"spindle CSV as a '{RECLASS_COLUMN}' column; the original CSVs are kept in an "
+            f"'_original' folder. Safe to re-run."
+        )
+        desc.setWordWrap(True)
+        desc.setStyleSheet("color: #555; font-size: 12px;")
+        root.addWidget(title)
+        root.addWidget(desc)
+
+        self.lbl_status = QLabel("")
+        self.lbl_status.setStyleSheet("color: gray;")
+        root.addWidget(self.lbl_status)
+
+        self.table = QTableWidget(0, len(_COLUMNS))
+        self.table.setHorizontalHeaderLabels(_COLUMNS)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        root.addWidget(self.table, 1)
+
+        self.btn_run = QPushButton("Run reclassification")
+        apply_primary_button(self.btn_run)
+        self.btn_run.clicked.connect(self._run)
+        root.addWidget(self.btn_run)
+
+        btn_go_qc = QPushButton("→ Sleep QC")
+        btn_go_qc.clicked.connect(lambda: self.navigate_to.emit("sleep_qc"))
+        root.addWidget(btn_go_qc)
+
+    # ---------------- state ----------------
+    def _dirs(self) -> tuple[Path, Path]:
+        manifest = Manifest.load(self.project_root)
+        return spindle_output_dir(manifest.combo, self.project_root), self.project_root / "standard"
+
+    def _refresh(self) -> None:
+        manifest = Manifest.load(self.project_root)
+        state_dir, _ = self._dirs()
+        csvs = {parse_animal_id(p): p for p in sorted(state_dir.glob("*.csv"))}
+
+        self.lbl_status.setText(f"{len(csvs)} spindle CSV(s) in {state_dir}")
+        self.btn_run.setEnabled(bool(csvs) and self._thread is None)
+
+        self.table.setRowCount(len(csvs))
+        for row, (animal, path) in enumerate(csvs.items()):
+            entry = manifest.get(animal)
+            done = has_column(path, RECLASS_COLUMN)
+            gate = entry.reclass_gate_applied if entry else None
+            bouts = self._bouts.get(animal)
+            cells = (
+                animal,
+                "✓" if done else "—",
+                "—" if gate is None else ("applied" if gate else "not needed"),
+                f"{bouts[0]} → {bouts[1]}" if bouts else "",
+            )
+            for col, text in enumerate(cells):
+                self.table.setItem(row, col, QTableWidgetItem(text))
+
+    def _poll(self) -> None:
+        if self._thread is None:
+            self._refresh()
+
+    # ---------------- run ----------------
+    def _run(self) -> None:
+        state_dir, edf_dir = self._dirs()
+        worker = self._worker = _ReclassWorker(state_dir, edf_dir)
+        worker.progress.connect(self._on_progress)
+        self._thread = QThread(self)
+        self.btn_run.setEnabled(False)
+        self.lbl_status.setText("Reclassifying…")
+        launch_worker(self._thread, worker, on_finished=self._on_finished, on_error=self._on_error)
+
+    def _on_progress(self, animal: str, result: NremReclass) -> None:
+        self._bouts[animal] = (result.bouts_before, result.bouts_after)
+        self.lbl_status.setText(f"Reclassified {animal}…")
+
+    def _on_finished(self, results: dict) -> None:
+        self._thread = self._worker = None
+        manifest = Manifest.load(self.project_root)
+        manifest.set_reclass_gates({a: r.gate_applied for a, r in results.items()})
+        self.manifest_changed.emit()
+        self._refresh()
+        n_gate = sum(r.gate_applied for r in results.values())
+        self.lbl_status.setText(f"Done: {len(results)} file(s), EMG gate applied to {n_gate}.")
+
+    def _on_error(self, msg: str) -> None:
+        self._thread = self._worker = None
+        self._refresh()
+        QMessageBox.critical(self, "Reclassification failed", msg)

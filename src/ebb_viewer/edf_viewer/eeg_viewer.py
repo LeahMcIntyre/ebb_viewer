@@ -26,6 +26,7 @@ from ebb_viewer.edf_viewer.mask_builder import (
     build_annotation_mask,
     build_default_masks,
     load_drink_mask,
+    load_reclassified_state_masks,
     load_state_masks,
     load_swd_mask,
     rebuild_annotation_mask,
@@ -215,7 +216,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.animal_id = animal_id
 
         self.mask_set = build_default_masks(recording)
-        self.state_set = None
+        self.state_set = None  # the state masks currently shown (raw or reclassified)
+        self._state_set_raw = None
+        self._state_set_reclass = None
         self.state_df = None
         self._annotations: list[tuple[float, str]] = []
         self._annotation_path = None
@@ -246,8 +249,16 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.trace_view.set_masks(self.mask_set)
 
         if recording.csv_path is not None:
-            self.state_set = load_state_masks(recording.csv_path, int(recording.fs))
+            self.state_set = self._state_set_raw = load_state_masks(
+                recording.csv_path, int(recording.fs)
+            )
             self.trace_view.set_state_masks(self.state_set)
+            self.trace_view.reclass_pill.set_available(
+                True,
+                "R: show NREM reclassification (gap fill, plus an EMG gate for files "
+                "where it fragments NREM). Display only; nothing is written.",
+            )
+            self.trace_view.reclass_pill.toggled.connect(self.on_toggle_reclass)
             self.state_df = _load_state_df(recording.csv_path)
 
         # actions/toolbars/menus
@@ -377,6 +388,39 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self._sleep_popup.plot_sleep(self.rec.csv_path)
         self._sleep_popup.show()
         self._sleep_popup.raise_()
+
+    def on_toggle_reclass(self, checked: bool) -> None:
+        """Swap the state bar between SPINDLE's states and the reclassified ones.
+
+        The reclassified set is built on first use (the EMG gate reads the EMG
+        channel from the EDF) and then cached.
+        """
+        pill = self.trace_view.reclass_pill
+        if checked and self._state_set_reclass is None:
+            QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            try:
+                self._state_set_reclass, result = load_reclassified_state_masks(
+                    self.rec.csv_path, self.rec.edf_path, int(self.rec.fs)
+                )
+            except Exception as e:
+                QtWidgets.QApplication.restoreOverrideCursor()
+                pill.set_checked(False)
+                QtWidgets.QMessageBox.critical(
+                    self, "Error reclassifying NREM", f"Could not reclassify NREM:\n{e}"
+                )
+                return
+            QtWidgets.QApplication.restoreOverrideCursor()
+            gate = "EMG gate applied" if result.gate_applied else "EMG gate not needed"
+            pill.set_available(
+                True,
+                f"R: NREM reclassification shown ({gate}). Display only; nothing is written.",
+            )
+        new_set = self._state_set_reclass if checked else self._state_set_raw
+        for mask in new_set:  # keep the dock's per-state checkboxes where the user left them
+            mask.enabled = self.state_set.get(mask.name).enabled
+        self.state_set = new_set
+        self.trace_view.set_state_masks(new_set)
+        self.masks_dock.rebuild(self.mask_set, new_set)
 
     def _navigate_mask(self, mask, forward: bool) -> None:
         span = (

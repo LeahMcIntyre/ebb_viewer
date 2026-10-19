@@ -585,3 +585,15 @@ def test_pending_count_no_double_count(tmp_path):
         + len(m.pending_drink_verification("default"))
     )
     assert total == 3  # one animal in each queue, no double-counting
+
+
+def test_reclass_gate_roundtrip(tmp_path):
+    m = _make_manifest(tmp_path, {"AM001": dict(), "AM002": dict()})
+    assert m.get("AM001").reclass_gate_applied is None
+
+    m.set_reclass_gates({"AM001": True, "AM002": False, "GHOST": True})
+    m2 = _reload(m)
+
+    assert m2.get("AM001").reclass_gate_applied is True
+    assert m2.get("AM002").reclass_gate_applied is False
+    assert m2.get("GHOST") is None

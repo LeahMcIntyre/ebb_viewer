@@ -263,3 +263,57 @@ def test_states_by_animal_leaves_other_animals_on_csv(tmp_path):
     df = compute_sleep_bins_df(tmp_path, bin_hours=1, states_by_animal={"A": ["w"] * 4})
     n_frac = df[df["state"] == "n"].set_index("mouse_id")["frac_time"]
     assert "A" not in n_frac.index and n_frac["B"] == 1.0
+
+
+# --- writing reclass_state into the CSVs --------------------------------
+
+
+def _fragmenting_epochs() -> list[tuple[str, float]]:
+    # NREM run with artifact epochs inside it: gap fill splits it into more bouts.
+    return [("n", 0.0), ("n", 0.9), ("n", 0.0), ("n", 0.0), ("n", 0.9), ("n", 0.0), ("w", 0.0)] * 4
+
+
+def test_reclassify_dir_to_csv_adds_column_and_backs_up_original(tmp_path, start_at_8am):
+    states = tmp_path / "states"
+    edfs = tmp_path / "edfs"
+    states.mkdir()
+    edfs.mkdir()
+    epochs = _fragmenting_epochs()
+    _write_csv(states / "A_x.csv", epochs)
+    (edfs / "A_PREPROCESSED.edf").touch()
+    original = (states / "A_x.csv").read_text()
+
+    out = nr.reclassify_dir_to_csv(states, edfs, rms_fn=lambda p: np.full(len(epochs), 100.0))
+
+    with (states / "A_x.csv").open(newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert [r["reclass_state"] for r in rows] == out["A"].final_state.tolist()
+    assert list(rows[0])[:5] == ["index", "state", "noise_probs", "rawstate", "threshold"]
+    assert (states / "_original" / "A_x.csv").read_text() == original
+
+
+def test_reclassify_dir_to_csv_is_idempotent(tmp_path, start_at_8am):
+    states = tmp_path / "states"
+    edfs = tmp_path / "edfs"
+    states.mkdir()
+    edfs.mkdir()
+    epochs = _fragmenting_epochs()
+    _write_csv(states / "A_x.csv", epochs)
+    (edfs / "A_PREPROCESSED.edf").touch()
+    original = (states / "A_x.csv").read_text()
+    kw = dict(rms_fn=lambda p: np.full(len(epochs), 100.0))
+
+    nr.reclassify_dir_to_csv(states, edfs, **kw)
+    first = (states / "A_x.csv").read_text()
+    nr.reclassify_dir_to_csv(states, edfs, **kw)
+
+    assert (states / "A_x.csv").read_text() == first
+    assert (states / "_original" / "A_x.csv").read_text() == original  # backup not overwritten
+
+
+def test_write_column_rejects_length_mismatch(tmp_path):
+    from ebb.io.spindle_csv import write_column
+
+    _write_csv(tmp_path / "A_x.csv", [("n", 0.0), ("w", 0.0)])
+    with pytest.raises(ValueError, match="rows"):
+        write_column(tmp_path / "A_x.csv", "reclass_state", ["n"])

@@ -21,7 +21,7 @@ from PyQt6.QtCore import QPoint, Qt, QTimer, pyqtSignal
 
 from ebb_viewer.edf_viewer.masks import MaskSet
 from ebb_viewer.edf_viewer.state_bar import StateBar
-from ebb_viewer.edf_viewer.state_legend import StateLegend
+from ebb_viewer.edf_viewer.state_legend import ReclassPill, StateLegend
 
 pg.setConfigOption("background", "w")
 pg.setConfigOption("foreground", "k")
@@ -122,6 +122,7 @@ class TraceView(QtWidgets.QWidget):
         # State bar + legend (both hidden until set_state_masks is called)
         self.state_bar = StateBar(self)
         self.state_legend = StateLegend(self)
+        self.reclass_pill = ReclassPill(self)
 
         self._build_ui()
         # Fit base_y from the initial window so _apply_y has a real range to
@@ -150,6 +151,9 @@ class TraceView(QtWidgets.QWidget):
         _row_hb.addWidget(self.state_legend)
         _row_hb.addWidget(self.state_bar, 1)
         grid.addWidget(self._state_row, 0, 0, 1, 2)
+        # Column 2 only exists to hold the reclass pill beside the state bar; the
+        # plots stay in column 1, so the pill never overlaps the trace area.
+        grid.addWidget(self.reclass_pill, 0, 2)
 
         for i in range(self.nch):
             col_left = QtWidgets.QWidget()
@@ -424,6 +428,7 @@ class TraceView(QtWidgets.QWidget):
         self.state_bar.set_state_masks(state_set, self.fs)
         self.state_legend.rebuild(state_set)
         self._state_row.setVisible(True)
+        self.reclass_pill.setVisible(True)
         self._set_window(self.start)
 
     def refresh_overlays(self) -> None:
