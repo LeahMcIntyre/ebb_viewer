@@ -35,7 +35,13 @@ import numpy.typing as npt
 
 from ebb.core.naming import parse_animal_id
 from ebb.io.edf_header import read_edf_start_datetime
-from ebb.io.spindle_csv import NOISE_COLUMNS, STATE_COLUMNS, resolve_column
+from ebb.io.spindle_csv import (
+    NOISE_COLUMNS,
+    RECLASS_COLUMN,
+    STATE_COLUMNS,
+    resolve_column,
+    write_column,
+)
 
 DEFAULT_NOISE_THRESHOLD = 0.5
 GAP_RADIUS = 1
@@ -220,18 +226,13 @@ def reclassify_file(
     )
 
 
-def reclassify_dir(
-    state_dir: str | Path,
-    edf_dir: str | Path,
-    **kwargs,
-) -> dict[str, NremReclass]:
-    """``reclassify_file`` for every CSV in ``state_dir``, keyed by animal ID.
+def _paired_files(state_dir: str | Path, edf_dir: str | Path):
+    """Yield ``(animal, csv_path, edf_path)`` for each CSV with a matching EDF.
 
     CSVs without a matching preprocessed EDF in ``edf_dir`` are skipped with a
     warning (callers fall back to the raw states for them).
     """
     edf_by_animal = {parse_animal_id(p): p for p in Path(edf_dir).glob("*PROCESSED.edf")}
-    out: dict[str, NremReclass] = {}
     for csv_path in sorted(Path(state_dir).glob("*.csv")):
         animal = parse_animal_id(csv_path)
         edf_path = edf_by_animal.get(animal)
@@ -239,10 +240,41 @@ def reclassify_dir(
             warnings.warn(
                 f"No EDF for animal {animal!r} in {edf_dir}; skipping reclassification "
                 f"for {csv_path.name} (raw states kept).",
-                stacklevel=2,
+                stacklevel=3,
             )
             continue
-        out[animal] = reclassify_file(csv_path, edf_path, **kwargs)
+        yield animal, csv_path, edf_path
+
+
+def reclassify_dir(
+    state_dir: str | Path,
+    edf_dir: str | Path,
+    **kwargs,
+) -> dict[str, NremReclass]:
+    """``reclassify_file`` for every CSV in ``state_dir``, keyed by animal ID."""
+    return {
+        animal: reclassify_file(csv_path, edf_path, **kwargs)
+        for animal, csv_path, edf_path in _paired_files(state_dir, edf_dir)
+    }
+
+
+def reclassify_dir_to_csv(
+    state_dir: str | Path,
+    edf_dir: str | Path,
+    on_animal: Callable[[str, NremReclass], None] | None = None,
+    **kwargs,
+) -> dict[str, NremReclass]:
+    """Reclassify every CSV in ``state_dir`` and write ``reclass_state`` into it.
+
+    ``on_animal`` is called after each file is written (for progress logging).
+    """
+    out: dict[str, NremReclass] = {}
+    for animal, csv_path, edf_path in _paired_files(state_dir, edf_dir):
+        result = reclassify_file(csv_path, edf_path, **kwargs)
+        write_column(csv_path, RECLASS_COLUMN, result.final_state)
+        out[animal] = result
+        if on_animal is not None:
+            on_animal(animal, result)
     return out
 
 
@@ -256,5 +288,6 @@ __all__ = [
     "needs_emg_gate",
     "read_states_and_noise",
     "reclassify_dir",
+    "reclassify_dir_to_csv",
     "reclassify_file",
 ]

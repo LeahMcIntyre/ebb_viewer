@@ -4,6 +4,7 @@ Stages:
   1. Preprocess       raw EDFs → standard/
   2. Spindle write    standard/ → spindle_edfs/<COMBO>/
   3. Upload/Download  spindle_edfs/<COMBO>/ ↔ SleepyRat → spindle_outputs/<COMBO>/
+  3b. Reclassify      spindle_outputs/<COMBO>/ CSVs gain a reclass_state column
   4. Sleep QC gate    flag per animal: ok | needs_review
   5. PSD compute      standard/ + spindle_outputs/<COMBO>/ → psd/<RUN>/psds_<COMBO>.pkl
   6. PSD review gate  flag per (animal, psd_run_name): ok | needs_drink_mask
@@ -53,6 +54,10 @@ class ManifestEntry:
 
     # Sleep QC
     sleep_qc: str | None = None  # None | "ok" | "needs_review"
+
+    # NREM reclassification — whether the EMG gate was applied when
+    # ``reclass_state`` was written to the spindle CSV (None = not run yet)
+    reclass_gate_applied: bool | None = None
 
     # PSD review — keyed by psd run name (e.g. "default", "light_phase")
     psd_status: dict = field(
@@ -106,6 +111,7 @@ def _entry_to_dict(entry: ManifestEntry) -> dict:
         "notes": entry.notes,
         "has_spindle": entry.has_spindle,
         "sleep_qc": entry.sleep_qc,
+        "reclass_gate_applied": entry.reclass_gate_applied,
         "psd_status": entry.psd_status,
         "drink_mask": entry.drink_mask,
     }
@@ -139,6 +145,7 @@ def _entry_from_dict(animal_id: str, d: dict, combo: str) -> ManifestEntry:
         notes=d.get("notes", ""),
         has_spindle=d.get("has_spindle", False),
         sleep_qc=d.get("sleep_qc"),
+        reclass_gate_applied=d.get("reclass_gate_applied"),
         psd_status=d.get("psd_status") or {},
         drink_mask=d.get("drink_mask"),
     )
@@ -254,6 +261,13 @@ class Manifest:
     def set_notes(self, animal_id: str, notes: str) -> None:
         """Set free-text notes for an animal."""
         self._entries[animal_id].notes = notes
+        self.save()
+
+    def set_reclass_gates(self, gates: dict[str, bool]) -> None:
+        """Record per-animal EMG-gate results from a reclassification run."""
+        for animal_id, applied in gates.items():
+            if animal_id in self._entries:
+                self._entries[animal_id].reclass_gate_applied = applied
         self.save()
 
     def __iter__(self) -> Iterator[ManifestEntry]:
