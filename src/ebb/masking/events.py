@@ -120,6 +120,57 @@ def get_offset(mask_path: str | Path, offset_path: str | Path) -> float:
     return float(matches.iloc[0])
 
 
+def swd_intervals(path: str | Path, label: str = "DEL_ts") -> npt.NDArray[np.float64]:
+    """Read the SWD events of a .mat file as an (N, 2) array of ``[start_s, stop_s]``.
+
+    Args:
+        path:
+            Path to a .mat file containing the SWDs.
+        label:
+            The key under which the timestamp matrix is stored. Defaults to
+            'DEL_ts'. If `label` is not present, the first non-meta key in the
+            file is used.
+
+    Returns:
+        Seconds from recording start; shape (0, 2) when the file has no events.
+
+    Raises:
+        ValueError: if the stored array is not 1-D/2-D with at least 2 columns.
+    """
+    path = Path(path)
+
+    # Explicitly manage the file resource
+    with path.open("rb") as f:
+        data = loadmat(f, squeeze_me=True, struct_as_record=False)
+
+    # pick key
+    keys = [k for k in data if not k.startswith("__")]
+    key = label if label in keys else keys[0]
+
+    swds = np.asarray(data[key])
+
+    # --- handle completely empty arrays: no SWDs at all ---
+    if swds.size == 0:
+        return np.empty((0, 2), dtype=np.float64)
+
+    # --- normalize shape to (N, 2) of [start_s, stop_s] ---
+    if swds.ndim == 1:
+        # squeeze_me collapses a single-event (1, K) row to (K,); restore
+        # the row dimension so the 2D branch below can handle it uniformly.
+        swds = swds[np.newaxis, :]
+
+    if swds.ndim == 2:
+        # Note: a (0, 2) "no events" array hits the `swds.size == 0` guard
+        # above, so reaching here with shape[1] < 2 means malformed data.
+        if swds.shape[1] >= 2:
+            return np.asarray(swds[:, 0:2], dtype=np.float64)
+        raise ValueError(
+            f"2D swd array has shape {swds.shape} but needs at least 2 columns "
+            "for [start, stop]."
+        )
+    raise ValueError(f"swds has ndim={swds.ndim}, expected 1D or 2D in {path}")
+
+
 def swd(
     path: str | Path,
     n_samples: int,
@@ -147,43 +198,8 @@ def swd(
     Returns:
         A 1-D boolean array where SWD events (plus padding) are False.
     """
+    swds = swd_intervals(path, label)
 
-    path = Path(path)
-
-    # Explicitly manage the file resource
-    with path.open("rb") as f:
-        data = loadmat(f, squeeze_me=True, struct_as_record=False)
-
-    # pick key
-    keys = [k for k in data if not k.startswith("__")]
-    key = label if label in keys else keys[0]
-
-    swds = np.asarray(data[key])
-
-    # --- handle completely empty arrays: no SWDs at all ---
-    if swds.size == 0:
-        return np.ones(n_samples, dtype=bool)
-
-    # --- normalize shape to (N, 2) of [start_s, stop_s] ---
-    if swds.ndim == 1:
-        # squeeze_me collapses a single-event (1, K) row to (K,); restore
-        # the row dimension so the 2D branch below can handle it uniformly.
-        swds = swds[np.newaxis, :]
-
-    if swds.ndim == 2:
-        # Note: a (0, 2) "no events" array hits the `swds.size == 0` guard
-        # above, so reaching here with shape[1] < 2 means malformed data.
-        if swds.shape[1] >= 2:
-            swds = swds[:, 0:2]
-        else:
-            raise ValueError(
-                f"2D swd array has shape {swds.shape} but needs at least 2 columns "
-                "for [start, stop]."
-            )
-    else:
-        raise ValueError(f"swds has ndim={swds.ndim}, expected 1D or 2D in {path}")
-
-    # now swds is (N, 2) or (0, 2)
     if swds.shape[0] == 0:
         # no intervals -> all True
         return np.ones(n_samples, dtype=bool)

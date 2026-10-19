@@ -37,6 +37,8 @@ RECLASS_COLUMN = "reclass_state"
 # swd_reclassification where that is non-blank. Not part of STATE_COLUMNS, which is
 # the *input* to reclassification (reading final_state there would break re-runs).
 FINAL_COLUMN = "final_state"
+# Written by the optional SWD review: blank except SWD epochs and epochs the user edited.
+SWD_COLUMN = "swd_reclassification"
 # What analysis (PSDs, masks, sleep metrics, exports) reads. Forced to final_state so
 # every project goes through the same path; the original states stay available via
 # STATE_COLUMNS for the "original" comparison views only.

@@ -59,6 +59,9 @@ class ManifestEntry:
     # ``reclass_state`` was written to the spindle CSV (None = not run yet)
     reclass_gate_applied: bool | None = None
 
+    # SWD review (optional, project-level): True once the user saved a review for this animal
+    swd_reviewed: bool = False
+
     # PSD review — keyed by psd run name (e.g. "default", "light_phase")
     psd_status: dict = field(
         default_factory=dict
@@ -112,6 +115,7 @@ def _entry_to_dict(entry: ManifestEntry) -> dict:
         "has_spindle": entry.has_spindle,
         "sleep_qc": entry.sleep_qc,
         "reclass_gate_applied": entry.reclass_gate_applied,
+        "swd_reviewed": entry.swd_reviewed,
         "psd_status": entry.psd_status,
         "drink_mask": entry.drink_mask,
     }
@@ -146,6 +150,7 @@ def _entry_from_dict(animal_id: str, d: dict, combo: str) -> ManifestEntry:
         has_spindle=d.get("has_spindle", False),
         sleep_qc=d.get("sleep_qc"),
         reclass_gate_applied=d.get("reclass_gate_applied"),
+        swd_reviewed=d.get("swd_reviewed", False),
         psd_status=d.get("psd_status") or {},
         drink_mask=d.get("drink_mask"),
     )
@@ -163,6 +168,7 @@ class Manifest:
         self.project_root = Path(project_root)
         self.path = self.project_root / "manifest.json"
         self.combo = DEFAULT_COMBO
+        self.swd_review_enabled = False  # project opt-in for the SWD review page
         self._entries: dict[str, ManifestEntry] = {}
 
     # ------------------------------------------------------------------
@@ -180,6 +186,7 @@ class Manifest:
         # Pre-single-combo files are a bare {animal_id: {...}} dict.
         if "animals" in raw:
             m.combo = raw.get("combo", DEFAULT_COMBO)
+            m.swd_review_enabled = bool(raw.get("swd_review_enabled", False))
             raw = raw["animals"]
         for animal_id, d in raw.items():
             m._entries[animal_id] = _entry_from_dict(animal_id, d, m.combo)
@@ -242,6 +249,7 @@ class Manifest:
         tmp = self.path.with_suffix(".json.tmp")
         data = {
             "combo": self.combo,
+            "swd_review_enabled": self.swd_review_enabled,
             "animals": {aid: _entry_to_dict(e) for aid, e in self._entries.items()},
         }
         with tmp.open("w", encoding="utf-8") as f:
@@ -268,6 +276,16 @@ class Manifest:
         for animal_id, applied in gates.items():
             if animal_id in self._entries:
                 self._entries[animal_id].reclass_gate_applied = applied
+        self.save()
+
+    def set_swd_review_enabled(self, enabled: bool) -> None:
+        """Turn the optional SWD review on or off for the whole project."""
+        self.swd_review_enabled = enabled
+        self.save()
+
+    def set_swd_reviewed(self, animal_id: str, reviewed: bool = True) -> None:
+        """Record that a saved SWD review exists for an animal."""
+        self._entries[animal_id].swd_reviewed = reviewed
         self.save()
 
     def __iter__(self) -> Iterator[ManifestEntry]:
