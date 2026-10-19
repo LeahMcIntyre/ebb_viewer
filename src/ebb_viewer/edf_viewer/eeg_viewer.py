@@ -256,12 +256,12 @@ class EegMainWindow(QtWidgets.QMainWindow):
                 recording.csv_path, int(recording.fs)
             )
             self.trace_view.set_state_masks(self.state_set)
-            self.trace_view.state_legend.set_reclass_enabled(
+            self.trace_view.reclass_pill.set_available(
                 True,
                 "R: show NREM reclassification (gap fill, plus an EMG gate for files "
                 "where it fragments NREM). Display only; nothing is written.",
             )
-            self.trace_view.state_legend.reclass_toggled.connect(self.on_toggle_reclass)
+            self.trace_view.reclass_pill.toggled.connect(self.on_toggle_reclass)
             self.state_df = _load_state_df(recording.csv_path)
 
         # actions/toolbars/menus
@@ -402,7 +402,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         The reclassified set is built on first use (the EMG gate reads the EMG
         channel from the EDF) and then cached.
         """
-        legend = self.trace_view.state_legend
+        pill = self.trace_view.reclass_pill
         if checked and self._state_set_reclass is None:
             QtWidgets.QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             try:
@@ -411,14 +411,14 @@ class EegMainWindow(QtWidgets.QMainWindow):
                 )
             except Exception as e:
                 QtWidgets.QApplication.restoreOverrideCursor()
-                legend.set_reclass_checked(False)
+                pill.set_checked(False)
                 QtWidgets.QMessageBox.critical(
                     self, "Error reclassifying NREM", f"Could not reclassify NREM:\n{e}"
                 )
                 return
             QtWidgets.QApplication.restoreOverrideCursor()
             gate = "EMG gate applied" if result.gate_applied else "EMG gate not needed"
-            legend.set_reclass_enabled(
+            pill.set_available(
                 True,
                 f"R: NREM reclassification shown ({gate}). Display only; nothing is written.",
             )
