@@ -3,7 +3,8 @@
 Inputs: ``spindle_outputs/<combo>/*.csv`` (after Reclassify) and the SWD interval
 ``.mat`` files in ``swd/`` (``find_swd_file`` shows the accepted names).
 Outputs: ``swd_reclassification`` and an updated ``final_state`` in each reviewed CSV,
-and ``swd_reviewed`` per animal in the manifest. Off by default: the checkbox is a
+and the number of reviewed SWD epochs per animal in the manifest. Only reviewed SWD epochs get a
+value, so a partly finished review shows as in progress and resumes where it stopped. Off by default: the checkbox is a
 project-level opt-in (``Manifest.swd_review_enabled``).
 """
 
@@ -24,17 +25,28 @@ from PyQt6.QtWidgets import (
 )
 
 from ebb.core.naming import parse_animal_id
-from ebb.io.spindle_csv import RECLASS_COLUMN, has_column
-from ebb.process.swd_review import swd_flags_for_file
+from ebb.io.spindle_csv import RECLASS_COLUMN, SWD_COLUMN, has_column, read_state_column
+from ebb.process.swd_review import reviewed_epochs, swd_flags_for_file
 from ebb_viewer.edf_viewer.swd_review import launch_swd_review
 from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
 
-_COLUMNS = ("Animal", "SWD file", "SWD epochs", "Reviewed", "")
+_COLUMNS = ("Animal", "SWD file", "SWD epochs", "Review", "")
 
 
 # Same rule PSD compute uses to pair SWD files with animals (psd_compute.match_paths): an
 # optional "<letters/digits>ts_" prefix, then the animal ID up to the next "_".
 _SWD_ANIMAL = re.compile(r"^(?:[A-Za-z0-9]*ts_)?([^_]+)")
+
+
+def _progress_text(n_reviewed: int, n_swd: int) -> str:
+    """"—" (not started), "In progress (k of N)" or "✓ N of N"."""
+    if n_swd == 0:
+        return "no SWD epochs"
+    if n_reviewed == 0:
+        return "—"
+    if n_reviewed >= n_swd:
+        return f"✓ {n_swd} of {n_swd}"
+    return f"In progress ({n_reviewed} of {n_swd})"
 
 
 def find_swd_file(project_root: Path, animal_id: str) -> Path | None:
@@ -134,17 +146,25 @@ class SwdReviewPage(QWidget):
             mat = find_swd_file(self.project_root, animal)
             reclassed = has_column(csv_path, RECLASS_COLUMN)
             n_swd = ""
+            progress = "—"
+            entry = manifest.get(animal)
             if mat is not None and reclassed:
                 try:
-                    n_swd = str(int(swd_flags_for_file(csv_path, mat)[1].sum()))
+                    flags = swd_flags_for_file(csv_path, mat)[1]
+                    n_swd = str(int(flags.sum()))
+                    done = (
+                        len(reviewed_epochs(read_state_column(csv_path, SWD_COLUMN), flags))
+                        if has_column(csv_path, SWD_COLUMN)
+                        else 0
+                    )
+                    progress = _progress_text(done, int(flags.sum()))
                 except (ValueError, OSError) as e:
                     n_swd = f"error: {e}"
-            entry = manifest.get(animal)
             cells = (
                 animal,
                 mat.name if mat else "— no SWD file",
                 n_swd if reclassed else "run Reclassify",
-                "✓" if entry and entry.swd_reviewed else "—",
+                progress,
             )
             for col, text in enumerate(cells):
                 self.table.setItem(row, col, QTableWidgetItem(text))
@@ -185,7 +205,7 @@ class SwdReviewPage(QWidget):
         self._windows.append(win)
         win.destroyed.connect(lambda _=None, w=win: self._windows.remove(w) if w in self._windows else None)
 
-    def _on_saved(self, animal: str) -> None:
-        Manifest.load(self.project_root).set_swd_reviewed(animal)
+    def _on_saved(self, animal: str, reviewed: int, total: int) -> None:
+        Manifest.load(self.project_root).set_swd_progress(animal, reviewed, total)
         self.manifest_changed.emit()
         self._refresh()

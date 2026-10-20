@@ -37,6 +37,7 @@ from ebb_viewer.pipeline.manifest import (
     psd_path,
     spindle_edf_dir,
     spindle_output_dir,
+    swd_review_status,
 )
 from ebb_viewer.pipeline.naming import drink_mask_rel
 from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
@@ -212,13 +213,17 @@ def compute_pipeline_status(
         s_swd = StepStatus("blocked", "Requires Reclassify (step 4)")
     else:
         with_swd = [e for e in manifest if e.has_spindle and find_swd_file(root, e.animal_id)]
-        n_reviewed = sum(1 for e in with_swd if e.swd_reviewed)
+        n_done = sum(1 for e in with_swd if swd_review_status(e) == "done")
+        n_started = sum(1 for e in with_swd if swd_review_status(e) == "in_progress")
         if not with_swd:
             s_swd = StepStatus("attention", "No SWD files found in swd/")
-        elif n_reviewed == len(with_swd):
-            s_swd = StepStatus("done", f"{n_reviewed} animal{'s' if n_reviewed != 1 else ''} reviewed")
-        elif n_reviewed > 0:
-            s_swd = StepStatus("attention", f"{n_reviewed} of {len(with_swd)} animals reviewed")
+        elif n_done == len(with_swd):
+            s_swd = StepStatus("done", f"{n_done} animal{'s' if n_done != 1 else ''} reviewed")
+        elif n_done or n_started:
+            parts = [f"{n_done} of {len(with_swd)} animals reviewed"]
+            if n_started:
+                parts.append(f"{n_started} in progress")
+            s_swd = StepStatus("attention", ", ".join(parts))
         else:
             s_swd = StepStatus("active", "Ready — review SWD epochs")
 

@@ -345,11 +345,15 @@ def test_swd_review_progress_states(tmp_path):
     m.swd_review_enabled = True
     assert compute_pipeline_status(tmp_path, m)[4].kind == "active"
 
-    m.get("A001").swd_reviewed = True
+    m.get("A001").swd_reviewed, m.get("A001").swd_total = 3, 3
     s = compute_pipeline_status(tmp_path, m)[4]
     assert s.kind == "attention" and "1 of 2" in s.description
 
-    m.get("A002").swd_reviewed = True
+    m.get("A002").swd_reviewed, m.get("A002").swd_total = 1, 3  # started, not finished
+    s = compute_pipeline_status(tmp_path, m)[4]
+    assert s.kind == "attention" and "1 in progress" in s.description
+
+    m.get("A002").swd_reviewed = 3
     assert compute_pipeline_status(tmp_path, m)[4].kind == "done"
 
 
@@ -364,5 +368,5 @@ def test_swd_review_only_counts_animals_that_have_swd_files(tmp_path):
     animals = {"A001": dict(reclass_gate_applied=False), "A002": dict(reclass_gate_applied=False)}
     m = _reclassified_project(tmp_path, animals, swd_for=["A001"])  # A002 has none
     m.swd_review_enabled = True
-    m.get("A001").swd_reviewed = True
+    m.get("A001").swd_reviewed, m.get("A001").swd_total = 2, 2
     assert compute_pipeline_status(tmp_path, m)[4].kind == "done"

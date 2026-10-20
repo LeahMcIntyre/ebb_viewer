@@ -601,12 +601,23 @@ def test_reclass_gate_roundtrip(tmp_path):
 
 def test_swd_review_fields_roundtrip(tmp_path):
     m = _make_manifest(tmp_path, {"AM001": dict(), "AM002": dict()})
-    assert m.swd_review_enabled is False and m.get("AM001").swd_reviewed is False
+    assert m.swd_review_enabled is False and m.get("AM001").swd_reviewed == 0
 
     m.set_swd_review_enabled(True)
-    m.set_swd_reviewed("AM001")
+    m.set_swd_progress("AM001", reviewed=3, total=5)
     m2 = _reload(m)
 
     assert m2.swd_review_enabled is True
-    assert m2.get("AM001").swd_reviewed is True
-    assert m2.get("AM002").swd_reviewed is False
+    assert (m2.get("AM001").swd_reviewed, m2.get("AM001").swd_total) == (3, 5)
+    assert (m2.get("AM002").swd_reviewed, m2.get("AM002").swd_total) == (0, 0)
+
+
+def test_swd_review_status_from_saved_progress():
+    from ebb_viewer.pipeline.manifest import swd_review_status
+
+    e = ManifestEntry("A", "standard/A.edf")
+    assert swd_review_status(e) == "not_started"
+    e.swd_reviewed, e.swd_total = 2, 5
+    assert swd_review_status(e) == "in_progress"
+    e.swd_reviewed = 5
+    assert swd_review_status(e) == "done"

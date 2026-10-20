@@ -70,7 +70,7 @@ def test_table_shows_swd_epoch_count_and_enables_review(qapp, tmp_path):
     cells = [page.table.item(0, c).text() for c in range(4)]
     assert cells[0] == "A1" and cells[1] == "A1_swd.mat"
     assert cells[2] == "2"  # intervals at 1-2 s and 5-6 s -> epochs 0 and 1
-    assert cells[3] == "—"
+    assert cells[3] == "—"  # not started
     assert page.table.cellWidget(0, 4).isEnabled()
 
 
@@ -102,9 +102,27 @@ def test_open_review_launches_window_and_saving_marks_manifest(qapp, tmp_path):
     assert args[1].name == "A1_x.csv" and args[2].name == "A1_swd.mat"
     fake_win.show.assert_called_once()
 
-    kwargs["on_saved"]("A1")  # what the window calls after Save
-    assert Manifest.load(root).get("A1").swd_reviewed is True
-    assert emitted and page.table.item(0, 3).text() == "✓"
+    kwargs["on_saved"]("A1", 1, 2)  # window saved after reviewing 1 of 2 SWD epochs
+    entry = Manifest.load(root).get("A1")
+    assert (entry.swd_reviewed, entry.swd_total) == (1, 2)
+    assert emitted
+
+
+def test_progress_column_comes_from_the_swd_reclassification_column(qapp, tmp_path):
+    root = _project(tmp_path)
+    Manifest.load(root).set_swd_review_enabled(True)
+    csv_path = root / "spindle_outputs" / "LFC_RSC" / "A1_x.csv"
+    page = SwdReviewPage(project_root=root)
+    assert page.table.item(0, 3).text() == "—"  # not started
+
+    # SWD epochs are 0 and 1; only epoch 0 reviewed
+    csv_path.write_text("state,reclass_state,swd_reclassification\nw,w,w\nn,n,\nn,n,\nw,w,\n")
+    page._refresh()
+    assert page.table.item(0, 3).text() == "In progress (1 of 2)"
+
+    csv_path.write_text("state,reclass_state,swd_reclassification\nw,w,w\nn,n,n\nn,n,\nw,w,\n")
+    page._refresh()
+    assert page.table.item(0, 3).text() == "✓ 2 of 2"
 
 
 def test_open_review_error_is_reported_not_raised(qapp, tmp_path):

@@ -23,6 +23,7 @@ from ebb.process.swd_review import (
     EPOCH_SEC,
     existing_edits,
     merge_final_state,
+    reviewed_epochs,
     save_swd_review,
     swd_epoch_flags,
 )
@@ -71,7 +72,7 @@ class SwdReviewWindow(QtWidgets.QMainWindow):
         csv_path: Path,
         mat_path: Path,
         animal_id: str = "",
-        on_saved: Callable[[str], None] | None = None,
+        on_saved: Callable[[str, int, int], None] | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -88,10 +89,18 @@ class SwdReviewWindow(QtWidgets.QMainWindow):
         self.flags = swd_epoch_flags(intervals, len(self.reclass))
         self.swd_epochs = [int(i) for i in np.flatnonzero(self.flags)]
         self.edits: dict[int, str] = {}
+        # SWD epochs already reviewed: those with a value in the saved swd_reclassification
+        # column. An SWD epoch counts as reviewed once you edit it, move on from it, or press
+        # Save while it is selected; the epoch the window opens on does not count until then.
+        self.visited: set[int] = set()
         if has_column(self.csv_path, SWD_COLUMN):
-            self.edits = existing_edits(self.reclass, read_state_column(self.csv_path, SWD_COLUMN))
+            swd_col = read_state_column(self.csv_path, SWD_COLUMN)
+            self.edits = existing_edits(self.reclass, swd_col)
+            self.visited = reviewed_epochs(swd_col, self.flags)
         self.dirty = False
-        self._sel = self.swd_epochs[0] if self.swd_epochs else 0
+        # A reopened review resumes at the first SWD epoch not yet reviewed.
+        unvisited = [e for e in self.swd_epochs if e not in self.visited]
+        self._sel = (unvisited or self.swd_epochs or [0])[0]
 
         self.setWindowTitle(f"SWD review — {animal_id}" if animal_id else "SWD review")
         self._build_ui()
@@ -109,7 +118,7 @@ class SwdReviewWindow(QtWidgets.QMainWindow):
         )
         self._selected_mask = Mask(name="selected", color=_SELECTED_COLOR)
         self._refresh_state_bar()
-        self.select_epoch(self._sel)
+        self.select_epoch(self._sel, user=False)
 
     # ---------------- UI ----------------
     def _build_ui(self) -> None:
@@ -124,8 +133,9 @@ class SwdReviewWindow(QtWidgets.QMainWindow):
         self.btn_next = QtWidgets.QPushButton("Next SWD epoch →")
         self.btn_save = QtWidgets.QPushButton("Save")
         self.btn_save.setToolTip(
-            "Writes swd_reclassification and final_state. SWD epochs you did not change "
-            "keep their current state."
+            "Writes swd_reclassification and final_state for the SWD epochs you have reviewed "
+            "(edited, moved on from, or saved on) and any epoch you edited. Epochs you have "
+            "not reviewed stay blank."
         )
         for b in (self.btn_prev, self.btn_next, self.btn_save):
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)  # keep key events on the trace
@@ -185,12 +195,25 @@ class SwdReviewWindow(QtWidgets.QMainWindow):
             parts.append(f"{state} (was {_STATE_NAMES.get(self.reclass[i], self.reclass[i])})")
         else:
             parts.append(state)
+        parts.append(f"{len(self.visited)}/{len(self.swd_epochs)} SWD epochs reviewed")
         parts.append(f"{len(self.edits)} edited" + (" · unsaved" if self.dirty else ""))
         self.lbl_status.setText("   ·   ".join(parts))
 
     # ---------------- actions ----------------
-    def select_epoch(self, epoch: int) -> None:
-        """Select ``epoch``, center the trace on it and highlight it."""
+    def _mark_current_reviewed(self) -> None:
+        """Count the selected epoch as reviewed if it is an SWD epoch (unsaved progress)."""
+        if self.flags[self._sel] and self._sel not in self.visited:
+            self.visited.add(self._sel)
+            self.dirty = True
+
+    def select_epoch(self, epoch: int, user: bool = True) -> None:
+        """Select ``epoch``, center the trace on it and highlight it.
+
+        Moving on from an SWD epoch marks it reviewed. The automatic selection made when the
+        window opens (``user=False``) leaves nothing behind to mark.
+        """
+        if user:
+            self._mark_current_reviewed()
         epoch = int(np.clip(epoch, 0, max(self.n_epochs - 1, 0)))
         self._sel = epoch
         s0 = epoch * self._samples_per_epoch
@@ -217,6 +240,7 @@ class SwdReviewWindow(QtWidgets.QMainWindow):
     def set_state(self, state: str) -> None:
         """Set the selected epoch to ``state`` ('w'/'n'/'r'); equal to the default is a no-op edit."""
         i = self._sel
+        self._mark_current_reviewed()  # editing an SWD epoch means you reviewed it
         if state == self.reclass[i]:
             changed = self.edits.pop(i, None) is not None
         else:
@@ -233,15 +257,16 @@ class SwdReviewWindow(QtWidgets.QMainWindow):
 
     def save(self) -> bool:
         """Write the review to the CSV. Returns True on success."""
+        self._mark_current_reviewed()  # pressing Save on an epoch means you are done with it
         try:
-            save_swd_review(self.csv_path, self.mat_path, self.edits)
+            save_swd_review(self.csv_path, self.mat_path, self.edits, self.visited)
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Save failed", str(e))
             return False
         self.dirty = False
         self._update_status()
         if self._on_saved is not None:
-            self._on_saved(self.animal_id)
+            self._on_saved(self.animal_id, len(self.visited), len(self.swd_epochs))
         return True
 
     def preview_final_state(self) -> list[str]:
@@ -249,7 +274,7 @@ class SwdReviewWindow(QtWidgets.QMainWindow):
         from ebb.process.swd_review import build_swd_column
 
         return merge_final_state(
-            self.reclass, build_swd_column(self.reclass, self.flags, self.edits)
+            self.reclass, build_swd_column(self.reclass, self.visited, self.edits)
         )
 
     def closeEvent(self, ev: QtGui.QCloseEvent) -> None:
@@ -275,7 +300,7 @@ def launch_swd_review(
     csv_path: Path,
     mat_path: Path,
     animal_id: str = "",
-    on_saved: Callable[[str], None] | None = None,
+    on_saved: Callable[[str, int, int], None] | None = None,
 ) -> SwdReviewWindow:
     """Load the EDF (same full read as the normal viewer) and return an unshown window."""
     from ebb_viewer.edf_viewer.eeg_viewer import _load_recording

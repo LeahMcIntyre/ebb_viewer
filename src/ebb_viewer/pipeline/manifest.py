@@ -59,8 +59,11 @@ class ManifestEntry:
     # ``reclass_state`` was written to the spindle CSV (None = not run yet)
     reclass_gate_applied: bool | None = None
 
-    # SWD review (optional, project-level): True once the user saved a review for this animal
-    swd_reviewed: bool = False
+    # SWD review (optional, project-level): SWD epochs reviewed as of the last Save and how many
+    # SWD epochs the animal has (a cache for the home page; the CSV's swd_reclassification
+    # column is the source of truth). 0 < reviewed < total means "in progress".
+    swd_reviewed: int = 0
+    swd_total: int = 0
 
     # PSD review — keyed by psd run name (e.g. "default", "light_phase")
     psd_status: dict = field(
@@ -74,6 +77,15 @@ class ManifestEntry:
 # ---------------------------------------------------------------------------
 # Derived path helpers (not stored; computed on demand)
 # ---------------------------------------------------------------------------
+
+
+def swd_review_status(entry: ManifestEntry) -> str:
+    """``"not_started"`` | ``"in_progress"`` | ``"done"`` from the saved SWD review progress.
+
+    """
+    if entry.swd_reviewed == 0:
+        return "not_started"
+    return "done" if entry.swd_reviewed >= entry.swd_total else "in_progress"
 
 
 def spindle_edf_dir(channels: str, project_root: Path) -> Path:
@@ -116,6 +128,7 @@ def _entry_to_dict(entry: ManifestEntry) -> dict:
         "sleep_qc": entry.sleep_qc,
         "reclass_gate_applied": entry.reclass_gate_applied,
         "swd_reviewed": entry.swd_reviewed,
+        "swd_total": entry.swd_total,
         "psd_status": entry.psd_status,
         "drink_mask": entry.drink_mask,
     }
@@ -150,7 +163,8 @@ def _entry_from_dict(animal_id: str, d: dict, combo: str) -> ManifestEntry:
         has_spindle=d.get("has_spindle", False),
         sleep_qc=d.get("sleep_qc"),
         reclass_gate_applied=d.get("reclass_gate_applied"),
-        swd_reviewed=d.get("swd_reviewed", False),
+        swd_reviewed=int(d.get("swd_reviewed", 0)),
+        swd_total=int(d.get("swd_total", 0)),
         psd_status=d.get("psd_status") or {},
         drink_mask=d.get("drink_mask"),
     )
@@ -283,9 +297,11 @@ class Manifest:
         self.swd_review_enabled = enabled
         self.save()
 
-    def set_swd_reviewed(self, animal_id: str, reviewed: bool = True) -> None:
-        """Record that a saved SWD review exists for an animal."""
-        self._entries[animal_id].swd_reviewed = reviewed
+    def set_swd_progress(self, animal_id: str, reviewed: int, total: int) -> None:
+        """Record how many of an animal's ``total`` SWD epochs its saved review covers."""
+        entry = self._entries[animal_id]
+        entry.swd_reviewed = reviewed
+        entry.swd_total = total
         self.save()
 
     def __iter__(self) -> Iterator[ManifestEntry]:

@@ -1,8 +1,9 @@
 """SWD epoch review: which 4 s epochs overlap an SWD, and the ``swd_reclassification`` column.
 
-``swd_reclassification`` is blank except for (a) every epoch that overlaps an SWD
-(the user's chosen state, or the current ``reclass_state`` if left alone) and
-(b) any epoch the user edited, including non-SWD neighbors. ``final_state`` is then
+``swd_reclassification`` is blank except for (a) SWD epochs the user has *reviewed*
+(the chosen state, or the current ``reclass_state`` if left alone) and (b) any epoch the
+user edited, including non-SWD neighbors. SWD epochs not yet reviewed stay blank, so the
+column doubles as the record of review progress. ``final_state`` is then
 ``swd_reclassification`` where non-blank, else ``reclass_state``, so every
 downstream step picks the review up without knowing it happened.
 """
@@ -10,7 +11,7 @@ downstream step picks the review up without knowing it happened.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -50,25 +51,28 @@ def swd_epoch_flags(
 
 def build_swd_column(
     reclass_state: Sequence[str],
-    flags: npt.ArrayLike,
+    reviewed: Iterable[int],
     edits: Mapping[int, str],
 ) -> list[str]:
     """The ``swd_reclassification`` column (see module docstring).
 
-    An edit on a non-SWD epoch that equals ``reclass_state`` is a no-op and
-    leaves the row blank.
+    ``reviewed`` are the SWD epochs the user has gone through; each gets its current
+    state unless edited. An edit on an epoch that is not reviewed and equals
+    ``reclass_state`` is a no-op and leaves the row blank.
     """
-    flags = np.asarray(flags, dtype=bool)
     n = len(reclass_state)
-    if len(flags) != n:
-        raise ValueError(f"{len(flags)} SWD flags for {n} epochs")
-    out = [reclass_state[i] if flags[i] else "" for i in range(n)]
+    reviewed = set(reviewed)
+    out = [""] * n
+    for i in reviewed:
+        if not 0 <= i < n:
+            raise ValueError(f"reviewed epoch {i} but the file has {n} epochs")
+        out[i] = reclass_state[i]
     for i, state in edits.items():
         if not 0 <= i < n:
             raise ValueError(f"edit for epoch {i} but the file has {n} epochs")
         if state not in VALID_STATES:
             raise ValueError(f"invalid state {state!r} for epoch {i}; expected one of w/n/r")
-        if flags[i] or state != reclass_state[i]:
+        if i in reviewed or state != reclass_state[i]:
             out[i] = state
     return out
 
@@ -87,6 +91,14 @@ def existing_edits(reclass_state: Sequence[str], swd_column: Sequence[str]) -> d
         for i, (r, s) in enumerate(zip(reclass_state, swd_column, strict=True))
         if s != "" and s != r
     }
+
+
+def reviewed_epochs(swd_column: Sequence[str], flags: npt.ArrayLike) -> set[int]:
+    """SWD epochs already reviewed: SWD epochs with a non-blank ``swd_reclassification``."""
+    flags = np.asarray(flags, dtype=bool)
+    if len(flags) != len(swd_column):
+        raise ValueError(f"{len(flags)} SWD flags for {len(swd_column)} epochs")
+    return {int(i) for i in np.flatnonzero(flags) if swd_column[i] != ""}
 
 
 def refresh_swd_after_reclass(
@@ -117,17 +129,21 @@ def save_swd_review(
     csv_path: str | Path,
     mat_path: str | Path,
     edits: Mapping[int, str],
+    reviewed: Iterable[int],
     label: str = "DEL_ts",
-) -> tuple[int, int]:
+) -> tuple[int, int, int]:
     """Write ``swd_reclassification`` and the recomputed ``final_state`` into the CSV.
 
-    Returns ``(n_swd_epochs, n_edited)``. The first write backs up the original
-    CSV to ``_original/`` (``write_columns``).
+    Only SWD epochs in ``reviewed`` (and epochs in ``edits``) get a value. Returns
+    ``(n_swd_epochs, n_reviewed_swd_epochs, n_edited)``. The first write backs up the
+    original CSV to ``_original/`` (``write_columns``).
     """
     reclass, flags = swd_flags_for_file(csv_path, mat_path, label)
-    column = build_swd_column(reclass, flags, edits)
+    swd_set = {int(i) for i in np.flatnonzero(flags)}
+    reviewed = set(reviewed) & swd_set
+    column = build_swd_column(reclass, reviewed, edits)
     write_columns(
         csv_path,
         {SWD_COLUMN: column, FINAL_COLUMN: merge_final_state(reclass, column)},
     )
-    return int(flags.sum()), len(existing_edits(reclass, column))
+    return len(swd_set), len(reviewed), len(existing_edits(reclass, column))
