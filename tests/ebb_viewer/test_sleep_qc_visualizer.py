@@ -488,7 +488,11 @@ def test_flagged_animals_uses_manifest_thresholds(qapp, tmp_path: Path):
     page._data = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), _flag_table())
 
     assert page._flagged_animals() == {"AM002": ["nrem_short"]}
-    assert "Short" in page._flag_tag_html("AM002")
+    assert "[flagged: short bouts]" in page._flag_tag_html("AM002")
+    assert page._flag_tooltip("AM002") == (
+        "Short (1-2 epoch) NREM bouts per file: 500.0 (above 400)"
+    )
+    assert page._flag_tooltip("AM001") == ""
     assert page._flag_tag_html("AM001") == ""
 
     page._manifest.flag_thresholds["nrem_short"] = 600
@@ -505,3 +509,16 @@ def test_overview_shows_flag_table_with_statuses(qapp, tmp_path: Path):
     assert page._overview.flagged_animals() == {"AM002": ["nrem_short"]}
     page._on_overview_animal_selected("AM002")
     assert page._overview.selected == "AM002"
+
+
+def test_flag_tag_names_at_most_two_metrics_then_counts_the_rest(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": None})
+    page = _make_page(qapp, tmp_path)
+    table = _flag_table().loc[["AM001"]].astype(float)
+    table.loc["AM001", ["nrem_short", "pct_nrem", "pct_wake", "pct_rem"]] = [500, 20, 80, 12]
+    page._data = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), table)
+
+    tag = page._flag_tag_html("AM001")
+
+    assert "[flagged: short bouts, REM +2]" in tag  # METRICS order, capped at two names
+    assert page._flag_tooltip("AM001").count("\n") == 3  # all four listed in the tooltip

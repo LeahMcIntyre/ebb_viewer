@@ -877,13 +877,33 @@ class SleepQCGridPage(QWidget):
                 out[str(animal)] = keys
         return out
 
+    _TAG_MAX_NAMES = 2
+
     def _flag_tag_html(self, animal: str) -> str:
-        """Legend tag listing the metrics that put ``animal`` past a threshold ('' if none)."""
+        """Short red legend tag for the metrics past a threshold ('' if none).
+
+        Names at most ``_TAG_MAX_NAMES`` metrics, then ``+N``; ``_flag_tooltip`` has the detail.
+        """
         keys = self._flagged_animals().get(animal)
         if not keys:
             return ""
-        names = ", ".join(METRIC_BY_KEY[k].label for k in keys)
-        return f'<span style="color:#c0392b;font-size:9px;font-style:italic;">[past threshold: {names}]</span>'
+        names = [METRIC_BY_KEY[k].short for k in keys[: self._TAG_MAX_NAMES]]
+        extra = len(keys) - self._TAG_MAX_NAMES
+        text = ", ".join(names) + (f" +{extra}" if extra > 0 else "")
+        return f'<span style="color:#c0392b;font-size:9px;font-style:italic;">[flagged: {text}]</span>'
+
+    def _flag_tooltip(self, animal: str) -> str:
+        """One line per metric past a threshold: full name, value and threshold."""
+        table = self._get_flag_table()
+        keys = self._flagged_animals().get(animal, [])
+        if table is None or not keys:
+            return ""
+        thresholds = self._manifest.flag_thresholds
+        return "\n".join(
+            f"{METRIC_BY_KEY[k].label}: {table.loc[animal, k]:.1f} "
+            f"({METRIC_BY_KEY[k].direction} {thresholds[k]:g})"
+            for k in keys
+        )
 
     @staticmethod
     def _plot_series(
@@ -1149,6 +1169,7 @@ class SleepQCGridPage(QWidget):
             if flag_tag:
                 flag_lbl = QLabel(flag_tag)
                 flag_lbl.setTextFormat(Qt.TextFormat.RichText)
+                flag_lbl.setToolTip(self._flag_tooltip(mid))
                 row_l.addWidget(flag_lbl)
             gate_tag = self._gate_tag_html(mid)
             if gate_tag:
@@ -1203,6 +1224,7 @@ class SleepQCGridPage(QWidget):
             label_text += " " + gate_tag
         animal_label = QLabel(label_text)
         animal_label.setTextFormat(Qt.TextFormat.RichText)
+        animal_label.setToolTip(self._flag_tooltip(animal))
         row_l.addWidget(animal_label)
 
         btn_notes = QPushButton("📝")

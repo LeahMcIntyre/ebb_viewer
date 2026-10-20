@@ -39,15 +39,16 @@ class Metric:
     label: str
     direction: str | None = None  # ABOVE | BELOW | AT_LEAST; None = never flags
     default: float | None = None  # default threshold; None when direction is None
+    short: str = ""  # a few words for tight spaces (legend tags)
 
 
 METRICS: tuple[Metric, ...] = (
-    Metric("nrem_short", "Short (1-2 epoch) NREM bouts per file", ABOVE, 400),
-    Metric("dark_bouts_h", "NREM bouts per dark hour", ABOVE, 15),
-    Metric("pct_rem", "REM % (whole file)", ABOVE, 10),
-    Metric("pct_nrem", "NREM % (whole file)", BELOW, 30),
-    Metric("pct_wake", "Wake % (whole file)", ABOVE, 70),
-    Metric("max_bin_rem", f"Max REM % in a {BIN_HOURS}-hour bin", AT_LEAST, 35),
+    Metric("nrem_short", "Short (1-2 epoch) NREM bouts per file", ABOVE, 400, "short bouts"),
+    Metric("dark_bouts_h", "NREM bouts per dark hour", ABOVE, 15, "dark bouts"),
+    Metric("pct_rem", "REM % (whole file)", ABOVE, 10, "REM"),
+    Metric("pct_nrem", "NREM % (whole file)", BELOW, 30, "NREM"),
+    Metric("pct_wake", "Wake % (whole file)", ABOVE, 70, "wake"),
+    Metric("max_bin_rem", f"Max REM % in a {BIN_HOURS}-hour bin", AT_LEAST, 35, "REM bin"),
 )
 METRIC_BY_KEY = {m.key: m for m in METRICS}
 
