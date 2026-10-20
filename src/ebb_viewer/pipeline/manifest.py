@@ -306,15 +306,6 @@ class Manifest:
                 self._entries[animal_id].reclass_gate_applied = applied
         self.save()
 
-    def set_flag_thresholds(self, thresholds: dict[str, float]) -> None:
-        """Set Sleep QC flagging cutoffs for the project (metric key -> cutoff)."""
-        known = default_thresholds()
-        unknown = set(thresholds) - set(known)
-        if unknown:
-            raise ValueError(f"No threshold for metric(s) {sorted(unknown)}; known: {sorted(known)}")
-        self.flag_thresholds.update({k: float(v) for k, v in thresholds.items()})
-        self.save()
-
     def set_swd_review_enabled(self, enabled: bool) -> None:
         """Turn the optional SWD review on or off for the whole project."""
         self.swd_review_enabled = enabled

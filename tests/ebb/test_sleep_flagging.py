@@ -85,15 +85,19 @@ def test_past_threshold(direction, value, cutoff, expected):
 
 
 def test_flagged_metrics_defaults_and_overrides():
-    m = {"nrem_short": 500, "dark_bouts_h": 10, "pct_rem": 99, "pct_nrem": 25,
-         "pct_wake": 0, "max_bin_rem": 20}
-    assert sf.flagged_metrics(m) == ["nrem_short", "pct_nrem"]  # pct_rem has no threshold
+    m = {"nrem_short": 500, "dark_bouts_h": 10, "pct_rem": 8, "pct_nrem": 25,
+         "pct_wake": 60, "max_bin_rem": 20}
+    assert sf.flagged_metrics(m) == ["nrem_short", "pct_nrem"]
+    assert sf.flagged_metrics({**m, "pct_rem": 16, "pct_wake": 71}) == [
+        "nrem_short", "pct_rem", "pct_nrem", "pct_wake"
+    ]
     assert sf.flagged_metrics(m, {"nrem_short": 600}) == []  # missing keys never flag
 
 
-def test_default_thresholds_match_notebook():
+def test_default_thresholds():
     assert sf.default_thresholds() == {
-        "nrem_short": 400, "dark_bouts_h": 15, "pct_nrem": 30, "max_bin_rem": 35,
+        "nrem_short": 400, "dark_bouts_h": 15, "pct_rem": 10, "pct_nrem": 30,
+        "pct_wake": 70, "max_bin_rem": 35,
     }
 
 
@@ -136,3 +140,14 @@ def test_metrics_table_one_row_per_paired_animal(tmp_path, monkeypatch):
         table = sf.metrics_table(states, edfs)
     assert list(table.index) == ["A1"]
     assert list(table.columns) == [m.key for m in sf.METRICS]
+
+
+def test_metrics_table_uses_supplied_states(tmp_path, monkeypatch):
+    monkeypatch.setattr(sf, "read_edf_start_datetime", lambda p: datetime(2024, 1, 1, 8, 0, 0))
+    states, edfs = tmp_path / "out", tmp_path / "standard"
+    states.mkdir()
+    edfs.mkdir()
+    _write_csv(states / "A1_labels.csv", "nwnr", final=False)  # no final_state: would raise
+    (edfs / "A1_PROCESSED.edf").touch()
+    table = sf.metrics_table(states, edfs, {"A1": list("nnnn")})
+    assert table.loc["A1", "pct_nrem"] == 100

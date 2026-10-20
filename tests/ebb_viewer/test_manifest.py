@@ -679,11 +679,12 @@ def test_flag_sleep_qc_rejects_excluded(tmp_path):
         m.flag_sleep_qc("A1", "excluded")
 
 
-def test_flag_thresholds_default_roundtrip_and_validation(tmp_path):
+def test_flag_thresholds_default_and_read_from_manifest_file(tmp_path):
     m = _make_manifest(tmp_path, {"A1": {}})
     assert m.flag_thresholds["nrem_short"] == 400
-    m.set_flag_thresholds({"nrem_short": 250})
-    assert Manifest.load(tmp_path).flag_thresholds["nrem_short"] == 250
-    assert Manifest.load(tmp_path).flag_thresholds["pct_nrem"] == 30  # others keep defaults
-    with pytest.raises(ValueError, match="pct_rem"):
-        m.set_flag_thresholds({"pct_rem": 5})
+    raw = json.loads(m.path.read_text())
+    raw["flag_thresholds"] = {"nrem_short": 250}  # edited by hand in manifest.json
+    m.path.write_text(json.dumps(raw))
+    loaded = Manifest.load(tmp_path)
+    assert loaded.flag_thresholds["nrem_short"] == 250
+    assert loaded.flag_thresholds["pct_nrem"] == 30  # others keep defaults
