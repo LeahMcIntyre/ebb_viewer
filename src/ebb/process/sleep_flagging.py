@@ -4,7 +4,7 @@ Computed from the ``final_state`` column (see ``nrem_reclass``) over the whole
 recording. Each metric has an optional threshold; a file past it is flagged for
 the user to review. Defaults come from the spindle-validation analysis
 (``file_flagging_metrics.ipynb``) and are starting points, not validated cutoffs;
-the REM and Wake cutoffs (15, 70) were added here and are not from that analysis.
+the REM and Wake cutoffs (10, 70) were added here (REM chosen from that notebook's REM plot; Wake is a placeholder).
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ class Metric:
 METRICS: tuple[Metric, ...] = (
     Metric("nrem_short", "Short (1-2 epoch) NREM bouts per file", ABOVE, 400),
     Metric("dark_bouts_h", "NREM bouts per dark hour", ABOVE, 15),
-    Metric("pct_rem", "REM % (whole file)", ABOVE, 15),
+    Metric("pct_rem", "REM % (whole file)", ABOVE, 10),
     Metric("pct_nrem", "NREM % (whole file)", BELOW, 30),
     Metric("pct_wake", "Wake % (whole file)", ABOVE, 70),
     Metric("max_bin_rem", f"Max REM % in a {BIN_HOURS}-hour bin", AT_LEAST, 35),

@@ -8,7 +8,7 @@ from ebb_viewer.widgets.sleep_flag_overview import FlagOverview
 
 BASE = {"nrem_short": 100, "dark_bouts_h": 5, "pct_rem": 8, "pct_nrem": 50,
         "pct_wake": 42, "max_bin_rem": 10}
-THRESHOLDS = {"nrem_short": 400, "dark_bouts_h": 15, "pct_rem": 15, "pct_nrem": 30,
+THRESHOLDS = {"nrem_short": 400, "dark_bouts_h": 15, "pct_rem": 10, "pct_nrem": 30,
               "pct_wake": 70, "max_bin_rem": 35}
 
 

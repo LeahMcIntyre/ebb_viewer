@@ -96,7 +96,7 @@ def test_flagged_metrics_defaults_and_overrides():
 
 def test_default_thresholds():
     assert sf.default_thresholds() == {
-        "nrem_short": 400, "dark_bouts_h": 15, "pct_rem": 15, "pct_nrem": 30,
+        "nrem_short": 400, "dark_bouts_h": 15, "pct_rem": 10, "pct_nrem": 30,
         "pct_wake": 70, "max_bin_rem": 35,
     }
 
