@@ -8,7 +8,8 @@ from ebb_viewer.widgets.sleep_flag_overview import FlagOverview
 
 BASE = {"nrem_short": 100, "dark_bouts_h": 5, "pct_rem": 8, "pct_nrem": 50,
         "pct_wake": 42, "max_bin_rem": 10}
-THRESHOLDS = {"nrem_short": 400, "dark_bouts_h": 15, "pct_nrem": 30, "max_bin_rem": 35}
+THRESHOLDS = {"nrem_short": 400, "dark_bouts_h": 15, "pct_rem": 15, "pct_nrem": 30,
+              "pct_wake": 70, "max_bin_rem": 35}
 
 
 def _table(**overrides) -> pd.DataFrame:
@@ -84,5 +85,3 @@ def test_each_thresholded_metric_has_a_labelled_line(qapp):
         (line,) = [i for i in w._plots[key].items if isinstance(i, pg.InfiniteLine)]
         assert line.value() == cutoff
         assert f"{cutoff:g}" in line.label.textItem.toPlainText()
-    for key in ("pct_rem", "pct_wake"):  # no threshold, no line
-        assert not [i for i in w._plots[key].items if isinstance(i, pg.InfiniteLine)]
