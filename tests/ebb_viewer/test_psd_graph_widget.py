@@ -197,3 +197,67 @@ def test_notes_button_plain_when_no_note(qapp, tmp_path: Path):
     w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest)
     assert w._act_notes.text() == "📝 Notes"
     assert w._act_notes.toolTip() == "Edit notes for this animal"
+
+
+# ---------------------------------------------------------------------------
+# Excluded animals are marked
+# ---------------------------------------------------------------------------
+
+
+class _FakeStoreTwoAnimals(_FakeStore):
+    def animals(self):
+        return ["AM001", "AM002_drink"]
+
+
+def _seed_excluded(tmp_path: Path) -> Manifest:
+    m = _seed_manifest(tmp_path, "AM001")
+    m._entries["AM002"] = ManifestEntry(
+        animal_id="AM002", preprocessed_edf="x.edf", has_spindle=True, sleep_qc="excluded",
+        notes="cage change\nExcluded: electrode fell out",
+    )
+    m.save()
+    return m
+
+
+def _gray(page) -> bool:
+    return next(iter(page.curves.values())).opts["pen"].color().red() == 140
+
+
+def test_banner_and_grey_curves_follow_the_selected_animal(qapp, tmp_path: Path):
+    _seed_excluded(tmp_path)
+    page = _make_page(qapp, project_root=tmp_path, store=_FakeStoreTwoAnimals())
+
+    assert page._excluded_banner.isHidden() and not _gray(page)  # AM001 is ok
+
+    page.cmb_animal.setCurrentText("AM002_drink")  # store keys carry a _drink suffix
+    assert not page._excluded_banner.isHidden()
+    text = page._excluded_banner.text()
+    assert "EXCLUDED" in text and "electrode fell out" in text and "cage change" in text
+    assert _gray(page)
+
+    page.cmb_animal.setCurrentText("AM001")
+    assert page._excluded_banner.isHidden() and not _gray(page)
+
+
+def test_banner_works_without_a_manifest_passed_in(qapp, tmp_path: Path):
+    """Views that don't flag (manifest=None) still read exclusions from the project's manifest."""
+    _seed_excluded(tmp_path)
+    page = _make_page(qapp, project_root=tmp_path, store=_FakeStoreTwoAnimals(), manifest=None)
+    page.cmb_animal.setCurrentText("AM002_drink")
+    assert not page._excluded_banner.isHidden()
+
+
+def test_excluded_animals_are_greyed_in_the_dropdown(qapp, tmp_path: Path):
+    from PyQt6.QtCore import Qt
+
+    _seed_excluded(tmp_path)
+    page = _make_page(qapp, project_root=tmp_path, store=_FakeStoreTwoAnimals())
+    assert page.cmb_animal.itemData(1, Qt.ItemDataRole.ForegroundRole) is not None
+    assert page.cmb_animal.itemData(1, Qt.ItemDataRole.ToolTipRole) == "Excluded in Sleep QC"
+    assert page.cmb_animal.itemData(0, Qt.ItemDataRole.ForegroundRole) is None
+    assert page.cmb_animal.itemText(1) == "AM002_drink"  # key unchanged
+
+
+def test_no_project_root_means_no_banner(qapp):
+    page = _make_page(qapp, store=_FakeStoreWithAnimal())
+    assert page._excluded_banner.isHidden()

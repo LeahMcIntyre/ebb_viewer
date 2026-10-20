@@ -11,7 +11,7 @@ Used in two modes:
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QKeySequence, QShortcut
+from PyQt6.QtGui import QAction, QColor, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -29,6 +29,7 @@ from specparam.utils import interpolate_spectrum
 
 from ebb.process.state_presets import gather_states_from_store
 from ebb_viewer.pipeline import psd_params
+from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
 
@@ -107,6 +108,7 @@ class PSDGridPage(QWidget):
         # Initial render
         if self.cmb_animal.count():
             self._render()
+        self._mark_excluded_items()
         self._update_flag_status()
         self._install_shortcuts()
 
@@ -260,6 +262,16 @@ class PSDGridPage(QWidget):
         self.root.addWidget(bar)
 
     def _build_grid(self):
+        # Banner for animals excluded in Sleep QC (hidden otherwise)
+        self._excluded_banner = QLabel()
+        self._excluded_banner.setWordWrap(True)
+        self._excluded_banner.setStyleSheet(
+            "background: #e3e3e3; color: #444; border: 1px solid #b5b5b5; "
+            "border-radius: 4px; padding: 6px 10px;"
+        )
+        self._excluded_banner.setVisible(False)
+        self.root.addWidget(self._excluded_banner)
+
         # Grid container
         self.glw = pg.GraphicsLayoutWidget()
         self.root.addWidget(self.glw, 1)
@@ -450,7 +462,7 @@ class PSDGridPage(QWidget):
         key = self.cmb_animal.currentText()
         if not key:
             return None
-        return key.replace("_artifact", "").replace("_drink", "")
+        return self._animal_id_of(key)
 
     def _flag_psd_ok(self) -> None:
         if self.manifest is None:
@@ -498,7 +510,57 @@ class PSDGridPage(QWidget):
         self._update_flag_status()
         self.manifest_changed.emit()
 
+    def _mark_excluded_items(self) -> None:
+        """Grey out excluded animals in the animal dropdown (the item text is the store key)."""
+        manifest = self.manifest
+        if manifest is None and self._project_root is not None:
+            manifest = Manifest.load(self._project_root)
+        if manifest is None:
+            return
+        for i in range(self.cmb_animal.count()):
+            entry = manifest.get(self._animal_id_of(self.cmb_animal.itemText(i)))
+            if entry is not None and entry.sleep_qc == "excluded":
+                self.cmb_animal.setItemData(i, QColor(140, 140, 140), Qt.ItemDataRole.ForegroundRole)
+                self.cmb_animal.setItemData(i, "Excluded in Sleep QC", Qt.ItemDataRole.ToolTipRole)
+
+    @staticmethod
+    def _animal_id_of(key: str) -> str:
+        """Strip _artifact/_drink suffixes from a store key to get the manifest animal_id."""
+        return key.replace("_artifact", "").replace("_drink", "")
+
+    def _excluded_notes(self) -> str | None:
+        """The current animal's notes if it is excluded in Sleep QC, else None.
+
+        Reads the manifest on disk when none was passed, so animals are marked in
+        views that do not flag.
+        """
+        animal_id = self._manifest_animal_id()
+        if animal_id is None:
+            return None
+        manifest = self.manifest
+        if manifest is None and self._project_root is not None:
+            manifest = Manifest.load(self._project_root)
+        entry = manifest.get(animal_id) if manifest is not None else None
+        if entry is None or entry.sleep_qc != "excluded":
+            return None
+        return entry.notes.strip()
+
+    def _update_excluded_marker(self) -> None:
+        """Banner and grey curves while the current animal is excluded in Sleep QC."""
+        notes = self._excluded_notes()
+        excluded = notes is not None
+        self._excluded_banner.setVisible(excluded)
+        if excluded:
+            self._excluded_banner.setText(
+                "<b>EXCLUDED in Sleep QC</b> — shown for reference; the analysis leaves this "
+                "animal out." + (f"<br>{notes.replace(chr(10), '<br>')}" if notes else "")
+            )
+        pen = pg.mkPen((140, 140, 140) if excluded else (0, 0, 0), width=1.5)
+        for curve in self.curves.values():
+            curve.setPen(pen)
+
     def _update_flag_status(self) -> None:
+        self._update_excluded_marker()
         if self.manifest is None:
             return
         animal_id = self._manifest_animal_id()
