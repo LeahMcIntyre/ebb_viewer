@@ -1,14 +1,15 @@
-"""Sleep QC visualizer page — review per-animal sleep metrics + spindle masks.
+"""Sleep QC visualizer page — flag and review per-animal sleep metrics.
 
 Drives the post-spindle-upload review step: a 3×3 grid of plots (states ×
-metrics) for batch comparison, plus a "Spindle Mask" box-and-strip view
-for masking-fraction outlier detection. Group mode shows a page of
-animals; animal mode shows a single animal.
+metrics) for batch comparison, plus an "Overview" of boxplots of the
+flagging metrics (``ebb.process.sleep_flagging``) where animals past a
+threshold are highlighted and can be flagged for review. Group mode shows
+a page of animals; animal mode shows a single animal.
 
 State of record: ``self._manifest`` (in-memory ``Manifest``, refreshed
 on showEvent / poll / decisions) plus ``self._data`` (a tuple of four
 dataframes for the project combo: bins, bins_offset, bins_clock,
-spindle_fractions).
+flagging metrics).
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QGuiApplication
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -45,12 +46,13 @@ from ebb.process.sleep_compute import (
     compute_sleep_bins_df,
     compute_sleep_bins_df_clock_aligned,
     compute_sleep_bins_df_offset,
-    compute_spindle_fractions,
 )
+from ebb.process.sleep_flagging import METRIC_BY_KEY, flagged_metrics, metrics_table
 from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
 from ebb_viewer.pipeline.swd_review import swd_review_gaps
 from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
 from ebb_viewer.widgets.notes_dialog import NotesDialog
+from ebb_viewer.widgets.sleep_flag_overview import FlagOverview
 
 # Project recordings are all acquired in the Central time zone. Used by the
 # offset variant of the sleep-bins computation so the next-`begin_hr`
@@ -93,15 +95,12 @@ class SleepQCGridPage(QWidget):
     # Line colour for the single animal shown in animal mode.
     _ANIMAL_COLOR = (31, 119, 180)
 
-    # Sentinel for ``_refresh_frac_plot``'s optional-but-distinct-from-None
-    # ``current_animal`` arg: "read from combo box" vs "clear to None".
-    _DEFAULT_ANIMAL = object()
-
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
         self.project_root = Path(project_root)
 
-        # Cache: (df_start, df_rotate, df_clock, df_frac). df_start has
+        # Cache: (df_start, df_rotate, df_clock, df_flags). df_flags holds the
+        # flagging metrics (one row per animal). df_start has
         # bin_start_hr counted from sample 0; df_rotate is rotated so bin 0 lands
         # on begin_hr; df_clock places each animal's bins at their true clock
         # position. _axis_mode picks which one feeds _get_df.
@@ -126,9 +125,6 @@ class SleepQCGridPage(QWidget):
         self._nav_hint_dest: str = ""
         self._highlighted_animal: str | None = None
         self._show_ref_median: bool = False
-        # IQR-outlier set, lazily computed by _get_spindle_outlier_animals.
-        # Reset whenever _data is reloaded.
-        self._outliers: set[str] | None = None
 
         # Animals skipped during the offset compute because no preprocessed
         # EDF was found, or whose recording was too short for the begin_hr
@@ -194,8 +190,8 @@ class SleepQCGridPage(QWidget):
         """Re-render whichever view is active against the current ``_data``."""
         self.lbl_combo.setText(f"Combo: {self._combo}")
         self._update_page_controls()
-        if self.btn_spindle.isChecked():
-            self._set_spindle_mask_mode(True)
+        if self.btn_overview.isChecked():
+            self._set_overview_mode(True)
         elif self._mode == "animal":
             self._refresh_animal_combo()
             self._update_all_plots()
@@ -322,16 +318,16 @@ class SleepQCGridPage(QWidget):
 
         # VIEW cluster — same flush-pair treatment as Group/Animal.
         top.addWidget(_section_label("VIEW"))
-        self.btn_spindle = QPushButton("Spindle Mask")
-        self.btn_spindle.setCheckable(True)
-        self.btn_spindle.setChecked(True)
+        self.btn_overview = QPushButton("Overview")
+        self.btn_overview.setCheckable(True)
+        self.btn_overview.setChecked(True)
         self.btn_view_sleep = QPushButton("Sleep")
         self.btn_view_sleep.setCheckable(True)
         self.btn_view_sleep.setChecked(False)
         view_row = QHBoxLayout()
         view_row.setContentsMargins(0, 0, 0, 0)
         view_row.setSpacing(0)
-        view_row.addWidget(self.btn_spindle)
+        view_row.addWidget(self.btn_overview)
         view_row.addWidget(self.btn_view_sleep)
         view_wrap = QWidget()
         view_wrap.setLayout(view_row)
@@ -411,10 +407,9 @@ class SleepQCGridPage(QWidget):
                 p.setTitle(f"{self.STATE_DEF[state]}: {metric_label}", size="10pt")
                 self._plots[(metric, state)] = p
 
-        self._frac_widget = SpindleFractionPlot()
-        self._frac_widget.setVisible(True)
-        self._frac_widget.setMinimumSize(560, 300)
-        layout.addWidget(self._frac_widget, stretch=1)
+        self._overview = FlagOverview()
+        self._overview.setMinimumSize(560, 300)
+        layout.addWidget(self._overview, stretch=1)
 
         self.grid.setVisible(False)
         layout.addWidget(self.grid, stretch=1)
@@ -455,11 +450,12 @@ class SleepQCGridPage(QWidget):
         self.btn_animal.clicked.connect(lambda: self._set_mode("animal"))
         self.cmb_axis_mode.currentIndexChanged.connect(self._on_axis_mode_changed)
         self.btn_median.toggled.connect(self._on_median_toggled)
-        self.btn_view_sleep.clicked.connect(lambda: self._set_spindle_mask_mode(False))
-        self.btn_spindle.clicked.connect(lambda: self._set_spindle_mask_mode(True))
+        self.btn_view_sleep.clicked.connect(lambda: self._set_overview_mode(False))
+        self.btn_overview.clicked.connect(lambda: self._set_overview_mode(True))
         self.btn_original.toggled.connect(self._on_original_toggled)
-        self._frac_widget.animal_clicked.connect(self._on_frac_animal_selected)
-        self._frac_widget.review_requested.connect(self._on_frac_review_requested)
+        self._overview.animal_clicked.connect(self._on_overview_animal_selected)
+        self._overview.flag_requested.connect(self._on_overview_flag_requested)
+        self._overview.thresholds_changed.connect(self._on_thresholds_changed)
 
         self.btn_prev.clicked.connect(self._on_prev_page)
         self.btn_next.clicked.connect(self._on_next_page)
@@ -480,7 +476,7 @@ class SleepQCGridPage(QWidget):
         self.btn_group.setChecked(is_group)
         self.btn_animal.setChecked(not is_group)
 
-        if not self.btn_spindle.isChecked():
+        if not self.btn_overview.isChecked():
             self._group_controls.setVisible(is_group)
             self._animal_controls.setVisible(not is_group)
 
@@ -496,55 +492,41 @@ class SleepQCGridPage(QWidget):
             self._maybe_show_rotate_skip_warning()
         self._update_all_plots()
 
-    def _set_spindle_mask_mode(self, spindle: bool) -> None:
-        self.btn_view_sleep.setChecked(not spindle)
-        self.btn_spindle.setChecked(spindle)
-        self.grid.setVisible(not spindle)
-        self._frac_widget.setVisible(spindle)
-        self._sleep_mode_controls.setVisible(not spindle)
-        self._legend_scroll.setVisible(not spindle)
-        if spindle:
+    def _set_overview_mode(self, overview: bool) -> None:
+        self.btn_view_sleep.setChecked(not overview)
+        self.btn_overview.setChecked(overview)
+        self.grid.setVisible(not overview)
+        self._overview.setVisible(overview)
+        self._sleep_mode_controls.setVisible(not overview)
+        self._legend_scroll.setVisible(not overview)
+        if overview:
             self._group_controls.setVisible(False)
-            self._animal_controls.setVisible(True)
-            self._lbl_animal.setText("Highlight:")
-            self._refresh_animal_combo()
-            self._frac_widget.clear_selection()
-            self._refresh_frac_plot()
-            self._render_group()
+            self._animal_controls.setVisible(False)
+            self._refresh_overview()
         else:
-            self._lbl_animal.setText("Animal:")
             self._set_mode(self._mode)
 
-    def _refresh_frac_plot(self, current_animal: str | None = _DEFAULT_ANIMAL) -> None:
-        df_frac = self._get_frac_df()
-        if current_animal is self._DEFAULT_ANIMAL:
-            current_animal = self.cmb_animal.currentText() or None
-        title = (
-            f"{self._combo} (reclassified)"
-            if self._reclass_active
-            else self._combo
-        )
-        gated = self._gated_animals()
-        if gated:
-            title += f" - orange ring = EMG gate applied ({len(gated)})"
-        self._frac_widget.set_data(
-            df_frac, title=title, current_animal=current_animal, gated=gated
+    def _refresh_overview(self, selected: str | None = None) -> None:
+        """Redraw the boxplots from the cached flagging metrics."""
+        statuses = {e.animal_id: e.sleep_qc for e in self._manifest}
+        self._overview.set_data(
+            self._get_flag_table(),
+            self._manifest.flag_thresholds,
+            statuses,
+            selected=selected,
         )
 
-    def _on_frac_animal_selected(self, mouse_id: str) -> None:
-        """Dot clicked or dismissed — update the highlight without leaving the spindle mask view."""
-        if mouse_id:
-            self.cmb_animal.setCurrentText(
-                mouse_id
-            )  # triggers _on_animal_changed → _refresh_frac_plot
-            entry = self._manifest.get(mouse_id)
-            self._frac_widget.update_strip_status(entry.sleep_qc if entry else None)
-        else:
-            self._refresh_frac_plot(current_animal=None)  # clear highlight
+    def _on_overview_animal_selected(self, animal: str) -> None:
+        """Dot clicked or dismissed: redraw so the selection is highlighted."""
+        self._refresh_overview(selected=animal or None)
 
-    def _on_frac_review_requested(self, mouse_id: str) -> None:
-        """Flag the selected animal for review from within the spindle mask view."""
-        self._flag_sleep_qc(mouse_id, "needs_review")
+    def _on_overview_flag_requested(self, animal: str) -> None:
+        """Flag the selected animal for review from the overview."""
+        self._flag_sleep_qc(animal, "needs_review")
+
+    def _on_thresholds_changed(self, thresholds: dict) -> None:
+        self._manifest.set_flag_thresholds(thresholds)
+        self._refresh_overview(selected=self._overview.selected)
 
     # ------------------------------------------------------------------
     # Data loading
@@ -572,7 +554,7 @@ class SleepQCGridPage(QWidget):
     def _compute_tables(
         self, d: Path, states_by_animal, *, record_skips: bool = False
     ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-        """The four metric tables for the CSV folder ``d``. ``states_by_animal`` must
+        """The sleep-bin tables and the flagging metrics for the CSV folder ``d``. ``states_by_animal`` must
         cover every CSV: the compute functions default to ``final_state`` and raise
         for animals that lack it, so this page always passes states explicitly."""
         std = self.project_root / "standard"
@@ -586,7 +568,7 @@ class SleepQCGridPage(QWidget):
                 compute_sleep_bins_df_clock_aligned(
                     d, std, tz=_RECORDING_TZ, states_by_animal=states_by_animal
                 ),
-                compute_spindle_fractions(d, states_by_animal=states_by_animal),
+                metrics_table(d, std, states_by_animal=states_by_animal),
             )
         if record_skips:  # same skips either way; report them once
             self._record_skip_warnings(caught)
@@ -597,7 +579,6 @@ class SleepQCGridPage(QWidget):
         self._data = None
         self._data_reclass = None
         self._reclassed = set()
-        self._outliers = None
         self._mouse_ids = []
         self._data_sig = sig
         d = self._csv_dir()
@@ -652,7 +633,6 @@ class SleepQCGridPage(QWidget):
             QGuiApplication.restoreOverrideCursor()
         self._reclassed = reclassed
         self._data_reclass = tables
-        self._outliers = None
         return True
 
     def _gated_animals(self) -> set[str]:
@@ -702,7 +682,6 @@ class SleepQCGridPage(QWidget):
     def _on_original_toggled(self, checked: bool) -> None:
         self._show_original = checked
         self._update_reclass_label()
-        self._outliers = None
         self._refresh_views()
 
     def _record_skip_warnings(self, caught: list) -> None:
@@ -866,10 +845,10 @@ class SleepQCGridPage(QWidget):
         data = self._active_data()
         if data is None:
             return None
-        df_start, df_rotate, df_clock, _df_frac = data
+        df_start, df_rotate, df_clock, _flags = data
         return {"start": df_start, "rotate": df_rotate, "clock": df_clock}[self._axis_mode]
 
-    def _get_frac_df(self) -> pd.DataFrame | None:
+    def _get_flag_table(self) -> pd.DataFrame | None:
         data = self._active_data()
         return data[3] if data is not None else None
 
@@ -890,30 +869,26 @@ class SleepQCGridPage(QWidget):
         for state in self.STATE_ORDER:
             self._plots[(bottom_metric, state)].getAxis("bottom").setTicks(None)
 
-    def _get_spindle_outlier_animals(self) -> set:
-        """Return animal IDs that are IQR × 1.5 outliers in any state of the spindle fraction data.
+    def _flagged_animals(self) -> dict[str, list[str]]:
+        """``{animal: [metric keys past a threshold]}`` for the active states."""
+        table = self._get_flag_table()
+        if table is None:
+            return {}
+        thresholds = self._manifest.flag_thresholds
+        out = {}
+        for animal, row in table.iterrows():
+            keys = flagged_metrics(row.to_dict(), thresholds)
+            if keys:
+                out[str(animal)] = keys
+        return out
 
-        Cached to avoid recomputing on every legend rebuild + every render
-        pass. Reset by ``_load_data`` when fresh data lands.
-        """
-        if self._outliers is not None:
-            return self._outliers
-        df_frac = self._get_frac_df()
-        if df_frac is None or df_frac.empty:
-            return set()
-        outliers: set[str] = set()
-        for state in df_frac["state"].unique():
-            sdf = df_frac[df_frac["state"] == state].dropna(subset=["fraction"])
-            if len(sdf) < 4:
-                continue
-            fracs = sdf["fraction"].to_numpy(dtype=float)
-            q1, q3 = np.percentile(fracs, [25, 75])
-            iqr = q3 - q1
-            lo, hi = q1 - 1.5 * iqr, q3 + 1.5 * iqr
-            mask = (fracs < lo) | (fracs > hi)
-            outliers.update(sdf["mouse_id"].to_numpy()[mask])
-        self._outliers = outliers
-        return outliers
+    def _flag_tag_html(self, animal: str) -> str:
+        """Legend tag listing the metrics that put ``animal`` past a threshold ('' if none)."""
+        keys = self._flagged_animals().get(animal)
+        if not keys:
+            return ""
+        names = ", ".join(METRIC_BY_KEY[k].label for k in keys)
+        return f'<span style="color:#c0392b;font-size:9px;font-style:italic;">[past threshold: {names}]</span>'
 
     @staticmethod
     def _plot_series(
@@ -951,8 +926,8 @@ class SleepQCGridPage(QWidget):
             self._plots[(bottom_metric, state)].getAxis("bottom").setTicks(ticks)
 
     def _update_all_plots(self, *_) -> None:
-        if self.btn_spindle.isChecked():
-            self._refresh_frac_plot()
+        if self.btn_overview.isChecked():
+            self._refresh_overview(selected=self._overview.selected)
             return
         if self._mode == "group":
             self._render_group()
@@ -1030,8 +1005,6 @@ class SleepQCGridPage(QWidget):
             self._update_legend_animal()
             return
 
-        outliers = self._get_spindle_outlier_animals()
-        alpha = 255 if (not outliers or animal in outliers) else 80
         for state in self.STATE_ORDER:
             for metric, _ in self.METRIC_ORDER:
                 dm = adf[adf["state"] == state].copy()
@@ -1044,7 +1017,6 @@ class SleepQCGridPage(QWidget):
                     dm[x_col].to_numpy(),
                     dm[metric].to_numpy(),
                     color=self._ANIMAL_COLOR,
-                    alpha=alpha,
                     width=2.0,
                 )
 
@@ -1158,7 +1130,6 @@ class SleepQCGridPage(QWidget):
         self, mice: list[str], mouse_colors: dict, show_ref: bool = False
     ) -> None:
         self._clear_legend()
-        spindle_outliers = self._get_spindle_outlier_animals()
 
         for i, mid in enumerate(mice):
             color = mouse_colors[mid]
@@ -1179,12 +1150,11 @@ class SleepQCGridPage(QWidget):
                 lambda checked, m=mid: self._on_legend_highlight(m, checked)
             )
             row_l.addWidget(btn_highlight)
-            if mid in spindle_outliers:
-                outlier_lbl = QLabel(
-                    '<span style="color:#c0392b;font-size:9px;font-style:italic;">[spindle outlier]</span>'
-                )
-                outlier_lbl.setTextFormat(Qt.TextFormat.RichText)
-                row_l.addWidget(outlier_lbl)
+            flag_tag = self._flag_tag_html(mid)
+            if flag_tag:
+                flag_lbl = QLabel(flag_tag)
+                flag_lbl.setTextFormat(Qt.TextFormat.RichText)
+                row_l.addWidget(flag_lbl)
             gate_tag = self._gate_tag_html(mid)
             if gate_tag:
                 gate_lbl = QLabel(gate_tag)
@@ -1230,11 +1200,9 @@ class SleepQCGridPage(QWidget):
         row_w, row_l = self._make_legend_row_frame(self._ANIMAL_COLOR, status)
 
         label_text = animal
-        if animal in self._get_spindle_outlier_animals():
-            label_text += (
-                ' <span style="color:#c0392b;font-size:9px;font-style:italic;">'
-                "[spindle outlier]</span>"
-            )
+        flag_tag = self._flag_tag_html(animal)
+        if flag_tag:
+            label_text += " " + flag_tag
         gate_tag = self._gate_tag_html(animal)
         if gate_tag:
             label_text += " " + gate_tag
@@ -1290,253 +1258,11 @@ class SleepQCGridPage(QWidget):
             self._manifest.flag_sleep_qc(animal, status)
         self.manifest_changed.emit()
         self._update_nav_hint()
-        if self._mode == "group" and not self.btn_spindle.isChecked():
+        if self._mode == "group" and not self.btn_overview.isChecked():
             mice = self._get_page_mice()
             self._update_legend_group(mice, self._build_mouse_color_map(mice), self._show_ref_median)
         else:
             self._update_all_plots()
-
-
-# ---------------------------------------------------------------------------
-# Spindle fraction chart
-# ---------------------------------------------------------------------------
-
-
-class SpindleFractionPlot(QWidget):
-    """
-    Box-and-strip chart showing per-animal spindle mask fraction, grouped by state.
-
-    Each dot is one animal. Outliers (IQR × 1.5 rule) are labelled with their
-    mouse_id. The current animal (if provided) is highlighted in blue.
-
-    Clicking a dot selects it and shows an action strip with a "Flag for Review"
-    button, so the user can act without leaving this view.
-    ``review_requested(mouse_id)`` is emitted when that button is clicked.
-    ``animal_clicked(mouse_id)`` is emitted to update the highlight in the chart.
-    """
-
-    animal_clicked = pyqtSignal(str)
-    review_requested = pyqtSignal(str)
-
-    STATE_ORDER = ["Wake", "NREM", "REM", "Total"]
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._selected_animal: str | None = None
-        self._gated: set[str] = set()  # animals to ring (EMG gate applied)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-
-        self._pw = pg.PlotWidget(background="w")
-        self._pw.viewport().setCursor(Qt.CursorShape.PointingHandCursor)
-        pi = self._pw.getPlotItem()
-        pi.showGrid(x=False, y=True, alpha=0.3)
-        pi.setLabel("left", "Fraction of state masked by spindles")
-        pi.getAxis("left").enableAutoSIPrefix(False)
-        pi.getAxis("bottom").setStyle(tickTextOffset=8)
-        layout.addWidget(self._pw)
-
-        # --- action strip (hidden until a dot is clicked) ---
-        self._strip = QFrame()
-        self._strip.setFrameShape(QFrame.Shape.StyledPanel)
-        self._strip.setStyleSheet(
-            "QFrame { background: #f0f4ff; border: 1px solid #b0c4f0; border-radius: 3px; }"
-        )
-        strip_row = QHBoxLayout(self._strip)
-        strip_row.setContentsMargins(10, 4, 6, 4)
-        strip_row.setSpacing(8)
-        self._strip_lbl = QLabel()
-        self._strip_lbl.setStyleSheet("font-weight: bold;")
-        strip_row.addWidget(self._strip_lbl)
-        strip_row.addStretch(1)
-        self._btn_review = QPushButton("Flag for Review")
-        self._btn_review.setFixedHeight(24)
-        self._btn_review.clicked.connect(self._on_review_clicked)
-        strip_row.addWidget(self._btn_review)
-        btn_dismiss = QPushButton("×")
-        btn_dismiss.setFixedSize(24, 24)
-        btn_dismiss.setToolTip("Dismiss")
-        btn_dismiss.clicked.connect(self._dismiss)
-        strip_row.addWidget(btn_dismiss)
-        self._strip.setVisible(False)
-        layout.addWidget(self._strip)
-
-    def set_data(
-        self,
-        df: pd.DataFrame | None,
-        title: str = "",
-        current_animal: str | None = None,
-        gated: set[str] | None = None,
-    ) -> None:
-        self._gated = set(gated or ())
-        gate_pen = pg.mkPen((230, 140, 0), width=2.2)
-        no_pen = pg.mkPen(None)
-        pi = self._pw.getPlotItem()
-        pi.clear()
-        pi.setTitle(title, size="11pt")
-
-        ax = pi.getAxis("bottom")
-        ax.setTicks([[(i, s) for i, s in enumerate(self.STATE_ORDER)]])
-
-        if df is None or df.empty:
-            return
-
-        rng = np.random.default_rng(42)
-        box_w = 0.22
-        cap_w = box_w * 0.55
-        y_max = 0.0
-        gray = pg.mkPen((60, 60, 60), width=1.2)
-        thick = pg.mkPen((60, 60, 60), width=2.2)
-        label_font = QFont()
-        label_font.setPointSize(7)
-
-        for xi, state in enumerate(self.STATE_ORDER):
-            sdf = df[df["state"] == state].dropna(subset=["fraction"])
-            if sdf.empty:
-                continue
-
-            fracs = sdf["fraction"].to_numpy(dtype=float)
-            mids = sdf["mouse_id"].to_numpy()
-            y_max = max(y_max, fracs.max())
-
-            # Box-and-whisker math needs ≥2 points; with len 1 the IQR
-            # collapses and `fracs[fracs >= lo_fence].min()` etc. are
-            # fragile. Skip the box for tiny cohorts but still draw the
-            # scatter point so a single-animal combo shows up.
-            if len(fracs) >= 2:
-                q1, med, q3 = np.percentile(fracs, [25, 50, 75])
-                iqr = q3 - q1
-                lo_fence = q1 - 1.5 * iqr
-                hi_fence = q3 + 1.5 * iqr
-                lo_wh = fracs[fracs >= lo_fence].min()
-                hi_wh = fracs[fracs <= hi_fence].max()
-
-                # IQR box
-                pi.addItem(
-                    pg.PlotCurveItem(
-                        [xi - box_w, xi - box_w, xi + box_w, xi + box_w, xi - box_w],
-                        [q1, q3, q3, q1, q1],
-                        pen=gray,
-                    )
-                )
-                # Median bar
-                pi.addItem(pg.PlotCurveItem([xi - box_w, xi + box_w], [med, med], pen=thick))
-                # Whiskers
-                pi.addItem(pg.PlotCurveItem([xi, xi], [q1, lo_wh], pen=gray))
-                pi.addItem(pg.PlotCurveItem([xi, xi], [q3, hi_wh], pen=gray))
-                # Whisker caps
-                pi.addItem(pg.PlotCurveItem([xi - cap_w, xi + cap_w], [lo_wh, lo_wh], pen=gray))
-                pi.addItem(pg.PlotCurveItem([xi - cap_w, xi + cap_w], [hi_wh, hi_wh], pen=gray))
-
-                is_out = (fracs < lo_fence) | (fracs > hi_fence)
-            else:
-                # Single-point group: no outlier classification possible.
-                med = float(fracs[0])
-                is_out = np.zeros(len(fracs), dtype=bool)
-
-            # Scatter points (reproducible jitter)
-            jitter = rng.uniform(-0.14, 0.14, len(fracs))
-            xs = (xi + jitter).astype(float)
-
-            is_current = mids == current_animal
-
-            # Regular inlier points
-            regular = ~is_out & ~is_current
-            if regular.any():
-                sc = pg.ScatterPlotItem(
-                    xs[regular],
-                    fracs[regular],
-                    data=mids[regular],
-                    pen=[gate_pen if m in self._gated else no_pen for m in mids[regular]],
-                    brush=pg.mkBrush(110, 110, 110, 180),
-                    size=7,
-                )
-                sc.sigClicked.connect(self._on_dot_clicked)
-                pi.addItem(sc)
-
-            # Outlier points + labels
-            outl = is_out & ~is_current
-            if outl.any():
-                sc = pg.ScatterPlotItem(
-                    xs[outl],
-                    fracs[outl],
-                    data=mids[outl],
-                    pen=[gate_pen if m in self._gated else no_pen for m in mids[outl]],
-                    brush=pg.mkBrush(210, 70, 50, 210),
-                    size=7,
-                )
-                sc.sigClicked.connect(self._on_dot_clicked)
-                pi.addItem(sc)
-                for x_pt, y_pt, mid in zip(xs[outl], fracs[outl], mids[outl], strict=True):
-                    anchor = (0.5, 1.2) if y_pt > med else (0.5, -0.2)
-                    lbl = pg.TextItem(mid, anchor=anchor, color=(180, 40, 20))
-                    lbl.setFont(label_font)
-                    lbl.setPos(x_pt, y_pt)
-                    pi.addItem(lbl)
-
-            # Current-animal highlight
-            if is_current.any():
-                sc = pg.ScatterPlotItem(
-                    xs[is_current],
-                    fracs[is_current],
-                    data=mids[is_current],
-                    pen=[
-                        gate_pen if m in self._gated else pg.mkPen((30, 80, 200), width=1.5)
-                        for m in mids[is_current]
-                    ],
-                    brush=pg.mkBrush(50, 110, 220, 220),
-                    size=10,
-                )
-                sc.sigClicked.connect(self._on_dot_clicked)
-                pi.addItem(sc)
-
-        pi.setXRange(-0.6, len(self.STATE_ORDER) - 0.4)
-        if y_max > 0:
-            pi.setYRange(0, min(1.0, y_max * 1.15 + 0.01))
-        else:
-            pi.setYRange(0, 0.5)
-
-    def _on_dot_clicked(self, item, spots, ev) -> None:
-        if not spots:
-            return
-        mid = str(spots[0].data())
-        self._selected_animal = mid
-        gate_note = " (EMG gate applied)" if mid in self._gated else ""
-        self._strip_lbl.setText(f"Selected: {mid}{gate_note}")
-        self._btn_review.setText("Flag for Review")
-        self._btn_review.setEnabled(True)
-        self._btn_review.setToolTip("")
-        self._strip.setVisible(True)
-        self.animal_clicked.emit(mid)
-
-    def update_strip_status(self, status: str | None) -> None:
-        """Update the action strip button based on the animal's current sleep_qc status."""
-        if status == "needs_review":
-            self._btn_review.setEnabled(False)
-            self._btn_review.setText("Already flagged for review")
-            self._btn_review.setToolTip("")
-        else:
-            self._btn_review.setEnabled(True)
-            self._btn_review.setText("Flag for Review")
-            self._btn_review.setToolTip("")
-
-    def clear_selection(self) -> None:
-        """Reset the action strip without emitting signals (for programmatic resets)."""
-        self._selected_animal = None
-        self._strip.setVisible(False)
-        self._btn_review.setEnabled(True)
-
-    def _on_review_clicked(self) -> None:
-        if self._selected_animal:
-            self.review_requested.emit(self._selected_animal)
-            self._strip_lbl.setText(f"Flagged for review: {self._selected_animal}")
-            self._btn_review.setEnabled(False)
-
-    def _dismiss(self) -> None:
-        self.clear_selection()
-        self.animal_clicked.emit("")
 
 
 # ---------------------------------------------------------------------------

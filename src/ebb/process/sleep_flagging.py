@@ -129,21 +129,32 @@ def flagged_metrics(
     ]
 
 
-def metrics_for_file(csv_path: str | Path, edf_path: str | Path) -> dict[str, float]:
+def metrics_for_file(
+    csv_path: str | Path, edf_path: str | Path, states: npt.NDArray | None = None
+) -> dict[str, float]:
     """``file_metrics`` from a CSV's ``final_state`` and the EDF's start time.
 
+    Args:
+        states: Per-epoch states to use instead of the CSV's ``final_state``.
+
     Raises:
-        NotReclassifiedError: if the CSV lacks ``final_state``.
+        NotReclassifiedError: if ``states`` is None and the CSV lacks ``final_state``.
     """
-    states = np.asarray(read_analysis_states(csv_path))
+    states = np.asarray(read_analysis_states(csv_path) if states is None else states)
     dark = ~light_period_mask(read_edf_start_datetime(Path(edf_path)), len(states))
     return file_metrics(states, dark)
 
 
-def metrics_table(state_dir: str | Path, edf_dir: str | Path) -> pd.DataFrame:
+def metrics_table(
+    state_dir: str | Path,
+    edf_dir: str | Path,
+    states_by_animal: dict[str, list[str]] | None = None,
+) -> pd.DataFrame:
     """One row per animal (index ``animal``) with every metric.
 
-    CSVs without a matching preprocessed EDF are skipped with a warning.
+    ``states_by_animal`` supplies per-epoch states instead of each CSV's
+    ``final_state`` (it must cover every CSV). CSVs without a matching
+    preprocessed EDF are skipped with a warning.
     """
     edf_by_animal = {parse_animal_id(p): p for p in Path(edf_dir).glob("*PROCESSED.edf")}
     rows = {}
@@ -153,7 +164,8 @@ def metrics_table(state_dir: str | Path, edf_dir: str | Path) -> pd.DataFrame:
         if edf_path is None:
             warnings.warn(f"No EDF for animal {animal!r} in {edf_dir}; skipping {csv_path.name}.")
             continue
-        rows[animal] = metrics_for_file(csv_path, edf_path)
+        states = None if states_by_animal is None else states_by_animal[animal]
+        rows[animal] = metrics_for_file(csv_path, edf_path, states)
     return pd.DataFrame.from_dict(rows, orient="index", columns=[m.key for m in METRICS]).rename_axis(
         "animal"
     )

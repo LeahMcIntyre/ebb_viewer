@@ -136,3 +136,14 @@ def test_metrics_table_one_row_per_paired_animal(tmp_path, monkeypatch):
         table = sf.metrics_table(states, edfs)
     assert list(table.index) == ["A1"]
     assert list(table.columns) == [m.key for m in sf.METRICS]
+
+
+def test_metrics_table_uses_supplied_states(tmp_path, monkeypatch):
+    monkeypatch.setattr(sf, "read_edf_start_datetime", lambda p: datetime(2024, 1, 1, 8, 0, 0))
+    states, edfs = tmp_path / "out", tmp_path / "standard"
+    states.mkdir()
+    edfs.mkdir()
+    _write_csv(states / "A1_labels.csv", "nwnr", final=False)  # no final_state: would raise
+    (edfs / "A1_PROCESSED.edf").touch()
+    table = sf.metrics_table(states, edfs, {"A1": list("nnnn")})
+    assert table.loc["A1", "pct_nrem"] == 100
