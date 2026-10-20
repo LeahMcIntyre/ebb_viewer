@@ -45,6 +45,7 @@ from ebb.io.edf_header import detect_fs_from_standard
 from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
 from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget
 from ebb_viewer.widgets.no_scroll_spinbox import NoScrollSpinBox
+from ebb_viewer.widgets.swd_warning import confirm_unfinished_swd_review
 
 # EEG channel labels in canonical order — same indices as the PSD page,
 # Finalize page, and ``ebb.io.combine``. Channel selection on this page
@@ -738,6 +739,8 @@ class ExportMasksPage(QWidget):
             return
         animal_ids = self._selected_animals()
         if not animal_ids:
+            return
+        if not confirm_unfinished_swd_review(self, self.project_root, set(animal_ids)):
             return
 
         out_dir = self._out_dir()

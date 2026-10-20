@@ -22,6 +22,7 @@ from openseize.file_io import edf
 
 from ebb import masking
 from ebb.io.edf_header import assert_fs_matches, parse_edf_start_datetime
+from ebb.io.spindle_csv import FINAL_COLUMN
 from ebb.masking.annotations import keyword_mask
 from ebb.process.mask_export import (
     artifact_masks_to_intervals,
@@ -35,6 +36,7 @@ from ebb_viewer.pipeline.manifest import (
     spindle_output_dir,
 )
 from ebb_viewer.pipeline.naming import drink_mask_rel, parse_animal_id
+from ebb_viewer.pipeline.swd_review import find_swd_file
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -85,7 +87,7 @@ def resolve_paths(
     """Locate EDF, state CSV, drink mask, and SWD MAT for one animal.
 
     Drink and SWD are optional — they're discovered by presence:
-    ``project_root/swd/<animal_id>_*.mat`` for SWD, manifest-tracked relative
+    ``find_swd_file`` (``project_root/swd/``) for SWD, manifest-tracked relative
     path for drink. Raises ``ValueError`` only for required files.
     """
     entry = manifest.get(animal_id)
@@ -124,9 +126,7 @@ def resolve_paths(
         )
     offset_csv = offset_csvs[0] if offset_csvs else None
 
-    swd_dir = Path(project_root) / "swd"
-    swd_matches = sorted(swd_dir.glob(f"{animal_id}_*.mat")) if swd_dir.is_dir() else []
-    swd = swd_matches[0] if swd_matches else None
+    swd = find_swd_file(project_root, animal_id)
 
     return ResolvedPaths(
         edf=edf_path,
@@ -452,6 +452,7 @@ def export_animal(
             "recording_start": built.rec_start.isoformat(),
             "edf_path": str(paths.edf),
             "state_csv_path": str(paths.state),
+            "state_column": FINAL_COLUMN,
             "drink_mask_path": str(paths.drink) if paths.drink else None,
             "offset_csv_path": str(paths.offset_csv) if paths.offset_csv else None,
             "swd_path": str(paths.swd) if paths.swd else None,
