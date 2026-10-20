@@ -890,7 +890,7 @@ class SleepQCGridPage(QWidget):
         names = [METRIC_BY_KEY[k].short for k in keys[: self._TAG_MAX_NAMES]]
         extra = len(keys) - self._TAG_MAX_NAMES
         text = ", ".join(names) + (f" +{extra}" if extra > 0 else "")
-        return f'<span style="color:#c0392b;font-size:9px;font-style:italic;">[flagged: {text}]</span>'
+        return f'<span style="color:#c0392b;font-size:9px;font-style:italic;">[{text}]</span>'
 
     def _flag_tooltip(self, animal: str) -> str:
         """One line per metric past a threshold: full name, value and threshold."""

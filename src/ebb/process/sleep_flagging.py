@@ -43,11 +43,11 @@ class Metric:
 
 
 METRICS: tuple[Metric, ...] = (
-    Metric("nrem_short", "Short (1-2 epoch) NREM bouts per file", ABOVE, 400, "short bouts"),
-    Metric("dark_bouts_h", "NREM bouts per dark hour", ABOVE, 15, "dark bouts"),
-    Metric("pct_rem", "REM % (whole file)", ABOVE, 10, "REM"),
-    Metric("pct_nrem", "NREM % (whole file)", BELOW, 30, "NREM"),
-    Metric("pct_wake", "Wake % (whole file)", ABOVE, 70, "wake"),
+    Metric("nrem_short", "Short (1-2 epoch) NREM bouts per file", ABOVE, 400, "short NREM bouts"),
+    Metric("dark_bouts_h", "NREM bouts per dark hour", ABOVE, 15, "dark NREM bouts"),
+    Metric("pct_rem", "REM % (whole file)", ABOVE, 10, "high REM"),
+    Metric("pct_nrem", "NREM % (whole file)", BELOW, 30, "low NREM"),
+    Metric("pct_wake", "Wake % (whole file)", ABOVE, 70, "high wake"),
     Metric("max_bin_rem", f"Max REM % in a {BIN_HOURS}-hour bin", AT_LEAST, 35, "REM bin"),
 )
 METRIC_BY_KEY = {m.key: m for m in METRICS}

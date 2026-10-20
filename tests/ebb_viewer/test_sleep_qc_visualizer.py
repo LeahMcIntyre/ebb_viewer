@@ -488,7 +488,7 @@ def test_flagged_animals_uses_manifest_thresholds(qapp, tmp_path: Path):
     page._data = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), _flag_table())
 
     assert page._flagged_animals() == {"AM002": ["nrem_short"]}
-    assert "[flagged: short bouts]" in page._flag_tag_html("AM002")
+    assert "[short NREM bouts]" in page._flag_tag_html("AM002")
     assert page._flag_tooltip("AM002") == (
         "Short (1-2 epoch) NREM bouts per file: 500.0 (above 400)"
     )
@@ -520,5 +520,5 @@ def test_flag_tag_names_at_most_two_metrics_then_counts_the_rest(qapp, tmp_path:
 
     tag = page._flag_tag_html("AM001")
 
-    assert "[flagged: short bouts, REM +2]" in tag  # METRICS order, capped at two names
+    assert "[short NREM bouts, high REM +2]" in tag  # METRICS order, capped at two names
     assert page._flag_tooltip("AM001").count("\n") == 3  # all four listed in the tooltip
