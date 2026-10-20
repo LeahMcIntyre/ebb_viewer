@@ -94,7 +94,9 @@ masks by globbing `<project_root>/drink_masks/<animal_id>.npy`, not
 by reading the manifest's `drink_mask` field. The manifest field
 is cleared once an animal is flagged "ok" with no other PSD run still at
 `drink_mask_applied`, so the .npy file is the authoritative record.
-Same pattern for SWD: glob `swd/<animal_id>_*.mat`.
+Same pattern for SWD, but use `find_swd_file` (`pipeline/swd_review.py`), not a glob:
+real projects name files both `Mice-1256.mat` and `JK1011_P063_DEL_ts.mat`, and a
+`<animal_id>_*.mat` glob silently misses the first style.
 
 ### One drink_masks offset CSV per project
 The Export Masks pipeline raises if `drink_masks/` contains more than
@@ -104,6 +106,40 @@ write code that handles "multiple offset CSVs"; the project structure
 is intentionally one-per-project.
 
 ---
+
+## Sleep states / reclassification
+
+Full description: `docs/sleep_reclassification.md`.
+
+### Never add `final_state` to `STATE_COLUMNS`
+`STATE_COLUMNS` (`rawstate`, `state`) is the *input* to reclassification and the "original
+states" views. `final_state` is the analysis column (`ANALYSIS_STATE_COLUMNS`). Putting it in
+`STATE_COLUMNS` makes a Reclassify re-run read its own output.
+
+### Analysis must not fall back to the original states
+`masking.state` and the `sleep_compute` functions default to `final_state` and raise
+`NotReclassifiedError`. A silent fallback would mix reclassified and unreclassified animals in
+one analysis. Code that deliberately wants the originals (Sleep QC "Show original", the viewer's
+original bar, a script) passes the states or `columns=STATE_COLUMNS` explicitly.
+
+### Blank in `swd_reclassification` means "not reviewed"
+Only reviewed SWD epochs and edited epochs get a value. Do not fill every SWD epoch on save:
+the column is also the progress record, and `final_state` already falls back to
+`reclass_state` for blank rows. `refresh_swd_after_reclass` relies on this (an entry equal to
+the old `reclass_state` is an unedited copy).
+
+### Keep a reference to unparented workers
+`ReclassifyPage` hung forever because its `_ReclassWorker` was garbage-collected before
+`thread.started → run`. Store the worker on the page (`self._worker`) as well as the thread.
+
+### Tests: an unmocked `QMessageBox` hangs the run
+A page that shows a modal dialog on an error path blocks a headless test forever. Patch
+`QMessageBox` (or the confirm helper, e.g. `confirm_unfinished_swd_review`) in tests, and run
+viewer test files with a wall-clock cap when something hangs.
+
+### `TraceView` uses `w` / `n` / `r` to jump between state spans
+`ReviewTraceView` (the SWD review window) overrides `keyPressEvent` to treat them as "set the
+state" instead. The review window's buttons use `NoFocus` so key events stay on the trace.
 
 ## Qt UI / styling
 
