@@ -186,6 +186,17 @@ def test_resolve_paths_finds_swd_when_present(tmp_path):
     assert paths.swd == swd_path
 
 
+def test_resolve_paths_finds_swd_named_with_the_bare_animal_id(tmp_path):
+    """Real projects name SWD files Mice-1256.mat (no underscore after the ID)."""
+    manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
+    _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
+    (tmp_path / "swd").mkdir()
+    (tmp_path / "swd" / "Mice-10.mat").touch()  # a different animal sharing the prefix
+    swd_path = tmp_path / "swd" / "Mice-1.mat"
+    swd_path.touch()
+    assert me.resolve_paths(tmp_path, manifest, "Mice-1").swd == swd_path
+
+
 def test_resolve_paths_no_swd_when_missing(tmp_path):
     manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
     _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
