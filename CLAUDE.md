@@ -36,9 +36,13 @@ Pages in pipeline order:
 1. `PreprocessPage` — raw EDFs → `standard/`
 2. `SpindleWritePage` — `standard/` → `spindle_edfs/<COMBO>/`
 3. `SpindleUploadPage` — upload/download via `SleepyRatWorker`
-4. `SleepQCGridPage` — per-animal OK/Review flagging. The Reclassify button recomputes both views (Spindle Mask and Sleep) from NREM-reclassified states (`ebb.process.nrem_reclass`: gap fill, plus an EMG gate on files where gap fill fragments NREM). View-only; nothing is written to disk.
-5. `PSDPage` — computes PSDs, writes `psd/<RUN>/psds_<COMBO>.pkl`
-6. `PSDVisualizer` — review PSDs, flag drink mask artifacts
+4. `ReclassifyPage` — NREM gap fill + EMG gate (`ebb.process.nrem_reclass`); writes `reclass_state` and `final_state` into each `spindle_outputs/<COMBO>/*.csv` and records the gate decision in the manifest
+4b. `SwdReviewPage` — optional (project opt-in): step through epochs that overlap an SWD and fix their states; writes `swd_reclassification` and updates `final_state`
+5. `SleepQCGridPage` — per-animal OK/Review flagging. Opens on the reclassified states (`final_state`); **Show original** switches both views to the original SPINDLE states. View-only.
+6. `PSDPage` — computes PSDs, writes `psd/<RUN>/psds_<COMBO>.pkl`
+7. `PSDVisualizer` — review PSDs, flag drink mask artifacts
+
+How the states are produced and consumed is documented in `docs/sleep_reclassification.md`. In short: **all analysis reads `final_state`** and raises `NotReclassifiedError` if it is missing; the original states are only for the "original" comparison views (`STATE_COLUMNS`).
 
 ### Manifest
 
@@ -46,7 +50,8 @@ Pages in pipeline order:
 
 Key model:
 - `Manifest` — ordered dict of `ManifestEntry` objects, one per animal, plus the project-level `combo` (default `LFC_RSC`; stored at the top level of `manifest.json`)
-- `ManifestEntry` — `preprocessed_edf` path, `has_spindle`, `sleep_qc`, `psd_status`, `drink_mask`, `notes`. A project has exactly one channel combo, so there is no per-combo run state.
+- `ManifestEntry` — `preprocessed_edf` path, `has_spindle`, `sleep_qc`, `reclass_gate_applied`, `swd_reviewed` / `swd_total` / `swd_waived`, `psd_status`, `drink_mask`, `notes`. A project has exactly one channel combo, so there is no per-combo run state.
+- The project-level SWD review opt-in is `Manifest.swd_review_enabled` (top level of `manifest.json`, next to `combo`).
 
 `Manifest.build_from_standard(root)` is the standard constructor on the home page — it loads existing state and syncs new files from disk without overwriting existing flags.
 
