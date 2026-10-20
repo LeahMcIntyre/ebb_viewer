@@ -38,6 +38,7 @@ from ebb_viewer.pages.reclassify import ReclassifyPage
 from ebb_viewer.pages.sleep_qc_visualizer import SleepQCGridPage
 from ebb_viewer.pages.spindle import SpindleWritePage
 from ebb_viewer.pages.spindle_upload import SpindleUploadPage
+from ebb_viewer.pages.swd_review import SwdReviewPage
 from ebb_viewer.pipeline.manifest import Manifest
 
 # ---------------------------------------------------------------------------
@@ -53,6 +54,7 @@ _NAV: list[tuple[str, int] | None] = [
     ("3. Spindle Upload", 3),
     None,
     ("4. Reclassify", 10),
+    ("4b. SWD Review", 11),
     ("5. Sleep QC", 4),
     None,
     ("6. PSD Computation", 5),
@@ -65,12 +67,12 @@ _NAV: list[tuple[str, int] | None] = [
 
 # Sidebar rows that carry pending-work badges → manifest method name.
 # Row 0: Home — animals flagged for EDF review.
-# Row 10: PSD Visualizer — PSDs flagged for review (incl. drink verification).
-# Row 11: Drink Mask — animals flagged needs_drink_mask.
+# Row 11: PSD Visualizer — PSDs flagged for review (incl. drink verification).
+# Row 12: Drink Mask — animals flagged needs_drink_mask.
 _BADGE_ROWS: dict[int, str] = {
     0: "needs_review",
-    10: "pending_psd_review",
-    11: "needs_drink_mask",
+    11: "pending_psd_review",
+    12: "needs_drink_mask",
 }
 
 # Page-name keys emitted via navigate_to → sidebar row index.
@@ -80,11 +82,12 @@ _PAGE_ROWS: dict[str, int] = {
     "spindle_write": 3,
     "spindle_upload": 4,
     "reclassify": 6,
-    "sleep_qc": 7,
-    "psd_compute": 9,
-    "psd_review": 10,
-    "drink_mask": 11,
-    "finalize": 12,
+    "swd_review": 7,
+    "sleep_qc": 8,
+    "psd_compute": 10,
+    "psd_review": 11,
+    "drink_mask": 12,
+    "finalize": 13,
 }
 
 
@@ -146,6 +149,7 @@ class MainWindow(QMainWindow):
         self.spindle_write_page = SpindleWritePage(parent=self, project_root=self.project_root)
         self.spindle_upload_page = SpindleUploadPage(parent=self, project_root=self.project_root)
         self.reclassify_page = ReclassifyPage(parent=self, project_root=self.project_root)
+        self.swd_review_page = SwdReviewPage(parent=self, project_root=self.project_root)
         self.sleep_qc_page = SleepQCGridPage(parent=self, project_root=self.project_root)
         self.psd_page = PSDPage(parent=self, project_root=self.project_root)
         self.psd_visualizer_page = PSDVisualizer(parent=self, project_root=self.project_root)
@@ -166,6 +170,7 @@ class MainWindow(QMainWindow):
             self.finalize_page,
             self.export_masks_page,
             self.reclassify_page,  # stack index 10 (appended; sidebar order is _NAV's)
+            self.swd_review_page,  # stack index 11
         )
         self._pages = pages_in_stack_order
         for w in pages_in_stack_order:
@@ -190,6 +195,7 @@ class MainWindow(QMainWindow):
         for page in (
             self.home_page,
             self.reclassify_page,
+            self.swd_review_page,
             self.sleep_qc_page,
             self.psd_page,
             self.drink_mask_page,
@@ -203,6 +209,7 @@ class MainWindow(QMainWindow):
             self.spindle_write_page,
             self.spindle_upload_page,
             self.reclassify_page,
+            self.swd_review_page,
             self.sleep_qc_page,
             self.psd_page,
             self.psd_visualizer_page,

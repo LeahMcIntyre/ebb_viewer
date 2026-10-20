@@ -59,6 +59,14 @@ class ManifestEntry:
     # ``reclass_state`` was written to the spindle CSV (None = not run yet)
     reclass_gate_applied: bool | None = None
 
+    # SWD review (optional, project-level): SWD epochs reviewed and how many SWD epochs the animal
+    # has (a cache for pages that must not read CSVs; the SWD Review page keeps it in sync, and the
+    # CSV's swd_reclassification column is the source of truth). ``swd_total`` is None until
+    # known. ``swd_waived``: the user confirmed this animal has no SWD file and needs none.
+    swd_reviewed: int = 0
+    swd_total: int | None = None
+    swd_waived: bool = False
+
     # PSD review — keyed by psd run name (e.g. "default", "light_phase")
     psd_status: dict = field(
         default_factory=dict
@@ -71,6 +79,19 @@ class ManifestEntry:
 # ---------------------------------------------------------------------------
 # Derived path helpers (not stored; computed on demand)
 # ---------------------------------------------------------------------------
+
+
+def swd_review_status(entry: ManifestEntry) -> str:
+    """``"not_started"`` | ``"in_progress"`` | ``"done"`` for an animal that has an SWD file.
+
+    An unknown total counts as not started; a file with no SWD epochs (``swd_total == 0``,
+    e.g. an empty .mat) has nothing to review and is done.
+    """
+    if entry.swd_total is None:
+        return "not_started"
+    if entry.swd_reviewed >= entry.swd_total:
+        return "done"
+    return "in_progress" if entry.swd_reviewed > 0 else "not_started"
 
 
 def spindle_edf_dir(channels: str, project_root: Path) -> Path:
@@ -112,6 +133,9 @@ def _entry_to_dict(entry: ManifestEntry) -> dict:
         "has_spindle": entry.has_spindle,
         "sleep_qc": entry.sleep_qc,
         "reclass_gate_applied": entry.reclass_gate_applied,
+        "swd_reviewed": entry.swd_reviewed,
+        "swd_total": entry.swd_total,
+        "swd_waived": entry.swd_waived,
         "psd_status": entry.psd_status,
         "drink_mask": entry.drink_mask,
     }
@@ -146,6 +170,9 @@ def _entry_from_dict(animal_id: str, d: dict, combo: str) -> ManifestEntry:
         has_spindle=d.get("has_spindle", False),
         sleep_qc=d.get("sleep_qc"),
         reclass_gate_applied=d.get("reclass_gate_applied"),
+        swd_reviewed=int(d.get("swd_reviewed", 0)),
+        swd_total=d.get("swd_total"),
+        swd_waived=bool(d.get("swd_waived", False)),
         psd_status=d.get("psd_status") or {},
         drink_mask=d.get("drink_mask"),
     )
@@ -163,6 +190,7 @@ class Manifest:
         self.project_root = Path(project_root)
         self.path = self.project_root / "manifest.json"
         self.combo = DEFAULT_COMBO
+        self.swd_review_enabled = False  # project opt-in for the SWD review page
         self._entries: dict[str, ManifestEntry] = {}
 
     # ------------------------------------------------------------------
@@ -180,6 +208,7 @@ class Manifest:
         # Pre-single-combo files are a bare {animal_id: {...}} dict.
         if "animals" in raw:
             m.combo = raw.get("combo", DEFAULT_COMBO)
+            m.swd_review_enabled = bool(raw.get("swd_review_enabled", False))
             raw = raw["animals"]
         for animal_id, d in raw.items():
             m._entries[animal_id] = _entry_from_dict(animal_id, d, m.combo)
@@ -242,6 +271,7 @@ class Manifest:
         tmp = self.path.with_suffix(".json.tmp")
         data = {
             "combo": self.combo,
+            "swd_review_enabled": self.swd_review_enabled,
             "animals": {aid: _entry_to_dict(e) for aid, e in self._entries.items()},
         }
         with tmp.open("w", encoding="utf-8") as f:
@@ -268,6 +298,23 @@ class Manifest:
         for animal_id, applied in gates.items():
             if animal_id in self._entries:
                 self._entries[animal_id].reclass_gate_applied = applied
+        self.save()
+
+    def set_swd_review_enabled(self, enabled: bool) -> None:
+        """Turn the optional SWD review on or off for the whole project."""
+        self.swd_review_enabled = enabled
+        self.save()
+
+    def set_swd_waived(self, animal_id: str, waived: bool = True) -> None:
+        """Confirm (or undo) that an animal needs no SWD file for the SWD review."""
+        self._entries[animal_id].swd_waived = waived
+        self.save()
+
+    def set_swd_progress(self, animal_id: str, reviewed: int, total: int) -> None:
+        """Record how many of an animal's ``total`` SWD epochs its saved review covers."""
+        entry = self._entries[animal_id]
+        entry.swd_reviewed = reviewed
+        entry.swd_total = total
         self.save()
 
     def __iter__(self) -> Iterator[ManifestEntry]:

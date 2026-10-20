@@ -48,6 +48,7 @@ from ebb.process.sleep_compute import (
     compute_spindle_fractions,
 )
 from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
+from ebb_viewer.pipeline.swd_review import swd_review_gaps
 from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
 from ebb_viewer.widgets.notes_dialog import NotesDialog
 
@@ -143,6 +144,7 @@ class SleepQCGridPage(QWidget):
 
         self._build_ui()
         self._wire()
+        self._update_swd_label()  # the first manifest load ran before the label existed
 
     @property
     def _combo(self) -> str:
@@ -151,7 +153,28 @@ class SleepQCGridPage(QWidget):
     def _refresh_manifest(self) -> None:
         """Reload the manifest from disk."""
         self._manifest = Manifest.load(self.project_root)
+        self._update_swd_label()
 
+    def _update_swd_label(self) -> None:
+        """Note that SWD review is unfinished (no dialog: Sleep QC stays usable)."""
+        label = getattr(self, "lbl_swd", None)  # first call happens before the UI exists
+        if label is None:
+            return
+        gaps = swd_review_gaps(self.project_root, self._manifest)
+        label.setVisible(bool(gaps))
+        if gaps:
+            parts = []
+            if gaps.missing:
+                parts.append(f"{len(gaps.missing)} without an SWD file")
+            if gaps.unfinished:
+                parts.append(f"{len(gaps.unfinished)} not finished")
+            label.setText("SWD review incomplete: " + ", ".join(parts))
+            tip = []
+            if gaps.missing:
+                tip.append("No SWD file: " + ", ".join(gaps.missing))
+            if gaps.unfinished:
+                tip.append("Not finished: " + ", ".join(gaps.unfinished))
+            label.setToolTip("\n".join(tip))
     def _poll(self):
         """Lightweight background refresh: reload manifest, pick up newly downloaded CSVs."""
         self._refresh_manifest()
@@ -290,6 +313,11 @@ class SleepQCGridPage(QWidget):
         self.lbl_reclass.setStyleSheet("color: gray;")
         self.lbl_reclass.setVisible(False)
         top.addWidget(self.lbl_reclass)
+        # Shown only while SWD review is on but unfinished (reclassified states are still valid).
+        self.lbl_swd = QLabel("")
+        self.lbl_swd.setStyleSheet("color: #d97706;")
+        self.lbl_swd.setVisible(False)
+        top.addWidget(self.lbl_swd)
         top.addSpacing(12)
 
         # VIEW cluster — same flush-pair treatment as Group/Animal.

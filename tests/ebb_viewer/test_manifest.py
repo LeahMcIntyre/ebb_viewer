@@ -597,3 +597,40 @@ def test_reclass_gate_roundtrip(tmp_path):
     assert m2.get("AM001").reclass_gate_applied is True
     assert m2.get("AM002").reclass_gate_applied is False
     assert m2.get("GHOST") is None
+
+
+def test_swd_review_fields_roundtrip(tmp_path):
+    m = _make_manifest(tmp_path, {"AM001": dict(), "AM002": dict()})
+    assert m.swd_review_enabled is False and m.get("AM001").swd_reviewed == 0
+
+    m.set_swd_review_enabled(True)
+    m.set_swd_progress("AM001", reviewed=3, total=5)
+    m2 = _reload(m)
+
+    assert m2.swd_review_enabled is True
+    assert (m2.get("AM001").swd_reviewed, m2.get("AM001").swd_total) == (3, 5)
+    assert (m2.get("AM002").swd_reviewed, m2.get("AM002").swd_total) == (0, None)  # total unknown
+
+
+def test_swd_review_status_from_saved_progress():
+    from ebb_viewer.pipeline.manifest import swd_review_status
+
+    e = ManifestEntry("A", "standard/A.edf")
+    assert swd_review_status(e) == "not_started"  # total unknown
+    e.swd_reviewed, e.swd_total = 0, 5
+    assert swd_review_status(e) == "not_started"
+    e.swd_reviewed = 2
+    assert swd_review_status(e) == "in_progress"
+    e.swd_reviewed = 5
+    assert swd_review_status(e) == "done"
+    e.swd_reviewed, e.swd_total = 0, 0  # an empty SWD file: nothing to review
+    assert swd_review_status(e) == "done"
+
+
+def test_swd_waived_roundtrip(tmp_path):
+    m = _make_manifest(tmp_path, {"AM001": dict()})
+    assert m.get("AM001").swd_waived is False
+    m.set_swd_waived("AM001")
+    assert _reload(m).get("AM001").swd_waived is True
+    m.set_swd_waived("AM001", False)
+    assert _reload(m).get("AM001").swd_waived is False

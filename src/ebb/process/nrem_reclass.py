@@ -40,9 +40,13 @@ from ebb.io.spindle_csv import (
     FINAL_COLUMN,
     RECLASS_COLUMN,
     STATE_COLUMNS,
+    SWD_COLUMN,
+    has_column,
+    read_state_column,
     resolve_column,
     write_columns,
 )
+from ebb.process.swd_review import merge_final_state, refresh_swd_after_reclass
 
 DEFAULT_NOISE_THRESHOLD = 0.5
 GAP_RADIUS = 1
@@ -267,15 +271,25 @@ def reclassify_dir_to_csv(
 ) -> dict[str, NremReclass]:
     """Reclassify every CSV in ``state_dir`` and write ``reclass_state`` and ``final_state``.
 
+    If a CSV already has an SWD review (``swd_reclassification``), it is kept and
+    re-applied over the new states (see ``refresh_swd_after_reclass``).
+
     ``on_animal`` is called after each file is written (for progress logging).
     """
     out: dict[str, NremReclass] = {}
     for animal, csv_path, edf_path in _paired_files(state_dir, edf_dir):
         result = reclassify_file(csv_path, edf_path, **kwargs)
-        write_columns(
-            csv_path,
-            {RECLASS_COLUMN: result.final_state, FINAL_COLUMN: result.final_state},
-        )
+        columns = {RECLASS_COLUMN: result.final_state, FINAL_COLUMN: result.final_state}
+        if has_column(csv_path, SWD_COLUMN) and has_column(csv_path, RECLASS_COLUMN):
+            # Keep saved SWD review: real edits stay, unedited copies follow the new states.
+            swd_col = refresh_swd_after_reclass(
+                read_state_column(csv_path, RECLASS_COLUMN),
+                read_state_column(csv_path, SWD_COLUMN),
+                result.final_state,
+            )
+            columns[SWD_COLUMN] = swd_col
+            columns[FINAL_COLUMN] = merge_final_state(result.final_state, swd_col)
+        write_columns(csv_path, columns)
         out[animal] = result
         if on_animal is not None:
             on_animal(animal, result)
