@@ -1,8 +1,8 @@
 """Sleep QC overview: one boxplot per flagging metric, one dot per animal.
 
 Animals past a metric's threshold are red and labelled; clicking a dot selects
-the animal and offers "Flag for Review". Thresholds are editable above the plots
-(``thresholds_changed``). Dot outlines show the animal's Sleep QC status, and
+the animal and offers "Flag for Review". Each threshold is a dashed line labelled
+with its value (the values live in the manifest). Dot outlines show the animal's Sleep QC status, and
 excluded animals are greyed out.
 """
 
@@ -23,7 +23,6 @@ from PyQt6.QtWidgets import (
 )
 
 from ebb.process.sleep_flagging import METRIC_BY_KEY, METRICS, flagged_metrics, past_threshold
-from ebb_viewer.widgets.no_scroll_spinbox import NoScrollDoubleSpinBox
 
 _COLS = 3
 _GRAY = (110, 110, 110, 180)
@@ -42,12 +41,10 @@ class FlagOverview(QWidget):
     Signals:
         animal_clicked(animal): a dot was clicked (``""`` when the strip is dismissed).
         flag_requested(animal): "Flag for Review" was clicked for the selected animal.
-        thresholds_changed(dict): ``{metric key: cutoff}`` after the user edits a cutoff.
-    """
+        """
 
     animal_clicked = pyqtSignal(str)
     flag_requested = pyqtSignal(str)
-    thresholds_changed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -56,29 +53,10 @@ class FlagOverview(QWidget):
         self._statuses: dict[str, str | None] = {}
         self._selected: str | None = None
         self._plots: dict[str, pg.PlotItem] = {}
-        self._spins: dict[str, NoScrollDoubleSpinBox] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
-
-        # Threshold editors, one per metric that flags.
-        bar = QHBoxLayout()
-        bar.setContentsMargins(0, 0, 0, 0)
-        bar.addWidget(QLabel("Flag when:"))
-        for m in METRICS:
-            if m.direction is None:
-                continue
-            bar.addWidget(QLabel(f"{m.label} {m.direction}"))
-            spin = NoScrollDoubleSpinBox()
-            spin.setRange(0, 100000)
-            spin.setDecimals(1)
-            spin.setFixedWidth(70)
-            spin.editingFinished.connect(self._on_threshold_edited)
-            self._spins[m.key] = spin
-            bar.addWidget(spin)
-        bar.addStretch(1)
-        layout.addLayout(bar)
 
         self._summary = QLabel("")
         self._summary.setStyleSheet("color: #555;")
@@ -147,10 +125,6 @@ class FlagOverview(QWidget):
         self._thresholds = dict(thresholds)
         self._statuses = dict(statuses)
         self._selected = selected or None
-        for key, spin in self._spins.items():
-            spin.blockSignals(True)
-            spin.setValue(self._thresholds.get(key, METRIC_BY_KEY[key].default))
-            spin.blockSignals(False)
         for m in METRICS:
             self._draw_metric(m.key)
         self._update_summary()
@@ -187,7 +161,11 @@ class FlagOverview(QWidget):
         if m.direction is not None and cutoff is not None:
             p.addItem(
                 pg.InfiniteLine(
-                    pos=cutoff, angle=0, pen=pg.mkPen((0, 0, 0), width=1, style=Qt.PenStyle.DashLine)
+                    pos=cutoff,
+                    angle=0,
+                    pen=pg.mkPen((0, 0, 0), width=1, style=Qt.PenStyle.DashLine),
+                    label=f"{m.direction} {cutoff:g}",
+                    labelOpts={"position": 0.97, "color": (0, 0, 0), "anchors": [(1, 1), (1, 1)]},
                 )
             )
             flagged = np.array([past_threshold(v, m.direction, cutoff) for v in values])
@@ -260,9 +238,6 @@ class FlagOverview(QWidget):
     # ------------------------------------------------------------------
     # Interaction
     # ------------------------------------------------------------------
-
-    def _on_threshold_edited(self) -> None:
-        self.thresholds_changed.emit({k: s.value() for k, s in self._spins.items()})
 
     def _on_dot_clicked(self, item, spots, ev) -> None:
         if not spots:

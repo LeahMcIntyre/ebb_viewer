@@ -491,9 +491,8 @@ def test_flagged_animals_uses_manifest_thresholds(qapp, tmp_path: Path):
     assert "Short" in page._flag_tag_html("AM002")
     assert page._flag_tag_html("AM001") == ""
 
-    page._on_thresholds_changed({"nrem_short": 600})
+    page._manifest.flag_thresholds["nrem_short"] = 600
     assert page._flagged_animals() == {}
-    assert Manifest.load(tmp_path).flag_thresholds["nrem_short"] == 600
 
 
 def test_overview_shows_flag_table_with_statuses(qapp, tmp_path: Path):

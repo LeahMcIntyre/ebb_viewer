@@ -455,7 +455,6 @@ class SleepQCGridPage(QWidget):
         self.btn_original.toggled.connect(self._on_original_toggled)
         self._overview.animal_clicked.connect(self._on_overview_animal_selected)
         self._overview.flag_requested.connect(self._on_overview_flag_requested)
-        self._overview.thresholds_changed.connect(self._on_thresholds_changed)
 
         self.btn_prev.clicked.connect(self._on_prev_page)
         self.btn_next.clicked.connect(self._on_next_page)
@@ -523,10 +522,6 @@ class SleepQCGridPage(QWidget):
     def _on_overview_flag_requested(self, animal: str) -> None:
         """Flag the selected animal for review from the overview."""
         self._flag_sleep_qc(animal, "needs_review")
-
-    def _on_thresholds_changed(self, thresholds: dict) -> None:
-        self._manifest.set_flag_thresholds(thresholds)
-        self._refresh_overview(selected=self._overview.selected)
 
     # ------------------------------------------------------------------
     # Data loading

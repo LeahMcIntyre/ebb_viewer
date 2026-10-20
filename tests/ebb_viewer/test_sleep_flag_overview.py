@@ -75,19 +75,14 @@ def test_dismiss_clears_selection(qapp):
     assert w.selected is None and got[-1] == ""
 
 
-def test_editing_threshold_emits_all_cutoffs(qapp):
+def test_each_thresholded_metric_has_a_labelled_line(qapp):
+    import pyqtgraph as pg
+
     w = FlagOverview()
     w.set_data(_table(), THRESHOLDS, {})
-    got = []
-    w.thresholds_changed.connect(got.append)
-    w._spins["nrem_short"].setValue(250)
-    w._spins["nrem_short"].editingFinished.emit()
-    assert got[0]["nrem_short"] == 250 and got[0]["pct_nrem"] == 30
-
-
-def test_set_data_does_not_emit_threshold_signal(qapp):
-    w = FlagOverview()
-    got = []
-    w.thresholds_changed.connect(got.append)
-    w.set_data(_table(), THRESHOLDS, {})
-    assert got == []
+    for key, cutoff in THRESHOLDS.items():
+        (line,) = [i for i in w._plots[key].items if isinstance(i, pg.InfiniteLine)]
+        assert line.value() == cutoff
+        assert f"{cutoff:g}" in line.label.textItem.toPlainText()
+    for key in ("pct_rem", "pct_wake"):  # no threshold, no line
+        assert not [i for i in w._plots[key].items if isinstance(i, pg.InfiniteLine)]
