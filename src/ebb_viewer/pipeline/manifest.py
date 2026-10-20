@@ -23,6 +23,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ebb.process.sleep_flagging import default_thresholds
 from ebb_viewer.pipeline import psd_params as _pp
 from ebb_viewer.pipeline.naming import drink_mask_rel, parse_animal_id
 
@@ -31,7 +32,9 @@ from ebb_viewer.pipeline.naming import drink_mask_rel, parse_animal_id
 # ---------------------------------------------------------------------------
 
 DEFAULT_COMBO = "LFC_RSC"
-SLEEP_QC_STATUSES = frozenset({"ok", "needs_review"})
+SLEEP_QC_STATUSES = frozenset({"ok", "needs_review", "excluded"})
+# Statuses ``flag_sleep_qc`` sets; "excluded" goes through ``exclude_sleep_qc`` (it needs a reason).
+_FLAGGABLE_STATUSES = frozenset({"ok", "needs_review"})
 PSD_STATUSES = frozenset({"ok", "needs_drink_mask", "drink_mask_applied"})
 
 
@@ -53,7 +56,7 @@ class ManifestEntry:
     has_spindle: bool = False
 
     # Sleep QC
-    sleep_qc: str | None = None  # None | "ok" | "needs_review"
+    sleep_qc: str | None = None  # None | "ok" | "needs_review" | "excluded"
 
     # NREM reclassification — whether the EMG gate was applied when
     # ``reclass_state`` was written to the spindle CSV (None = not run yet)
@@ -191,6 +194,7 @@ class Manifest:
         self.path = self.project_root / "manifest.json"
         self.combo = DEFAULT_COMBO
         self.swd_review_enabled = False  # project opt-in for the SWD review page
+        self.flag_thresholds = default_thresholds()  # Sleep QC flagging cutoffs, by metric key
         self._entries: dict[str, ManifestEntry] = {}
 
     # ------------------------------------------------------------------
@@ -209,6 +213,7 @@ class Manifest:
         if "animals" in raw:
             m.combo = raw.get("combo", DEFAULT_COMBO)
             m.swd_review_enabled = bool(raw.get("swd_review_enabled", False))
+            m.flag_thresholds.update(raw.get("flag_thresholds", {}))
             raw = raw["animals"]
         for animal_id, d in raw.items():
             m._entries[animal_id] = _entry_from_dict(animal_id, d, m.combo)
@@ -272,6 +277,7 @@ class Manifest:
         data = {
             "combo": self.combo,
             "swd_review_enabled": self.swd_review_enabled,
+            "flag_thresholds": self.flag_thresholds,
             "animals": {aid: _entry_to_dict(e) for aid, e in self._entries.items()},
         }
         with tmp.open("w", encoding="utf-8") as f:
@@ -298,6 +304,15 @@ class Manifest:
         for animal_id, applied in gates.items():
             if animal_id in self._entries:
                 self._entries[animal_id].reclass_gate_applied = applied
+        self.save()
+
+    def set_flag_thresholds(self, thresholds: dict[str, float]) -> None:
+        """Set Sleep QC flagging cutoffs for the project (metric key -> cutoff)."""
+        known = default_thresholds()
+        unknown = set(thresholds) - set(known)
+        if unknown:
+            raise ValueError(f"No threshold for metric(s) {sorted(unknown)}; known: {sorted(known)}")
+        self.flag_thresholds.update({k: float(v) for k, v in thresholds.items()})
         self.save()
 
     def set_swd_review_enabled(self, enabled: bool) -> None:
@@ -413,16 +428,39 @@ class Manifest:
         Leaving "ok" clears PSD review progress, which is only valid while
         sleep_qc == "ok".
         """
-        if status not in SLEEP_QC_STATUSES:
+        if status not in _FLAGGABLE_STATUSES:
             raise ValueError(
-                f"Invalid sleep_qc status {status!r}; must be one of {SLEEP_QC_STATUSES}"
+                f"Invalid sleep_qc status {status!r}; must be one of {set(_FLAGGABLE_STATUSES)} "
+                "(use exclude_sleep_qc to exclude)"
             )
+        self._set_sleep_qc(animal_id, status)
+        self.save()
+
+    def exclude_sleep_qc(self, animal_id: str, reason: str) -> None:
+        """Exclude an animal from analysis, recording ``reason`` in its notes.
+
+        The reason is appended to ``notes`` as an ``Excluded: <reason>`` line.
+        Undo with ``flag_sleep_qc`` or ``reset_sleep_qc``; the note stays.
+
+        Raises:
+            ValueError: if ``reason`` is empty or whitespace.
+        """
+        reason = reason.strip()
+        if not reason:
+            raise ValueError("A reason is required to exclude an animal")
+        entry = self._entries[animal_id]
+        self._set_sleep_qc(animal_id, "excluded")
+        line = f"Excluded: {reason}"
+        entry.notes = f"{entry.notes}\n{line}" if entry.notes else line
+        self.save()
+
+    def _set_sleep_qc(self, animal_id: str, status: str) -> None:
+        """Set the status; leaving "ok" clears PSD review progress (only valid under "ok")."""
         entry = self._entries[animal_id]
         if entry.sleep_qc == "ok" and status != "ok":
             entry.psd_status = {}
             entry.drink_mask = None
         entry.sleep_qc = status
-        self.save()
 
     def flag_psd(self, animal_id: str, status: str, run_name: str = "default") -> None:
         """Set the PSD review flag for (animal, run_name).

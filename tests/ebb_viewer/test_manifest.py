@@ -634,3 +634,56 @@ def test_swd_waived_roundtrip(tmp_path):
     assert _reload(m).get("AM001").swd_waived is True
     m.set_swd_waived("AM001", False)
     assert _reload(m).get("AM001").swd_waived is False
+
+
+# --- exclusion and flagging thresholds -----------------------------------
+
+
+def test_exclude_requires_a_reason(tmp_path):
+    m = _make_manifest(tmp_path, {"A1": {"sleep_qc": "needs_review"}})
+    with pytest.raises(ValueError, match="reason"):
+        m.exclude_sleep_qc("A1", "   ")
+    assert m.get("A1").sleep_qc == "needs_review"
+
+
+def test_exclude_sets_status_and_appends_to_notes(tmp_path):
+    m = _make_manifest(tmp_path, {"A1": {"notes": "cage change day 2"}, "A2": {}})
+    m.exclude_sleep_qc("A1", " lost EEG signal ")
+    m.exclude_sleep_qc("A2", "seizures")
+    assert m.get("A1").sleep_qc == "excluded"
+    assert m.get("A1").notes == "cage change day 2\nExcluded: lost EEG signal"
+    assert m.get("A2").notes == "Excluded: seizures"
+    assert Manifest.load(tmp_path).get("A1").sleep_qc == "excluded"
+
+
+def test_exclude_from_ok_clears_psd_progress(tmp_path):
+    m = _make_manifest(tmp_path, {"A1": {"sleep_qc": "ok", "psd_status": {"default": "ok"}}})
+    m.exclude_sleep_qc("A1", "bad file")
+    assert m.get("A1").psd_status == {}
+
+
+def test_unexclude_keeps_the_note(tmp_path):
+    m = _make_manifest(tmp_path, {"A1": {}})
+    m.exclude_sleep_qc("A1", "bad file")
+    m.flag_sleep_qc("A1", "ok")
+    assert m.get("A1").sleep_qc == "ok"
+    assert m.get("A1").notes == "Excluded: bad file"
+    m.exclude_sleep_qc("A1", "still bad")
+    m.reset_sleep_qc("A1")
+    assert m.get("A1").sleep_qc is None
+
+
+def test_flag_sleep_qc_rejects_excluded(tmp_path):
+    m = _make_manifest(tmp_path, {"A1": {}})
+    with pytest.raises(ValueError, match="exclude_sleep_qc"):
+        m.flag_sleep_qc("A1", "excluded")
+
+
+def test_flag_thresholds_default_roundtrip_and_validation(tmp_path):
+    m = _make_manifest(tmp_path, {"A1": {}})
+    assert m.flag_thresholds["nrem_short"] == 400
+    m.set_flag_thresholds({"nrem_short": 250})
+    assert Manifest.load(tmp_path).flag_thresholds["nrem_short"] == 250
+    assert Manifest.load(tmp_path).flag_thresholds["pct_nrem"] == 30  # others keep defaults
+    with pytest.raises(ValueError, match="pct_rem"):
+        m.set_flag_thresholds({"pct_rem": 5})
