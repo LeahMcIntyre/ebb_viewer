@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from ebb.core.naming import parse_animal_id
 from ebb.io.sleep_export import export_sleep
-from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
+from ebb_viewer.pipeline.manifest import READY_STATUSES, Manifest, spindle_output_dir
 
 # Project recordings are all acquired in the Central time zone; passed to the
 # rotate-to-6AM binning so the rotation honors DST transitions.
@@ -53,7 +53,7 @@ def _find_animal_csv(animal_id: str, combo: str, project_root: Path) -> Path | N
 def build_sleep_export(project_root: Path) -> SleepExportResult:
     """Gather ok-combo CSVs and write the sleep export bundle.
 
-    For every manifest animal with an accepted (``sleep_qc == "ok"``) combo,
+    For every manifest animal with a decided Sleep QC (``"ok"`` or ``"excluded"``),
     copies that combo's SPINDLE CSV into ``sleep_export/chosen_csvs/`` and
     then runs :func:`ebb.io.sleep_export.export_sleep` over the gathered
     directory. Animals without an ok combo (or whose CSV is missing on disk)
@@ -77,7 +77,7 @@ def build_sleep_export(project_root: Path) -> SleepExportResult:
 
     for entry in manifest:
         animal = entry.animal_id
-        if entry.sleep_qc != "ok":
+        if entry.sleep_qc not in READY_STATUSES:
             # Only flag animals that have spindle files; an entry without
             # isn't through sleep QC and shouldn't count as "missing ok".
             if entry.has_spindle:

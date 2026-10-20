@@ -71,6 +71,7 @@ _EXISTS_COLOR = QColor("#d4edda")  # green
 
 _SLEEP_QC_LABEL: dict[str, str] = {
     "needs_review": "Review EDF",
+    "excluded": "Excluded",
 }
 
 
@@ -162,7 +163,8 @@ def compute_pipeline_status(
     n_review = len(manifest.needs_review())
     n_pending_qc = len(manifest.pending_sleep_qc())
     n_animals = len(manifest)
-    n_ok = len(manifest.ready_for_psd())
+    n_ok = len(manifest.ready_for_psd())  # ok + excluded
+    n_excluded = sum(1 for e in manifest.ready_for_psd() if e.sleep_qc == "excluded")
     n_psd_pending = len(manifest.all_pending_psd_review())
 
     # --- Step 1: Preprocess ---
@@ -241,7 +243,10 @@ def compute_pipeline_status(
 
     # --- Step 5: Sleep QC ---
     if step3_done and n_pending_qc == 0 and n_review == 0 and n_ok > 0:
-        s4 = StepStatus("done", f"{n_ok} animal{'s' if n_ok != 1 else ''} marked ok")
+        excluded = f", {n_excluded} excluded" if n_excluded else ""
+        s4 = StepStatus(
+            "done", f"{n_ok - n_excluded} animal{'s' if n_ok - n_excluded != 1 else ''} marked ok{excluded}"
+        )
     elif step3_done and (n_review > 0 or n_pending_qc > 0):
         parts = []
         if n_review:

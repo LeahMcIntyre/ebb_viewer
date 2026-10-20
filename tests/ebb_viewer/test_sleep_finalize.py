@@ -104,3 +104,23 @@ def test_chosen_csvs_rebuilt_each_run(tmp_path: Path):
 
     names = {p.name for p in (result.out_dir / "chosen_csvs").glob("*.csv")}
     assert names == {"Animal1_run.csv"}  # stale file gone
+
+
+def test_excluded_animal_is_still_exported(tmp_path: Path):
+    per_hr = 3600 // 4
+    for animal in ("Animal1", "Animal2", "Animal3"):
+        _write_rawstate_csv(
+            tmp_path / "spindle_outputs" / "LFC_RSC" / f"{animal}_run.csv", ["w"] * (24 * per_hr)
+        )
+    (tmp_path / "standard").mkdir()
+    for animal in ("Animal1", "Animal2", "Animal3"):
+        (tmp_path / "standard" / f"{animal}_PREPROCESSED.edf").write_bytes(b"")
+    _seed(tmp_path, {"Animal1": "ok", "Animal2": "excluded", "Animal3": "needs_review"})
+
+    with patch(
+        "ebb.process.sleep_compute.read_edf_start_datetime", return_value=datetime(2024, 1, 1, 6)
+    ):
+        result = build_sleep_export(tmp_path)
+
+    assert result.exported == ["Animal1", "Animal2"]
+    assert result.missing_ok == ["Animal3"]

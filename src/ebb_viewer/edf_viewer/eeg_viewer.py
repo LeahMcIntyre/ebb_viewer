@@ -40,6 +40,7 @@ from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
 from ebb_viewer.pipeline.naming import parse_animal_id
 from ebb_viewer.widgets.drink_mask_dialog import DrinkMaskDialogue
+from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.sleep_viewer import SleepPopup
 from ebb_viewer.widgets.stft_viewer import STFTBoundsDialog, STFTPopup
 
@@ -200,6 +201,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
     _QC_STYLES: dict[str, str] = {
         "ok": "color: green; font-weight: bold;",
         "needs_review": "color: #b8860b; font-weight: bold;",
+        "excluded": "color: #8a8a8a; font-weight: bold;",
     }
 
     def __init__(
@@ -470,6 +472,14 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self._act_review.triggered.connect(self._flag_qc_review)
         qc_tb.addAction(self._act_review)
 
+        qc_tb.addSeparator()
+
+        self._act_exclude = QtGui.QAction("Exclude", self)
+        self._act_exclude.setCheckable(True)
+        self._act_exclude.setToolTip("Exclude this animal from analysis (a reason is required)")
+        self._act_exclude.triggered.connect(self._flag_qc_exclude)
+        qc_tb.addAction(self._act_exclude)
+
         self._update_qc_status()
 
     def _flag_qc_ok(self) -> None:
@@ -480,6 +490,14 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.manifest.flag_sleep_qc(self.animal_id, "needs_review")
         self._update_qc_status()
 
+    def _flag_qc_exclude(self, checked: bool) -> None:
+        """Exclude (asking for a reason); un-excluding sends the animal back to review."""
+        if checked:
+            exclude_with_reason(self, self.manifest, self.animal_id)
+        else:
+            self.manifest.flag_sleep_qc(self.animal_id, "needs_review")
+        self._update_qc_status()
+
     def _update_qc_status(self) -> None:
         entry = self.manifest.get(self.animal_id)
         status = entry.sleep_qc if entry else None
@@ -488,6 +506,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self._qc_status_label.setStyleSheet(self._QC_STYLES.get(status, ""))
         self._act_ok.setChecked(status == "ok")
         self._act_review.setChecked(status == "needs_review")
+        self._act_exclude.setChecked(status == "excluded")
 
     def _on_mask_rebuild(self, mask) -> None:
         name = mask.name

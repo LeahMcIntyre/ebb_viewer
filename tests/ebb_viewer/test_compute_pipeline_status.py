@@ -69,6 +69,15 @@ def test_step5_active_when_all_qc_resolved(tmp_path):
     assert "marked ok" in s5.description
 
 
+def test_sleep_qc_step_counts_excluded_as_decided(tmp_path):
+    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
+    m = _make_manifest(tmp_path, {"A001": dict(sleep_qc="ok"), "A002": dict(sleep_qc="excluded")})
+    statuses = compute_pipeline_status(tmp_path, m)
+    assert statuses[5].kind == "done"
+    assert statuses[5].description == "1 animal marked ok, 1 excluded"
+    assert statuses[6].kind == "active"  # PSD compute can run: excluded animals are still computed
+
+
 def test_step5_blocked_when_review_pending_and_ok_exists(tmp_path):
     """Step 5 is 'blocked' when some animals still need EDF review."""
     _setup_filesystem(tmp_path, combos=["LFC_RSC"])
