@@ -104,7 +104,7 @@ def test_legend_row_has_exclude_button_checked_and_greyed_when_excluded(qapp, tm
     assert buttons["Exclude"].isChecked()
     assert not buttons["OK"].isChecked() and not buttons["Review"].isChecked()
     row = page.legend_container.findChild(type(page.legend_container), "legendRow")
-    assert "#e3e3e3" in row.styleSheet() and "#8a8a8a" in row.styleSheet()
+    assert "#cfcfcf" in row.styleSheet() and "#8a8a8a" in row.styleSheet()
 
 
 # --- EDF viewer ------------------------------------------------------------

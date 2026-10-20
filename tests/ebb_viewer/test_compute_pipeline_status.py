@@ -76,6 +76,7 @@ def test_sleep_qc_step_counts_excluded_as_decided(tmp_path):
     assert statuses[5].kind == "done"
     assert statuses[5].description == "1 animal marked ok, 1 excluded"
     assert statuses[6].kind == "active"  # PSD compute can run: excluded animals are still computed
+    assert statuses[6].description == "Ready — 2 animals (1 excluded, still computed)"
 
 
 def test_step5_blocked_when_review_pending_and_ok_exists(tmp_path):
@@ -392,3 +393,12 @@ def test_swd_review_empty_swd_file_has_nothing_to_review(tmp_path):
     m.swd_review_enabled = True
     m.get("A001").swd_reviewed, m.get("A001").swd_total = 0, 0  # empty .mat: no SWD epochs
     assert compute_pipeline_status(tmp_path, m)[4].kind == "done"
+
+
+def test_excluded_sleep_qc_cell_is_labelled_and_carries_the_reason(qapp):
+    from ebb_viewer.pages.home import HomePage
+
+    cell = HomePage._build_sleep_qc_cell(None, "excluded", True, "Excluded: lost signal")
+    assert cell.text() == "Excluded"
+    assert cell.toolTip() == "Excluded: lost signal"
+    assert HomePage._build_sleep_qc_cell(None, "ok", True, "x").toolTip() == ""

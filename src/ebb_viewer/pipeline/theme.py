@@ -4,7 +4,7 @@
 STATUS_COLOR_HEX: dict[str, str] = {
     "ok": "#d4edda",  # green
     "needs_review": "#FFF3CD",  # yellow
-    "excluded": "#e3e3e3",  # grey
+    "excluded": "#cfcfcf",  # grey
     "needs_drink_mask": "#E97B7B",  # red
     "drink_mask_applied": "#d4edda",  # green
 }

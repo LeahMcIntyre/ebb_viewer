@@ -467,3 +467,36 @@ def test_autodetect_fs_noop_when_detect_returns_none(qapp, tmp_path: Path, monke
     page._maybe_autodetect_fs()
 
     assert page.spin_fs.value() == psds_mod.DEFAULT_FS
+
+
+def _page_with_animals(qapp, tmp_path: Path, statuses: dict[str, str | None]):
+    from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
+
+    (tmp_path / "standard").mkdir()
+    spindle = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle.mkdir(parents=True)
+    m = Manifest(tmp_path)
+    for animal, status in statuses.items():
+        (spindle / f"{animal}_LFC_RSC.csv").write_text("rawstate\n")
+        m._entries[animal] = ManifestEntry(
+            animal_id=animal, preprocessed_edf=f"{animal}_PREPROCESSED.edf",
+            has_spindle=True, sleep_qc=status,
+        )
+    m.save()
+    page = _make_page(qapp, tmp_path)
+    page._validate()
+    return page
+
+
+def test_excluded_animals_count_as_ready_and_are_called_out(qapp, tmp_path: Path):
+    page = _page_with_animals(qapp, tmp_path, {"AM001": "ok", "AM002": "excluded"})
+    assert page.btn_run_pipeline.isEnabled()
+    assert "2 animals, 1 excluded" in page._summary_label.text()
+    assert page.combo_table.item(0, 2).text() == "2 (1 excluded)"
+    assert page.combo_table.horizontalHeaderItem(2).text() == "Ready Animals"
+
+
+def test_unresolved_animal_blocks_run_and_names_both_ready_statuses(qapp, tmp_path: Path):
+    page = _page_with_animals(qapp, tmp_path, {"AM001": "excluded", "AM002": "needs_review"})
+    assert not page.btn_run_pipeline.isEnabled()
+    assert "ok or excluded" in page._gate_label.text()
