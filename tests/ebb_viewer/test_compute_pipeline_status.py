@@ -343,7 +343,8 @@ def test_swd_review_progress_states(tmp_path):
     animals = {"A001": dict(reclass_gate_applied=False), "A002": dict(reclass_gate_applied=False)}
     m = _reclassified_project(tmp_path, animals, swd_for=["A001", "A002"])
     m.swd_review_enabled = True
-    assert compute_pipeline_status(tmp_path, m)[4].kind == "active"
+    s = compute_pipeline_status(tmp_path, m)[4]
+    assert s.kind == "active" and "Ready" in s.description
 
     m.get("A001").swd_reviewed, m.get("A001").swd_total = 3, 3
     s = compute_pipeline_status(tmp_path, m)[4]
@@ -357,16 +358,28 @@ def test_swd_review_progress_states(tmp_path):
     assert compute_pipeline_status(tmp_path, m)[4].kind == "done"
 
 
-def test_swd_review_attention_when_no_swd_files(tmp_path):
+def test_swd_review_needs_a_file_or_a_confirmation_for_every_animal(tmp_path):
+    animals = {"A001": dict(reclass_gate_applied=False), "A002": dict(reclass_gate_applied=False)}
+    m = _reclassified_project(tmp_path, animals, swd_for=["A001"])  # A002 has no SWD file
+    m.swd_review_enabled = True
+    m.get("A001").swd_reviewed, m.get("A001").swd_total = 2, 2
+
+    s = compute_pipeline_status(tmp_path, m)[4]
+    assert s.kind == "attention" and "1 without an SWD file" in s.description
+
+    m.get("A002").swd_waived = True  # user confirmed it needs none
+    assert compute_pipeline_status(tmp_path, m)[4].kind == "done"
+
+
+def test_swd_review_all_animals_missing_files_is_attention(tmp_path):
     m = _reclassified_project(tmp_path, {"A001": dict(reclass_gate_applied=False)})
     m.swd_review_enabled = True
     s = compute_pipeline_status(tmp_path, m)[4]
-    assert s.kind == "attention" and "No SWD files" in s.description
+    assert s.kind == "attention" and "without an SWD file" in s.description
 
 
-def test_swd_review_only_counts_animals_that_have_swd_files(tmp_path):
-    animals = {"A001": dict(reclass_gate_applied=False), "A002": dict(reclass_gate_applied=False)}
-    m = _reclassified_project(tmp_path, animals, swd_for=["A001"])  # A002 has none
+def test_swd_review_empty_swd_file_has_nothing_to_review(tmp_path):
+    m = _reclassified_project(tmp_path, {"A001": dict(reclass_gate_applied=False)}, swd_for=["A001"])
     m.swd_review_enabled = True
-    m.get("A001").swd_reviewed, m.get("A001").swd_total = 2, 2
+    m.get("A001").swd_reviewed, m.get("A001").swd_total = 0, 0  # empty .mat: no SWD epochs
     assert compute_pipeline_status(tmp_path, m)[4].kind == "done"

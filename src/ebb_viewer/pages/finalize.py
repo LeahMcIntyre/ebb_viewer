@@ -32,6 +32,7 @@ from ebb.core.naming import parse_animal_id
 from ebb.process.state_presets import PRESET_DISPLAY
 from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.widgets.swd_warning import confirm_unfinished_swd_review
 
 CH_LABELS = ["LFC", "RSC", "LSC"]
 
@@ -421,6 +422,9 @@ class FinalizePage(QWidget):
     def _on_export_sleep(self):
         from ebb_viewer.pipeline.sleep_finalize import build_sleep_export
 
+        if not confirm_unfinished_swd_review(self, self.project_root):
+            return
+
         try:
             result = build_sleep_export(self.project_root)
         except Exception as e:
@@ -443,6 +447,9 @@ class FinalizePage(QWidget):
 
     def _on_finalize(self, run_name: str):
         from ebb.process.psd_compute import build_run_final_pkl
+
+        if not confirm_unfinished_swd_review(self, self.project_root):
+            return
 
         try:
             out = build_run_final_pkl(self.project_root, Manifest.load(self.project_root).combo, run_name)

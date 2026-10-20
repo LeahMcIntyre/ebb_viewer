@@ -58,6 +58,7 @@ from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
 from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget
 from ebb_viewer.widgets.no_scroll_spinbox import NoScrollSpinBox
+from ebb_viewer.widgets.swd_warning import confirm_unfinished_swd_review
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
 DEFAULT_FS = 250
@@ -655,6 +656,11 @@ class PSDPage(QWidget):
                     " or switch to 'No SWD mask'.",
                 )
                 return
+
+        if not confirm_unfinished_swd_review(
+            self, self.project_root, {e.animal_id for e in manifest.ready_for_psd()}
+        ):
+            return
 
         run_name = self._run_name()
         if not psd_params.valid_run_name(run_name):

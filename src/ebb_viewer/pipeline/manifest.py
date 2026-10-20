@@ -59,11 +59,13 @@ class ManifestEntry:
     # ``reclass_state`` was written to the spindle CSV (None = not run yet)
     reclass_gate_applied: bool | None = None
 
-    # SWD review (optional, project-level): SWD epochs reviewed as of the last Save and how many
-    # SWD epochs the animal has (a cache for the home page; the CSV's swd_reclassification
-    # column is the source of truth). 0 < reviewed < total means "in progress".
+    # SWD review (optional, project-level): SWD epochs reviewed and how many SWD epochs the animal
+    # has (a cache for pages that must not read CSVs; the SWD Review page keeps it in sync, and the
+    # CSV's swd_reclassification column is the source of truth). ``swd_total`` is None until
+    # known. ``swd_waived``: the user confirmed this animal has no SWD file and needs none.
     swd_reviewed: int = 0
-    swd_total: int = 0
+    swd_total: int | None = None
+    swd_waived: bool = False
 
     # PSD review — keyed by psd run name (e.g. "default", "light_phase")
     psd_status: dict = field(
@@ -80,12 +82,16 @@ class ManifestEntry:
 
 
 def swd_review_status(entry: ManifestEntry) -> str:
-    """``"not_started"`` | ``"in_progress"`` | ``"done"`` from the saved SWD review progress.
+    """``"not_started"`` | ``"in_progress"`` | ``"done"`` for an animal that has an SWD file.
 
+    An unknown total counts as not started; a file with no SWD epochs (``swd_total == 0``,
+    e.g. an empty .mat) has nothing to review and is done.
     """
-    if entry.swd_reviewed == 0:
+    if entry.swd_total is None:
         return "not_started"
-    return "done" if entry.swd_reviewed >= entry.swd_total else "in_progress"
+    if entry.swd_reviewed >= entry.swd_total:
+        return "done"
+    return "in_progress" if entry.swd_reviewed > 0 else "not_started"
 
 
 def spindle_edf_dir(channels: str, project_root: Path) -> Path:
@@ -129,6 +135,7 @@ def _entry_to_dict(entry: ManifestEntry) -> dict:
         "reclass_gate_applied": entry.reclass_gate_applied,
         "swd_reviewed": entry.swd_reviewed,
         "swd_total": entry.swd_total,
+        "swd_waived": entry.swd_waived,
         "psd_status": entry.psd_status,
         "drink_mask": entry.drink_mask,
     }
@@ -164,7 +171,8 @@ def _entry_from_dict(animal_id: str, d: dict, combo: str) -> ManifestEntry:
         sleep_qc=d.get("sleep_qc"),
         reclass_gate_applied=d.get("reclass_gate_applied"),
         swd_reviewed=int(d.get("swd_reviewed", 0)),
-        swd_total=int(d.get("swd_total", 0)),
+        swd_total=d.get("swd_total"),
+        swd_waived=bool(d.get("swd_waived", False)),
         psd_status=d.get("psd_status") or {},
         drink_mask=d.get("drink_mask"),
     )
@@ -295,6 +303,11 @@ class Manifest:
     def set_swd_review_enabled(self, enabled: bool) -> None:
         """Turn the optional SWD review on or off for the whole project."""
         self.swd_review_enabled = enabled
+        self.save()
+
+    def set_swd_waived(self, animal_id: str, waived: bool = True) -> None:
+        """Confirm (or undo) that an animal needs no SWD file for the SWD review."""
+        self._entries[animal_id].swd_waived = waived
         self.save()
 
     def set_swd_progress(self, animal_id: str, reviewed: int, total: int) -> None:

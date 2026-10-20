@@ -74,15 +74,19 @@ def test_table_shows_swd_epoch_count_and_enables_review(qapp, tmp_path):
     assert page.table.cellWidget(0, 4).isEnabled()
 
 
-def test_review_disabled_without_swd_file_or_reclassification(qapp, tmp_path):
+def test_review_disabled_without_reclassification_and_confirm_offered_without_swd_file(
+    qapp, tmp_path
+):
     root = _project(tmp_path / "a", swd=False)
     Manifest.load(root).set_swd_review_enabled(True)
-    assert not SwdReviewPage(project_root=root).table.cellWidget(0, 4).isEnabled()
+    btn = SwdReviewPage(project_root=root).table.cellWidget(0, 4)
+    assert btn.text() == "Confirm no SWD"  # nothing to review: confirm it needs none instead
 
     root = _project(tmp_path / "b", reclassified=False)
     Manifest.load(root).set_swd_review_enabled(True)
     page = SwdReviewPage(project_root=root)
     assert page.table.item(0, 2).text() == "run Reclassify"
+    assert page.table.cellWidget(0, 4).text() == "Review…"
     assert not page.table.cellWidget(0, 4).isEnabled()
 
 
@@ -102,6 +106,9 @@ def test_open_review_launches_window_and_saving_marks_manifest(qapp, tmp_path):
     assert args[1].name == "A1_x.csv" and args[2].name == "A1_swd.mat"
     fake_win.show.assert_called_once()
 
+    # the window saves the CSV (epoch 0 reviewed), then reports progress
+    csv_path = root / "spindle_outputs" / "LFC_RSC" / "A1_x.csv"
+    csv_path.write_text("state,reclass_state,swd_reclassification\nw,w,w\nn,n,\nn,n,\nw,w,\n")
     kwargs["on_saved"]("A1", 1, 2)  # window saved after reviewing 1 of 2 SWD epochs
     entry = Manifest.load(root).get("A1")
     assert (entry.swd_reviewed, entry.swd_total) == (1, 2)
@@ -135,3 +142,49 @@ def test_open_review_error_is_reported_not_raised(qapp, tmp_path):
     ):
         page._open_review("A1")
     assert critical.called and "bad edf" in critical.call_args.args[2]
+
+
+def test_animal_without_swd_file_can_be_confirmed_and_unconfirmed(qapp, tmp_path):
+    from PyQt6.QtWidgets import QMessageBox
+
+    root = _project(tmp_path, swd=False)
+    Manifest.load(root).set_swd_review_enabled(True)
+    page = SwdReviewPage(project_root=root)
+    assert page.table.item(0, 3).text() == "Needs file or confirmation"
+    btn = page.table.cellWidget(0, 4)
+    assert btn.text() == "Confirm no SWD" and btn.isEnabled()
+
+    with patch("ebb_viewer.pages.swd_review.QMessageBox.question",
+               return_value=QMessageBox.StandardButton.Cancel):
+        page._toggle_waived("A1")
+    assert Manifest.load(root).get("A1").swd_waived is False  # cancelled: nothing changes
+
+    with patch("ebb_viewer.pages.swd_review.QMessageBox.question",
+               return_value=QMessageBox.StandardButton.Yes):
+        page._toggle_waived("A1")
+    assert Manifest.load(root).get("A1").swd_waived is True
+    assert page.table.item(0, 3).text() == "Confirmed: no SWD needed"
+    assert page.table.cellWidget(0, 4).text() == "Undo confirmation"
+
+    page._toggle_waived("A1")  # undo needs no confirmation
+    assert Manifest.load(root).get("A1").swd_waived is False
+
+
+def test_refresh_syncs_progress_counts_into_the_manifest(qapp, tmp_path):
+    root = _project(tmp_path)
+    Manifest.load(root).set_swd_review_enabled(True)
+    SwdReviewPage(project_root=root)  # refresh on construction
+    entry = Manifest.load(root).get("A1")
+    assert (entry.swd_reviewed, entry.swd_total) == (0, 2)  # two SWD epochs, none reviewed
+
+
+def test_empty_swd_file_syncs_as_nothing_to_review(qapp, tmp_path):
+    import numpy as np
+
+    root = _project(tmp_path)
+    savemat(root / "swd" / "A1_swd.mat", {"DEL_ts": np.empty((0, 2))})
+    Manifest.load(root).set_swd_review_enabled(True)
+    page = SwdReviewPage(project_root=root)
+    assert page.table.item(0, 3).text() == "no SWD epochs"
+    entry = Manifest.load(root).get("A1")
+    assert (entry.swd_reviewed, entry.swd_total) == (0, 0)

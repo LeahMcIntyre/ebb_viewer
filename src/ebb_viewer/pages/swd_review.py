@@ -1,14 +1,14 @@
 """SWD Review page — optional per-project review of epochs that overlap SWDs.
 
 Inputs: ``spindle_outputs/<combo>/*.csv`` (after Reclassify) and the SWD interval
-``.mat`` files in ``swd/`` (``find_swd_file`` shows the accepted names).
+``.mat`` files in ``swd/`` (``find_swd_file`` shows the accepted names). With review on, every
+animal needs an SWD file (an empty one is fine) or the user's confirmation that it has none.
 Outputs: ``swd_reclassification`` and an updated ``final_state`` in each reviewed CSV,
 and the number of reviewed SWD epochs per animal in the manifest. Only reviewed SWD epochs get a
 value, so a partly finished review shows as in progress and resumes where it stopped. Off by default: the checkbox is a
 project-level opt-in (``Manifest.swd_review_enabled``).
 """
 
-import re
 from pathlib import Path
 
 from PyQt6.QtCore import pyqtSignal
@@ -29,13 +29,9 @@ from ebb.io.spindle_csv import RECLASS_COLUMN, SWD_COLUMN, has_column, read_stat
 from ebb.process.swd_review import reviewed_epochs, swd_flags_for_file
 from ebb_viewer.edf_viewer.swd_review import launch_swd_review
 from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
+from ebb_viewer.pipeline.swd_review import find_swd_file
 
 _COLUMNS = ("Animal", "SWD file", "SWD epochs", "Review", "")
-
-
-# Same rule PSD compute uses to pair SWD files with animals (psd_compute.match_paths): an
-# optional "<letters/digits>ts_" prefix, then the animal ID up to the next "_".
-_SWD_ANIMAL = re.compile(r"^(?:[A-Za-z0-9]*ts_)?([^_]+)")
 
 
 def _progress_text(n_reviewed: int, n_swd: int) -> str:
@@ -47,19 +43,6 @@ def _progress_text(n_reviewed: int, n_swd: int) -> str:
     if n_reviewed >= n_swd:
         return f"✓ {n_swd} of {n_swd}"
     return f"In progress ({n_reviewed} of {n_swd})"
-
-
-def find_swd_file(project_root: Path, animal_id: str) -> Path | None:
-    """The ``swd/*.mat`` file for ``animal_id`` (first, sorted), or None.
-
-    Matches ``Mice-1256.mat`` and ``JK1011_P063_DEL_ts.mat``, but not another animal whose ID merely starts with the same characters (A1 vs A10).
-    """
-    swd_dir = Path(project_root) / "swd"
-    for mat in sorted(swd_dir.glob("*.mat")) if swd_dir.is_dir() else []:
-        m = _SWD_ANIMAL.match(mat.stem)
-        if m and m.group(1) == animal_id:
-            return mat
-    return None
 
 
 class SwdReviewPage(QWidget):
@@ -140,15 +123,21 @@ class SwdReviewPage(QWidget):
             self.lbl_status.setText("SWD review is off for this project; nothing is changed.")
             self.table.setRowCount(0)
             return
-        self.lbl_status.setText(f"{len(csvs)} spindle CSV(s) in {manifest.combo}")
+        self.lbl_status.setText(
+            f"{len(csvs)} spindle CSV(s) in {manifest.combo}. Every animal needs an SWD file "
+            "(an empty one is fine) or your confirmation that it has none."
+        )
         self.table.setRowCount(len(csvs))
+        synced = False
         for row, (animal, csv_path) in enumerate(csvs.items()):
             mat = find_swd_file(self.project_root, animal)
             reclassed = has_column(csv_path, RECLASS_COLUMN)
+            entry = manifest.get(animal)
             n_swd = ""
             progress = "—"
-            entry = manifest.get(animal)
-            if mat is not None and reclassed:
+            if mat is None:
+                progress = "Confirmed: no SWD needed" if entry and entry.swd_waived else "Needs file or confirmation"
+            elif reclassed:
                 try:
                     flags = swd_flags_for_file(csv_path, mat)[1]
                     n_swd = str(int(flags.sum()))
@@ -158,6 +147,13 @@ class SwdReviewPage(QWidget):
                         else 0
                     )
                     progress = _progress_text(done, int(flags.sum()))
+                    if entry is not None and (entry.swd_reviewed, entry.swd_total) != (
+                        done,
+                        int(flags.sum()),
+                    ):
+                        # keep the manifest cache (home page, warnings) in step with the CSV
+                        entry.swd_reviewed, entry.swd_total = done, int(flags.sum())
+                        synced = True
                 except (ValueError, OSError) as e:
                     n_swd = f"error: {e}"
             cells = (
@@ -168,10 +164,40 @@ class SwdReviewPage(QWidget):
             )
             for col, text in enumerate(cells):
                 self.table.setItem(row, col, QTableWidgetItem(text))
-            btn = QPushButton("Review…")
-            btn.setEnabled(mat is not None and reclassed and entry is not None)
-            btn.clicked.connect(lambda _=False, a=animal: self._open_review(a))
+            if mat is None:
+                waived = bool(entry and entry.swd_waived)
+                btn = QPushButton("Undo confirmation" if waived else "Confirm no SWD")
+                btn.setEnabled(entry is not None)
+                btn.clicked.connect(lambda _=False, a=animal: self._toggle_waived(a))
+            else:
+                btn = QPushButton("Review…")
+                btn.setEnabled(reclassed and entry is not None)
+                btn.clicked.connect(lambda _=False, a=animal: self._open_review(a))
             self.table.setCellWidget(row, 4, btn)
+        if synced:
+            manifest.save()
+
+    def _toggle_waived(self, animal: str) -> None:
+        """Confirm that an animal has no SWD file and needs none, or undo that confirmation."""
+        manifest = Manifest.load(self.project_root)
+        entry = manifest.get(animal)
+        if entry is None:
+            return
+        if not entry.swd_waived:
+            reply = QMessageBox.question(
+                self,
+                "Confirm no SWD file",
+                f"{animal} has no SWD file in swd/. Confirm that this animal has no SWDs to "
+                "review and does not need one?\n\nIf it does, add a file (an empty one is "
+                "fine) instead.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+        manifest.set_swd_waived(animal, not entry.swd_waived)
+        self.manifest_changed.emit()
+        self._refresh()
 
     # ---------------- review ----------------
     def _open_review(self, animal: str) -> None:

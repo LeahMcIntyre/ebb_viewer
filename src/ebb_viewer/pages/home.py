@@ -29,7 +29,6 @@ from PyQt6.QtWidgets import (
 
 from ebb.io.spindle_csv import FINAL_COLUMN, has_column
 from ebb_viewer.edf_viewer.eeg_viewer import launch_edf_window
-from ebb_viewer.pages.swd_review import find_swd_file
 from ebb_viewer.pipeline import psd_params as _psd_params
 from ebb_viewer.pipeline.manifest import (
     Manifest,
@@ -40,6 +39,7 @@ from ebb_viewer.pipeline.manifest import (
     swd_review_status,
 )
 from ebb_viewer.pipeline.naming import drink_mask_rel
+from ebb_viewer.pipeline.swd_review import find_swd_file, swd_review_gaps
 from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
 from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.table_helpers import make_cell
@@ -212,20 +212,32 @@ def compute_pipeline_status(
     elif s_reclass.kind != "done":
         s_swd = StepStatus("blocked", "Requires Reclassify (step 4)")
     else:
-        with_swd = [e for e in manifest if e.has_spindle and find_swd_file(root, e.animal_id)]
-        n_done = sum(1 for e in with_swd if swd_review_status(e) == "done")
-        n_started = sum(1 for e in with_swd if swd_review_status(e) == "in_progress")
-        if not with_swd:
-            s_swd = StepStatus("attention", "No SWD files found in swd/")
-        elif n_done == len(with_swd):
+        gaps = swd_review_gaps(root, manifest)
+        animals = [e for e in manifest if e.has_spindle]
+        n_done = sum(
+            1
+            for e in animals
+            if find_swd_file(root, e.animal_id) and swd_review_status(e) == "done"
+        )
+        n_started = sum(
+            1
+            for e in animals
+            if find_swd_file(root, e.animal_id) and swd_review_status(e) == "in_progress"
+        )
+        if not gaps:
             s_swd = StepStatus("done", f"{n_done} animal{'s' if n_done != 1 else ''} reviewed")
-        elif n_done or n_started:
-            parts = [f"{n_done} of {len(with_swd)} animals reviewed"]
-            if n_started:
-                parts.append(f"{n_started} in progress")
-            s_swd = StepStatus("attention", ", ".join(parts))
         else:
-            s_swd = StepStatus("active", "Ready — review SWD epochs")
+            parts = []
+            if gaps.missing:
+                parts.append(f"{len(gaps.missing)} without an SWD file")
+            if n_done or n_started:
+                parts.append(f"{n_done} of {n_done + len(gaps.unfinished)} reviewed")
+                if n_started:
+                    parts.append(f"{n_started} in progress")
+            elif gaps.unfinished:
+                parts.append("Ready — review SWD epochs")
+            kind = "attention" if (gaps.missing or n_done or n_started) else "active"
+            s_swd = StepStatus(kind, ", ".join(parts))
 
     # --- Step 5: Sleep QC ---
     if step3_done and n_pending_qc == 0 and n_review == 0 and n_ok > 0:
