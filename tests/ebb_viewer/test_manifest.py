@@ -652,17 +652,17 @@ def test_swd_waived_roundtrip(tmp_path):
 def test_exclude_requires_a_reason(tmp_path):
     m = _make_manifest(tmp_path, {"A1": {"sleep_qc": "needs_review"}})
     with pytest.raises(ValueError, match="reason"):
-        m.exclude_sleep_qc("A1", "   ")
+        m.exclude_sleep_qc("A1", "   ", "Sleep QC")
     assert m.get("A1").sleep_qc == "needs_review"
 
 
 def test_exclude_sets_status_and_appends_to_notes(tmp_path):
     m = _make_manifest(tmp_path, {"A1": {"notes": "cage change day 2"}, "A2": {}})
-    m.exclude_sleep_qc("A1", " lost EEG signal ")
-    m.exclude_sleep_qc("A2", "seizures")
+    m.exclude_sleep_qc("A1", " lost EEG signal ", "Sleep QC")
+    m.exclude_sleep_qc("A2", "seizures", "PSD review")
     assert m.get("A1").sleep_qc == "excluded"
-    assert m.get("A1").notes == "cage change day 2\nExcluded: lost EEG signal"
-    assert m.get("A2").notes == "Excluded: seizures"
+    assert m.get("A1").notes == "cage change day 2\nExcluded (Sleep QC): lost EEG signal"
+    assert m.get("A2").notes == "Excluded (PSD review): seizures"
     assert Manifest.load(tmp_path).get("A1").sleep_qc == "excluded"
 
 
@@ -672,7 +672,7 @@ def test_exclude_clears_psd_progress_and_drink_mask(tmp_path):
         tmp_path,
         {"A1": {"sleep_qc": "ok", "psd_status": {"default": "drink_mask_applied"}, "drink_mask": "drink_masks/A1.npy"}},
     )
-    m.exclude_sleep_qc("A1", "bad file")
+    m.exclude_sleep_qc("A1", "bad file", "Sleep QC")
     assert m.get("A1").psd_status == {} and m.get("A1").drink_mask is None
     m.flag_sleep_qc("A1", "ok")  # un-excluded to ok: a fresh review
     assert m.get("A1").psd_status == {}
@@ -726,17 +726,17 @@ def test_excluding_the_last_unverified_animal_empties_every_review_queue(tmp_pat
         + len(m.pending_drink_verification("default"))
     )
     assert queues() == 1
-    m.exclude_sleep_qc("A3", "signal lost")
+    m.exclude_sleep_qc("A3", "signal lost", "Sleep QC")
     assert queues() == 0
 
 
 def test_unexclude_keeps_the_note(tmp_path):
     m = _make_manifest(tmp_path, {"A1": {}})
-    m.exclude_sleep_qc("A1", "bad file")
+    m.exclude_sleep_qc("A1", "bad file", "Sleep QC")
     m.flag_sleep_qc("A1", "ok")
     assert m.get("A1").sleep_qc == "ok"
-    assert m.get("A1").notes == "Excluded: bad file"
-    m.exclude_sleep_qc("A1", "still bad")
+    assert m.get("A1").notes == "Excluded (Sleep QC): bad file"
+    m.exclude_sleep_qc("A1", "still bad", "Sleep QC")
     m.reset_sleep_qc("A1")
     assert m.get("A1").sleep_qc is None
 
@@ -762,15 +762,22 @@ def test_excluded_animals_maps_animal_to_its_reasons(tmp_path):
     m = _make_manifest(
         tmp_path,
         {
-            "A1": {"sleep_qc": "ok", "notes": "Excluded: stale old line"},
-            "A2": {"sleep_qc": "excluded", "notes": "cage change\nExcluded: lost signal\nExcluded: seizures"},
+            "A1": {"sleep_qc": "ok", "notes": "Excluded (Sleep QC): stale old line"},
+            "A2": {"sleep_qc": "excluded", "notes": "cage change\nExcluded (Sleep QC): lost signal\nExcluded (PSD review): seizures"},
             "A3": {"sleep_qc": "excluded", "notes": "edited by hand"},
             "A4": {"sleep_qc": "excluded"},
             "A5": {"sleep_qc": "needs_review"},
         },
     )
     assert m.excluded_animals() == {
-        "A2": "lost signal; seizures",  # only the Excluded: lines, not the other notes
+        "A2": "Sleep QC: lost signal; PSD review: seizures",  # only the Excluded lines
         "A3": "edited by hand",  # excluded without a reason line: the whole note
         "A4": "",
     }
+
+
+def test_excluded_reason_carries_the_stage(tmp_path):
+    m = _make_manifest(tmp_path, {"A1": {}, "A2": {}})
+    m.exclude_sleep_qc("A1", "lost signal", "Sleep QC")
+    m.exclude_sleep_qc("A2", "ghost peak", "PSD review")
+    assert m.excluded_animals() == {"A1": "Sleep QC: lost signal", "A2": "PSD review: ghost peak"}

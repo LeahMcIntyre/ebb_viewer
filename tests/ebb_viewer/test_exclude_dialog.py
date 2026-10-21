@@ -40,15 +40,15 @@ def test_exclude_button_needs_a_reason(qapp):
 def test_accepted_dialog_excludes_and_records_reason(qapp, tmp_path):
     m = _manifest(tmp_path, "needs_review", notes="earlier note")
     with _accepting("seizures all day"):
-        assert exclude_with_reason(None, m, "AM001") is True
+        assert exclude_with_reason(None, m, "AM001", "Sleep QC") is True
     assert m.get("AM001").sleep_qc == "excluded"
-    assert m.get("AM001").notes == "earlier note\nExcluded: seizures all day"
+    assert m.get("AM001").notes == "earlier note\nExcluded (Sleep QC): seizures all day"
 
 
 def test_cancelled_dialog_changes_nothing(qapp, tmp_path):
     m = _manifest(tmp_path, "needs_review")
     with patch.object(ExcludeDialog, "exec", lambda self: 0):
-        assert exclude_with_reason(None, m, "AM001") is False
+        assert exclude_with_reason(None, m, "AM001", "Sleep QC") is False
     assert m.get("AM001").sleep_qc == "needs_review"
     assert m.get("AM001").notes == ""
 
@@ -70,7 +70,7 @@ def test_page_exclude_sets_status_emits_and_keeps_note(qapp, tmp_path):
     with _accepting("bad file"):
         page._exclude_sleep_qc("AM001", True)
     assert page._manifest.get("AM001").sleep_qc == "excluded"
-    assert Manifest.load(tmp_path).get("AM001").notes == "Excluded: bad file"
+    assert Manifest.load(tmp_path).get("AM001").notes == "Excluded (Sleep QC): bad file"
     assert emitted == [True]
 
 
@@ -91,7 +91,7 @@ def test_page_unexclude_returns_to_needs_review_and_keeps_note(qapp, tmp_path):
         page._exclude_sleep_qc("AM001", True)
     page._exclude_sleep_qc("AM001", False)
     assert page._manifest.get("AM001").sleep_qc == "needs_review"
-    assert page._manifest.get("AM001").notes == "Excluded: bad file"
+    assert page._manifest.get("AM001").notes == "Excluded (Sleep QC): bad file"
 
 
 def test_legend_row_has_exclude_button_checked_and_greyed_when_excluded(qapp, tmp_path):

@@ -19,6 +19,7 @@ spindle files live under ``spindle_edfs/<combo>/`` and
 """
 
 import json
+import re
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,6 +41,10 @@ _FLAGGABLE_STATUSES = frozenset({"ok", "needs_review"})
 # animals are in PSD review (pending review, drink masks, verification): excluded animals
 # have no PSD status and cannot be flagged.
 READY_STATUSES = frozenset({"ok", "excluded"})
+
+STAGE_SLEEP_QC = "Sleep QC"
+STAGE_PSD_REVIEW = "PSD review"
+_EXCLUDED_LINE = re.compile(r"Excluded \(([^)]*)\):\s*(.*)")
 PSD_STATUSES = frozenset({"ok", "needs_drink_mask", "drink_mask_applied"})
 
 
@@ -300,16 +305,21 @@ class Manifest:
         return self._entries.get(animal_id)
 
     def excluded_animals(self) -> dict[str, str]:
-        """``{animal_id: reason}`` for animals excluded in Sleep QC.
+        """``{animal_id: reason}`` for excluded animals.
 
-        The reason is the animal's ``Excluded: ...`` note lines joined with "; " (the whole
-        notes if it was excluded without one, e.g. by editing manifest.json).
+        The reason is the animal's ``Excluded (<stage>): ...`` note lines, each as
+        ``<stage>: <reason>``, joined with "; " (the whole notes if it was excluded
+        without one, e.g. by editing manifest.json).
         """
         out = {}
         for e in self:
             if e.sleep_qc != "excluded":
                 continue
-            lines = [ln.strip()[len("Excluded:") :].strip() for ln in e.notes.splitlines() if ln.strip().startswith("Excluded:")]
+            lines = [
+                f"{m.group(1)}: {m.group(2)}"
+                for ln in e.notes.splitlines()
+                if (m := _EXCLUDED_LINE.match(ln.strip()))
+            ]
             out[e.animal_id] = "; ".join(lines) or e.notes.strip()
         return out
 
@@ -449,10 +459,11 @@ class Manifest:
         self._set_sleep_qc(animal_id, status)
         self.save()
 
-    def exclude_sleep_qc(self, animal_id: str, reason: str) -> None:
+    def exclude_sleep_qc(self, animal_id: str, reason: str, stage: str) -> None:
         """Exclude an animal from analysis, recording ``reason`` in its notes.
 
-        The reason is appended to ``notes`` as an ``Excluded: <reason>`` line, and the
+        ``stage`` is where it was excluded (``STAGE_SLEEP_QC`` / ``STAGE_PSD_REVIEW``). The
+        reason is appended to ``notes`` as an ``Excluded (<stage>): <reason>`` line, and the
         animal's PSD review progress is cleared (excluded animals are not reviewed).
         Undo with ``flag_sleep_qc`` or ``reset_sleep_qc``; the note stays.
 
@@ -464,7 +475,7 @@ class Manifest:
             raise ValueError("A reason is required to exclude an animal")
         entry = self._entries[animal_id]
         self._set_sleep_qc(animal_id, "excluded")
-        line = f"Excluded: {reason}"
+        line = f"Excluded ({stage}): {reason}"
         entry.notes = f"{entry.notes}\n{line}" if entry.notes else line
         self.save()
 

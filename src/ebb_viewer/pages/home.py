@@ -52,7 +52,7 @@ _COLUMNS = [
     "Preprocessed",
     "Spindle EDF",
     "Spindle Output",
-    "Sleep QC",
+    "QC Status",
     "PSD File",
     "PSD Status",
     "Notes",
@@ -61,7 +61,7 @@ _COL_ANIMAL = _COLUMNS.index("Animal")
 _COL_PREPROCESSED = _COLUMNS.index("Preprocessed")
 _COL_SPINDLE_EDF = _COLUMNS.index("Spindle EDF")
 _COL_SPINDLE_OUT = _COLUMNS.index("Spindle Output")
-_COL_SLEEP_QC = _COLUMNS.index("Sleep QC")
+_COL_SLEEP_QC = _COLUMNS.index("QC Status")
 _COL_PSD_FILE = _COLUMNS.index("PSD File")
 _COL_PSD_STATUS = _COLUMNS.index("PSD Status")
 _COL_NOTES = _COLUMNS.index("Notes")
@@ -789,7 +789,7 @@ class HomePage(QWidget):
         )
 
     def _build_sleep_qc_cell(self, sleep_qc: str | None, spindle_out_ok: bool, notes: str = ""):
-        """Build the Sleep QC column cell (pending / needs_review / ok / excluded).
+        """Build the QC Status column cell (pending / needs_review / ok / excluded).
 
         An excluded cell's tooltip is the animal's notes, which hold the reason.
         """
@@ -816,7 +816,9 @@ class HomePage(QWidget):
             psd_status == "needs_drink_mask"
             and (self.project_root / drink_mask_rel(entry.animal_id)).is_file()
         )
-        if psd_status == "drink_mask_applied":
+        if entry.sleep_qc == "excluded":
+            txt, bg = "—", None  # excluded animals are never PSD-reviewed
+        elif psd_status == "drink_mask_applied":
             txt, bg = "drink mask applied", _STATUS_COLOR["drink_mask_applied"]
         elif psd_status == "needs_drink_mask":
             if has_drink_mask:
