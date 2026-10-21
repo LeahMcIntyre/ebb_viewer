@@ -55,7 +55,7 @@ Key model:
 
 `Manifest.build_from_standard(root)` is the standard constructor on the home page — it loads existing state and syncs new files from disk without overwriting existing flags.
 
-Valid statuses: `sleep_qc` ∈ `{None, "ok", "needs_review", "excluded"}` (`"ok"` and `"excluded"` are both "decided": `READY_STATUSES` gate PSD compute and the exports, so an excluded animal is still computed, but it is not queued for PSD review (`pending_psd_review` skips it); the manifest is the only record of the exclusion, and the analysis step reads it from there); `psd_status` ∈ `{None, "ok", "needs_drink_mask", "drink_mask_applied"}`.
+Valid statuses: `sleep_qc` ∈ `{None, "ok", "needs_review", "excluded"}` (`"ok"` and `"excluded"` are both "decided": `READY_STATUSES` gate PSD compute and the exports, so an excluded animal is still computed, but only `"ok"` animals are in PSD review: excluded animals are in no review queue, have their PSD status cleared and cannot be flagged OK / drink mask (`flag_psd` raises); the manifest is the only record of the exclusion, and the analysis step reads it from there); `psd_status` ∈ `{None, "ok", "needs_drink_mask", "drink_mask_applied"}`.
 
 `manifest._entry_from_dict` still reads the pre-single-combo format (marked TEMPORARY) — delete it once existing projects have been re-saved.
 

@@ -477,7 +477,7 @@ class PSDGridPage(QWidget):
         return self._animal_id_of(key)
 
     def _flag_psd_ok(self) -> None:
-        if self.manifest is None:
+        if self.manifest is None or self._excluded_notes() is not None:
             return
         animal_id = self._manifest_animal_id()
         if animal_id is None:
@@ -487,7 +487,7 @@ class PSDGridPage(QWidget):
         self.manifest_changed.emit()
 
     def _flag_drink_mask(self) -> None:
-        if self.manifest is None:
+        if self.manifest is None or self._excluded_notes() is not None:
             return
         animal_id = self._manifest_animal_id()
         if animal_id is None:
@@ -514,7 +514,7 @@ class PSDGridPage(QWidget):
         self.manifest_changed.emit()
 
     def _reset_psd_status(self) -> None:
-        if self.manifest is None:
+        if self.manifest is None or self._excluded_notes() is not None:
             return
         animal_id = self._manifest_animal_id()
         if animal_id is None:
@@ -596,12 +596,16 @@ class PSDGridPage(QWidget):
         self._update_excluded_marker()
         if self.manifest is None:
             return
-        self._btn_flag_exclude.setChecked(self._excluded_notes() is not None)
+        excluded = self._excluded_notes() is not None
+        self._btn_flag_exclude.setChecked(excluded)
+        # Excluded animals are not reviewed: no OK / Drink Mask (the shortcuts do nothing either).
+        self._btn_flag_ok.setEnabled(not excluded)
+        self._btn_flag_drink.setEnabled(not excluded)
         animal_id = self._manifest_animal_id()
         entry = self.manifest.get(animal_id) if animal_id else None
         status = entry.psd_status.get(self._run_name) if entry else None
 
-        self._btn_flag_reset.setEnabled(status is not None)
+        self._btn_flag_reset.setEnabled(status is not None and not excluded)
 
         has_notes = bool(entry is not None and entry.notes.strip())
         self._act_notes.setText("📝 Notes •" if has_notes else "📝 Notes")
@@ -644,7 +648,6 @@ class PSDGridPage(QWidget):
         else:
             self._btn_flag_ok.setChecked(False)
             self._btn_flag_drink.setChecked(False)
-            excluded = self._excluded_notes() is not None
             self._status_label.setText("excluded" if excluded else "")
             self._status_label.setStyleSheet("color: gray;" if excluded else "")
             self._guidance_label.setVisible(False)
