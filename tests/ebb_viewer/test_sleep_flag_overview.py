@@ -18,7 +18,9 @@ def _table(**overrides) -> pd.DataFrame:
 
 
 def _click(w: FlagOverview, animal: str) -> None:
-    w._on_dot_clicked(None, [MagicMock(data=MagicMock(return_value=animal))], None)
+    spots = np.empty(1, dtype=object)  # pyqtgraph hands over an ndarray, not a list
+    spots[0] = MagicMock(data=MagicMock(return_value=animal))
+    w._on_dot_clicked(None, spots, None)
 
 
 def test_flagged_animals_lists_metrics_past_thresholds(qapp):
@@ -85,3 +87,14 @@ def test_each_thresholded_metric_has_a_labelled_line(qapp):
         (line,) = [i for i in w._plots[key].items if isinstance(i, pg.InfiniteLine)]
         assert line.value() == cutoff
         assert f"{cutoff:g}" in line.label.textItem.toPlainText()
+
+
+def test_click_on_overlapping_dots_selects_the_first(qapp):
+    """Regression: several dots under the cursor arrive as a multi-element ndarray."""
+    w = FlagOverview()
+    w.set_data(_table(), THRESHOLDS, {})
+    spots = np.empty(2, dtype=object)
+    spots[0] = MagicMock(data=MagicMock(return_value="A1"))
+    spots[1] = MagicMock(data=MagicMock(return_value="A2"))
+    w._on_dot_clicked(None, spots, None)
+    assert w.selected == "A1"
