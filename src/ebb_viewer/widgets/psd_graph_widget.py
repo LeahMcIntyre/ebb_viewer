@@ -610,8 +610,9 @@ class PSDGridPage(QWidget):
         else:
             self._btn_flag_ok.setChecked(False)
             self._btn_flag_drink.setChecked(False)
-            self._status_label.setText("")
-            self._status_label.setStyleSheet("")
+            excluded = self._excluded_notes() is not None
+            self._status_label.setText("excluded" if excluded else "")
+            self._status_label.setStyleSheet("color: gray;" if excluded else "")
             self._guidance_label.setVisible(False)
 
     def _clear_all(self):

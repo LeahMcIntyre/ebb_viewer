@@ -261,3 +261,14 @@ def test_excluded_animals_are_greyed_in_the_dropdown(qapp, tmp_path: Path):
 def test_no_project_root_means_no_banner(qapp):
     page = _make_page(qapp, store=_FakeStoreWithAnimal())
     assert page._excluded_banner.isHidden()
+
+
+def test_status_label_says_excluded_when_no_psd_status(qapp, tmp_path: Path):
+    _seed_excluded(tmp_path)
+    page = _make_page(
+        qapp, project_root=tmp_path, store=_FakeStoreTwoAnimals(), manifest=Manifest.load(tmp_path)
+    )
+    page.cmb_animal.setCurrentText("AM002_drink")
+    assert page._status_label.text() == "excluded"
+    page.cmb_animal.setCurrentText("AM001")
+    assert page._status_label.text() != "excluded"

@@ -357,11 +357,15 @@ class Manifest:
     def pending_psd_review(self, run_name: str) -> list[ManifestEntry]:
         """Animals with ok sleep QC whose PSD hasn't been reviewed yet for run_name.
 
+        Excluded animals are not queued: their PSDs are still computed, but nobody
+        reviews them (they rejoin the queue if un-excluded to ok). An excluded animal
+        that already has a PSD status stays in the other queues.
+
         Gated on psds_<combo>.pkl existing for that run.
         """
         if not psd_path(self.combo, self.project_root, run_name).exists():
             return []
-        return self._filter(lambda e: e.sleep_qc in READY_STATUSES and run_name not in e.psd_status)
+        return self._filter(lambda e: e.sleep_qc == "ok" and run_name not in e.psd_status)
 
     def needs_drink_mask(self, run_name: str) -> list[ManifestEntry]:
         """Animals flagged as having drinking sidebands in the PSD for run_name."""

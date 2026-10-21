@@ -232,6 +232,21 @@ def test_step6_blocked_when_merged_pkl_absent_despite_reviewed_animals(tmp_path)
     assert statuses[7].kind == "blocked"
 
 
+def test_excluded_unreviewed_animal_does_not_make_psd_review_attention(tmp_path):
+    """An excluded animal has no PSD status and is not queued, so it cannot hold up step 7."""
+    _setup_with_final_pkl(tmp_path, combos=["LFC_RSC"])
+    m = _make_manifest(
+        tmp_path,
+        {
+            "A001": dict(sleep_qc="ok", psd_status={"default": "ok"}),
+            "A002": dict(sleep_qc="excluded"),
+        },
+    )
+    assert len(m.all_pending_psd_review()) == 0
+    statuses = compute_pipeline_status(tmp_path, m)
+    assert statuses[7].kind != "attention"
+
+
 # ---------------------------------------------------------------------------
 # Step 6 must not show "done" when an animal needs drink mask
 # ---------------------------------------------------------------------------
