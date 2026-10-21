@@ -35,6 +35,25 @@ _STATUS_PEN = {
 }
 
 
+def _swarm(values: np.ndarray, y_gap: float, x_step: float = 0.1, x_max: float = 0.6) -> np.ndarray:
+    """x offsets that keep dots with similar values from sitting on top of each other.
+
+    Dots are placed in value order at the offset nearest 0 (alternating sides) that
+    is at least ``x_step`` away from every already placed dot within ``y_gap`` of it.
+    """
+    xs = np.zeros(len(values))
+    placed: list[int] = []
+    for i in np.argsort(values):
+        near = [xs[j] for j in placed if abs(values[j] - values[i]) < y_gap]
+        for k in range(int(x_max / x_step) * 2 + 1):
+            x = ((k + 1) // 2) * x_step * (1 if k % 2 else -1)
+            if all(abs(x - n) >= x_step for n in near):
+                xs[i] = x
+                break
+        placed.append(i)
+    return xs
+
+
 class FlagOverview(QWidget):
     """Boxplot grid of the flagging metrics (see module docstring).
 
@@ -172,7 +191,8 @@ class FlagOverview(QWidget):
         else:
             flagged = np.zeros(len(values), dtype=bool)
 
-        jitter = np.random.default_rng(0).uniform(-0.18, 0.18, len(values))
+        span = float(values.max() - values.min()) or 1.0
+        jitter = _swarm(values, y_gap=span * 0.05)
         brushes, pens, sizes = [], [], []
         for a, f in zip(animals, flagged, strict=True):
             status = self._statuses.get(a)
@@ -199,7 +219,7 @@ class FlagOverview(QWidget):
                 lbl.setPos(x + 0.05, y)
                 p.addItem(lbl)
 
-        p.setXRange(-0.7, 1.2)
+        p.setXRange(-0.7, 1.2)  # box at 0; dots spread out to the sides
         lo, hi = float(values.min()), float(values.max())
         if cutoff is not None:
             lo, hi = min(lo, cutoff), max(hi, cutoff)
