@@ -172,7 +172,7 @@ class FlagOverview(QWidget):
         else:
             flagged = np.zeros(len(values), dtype=bool)
 
-        jitter = np.random.default_rng(0).uniform(-0.18, 0.18, len(values))
+        jitter = np.random.default_rng(0).uniform(-0.3, 0.3, len(values))
         brushes, pens, sizes = [], [], []
         for a, f in zip(animals, flagged, strict=True):
             status = self._statuses.get(a)
