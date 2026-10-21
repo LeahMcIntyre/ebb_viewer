@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ebb.core.naming import parse_animal_id
 from ebb.io.spindle_csv import FINAL_COLUMN, has_column
 from ebb_viewer.edf_viewer.eeg_viewer import launch_edf_window
 from ebb_viewer.pipeline import psd_params as _psd_params
@@ -197,10 +198,17 @@ def compute_pipeline_status(
     n_csvs = len(csvs)
     n_reclassed = sum(1 for p in csvs if has_column(p, FINAL_COLUMN))
     n_gated = sum(1 for e in manifest if e.reclass_gate_applied)
+    n_gate_unknown = sum(
+        1
+        for p in csvs
+        if has_column(p, FINAL_COLUMN)
+        and ((e := manifest.get(parse_animal_id(p))) is None or e.reclass_gate_applied is None)
+    )
     if not step3_done:
         s_reclass = StepStatus("blocked", "Requires step 3")
     elif n_reclassed == n_csvs:
-        s_reclass = StepStatus("done", f"{n_reclassed} reclassified (EMG gate on {n_gated})")
+        note = f"; gate record missing for {n_gate_unknown}" if n_gate_unknown else ""
+        s_reclass = StepStatus("done", f"{n_reclassed} reclassified (EMG gate on {n_gated}{note})")
     elif n_reclassed > 0:
         s_reclass = StepStatus(
             "attention", f"{n_csvs - n_reclassed} of {n_csvs} CSVs not reclassified"
@@ -245,7 +253,8 @@ def compute_pipeline_status(
     if step3_done and n_pending_qc == 0 and n_review == 0 and n_ok > 0:
         excluded = f", {n_excluded} excluded" if n_excluded else ""
         s4 = StepStatus(
-            "done", f"{n_ok - n_excluded} animal{'s' if n_ok - n_excluded != 1 else ''} marked ok{excluded}"
+            "done",
+            f"{n_ok - n_excluded} animal{'s' if n_ok - n_excluded != 1 else ''} marked ok{excluded}",
         )
     elif step3_done and (n_review > 0 or n_pending_qc > 0):
         parts = []
@@ -267,9 +276,7 @@ def compute_pipeline_status(
 
     if psd_runs and any_psd_pkl:
         n_runs = len(psd_runs)
-        s5 = StepStatus(
-            "done", f"{n_runs} run{'s' if n_runs != 1 else ''} computed — PSDs ready"
-        )
+        s5 = StepStatus("done", f"{n_runs} run{'s' if n_runs != 1 else ''} computed — PSDs ready")
     elif all_ready_for_psd:
         excluded = f" ({n_excluded} excluded, still computed)" if n_excluded else " marked ok"
         s5 = StepStatus(
@@ -531,9 +538,7 @@ class HomePage(QWidget):
     def _refresh_pipeline_guide(
         self, manifest: Manifest, psd_runs: list[str] | None = None
     ) -> None:
-        statuses = compute_pipeline_status(
-            self.project_root, manifest, psd_runs=psd_runs
-        )
+        statuses = compute_pipeline_status(self.project_root, manifest, psd_runs=psd_runs)
         next_idx: int | None = next(
             (i for i, s in enumerate(statuses) if s.kind in ("active", "attention")),
             None,
@@ -765,7 +770,9 @@ class HomePage(QWidget):
             make_cell("✓" if spindle_out_ok else "—", _EXISTS_COLOR if spindle_out_ok else None),
         )
         self.table.setItem(
-            row_idx, _COL_SLEEP_QC, self._build_sleep_qc_cell(entry.sleep_qc, spindle_out_ok, entry.notes)
+            row_idx,
+            _COL_SLEEP_QC,
+            self._build_sleep_qc_cell(entry.sleep_qc, spindle_out_ok, entry.notes),
         )
         self.table.setItem(
             row_idx,

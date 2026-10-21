@@ -30,6 +30,14 @@ from ebb_viewer.widgets.worker_helpers import launch_worker
 _COLUMNS = ("Animal", "Reclassified", "EMG gate", "NREM bouts (light) before → after")
 
 
+def gate_label(reclassified: bool, gate: bool | None) -> str:
+    """EMG-gate cell text. A reclassified file with no manifest record is "unknown":
+    the result in ``final_state`` is right, only the label was lost (re-run restores it)."""
+    if gate is not None:
+        return "applied" if gate else "not needed"
+    return "unknown (re-run to restore)" if reclassified else "—"
+
+
 class _ReclassWorker(QObject):
     """Runs ``reclassify_dir_to_csv`` off the GUI thread."""
 
@@ -116,7 +124,14 @@ class ReclassifyPage(QWidget):
         state_dir, _ = self._dirs()
         csvs = {parse_animal_id(p): p for p in sorted(state_dir.glob("*.csv"))}
 
-        self.lbl_status.setText(f"{len(csvs)} spindle CSV(s) in {state_dir}")
+        n_unknown = sum(
+            1
+            for a, p in csvs.items()
+            if has_column(p, FINAL_COLUMN)
+            and ((e := manifest.get(a)) is None or e.reclass_gate_applied is None)
+        )
+        hint = f"; EMG gate record missing for {n_unknown} (re-run to restore)" if n_unknown else ""
+        self.lbl_status.setText(f"{len(csvs)} spindle CSV(s) in {state_dir}{hint}")
         self.btn_run.setEnabled(bool(csvs) and self._thread is None)
 
         self.table.setRowCount(len(csvs))
@@ -128,7 +143,7 @@ class ReclassifyPage(QWidget):
             cells = (
                 animal,
                 "✓" if done else "—",
-                "—" if gate is None else ("applied" if gate else "not needed"),
+                gate_label(done, gate),
                 f"{bouts[0]} → {bouts[1]}" if bouts else "",
             )
             for col, text in enumerate(cells):
