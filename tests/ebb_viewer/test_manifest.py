@@ -481,6 +481,16 @@ def test_pending_psd_review(tmp_path):
     assert "AM003" not in animal_ids  # sleep_qc not ok
 
 
+def test_pending_psd_review_skips_excluded_until_unexcluded(tmp_path):
+    _make_psd_run(tmp_path)
+    m = _make_manifest(tmp_path, {"AM001": dict(sleep_qc="ok"), "AM002": dict(sleep_qc="excluded")})
+    assert [e.animal_id for e in m.pending_psd_review("default")] == ["AM001"]
+    assert [e.animal_id for e in m.all_pending_psd_review()] == ["AM001"]
+
+    m.flag_sleep_qc("AM002", "ok")  # un-excluded straight to ok: it needs a real review now
+    assert {e.animal_id for e in m.pending_psd_review("default")} == {"AM001", "AM002"}
+
+
 def test_pending_psd_review_empty_without_final_pkl(tmp_path):
     m = _make_manifest(tmp_path, {"AM001": dict(sleep_qc="ok")})
     # No psds_LFC_RSC.pkl → empty
@@ -675,7 +685,7 @@ def test_excluded_animals_are_ready_for_psd_and_can_be_psd_flagged(tmp_path):
     _make_psd_run(tmp_path)
     m = _make_manifest(tmp_path, {"A1": {"sleep_qc": "excluded"}, "A2": {"sleep_qc": "needs_review"}})
     assert [e.animal_id for e in m.ready_for_psd()] == ["A1"]
-    assert [e.animal_id for e in m.pending_psd_review("default")] == ["A1"]
+    assert m.pending_psd_review("default") == []  # excluded: computed, but not queued for review
     m.flag_psd("A1", "needs_drink_mask")
     assert [e.animal_id for e in m.needs_drink_mask("default")] == ["A1"]
     with pytest.raises(ValueError, match="'ok' or 'excluded'"):
