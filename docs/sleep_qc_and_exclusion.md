@@ -126,8 +126,6 @@ The computed `psds_<combo>.pkl` files are never modified. The analysis step drop
 
 ## 7. Known gaps
 
-- The Sleep QC "ready, go to PSD Computation" hint requires every animal to be `ok`, so it does
-  not appear while any animal is excluded (`_update_nav_hint` in `sleep_qc_visualizer.py`).
 - Export Masks (`pipeline/mask_export.default_animals`) uses `ready_for_psd()`, so it includes
   excluded animals, and its meta files do not say so. Its docstring still says "only OK".
 - `docs/pipeline_flow.md` and the other flow diagrams still show the old multi-combo pipeline.
