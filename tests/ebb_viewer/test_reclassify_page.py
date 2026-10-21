@@ -61,3 +61,12 @@ def test_rerun_warns_when_sleep_qc_already_flagged_and_can_cancel(qapp, tmp_path
 
     assert page._thread is None and not called  # cancelled before starting
     assert Manifest.load(tmp_path).get("A1").sleep_qc == "ok"  # flags never reset
+
+
+def test_gate_label_distinguishes_unknown_from_not_reclassified():
+    from ebb_viewer.pages.reclassify import gate_label
+
+    assert gate_label(False, None) == "—"
+    assert gate_label(True, None).startswith("unknown")
+    assert gate_label(True, True) == "applied"
+    assert gate_label(True, False) == "not needed"
