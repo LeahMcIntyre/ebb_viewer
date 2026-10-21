@@ -30,6 +30,7 @@ from specparam.utils import interpolate_spectrum
 from ebb.process.state_presets import gather_states_from_store
 from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
 
@@ -251,11 +252,22 @@ class PSDGridPage(QWidget):
         self._btn_flag_ok.clicked.connect(lambda checked: self._flag_psd_ok())
         fh.addWidget(self._btn_flag_ok)
 
-        for btn in (self._btn_flag_ok, self._btn_flag_drink):
+        # No keyboard shortcut: an exclusion should be deliberate.
+        self._btn_flag_exclude = QPushButton("Exclude")
+        self._btn_flag_exclude.setCheckable(True)
+        self._btn_flag_exclude.setToolTip(
+            "Exclude this animal from analysis (a reason is required). "
+            "Click again to send it back to Sleep QC review."
+        )
+        self._btn_flag_exclude.clicked.connect(self._flag_exclude)
+        fh.addWidget(self._btn_flag_exclude)
+
+        for btn in (self._btn_flag_ok, self._btn_flag_drink, self._btn_flag_exclude):
             btn.setMinimumHeight(28)
             btn.setStyleSheet(_FLAG_BUTTON_QSS)
         self._btn_flag_ok.setProperty("flag", "ok")
         self._btn_flag_drink.setProperty("flag", "drink")
+        self._btn_flag_exclude.setProperty("flag", "exclude")
 
         h.addWidget(self._flag_controls)
         self._flag_controls.setVisible(self.manifest is not None)
@@ -484,6 +496,23 @@ class PSDGridPage(QWidget):
         self._update_flag_status()
         self.manifest_changed.emit()
 
+    def _flag_exclude(self, checked: bool) -> None:
+        """Exclude the current animal (asking for a reason) or send it back to Sleep QC review."""
+        if self.manifest is None:
+            return
+        animal_id = self._manifest_animal_id()
+        if animal_id is None or self.manifest.get(animal_id) is None:
+            return
+        if checked:
+            if not exclude_with_reason(self, self.manifest, animal_id):
+                self._update_flag_status()  # cancelled: pop the toggle back out
+                return
+        else:
+            self.manifest.flag_sleep_qc(animal_id, "needs_review")
+        self._mark_excluded_items()
+        self._update_flag_status()
+        self.manifest_changed.emit()
+
     def _reset_psd_status(self) -> None:
         if self.manifest is None:
             return
@@ -519,9 +548,13 @@ class PSDGridPage(QWidget):
             return
         for i in range(self.cmb_animal.count()):
             entry = manifest.get(self._animal_id_of(self.cmb_animal.itemText(i)))
-            if entry is not None and entry.sleep_qc == "excluded":
-                self.cmb_animal.setItemData(i, QColor(140, 140, 140), Qt.ItemDataRole.ForegroundRole)
-                self.cmb_animal.setItemData(i, "Excluded in Sleep QC", Qt.ItemDataRole.ToolTipRole)
+            excluded = entry is not None and entry.sleep_qc == "excluded"
+            self.cmb_animal.setItemData(
+                i, QColor(140, 140, 140) if excluded else None, Qt.ItemDataRole.ForegroundRole
+            )
+            self.cmb_animal.setItemData(
+                i, "Excluded in Sleep QC" if excluded else None, Qt.ItemDataRole.ToolTipRole
+            )
 
     @staticmethod
     def _animal_id_of(key: str) -> str:
@@ -563,6 +596,7 @@ class PSDGridPage(QWidget):
         self._update_excluded_marker()
         if self.manifest is None:
             return
+        self._btn_flag_exclude.setChecked(self._excluded_notes() is not None)
         animal_id = self._manifest_animal_id()
         entry = self.manifest.get(animal_id) if animal_id else None
         status = entry.psd_status.get(self._run_name) if entry else None
@@ -624,6 +658,7 @@ _FLAG_BUTTON_QSS = """
     QPushButton { font-weight: bold; padding: 2px 10px; }
     QPushButton[flag="ok"]:checked { background: #2e8b57; color: white; }
     QPushButton[flag="drink"]:checked { background: #e08a00; color: white; }
+    QPushButton[flag="exclude"]:checked { background: #7a7a7a; color: white; }
 """
 
 

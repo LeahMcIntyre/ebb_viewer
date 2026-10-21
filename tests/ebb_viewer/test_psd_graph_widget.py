@@ -272,3 +272,81 @@ def test_status_label_says_excluded_when_no_psd_status(qapp, tmp_path: Path):
     assert page._status_label.text() == "excluded"
     page.cmb_animal.setCurrentText("AM001")
     assert page._status_label.text() != "excluded"
+
+
+# ---------------------------------------------------------------------------
+# Excluding from the PSD review bar
+# ---------------------------------------------------------------------------
+
+
+def _accepting(reason: str):
+    from ebb_viewer.widgets.exclude_dialog import ExcludeDialog
+
+    def fake(self):
+        self.edit.setPlainText(reason)
+        return 1
+
+    return patch.object(ExcludeDialog, "exec", fake)
+
+
+def _flagging_page(qapp, tmp_path: Path):
+    m = _seed_manifest(tmp_path, "AM001")
+    return _make_page(qapp, project_root=tmp_path, store=_FakeStoreWithAnimal(), manifest=m), m
+
+
+def test_exclude_button_excludes_with_reason_and_updates_the_view(qapp, tmp_path: Path):
+    page, m = _flagging_page(qapp, tmp_path)
+    emitted = []
+    page.manifest_changed.connect(lambda: emitted.append(True))
+    assert not page._btn_flag_exclude.isChecked() and page._excluded_banner.isHidden()
+
+    with _accepting("saturated signal"):
+        page._btn_flag_exclude.click()
+
+    assert m.get("AM001").sleep_qc == "excluded"
+    assert m.get("AM001").notes == "Excluded: saturated signal"
+    assert page._btn_flag_exclude.isChecked()
+    assert not page._excluded_banner.isHidden() and "saturated signal" in page._excluded_banner.text()
+    assert emitted == [True]
+    assert Manifest.load(tmp_path).get("AM001").sleep_qc == "excluded"
+
+
+def test_cancelled_exclude_changes_nothing_and_pops_the_toggle_back(qapp, tmp_path: Path):
+    from ebb_viewer.widgets.exclude_dialog import ExcludeDialog
+
+    page, m = _flagging_page(qapp, tmp_path)
+    emitted = []
+    page.manifest_changed.connect(lambda: emitted.append(True))
+    with patch.object(ExcludeDialog, "exec", lambda self: 0):
+        page._btn_flag_exclude.click()
+    assert m.get("AM001").sleep_qc == "ok" and m.get("AM001").notes == ""
+    assert not page._btn_flag_exclude.isChecked()
+    assert emitted == []
+
+
+def test_unexcluding_sends_the_animal_back_to_sleep_qc_review(qapp, tmp_path: Path):
+    page, m = _flagging_page(qapp, tmp_path)
+    with _accepting("bad"):
+        page._btn_flag_exclude.click()
+    page._btn_flag_exclude.click()  # un-exclude
+
+    assert m.get("AM001").sleep_qc == "needs_review"
+    assert m.get("AM001").notes == "Excluded: bad"  # note kept
+    assert not page._btn_flag_exclude.isChecked() and page._excluded_banner.isHidden()
+
+
+def test_excluding_greys_the_dropdown_entry_and_unexcluding_restores_it(qapp, tmp_path: Path):
+    from PyQt6.QtCore import Qt
+
+    page, _ = _flagging_page(qapp, tmp_path)
+    assert page.cmb_animal.itemData(0, Qt.ItemDataRole.ForegroundRole) is None
+    with _accepting("bad"):
+        page._btn_flag_exclude.click()
+    assert page.cmb_animal.itemData(0, Qt.ItemDataRole.ForegroundRole) is not None
+    page._btn_flag_exclude.click()
+    assert page.cmb_animal.itemData(0, Qt.ItemDataRole.ForegroundRole) is None
+
+
+def test_exclude_button_hidden_without_a_manifest(qapp, tmp_path: Path):
+    page = _make_page(qapp, project_root=tmp_path, store=_FakeStoreWithAnimal(), manifest=None)
+    assert page._flag_controls.isHidden()
