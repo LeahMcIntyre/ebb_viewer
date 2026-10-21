@@ -92,8 +92,10 @@ A CSV without `final_state` raises `NotReclassifiedError` ("run the Reclassify s
 - **Sleep QC flagging** reads `final_state` too: the Overview boxplots (short NREM bouts, NREM
   bouts per dark hour, REM %, NREM %, Wake %, max REM % in a 2-hour bin) come from
   `ebb.process.sleep_flagging`, and the cutoffs from `flag_thresholds` in `manifest.json`.
-  Exclusions (`sleep_qc == "excluded"`, reason in `notes`) do not remove an animal from PSD or
-  the exports; they are only recorded in the manifest.
+  Exclusions (`sleep_qc == "excluded"`, reason in `notes`) do not remove an animal from PSD
+  compute or the exports; they are recorded in the manifest. Only `ok` animals are in PSD
+  review: an excluded animal is in no review queue, its PSD status is cleared, and OK / Drink
+  Mask are disabled for it. Excluding the last unreviewed animal therefore finishes the review.
 - **EDF viewer:** the "R" pill beside the state bar starts lit (reclassified states); click it
   for the original bar.
 - **Export Masks** writes `state_column: final_state` into each export's meta file.

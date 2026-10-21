@@ -350,3 +350,30 @@ def test_excluding_greys_the_dropdown_entry_and_unexcluding_restores_it(qapp, tm
 def test_exclude_button_hidden_without_a_manifest(qapp, tmp_path: Path):
     page = _make_page(qapp, project_root=tmp_path, store=_FakeStoreWithAnimal(), manifest=None)
     assert page._flag_controls.isHidden()
+
+
+def test_ok_and_drink_mask_are_disabled_and_inert_for_excluded_animals(qapp, tmp_path: Path):
+    page, m = _flagging_page(qapp, tmp_path)
+    assert page._btn_flag_ok.isEnabled() and page._btn_flag_drink.isEnabled()
+
+    with _accepting("bad"):
+        page._btn_flag_exclude.click()
+    assert not page._btn_flag_ok.isEnabled() and not page._btn_flag_drink.isEnabled()
+    assert not page._btn_flag_reset.isEnabled()
+
+    page._flag_psd_ok()  # the O / D shortcuts call these: nothing happens, nothing raises
+    page._flag_drink_mask()
+    assert m.get("AM001").psd_status == {}
+
+    page._btn_flag_exclude.click()  # un-exclude
+    assert page._btn_flag_ok.isEnabled() and page._btn_flag_drink.isEnabled()
+
+
+def test_excluding_clears_an_existing_psd_status(qapp, tmp_path: Path):
+    page, m = _flagging_page(qapp, tmp_path)
+    page._btn_flag_ok.click()
+    assert m.get("AM001").psd_status == {"default": "ok"}
+    with _accepting("bad"):
+        page._btn_flag_exclude.click()
+    assert m.get("AM001").psd_status == {}
+    assert page._status_label.text() == "excluded"

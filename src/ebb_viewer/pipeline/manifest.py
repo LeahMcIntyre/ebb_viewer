@@ -36,7 +36,9 @@ SLEEP_QC_STATUSES = frozenset({"ok", "needs_review", "excluded"})
 # Statuses ``flag_sleep_qc`` sets; "excluded" goes through ``exclude_sleep_qc`` (it needs a reason).
 _FLAGGABLE_STATUSES = frozenset({"ok", "needs_review"})
 # Sleep QC decided: the animal goes through PSD compute and every export. An excluded
-# animal is still computed; only its label says to leave it out of the analysis.
+# animal is still computed; only its label says to leave it out of the analysis. Only "ok"
+# animals are in PSD review (pending review, drink masks, verification): excluded animals
+# have no PSD status and cannot be flagged.
 READY_STATUSES = frozenset({"ok", "excluded"})
 PSD_STATUSES = frozenset({"ok", "needs_drink_mask", "drink_mask_applied"})
 
@@ -370,7 +372,7 @@ class Manifest:
     def needs_drink_mask(self, run_name: str) -> list[ManifestEntry]:
         """Animals flagged as having drinking sidebands in the PSD for run_name."""
         return self._filter(
-            lambda e: e.sleep_qc in READY_STATUSES and e.psd_status.get(run_name) == "needs_drink_mask"
+            lambda e: e.sleep_qc == "ok" and e.psd_status.get(run_name) == "needs_drink_mask"
         )
 
     def needs_drink_mask_rerun(self, run_name: str) -> list[ManifestEntry]:
@@ -378,7 +380,7 @@ class Manifest:
         root = self.project_root
         return self._filter(
             lambda e: (
-                e.sleep_qc in READY_STATUSES
+                e.sleep_qc == "ok"
                 and e.psd_status.get(run_name) == "needs_drink_mask"
                 and (root / drink_mask_rel(e.animal_id)).is_file()
             )
@@ -387,7 +389,7 @@ class Manifest:
     def pending_drink_verification(self, run_name: str) -> list[ManifestEntry]:
         """Animals with drink_mask_applied — ready for Pass 2 PSD verification."""
         return self._filter(
-            lambda e: e.sleep_qc in READY_STATUSES and e.psd_status.get(run_name) == "drink_mask_applied"
+            lambda e: e.sleep_qc == "ok" and e.psd_status.get(run_name) == "drink_mask_applied"
         )
 
     def _aggregate_across_runs(
@@ -423,8 +425,7 @@ class Manifest:
     def flag_sleep_qc(self, animal_id: str, status: str) -> None:
         """Set the sleep QC flag for an animal.
 
-        Leaving "ok" or "excluded" for another status clears PSD review progress,
-        which is only valid while the animal is ready for PSD.
+        Leaving "ok" clears PSD review progress, which is only valid while sleep_qc == "ok".
         """
         if status not in _FLAGGABLE_STATUSES:
             raise ValueError(
@@ -437,7 +438,8 @@ class Manifest:
     def exclude_sleep_qc(self, animal_id: str, reason: str) -> None:
         """Exclude an animal from analysis, recording ``reason`` in its notes.
 
-        The reason is appended to ``notes`` as an ``Excluded: <reason>`` line.
+        The reason is appended to ``notes`` as an ``Excluded: <reason>`` line, and the
+        animal's PSD review progress is cleared (excluded animals are not reviewed).
         Undo with ``flag_sleep_qc`` or ``reset_sleep_qc``; the note stays.
 
         Raises:
@@ -453,9 +455,9 @@ class Manifest:
         self.save()
 
     def _set_sleep_qc(self, animal_id: str, status: str) -> None:
-        """Set the status; leaving the ready statuses clears PSD review progress."""
+        """Set the status; anything but "ok" clears PSD review progress (only valid under "ok")."""
         entry = self._entries[animal_id]
-        if entry.sleep_qc in READY_STATUSES and status not in READY_STATUSES:
+        if status != "ok":
             entry.psd_status = {}
             entry.drink_mask = None
         entry.sleep_qc = status
@@ -469,15 +471,15 @@ class Manifest:
             run_name:   PSD run name (e.g. "light_phase").
 
         Raises:
-            ValueError: if the animal's sleep_qc is not "ok" or "excluded".
+            ValueError: if the animal's sleep_qc is not "ok" (excluded animals are not reviewed).
         """
         if status not in PSD_STATUSES:
             raise ValueError(f"Invalid psd_status {status!r}; must be one of {PSD_STATUSES}")
         entry = self._entries[animal_id]
-        if entry.sleep_qc not in READY_STATUSES:
+        if entry.sleep_qc != "ok":
             raise ValueError(
                 f"Cannot set PSD status for animal {animal_id!r}: "
-                f"sleep_qc is {entry.sleep_qc!r}, expected 'ok' or 'excluded'."
+                f"sleep_qc is {entry.sleep_qc!r}, expected 'ok'."
             )
         entry.psd_status[run_name] = status
         if status == "drink_mask_applied":

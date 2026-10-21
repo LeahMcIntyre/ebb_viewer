@@ -666,13 +666,16 @@ def test_exclude_sets_status_and_appends_to_notes(tmp_path):
     assert Manifest.load(tmp_path).get("A1").sleep_qc == "excluded"
 
 
-def test_exclude_from_ok_keeps_psd_progress(tmp_path):
-    """Excluded animals are still computed, so ok <-> excluded does not reset PSD review."""
-    m = _make_manifest(tmp_path, {"A1": {"sleep_qc": "ok", "psd_status": {"default": "ok"}}})
+def test_exclude_clears_psd_progress_and_drink_mask(tmp_path):
+    """Excluded animals are not reviewed, so PSD status only exists while sleep_qc is ok."""
+    m = _make_manifest(
+        tmp_path,
+        {"A1": {"sleep_qc": "ok", "psd_status": {"default": "drink_mask_applied"}, "drink_mask": "drink_masks/A1.npy"}},
+    )
     m.exclude_sleep_qc("A1", "bad file")
-    assert m.get("A1").psd_status == {"default": "ok"}
-    m.flag_sleep_qc("A1", "ok")
-    assert m.get("A1").psd_status == {"default": "ok"}
+    assert m.get("A1").psd_status == {} and m.get("A1").drink_mask is None
+    m.flag_sleep_qc("A1", "ok")  # un-excluded to ok: a fresh review
+    assert m.get("A1").psd_status == {}
 
 
 def test_unexclude_to_needs_review_clears_psd_progress(tmp_path):
@@ -681,15 +684,50 @@ def test_unexclude_to_needs_review_clears_psd_progress(tmp_path):
     assert m.get("A1").psd_status == {}
 
 
-def test_excluded_animals_are_ready_for_psd_and_can_be_psd_flagged(tmp_path):
+def test_excluded_animals_are_computed_but_not_reviewed(tmp_path):
     _make_psd_run(tmp_path)
-    m = _make_manifest(tmp_path, {"A1": {"sleep_qc": "excluded"}, "A2": {"sleep_qc": "needs_review"}})
-    assert [e.animal_id for e in m.ready_for_psd()] == ["A1"]
-    assert m.pending_psd_review("default") == []  # excluded: computed, but not queued for review
-    m.flag_psd("A1", "needs_drink_mask")
-    assert [e.animal_id for e in m.needs_drink_mask("default")] == ["A1"]
-    with pytest.raises(ValueError, match="'ok' or 'excluded'"):
-        m.flag_psd("A2", "ok")
+    m = _make_manifest(tmp_path, {"A1": {"sleep_qc": "excluded"}, "A2": {"sleep_qc": "ok"}})
+    assert {e.animal_id for e in m.ready_for_psd()} == {"A1", "A2"}  # PSD compute includes both
+    assert [e.animal_id for e in m.pending_psd_review("default")] == ["A2"]
+    with pytest.raises(ValueError, match="expected 'ok'"):
+        m.flag_psd("A1", "needs_drink_mask")
+
+
+def test_review_queues_ignore_excluded_animals_even_with_a_stale_status(tmp_path):
+    """Whatever status an excluded animal carries (e.g. from an older manifest), it is in no queue."""
+    _touch(tmp_path / "drink_masks" / "A1.npy")
+    _touch(tmp_path / "drink_masks" / "A2.npy")
+    m = _make_manifest(
+        tmp_path,
+        {
+            "A1": {"sleep_qc": "excluded", "psd_status": {"default": "needs_drink_mask"}},
+            "A2": {"sleep_qc": "excluded", "psd_status": {"default": "drink_mask_applied"}},
+        },
+    )
+    assert m.needs_drink_mask("default") == []
+    assert m.needs_drink_mask_rerun("default") == []
+    assert m.pending_drink_verification("default") == []
+
+
+def test_excluding_the_last_unverified_animal_empties_every_review_queue(tmp_path):
+    """Everything ok or excluded except one drink-masked animal; excluding it finishes the review."""
+    _make_psd_run(tmp_path)
+    m = _make_manifest(
+        tmp_path,
+        {
+            "A1": {"sleep_qc": "ok", "psd_status": {"default": "ok"}},
+            "A2": {"sleep_qc": "excluded"},
+            "A3": {"sleep_qc": "ok", "psd_status": {"default": "drink_mask_applied"}},
+        },
+    )
+    queues = lambda: (  # noqa: E731
+        len(m.pending_psd_review("default"))
+        + len(m.needs_drink_mask("default"))
+        + len(m.pending_drink_verification("default"))
+    )
+    assert queues() == 1
+    m.exclude_sleep_qc("A3", "signal lost")
+    assert queues() == 0
 
 
 def test_unexclude_keeps_the_note(tmp_path):
