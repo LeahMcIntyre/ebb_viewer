@@ -48,7 +48,7 @@ from ebb.process.sleep_compute import (
     compute_sleep_bins_df_offset,
 )
 from ebb.process.sleep_flagging import METRIC_BY_KEY, flagged_metrics, metrics_table
-from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
+from ebb_viewer.pipeline.manifest import READY_STATUSES, Manifest, spindle_output_dir
 from ebb_viewer.pipeline.swd_review import swd_review_gaps
 from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
@@ -205,7 +205,7 @@ class SleepQCGridPage(QWidget):
             self._hint_frame.setVisible(False)
             return
         has_review = any(e.sleep_qc == "needs_review" for e in entries)
-        all_have_ok = all(e.sleep_qc == "ok" for e in entries)
+        all_decided = all(e.sleep_qc in READY_STATUSES for e in entries)  # ok or excluded
         if has_review:
             self._hint_lbl.setText("Check animals flagged for EDF review.")
             self._hint_btn.setText("→ Home (review flagged EDFs)")
@@ -214,8 +214,12 @@ class SleepQCGridPage(QWidget):
                 "QFrame { background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; }"
             )
             self._hint_frame.setVisible(True)
-        elif all_have_ok:
-            self._hint_lbl.setText("✓ All spindle metrics checked — ready for PSD computation.")
+        elif all_decided:
+            n_excluded = sum(1 for e in entries if e.sleep_qc == "excluded")
+            excluded = f" ({n_excluded} excluded)" if n_excluded else ""
+            self._hint_lbl.setText(
+                f"✓ All spindle metrics checked{excluded} — ready for PSD computation."
+            )
             self._hint_btn.setText("→ PSD Computation")
             self._nav_hint_dest = "psd_compute"
             self._hint_frame.setStyleSheet(

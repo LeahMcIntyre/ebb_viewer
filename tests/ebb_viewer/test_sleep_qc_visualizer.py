@@ -175,6 +175,36 @@ def test_nav_hint_points_to_psd_when_all_ok(qapp, tmp_path: Path):
     assert not page._hint_frame.isHidden()
 
 
+def test_nav_hint_points_to_psd_when_all_ok_or_excluded(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": "ok", "AM002": "excluded", "AM003": "excluded"})
+    page = _make_page(qapp, tmp_path)
+    page._update_nav_hint()
+    assert page._nav_hint_dest == "psd_compute"
+    assert not page._hint_frame.isHidden()
+    assert "(2 excluded)" in page._hint_lbl.text()
+
+
+def test_nav_hint_has_no_excluded_note_when_none_are_excluded(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": "ok", "AM002": "ok"})
+    page = _make_page(qapp, tmp_path)
+    page._update_nav_hint()
+    assert "excluded" not in page._hint_lbl.text()
+
+
+def test_nav_hint_still_points_home_when_an_animal_needs_review_next_to_excluded(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": "excluded", "AM002": "needs_review"})
+    page = _make_page(qapp, tmp_path)
+    page._update_nav_hint()
+    assert page._nav_hint_dest == "home"
+
+
+def test_nav_hint_hidden_while_animals_pending_beside_excluded(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": "excluded", "AM002": None})
+    page = _make_page(qapp, tmp_path)
+    page._update_nav_hint()
+    assert page._hint_frame.isHidden()
+
+
 def test_nav_hint_hidden_while_animals_pending(qapp, tmp_path: Path):
     _seed_manifest(tmp_path, {"AM001": "ok", "AM002": None})
     page = _make_page(qapp, tmp_path)
