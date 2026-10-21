@@ -240,7 +240,7 @@ class FlagOverview(QWidget):
     # ------------------------------------------------------------------
 
     def _on_dot_clicked(self, item, spots, ev) -> None:
-        if not spots:
+        if len(spots) == 0:  # pyqtgraph passes an ndarray of spots
             return
         animal = str(spots[0].data())
         self._selected = animal
