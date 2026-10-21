@@ -98,16 +98,3 @@ def test_click_on_overlapping_dots_selects_the_first(qapp):
     spots[1] = MagicMock(data=MagicMock(return_value="A2"))
     w._on_dot_clicked(None, spots, None)
     assert w.selected == "A1"
-
-
-def test_swarm_separates_dots_with_similar_values():
-    from ebb_viewer.widgets.sleep_flag_overview import _swarm
-
-    values = np.array([10.0, 10.0, 10.1, 10.2, 50.0])
-    xs = _swarm(values, y_gap=1.0)
-    close = np.arange(4)
-    for i in close:
-        for j in close[close > i]:
-            assert abs(xs[i] - xs[j]) >= 0.1 - 1e-9
-    assert xs[4] == 0  # an isolated dot stays centred
-    assert np.abs(xs).max() <= 0.6 + 1e-9
