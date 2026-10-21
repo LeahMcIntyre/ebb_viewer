@@ -45,10 +45,32 @@ New code that builds a `ManifestEntry` by hand (tests, importers) must
 set it or the entry is invisible to the views.
 
 ### PSD status is only valid while `sleep_qc == "ok"`
-`flag_sleep_qc` clears `psd_status` and `drink_mask` when an animal
-leaves "ok", and `reset_sleep_qc` always clears them. `flag_psd`
-refuses to run on a non-ok animal. Go through these methods rather
+`flag_sleep_qc` and `exclude_sleep_qc` clear `psd_status` and
+`drink_mask` whenever the new status is not "ok", and `reset_sleep_qc`
+always clears them. `flag_psd` refuses to run on a non-ok animal
+(excluded animals are not reviewed). Go through these methods rather
 than assigning `entry.sleep_qc` directly.
+
+### `READY_STATUSES` vs `== "ok"`
+`READY_STATUSES` (`ok`, `excluded`) means "Sleep QC decided" and is
+right for PSD compute and the exports, which still process excluded
+animals. The PSD review queues (`pending_psd_review`, `needs_drink_mask`,
+`needs_drink_mask_rerun`, `pending_drink_verification`) must use
+`== "ok"`: if one of them accepts excluded animals, excluding the last
+unreviewed animal leaves it in the queue, the Visualizer never says
+"all reviewed", and Finalize stays blocked.
+
+### Exclusion needs a reason, and un-excluding goes to `needs_review`
+Excluding goes through `Manifest.exclude_sleep_qc(animal, reason)`
+(`flag_sleep_qc` rejects "excluded"), and the UI uses
+`exclude_with_reason` (the dialog). Don't add an exclude path that
+skips the reason. Un-excluding sets `needs_review` and keeps the note.
+
+### Finalize markers are a snapshot
+`excluded` / `exclusion_reason` in `psds_final.pkl` and the sleep tables
+are written when Finalize runs. They go stale if an exclusion changes
+afterwards (re-run Finalize). Don't write them into the computed
+`psds_<combo>.pkl`: those files are never modified after compute.
 
 ### Project combo lives in `manifest.json`
 `Manifest.combo` (default `LFC_RSC`) is stored at the top level of
