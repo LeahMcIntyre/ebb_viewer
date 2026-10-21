@@ -96,6 +96,11 @@ A CSV without `final_state` raises `NotReclassifiedError` ("run the Reclassify s
   compute or the exports; they are recorded in the manifest. Only `ok` animals are in PSD
   review: an excluded animal is in no review queue, its PSD status is cleared, and OK / Drink
   Mask are disabled for it. Excluding the last unreviewed animal therefore finishes the review.
+- **Finalize keeps excluded animals and marks them**, as of the moment it runs (re-finalize to
+  refresh): every record in `psds_final.pkl` gets `excluded` / `exclusion_reason`, the three sleep
+  export tables get the same two columns, and `excluded_animals.csv` is written beside both (header
+  only when nothing is excluded). The Prism workbook gets an `excluded_animals` sheet when the
+  sealed file marks any. The analysis step drops the rows where `excluded` is true.
 - **EDF viewer:** the "R" pill beside the state bar starts lit (reclassified states); click it
   for the original bar.
 - **Export Masks** writes `state_column: final_state` into each export's meta file.

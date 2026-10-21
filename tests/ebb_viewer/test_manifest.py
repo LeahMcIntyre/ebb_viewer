@@ -756,3 +756,21 @@ def test_flag_thresholds_default_and_read_from_manifest_file(tmp_path):
     loaded = Manifest.load(tmp_path)
     assert loaded.flag_thresholds["nrem_short"] == 250
     assert loaded.flag_thresholds["pct_nrem"] == 30  # others keep defaults
+
+
+def test_excluded_animals_maps_animal_to_its_reasons(tmp_path):
+    m = _make_manifest(
+        tmp_path,
+        {
+            "A1": {"sleep_qc": "ok", "notes": "Excluded: stale old line"},
+            "A2": {"sleep_qc": "excluded", "notes": "cage change\nExcluded: lost signal\nExcluded: seizures"},
+            "A3": {"sleep_qc": "excluded", "notes": "edited by hand"},
+            "A4": {"sleep_qc": "excluded"},
+            "A5": {"sleep_qc": "needs_review"},
+        },
+    )
+    assert m.excluded_animals() == {
+        "A2": "lost signal; seizures",  # only the Excluded: lines, not the other notes
+        "A3": "edited by hand",  # excluded without a reason line: the whole note
+        "A4": "",
+    }

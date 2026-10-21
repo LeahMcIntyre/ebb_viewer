@@ -12,6 +12,9 @@ analysis-ready tables as tidy CSVs and as sheets in one workbook:
 - ``sleep_whole_file`` — whole-recording metrics standardized by recording
                        length, one row per (animal, state).
 
+With ``excluded`` given, animals excluded in Sleep QC stay in all three tables and are marked
+(``excluded`` / ``exclusion_reason`` columns, plus ``excluded_animals.csv``).
+
 Group assignment is intentionally left out — tables are keyed by animal ID
 so the caller can join their own grouping downstream.
 """
@@ -23,6 +26,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
+from ebb.io.exclusions import annotate_table, write_excluded_animals
 from ebb.process.sleep_compute import (
     compute_sleep_bins_df_offset,
     compute_whole_file_metrics,
@@ -69,6 +73,7 @@ def export_sleep(
     *,
     begin_hr: int = 6,
     tz: ZoneInfo | None = None,
+    excluded: dict[str, str] | None = None,
 ) -> dict[str, Path]:
     """Compute and write the three sleep tables as CSVs plus one workbook.
 
@@ -79,6 +84,9 @@ def export_sleep(
         out_dir: Destination directory; created if absent.
         begin_hr: Clock hour bin 0 rotates to (default 6 AM).
         tz: Optional recording timezone so the rotation honors DST.
+        excluded: Animal ID -> Sleep QC exclusion reason. Excluded animals stay in every
+            table, which gets ``excluded`` / ``exclusion_reason`` columns, and an
+            ``excluded_animals.csv`` is written to ``out_dir``. ``None`` adds nothing.
 
     Returns:
         Mapping of table name → written CSV path, plus ``"workbook"`` → xlsx
@@ -106,6 +114,10 @@ def export_sleep(
         "sleep_bins_avg": bins_avg,
         "sleep_whole_file": whole,
     }
+
+    if excluded is not None:
+        tables = {name: annotate_table(df, excluded) for name, df in tables.items()}
+        write_excluded_animals(out_dir, excluded)
 
     written: dict[str, Path] = {}
     for name, df in tables.items():

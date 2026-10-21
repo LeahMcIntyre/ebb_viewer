@@ -37,6 +37,7 @@ from openseize.spectra import estimators
 from ebb import masking
 from ebb.core import concurrency, metastores
 from ebb.core.naming import parse_animal_id
+from ebb.io.exclusions import annotate_records, write_excluded_animals
 from ebb.io.edf_header import assert_fs_matches, parse_edf_start_datetime
 from ebb.io.spindle_csv import ANALYSIS_STATE_COLUMNS
 from ebb.masking.annotations import keyword_mask
@@ -700,11 +701,22 @@ def batch_estimate(
     return results
 
 
-def build_run_final_pkl(project_root, combo: str, run_name: str = "default") -> Path:
+def build_run_final_pkl(
+    project_root,
+    combo: str,
+    run_name: str = "default",
+    excluded: dict[str, str] | None = None,
+) -> Path:
     """Seal a completed PSD run by copying the latest PKL to psds_final.pkl.
 
     Prefers `psds_<combo>_drink.pkl` (which contains drink-masked overrides —
     see `rerun_with_drink_masks`) over `psds_<combo>.pkl`.
+
+    ``excluded`` maps animal ID to the Sleep QC exclusion reason. Excluded animals stay in
+    the file; every record gets ``excluded`` / ``exclusion_reason`` fields and an
+    ``excluded_animals.csv`` is written beside it (header only when ``excluded`` is empty).
+    With ``excluded=None`` the records are copied unchanged.
+
     Raises `FileNotFoundError` if neither exists. Returns the path written.
     """
     psd_dir = Path(project_root) / "psd" / run_name
@@ -715,6 +727,9 @@ def build_run_final_pkl(project_root, combo: str, run_name: str = "default") -> 
         raise FileNotFoundError(f"No PSD PKL found in {psd_dir}. Run 'Compute PSDs' first.")
     with open(source, "rb") as f:
         data = pickle.load(f)
+    if excluded is not None:
+        annotate_records(data, excluded)
+        write_excluded_animals(psd_dir, excluded)
     out = psd_dir / "psds_final.pkl"
     tmp = out.with_suffix(".pkl.tmp")
     with open(tmp, "wb") as f:

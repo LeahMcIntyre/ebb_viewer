@@ -299,6 +299,20 @@ class Manifest:
     def get(self, animal_id: str) -> ManifestEntry | None:
         return self._entries.get(animal_id)
 
+    def excluded_animals(self) -> dict[str, str]:
+        """``{animal_id: reason}`` for animals excluded in Sleep QC.
+
+        The reason is the animal's ``Excluded: ...`` note lines joined with "; " (the whole
+        notes if it was excluded without one, e.g. by editing manifest.json).
+        """
+        out = {}
+        for e in self:
+            if e.sleep_qc != "excluded":
+                continue
+            lines = [ln.strip()[len("Excluded:") :].strip() for ln in e.notes.splitlines() if ln.strip().startswith("Excluded:")]
+            out[e.animal_id] = "; ".join(lines) or e.notes.strip()
+        return out
+
     def set_notes(self, animal_id: str, notes: str) -> None:
         """Set free-text notes for an animal."""
         self._entries[animal_id].notes = notes

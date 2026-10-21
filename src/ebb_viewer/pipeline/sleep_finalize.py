@@ -33,6 +33,7 @@ class SleepExportResult:
     exported: list[str] = field(default_factory=list)  # animals with an ok combo
     missing_ok: list[str] = field(default_factory=list)  # animals lacking one
     missing_csv: list[str] = field(default_factory=list)  # ok combo but no CSV on disk
+    excluded: list[str] = field(default_factory=list)  # exported but marked excluded
 
 
 def sleep_export_dir(project_root: Path) -> Path:
@@ -90,12 +91,14 @@ def build_sleep_export(project_root: Path) -> SleepExportResult:
         shutil.copy2(csv_path, chosen_dir / csv_path.name)
         exported.append(animal)
 
+    excluded = manifest.excluded_animals()
     written = export_sleep(
         chosen_dir,
         project_root / "standard",
         out_dir,
         begin_hr=6,
         tz=_RECORDING_TZ,
+        excluded=excluded,
     )
 
     return SleepExportResult(
@@ -104,4 +107,5 @@ def build_sleep_export(project_root: Path) -> SleepExportResult:
         exported=sorted(exported),
         missing_ok=sorted(missing_ok),
         missing_csv=sorted(missing_csv),
+        excluded=sorted(a for a in exported if a in excluded),
     )

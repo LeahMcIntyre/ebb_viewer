@@ -323,6 +323,16 @@ class FinalizePage(QWidget):
         status_lbl.setStyleSheet(pending_style)
         layout.addWidget(status_lbl)
 
+        excluded = manifest.excluded_animals() if manifest is not None else {}
+        if excluded:
+            excluded_lbl = QLabel(
+                f"{len(excluded)} excluded animal(s) are kept in psds_final.pkl and marked "
+                f"(excluded / exclusion_reason): {', '.join(sorted(excluded))}"
+            )
+            excluded_lbl.setWordWrap(True)
+            excluded_lbl.setStyleSheet("color: #555;")
+            layout.addWidget(excluded_lbl)
+
         # Source file that will be used
         combo = Manifest.load(self.project_root).combo
         drink_src = psd_dir / f"psds_{combo}_drink.pkl"
@@ -438,8 +448,13 @@ class FinalizePage(QWidget):
             str(result.out_dir),
             "",
             "Wrote sleep_bins.csv, sleep_bins_avg.csv, sleep_whole_file.csv, "
-            "sleep_export.xlsx, and chosen_csvs/.",
+            "sleep_export.xlsx, excluded_animals.csv, and chosen_csvs/.",
         ]
+        if result.excluded:
+            lines += [
+                "",
+                f"Excluded animals are kept and marked (excluded column): {', '.join(result.excluded)}",
+            ]
         if result.missing_ok:
             lines += ["", f"Skipped — sleep QC not accepted: {', '.join(result.missing_ok)}"]
         if result.missing_csv:
@@ -453,15 +468,23 @@ class FinalizePage(QWidget):
         if not confirm_unfinished_swd_review(self, self.project_root):
             return
 
+        manifest = Manifest.load(self.project_root)
+        excluded = manifest.excluded_animals()
         try:
-            out = build_run_final_pkl(self.project_root, Manifest.load(self.project_root).combo, run_name)
+            out = build_run_final_pkl(self.project_root, manifest.combo, run_name, excluded=excluded)
         except Exception as e:
             QMessageBox.critical(self, "Finalize Failed", str(e))
             return
+        note = (
+            f"\n\n{len(excluded)} excluded animal(s) are kept and marked (excluded / "
+            f"exclusion_reason, plus excluded_animals.csv): {', '.join(sorted(excluded))}"
+            if excluded
+            else "\n\nNo animals are excluded."
+        )
         QMessageBox.information(
             self,
             "Run Finalized",
-            f"psds_final.pkl written for run '{run_name}'.\n\n{out}",
+            f"psds_final.pkl written for run '{run_name}'.\n\n{out}{note}",
         )
         self._refresh()
 

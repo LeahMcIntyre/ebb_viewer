@@ -79,3 +79,51 @@ def test_sleep_export_writes_bundle(qapp, tmp_path: Path):
     out = tmp_path / "sleep_export"
     assert (out / "sleep_export.xlsx").exists()
     assert (out / "chosen_csvs" / "AM001_run.csv").exists()
+
+
+def test_finalize_marks_excluded_animals_in_the_sealed_pkl(qapp, tmp_path: Path):
+    import pickle
+
+    import numpy as np
+    from PyQt6.QtWidgets import QMessageBox
+
+    _seed(tmp_path, {"AM001": "ok", "AM002": "ok"})
+    m = Manifest.load(tmp_path)
+    m.exclude_sleep_qc("AM002", "signal lost")
+    psd_dir = tmp_path / "psd" / "default"
+    psd_dir.mkdir(parents=True)
+    recs = [
+        {"path": Path(f"/d/{a}_x_PROCESSED.edf"), "freqs": np.array([1.0]), "psd": np.array([[1.0]])}
+        for a in ("AM001", "AM002")
+    ]
+    with open(psd_dir / "psds_LFC_RSC.pkl", "wb") as f:
+        pickle.dump(recs, f)
+
+    page = _make_page(qapp, tmp_path)
+    with patch.object(QMessageBox, "information") as info, patch(
+        "ebb_viewer.pages.finalize.confirm_unfinished_swd_review", return_value=True
+    ):
+        page._on_finalize("default")
+
+    with open(psd_dir / "psds_final.pkl", "rb") as f:
+        final = pickle.load(f)
+    assert [(r["excluded"], r["exclusion_reason"]) for r in final] == [(False, ""), (True, "signal lost")]
+    message = info.call_args.args[2]
+    assert "AM002" in message and "excluded_animals.csv" in message
+    assert (psd_dir / "excluded_animals.csv").exists()
+
+
+def test_run_card_lists_excluded_animals_before_sealing(qapp, tmp_path: Path):
+    from PyQt6.QtWidgets import QLabel
+
+    _seed(tmp_path, {"AM001": "ok", "AM002": "ok"})
+    Manifest.load(tmp_path).exclude_sleep_qc("AM002", "signal lost")
+    run_dir = tmp_path / "psd" / "default"
+    run_dir.mkdir(parents=True)
+    (run_dir / "psd_params.json").write_text("{}")
+    (run_dir / "psds_LFC_RSC.pkl").touch()
+
+    page = _make_page(qapp, tmp_path)
+    page._refresh()
+    texts = [lbl.text() for lbl in page.findChildren(QLabel)]
+    assert any("1 excluded animal(s) are kept in psds_final.pkl" in t and "AM002" in t for t in texts)
