@@ -71,7 +71,7 @@ Review and Exclude) and decide: **OK** or **Exclude**.
 
 **Excluding** always opens a dialog whose Exclude button stays disabled until a reason is typed;
 cancelling changes nothing. The reason is appended to the animal's `notes` as an
-`Excluded: <reason>` line (`Manifest.exclude_sleep_qc`, which also refuses an empty reason).
+`Excluded (<stage>): <reason>` line (`Manifest.exclude_sleep_qc`, which also refuses an empty reason). The stage is `Sleep QC` (grid, legend, EDF viewer) or `PSD review` (PSD Visualizer): it records where the exclusion happened, while the status itself is one and the same, `excluded`. The Home table column is "QC Status" for this reason, and the PSD Status cell of an excluded animal reads "—".
 Excluded rows are greyed in the legend and their lines are dimmed in the grid.
 
 **Un-excluding.** Pressing the pressed Exclude button again sends the animal back to
@@ -117,7 +117,7 @@ Finalize after changing an exclusion to refresh the markers.
 | `psd/<run>/excluded_animals.csv`, `sleep_export/excluded_animals.csv` | `animal, reason`; always written, header only when nothing is excluded |
 | Prism workbook (Export on the Finalize page) | an `excluded_animals` sheet, only when the sealed pkl marks any; the animal columns are unchanged |
 
-The reason is the animal's `Excluded:` note lines joined with "; " (`Manifest.excluded_animals()`),
+The reason is the animal's `Excluded (<stage>):` note lines, each as `<stage>: <reason>`, joined with "; " (`Manifest.excluded_animals()`),
 or the whole note if the animal was excluded without one. The Finalize page lists the excluded
 animals on each run card and in the result dialogs.
 

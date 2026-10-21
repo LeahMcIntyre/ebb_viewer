@@ -29,7 +29,7 @@ from specparam.utils import interpolate_spectrum
 
 from ebb.process.state_presets import gather_states_from_store
 from ebb_viewer.pipeline import psd_params
-from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.pipeline.manifest import STAGE_PSD_REVIEW, Manifest
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
@@ -274,7 +274,7 @@ class PSDGridPage(QWidget):
         self.root.addWidget(bar)
 
     def _build_grid(self):
-        # Banner for animals excluded in Sleep QC (hidden otherwise)
+        # Banner for excluded animals (hidden otherwise)
         self._excluded_banner = QLabel()
         self._excluded_banner.setWordWrap(True)
         self._excluded_banner.setStyleSheet(
@@ -504,7 +504,7 @@ class PSDGridPage(QWidget):
         if animal_id is None or self.manifest.get(animal_id) is None:
             return
         if checked:
-            if not exclude_with_reason(self, self.manifest, animal_id):
+            if not exclude_with_reason(self, self.manifest, animal_id, STAGE_PSD_REVIEW):
                 self._update_flag_status()  # cancelled: pop the toggle back out
                 return
         else:
@@ -553,7 +553,7 @@ class PSDGridPage(QWidget):
                 i, QColor(140, 140, 140) if excluded else None, Qt.ItemDataRole.ForegroundRole
             )
             self.cmb_animal.setItemData(
-                i, "Excluded in Sleep QC" if excluded else None, Qt.ItemDataRole.ToolTipRole
+                i, "Excluded" if excluded else None, Qt.ItemDataRole.ToolTipRole
             )
 
     @staticmethod
@@ -562,7 +562,7 @@ class PSDGridPage(QWidget):
         return key.replace("_artifact", "").replace("_drink", "")
 
     def _excluded_notes(self) -> str | None:
-        """The current animal's notes if it is excluded in Sleep QC, else None.
+        """The current animal's notes if it is excluded, else None.
 
         Reads the manifest on disk when none was passed, so animals are marked in
         views that do not flag.

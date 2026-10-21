@@ -413,7 +413,7 @@ def test_swd_review_empty_swd_file_has_nothing_to_review(tmp_path):
 def test_excluded_sleep_qc_cell_is_labelled_and_carries_the_reason(qapp):
     from ebb_viewer.pages.home import HomePage
 
-    cell = HomePage._build_sleep_qc_cell(None, "excluded", True, "Excluded: lost signal")
+    cell = HomePage._build_sleep_qc_cell(None, "excluded", True, "Excluded (Sleep QC): lost signal")
     assert cell.text() == "Excluded"
-    assert cell.toolTip() == "Excluded: lost signal"
+    assert cell.toolTip() == "Excluded (Sleep QC): lost signal"
     assert HomePage._build_sleep_qc_cell(None, "ok", True, "x").toolTip() == ""

@@ -38,6 +38,7 @@ from ebb_viewer.edf_viewer.mask_builder import (
 from ebb_viewer.edf_viewer.masks_dock import MasksDock
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
+from ebb_viewer.pipeline.manifest import STAGE_SLEEP_QC
 from ebb_viewer.pipeline.naming import parse_animal_id
 from ebb_viewer.widgets.drink_mask_dialog import DrinkMaskDialogue
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
@@ -493,7 +494,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
     def _flag_qc_exclude(self, checked: bool) -> None:
         """Exclude (asking for a reason); un-excluding sends the animal back to review."""
         if checked:
-            exclude_with_reason(self, self.manifest, self.animal_id)
+            exclude_with_reason(self, self.manifest, self.animal_id, STAGE_SLEEP_QC)
         else:
             self.manifest.flag_sleep_qc(self.animal_id, "needs_review")
         self._update_qc_status()

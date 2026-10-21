@@ -639,7 +639,7 @@ class PSDPage(QWidget):
         excluded_ids = [e.animal_id for e in manifest.ready_for_psd() if e.sleep_qc == "excluded"]
         if excluded_ids:
             self._log(
-                f"{combo}: {', '.join(excluded_ids)} excluded in Sleep QC — computed anyway, "
+                f"{combo}: {', '.join(excluded_ids)} excluded — computed anyway, "
                 "marked excluded in the manifest only"
             )
 

@@ -61,10 +61,10 @@ unreviewed animal leaves it in the queue, the Visualizer never says
 "all reviewed", and Finalize stays blocked.
 
 ### Exclusion needs a reason, and un-excluding goes to `needs_review`
-Excluding goes through `Manifest.exclude_sleep_qc(animal, reason)`
+Excluding goes through `Manifest.exclude_sleep_qc(animal, reason, stage)`
 (`flag_sleep_qc` rejects "excluded"), and the UI uses
 `exclude_with_reason` (the dialog). Don't add an exclude path that
-skips the reason. Un-excluding sets `needs_review` and keeps the note.
+skips the reason, or the stage (`STAGE_SLEEP_QC` / `STAGE_PSD_REVIEW`; the note reads `Excluded (<stage>): ...`). Un-excluding sets `needs_review` and keeps the note.
 
 ### Finalize markers are a snapshot
 `excluded` / `exclusion_reason` in `psds_final.pkl` and the sleep tables

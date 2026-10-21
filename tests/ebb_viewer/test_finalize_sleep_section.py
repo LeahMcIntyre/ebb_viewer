@@ -89,7 +89,7 @@ def test_finalize_marks_excluded_animals_in_the_sealed_pkl(qapp, tmp_path: Path)
 
     _seed(tmp_path, {"AM001": "ok", "AM002": "ok"})
     m = Manifest.load(tmp_path)
-    m.exclude_sleep_qc("AM002", "signal lost")
+    m.exclude_sleep_qc("AM002", "signal lost", "Sleep QC")
     psd_dir = tmp_path / "psd" / "default"
     psd_dir.mkdir(parents=True)
     recs = [
@@ -107,7 +107,7 @@ def test_finalize_marks_excluded_animals_in_the_sealed_pkl(qapp, tmp_path: Path)
 
     with open(psd_dir / "psds_final.pkl", "rb") as f:
         final = pickle.load(f)
-    assert [(r["excluded"], r["exclusion_reason"]) for r in final] == [(False, ""), (True, "signal lost")]
+    assert [(r["excluded"], r["exclusion_reason"]) for r in final] == [(False, ""), (True, "Sleep QC: signal lost")]
     message = info.call_args.args[2]
     assert "AM002" in message and "excluded_animals.csv" in message
     assert (psd_dir / "excluded_animals.csv").exists()
@@ -117,7 +117,7 @@ def test_run_card_lists_excluded_animals_before_sealing(qapp, tmp_path: Path):
     from PyQt6.QtWidgets import QLabel
 
     _seed(tmp_path, {"AM001": "ok", "AM002": "ok"})
-    Manifest.load(tmp_path).exclude_sleep_qc("AM002", "signal lost")
+    Manifest.load(tmp_path).exclude_sleep_qc("AM002", "signal lost", "Sleep QC")
     run_dir = tmp_path / "psd" / "default"
     run_dir.mkdir(parents=True)
     (run_dir / "psd_params.json").write_text("{}")

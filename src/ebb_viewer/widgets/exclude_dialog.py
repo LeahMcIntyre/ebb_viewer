@@ -41,13 +41,13 @@ class ExcludeDialog(QtWidgets.QDialog):
         return self.edit.toPlainText().strip()
 
 
-def exclude_with_reason(parent, manifest, animal_id: str) -> bool:
-    """Ask for a reason and exclude ``animal_id`` in ``manifest``.
+def exclude_with_reason(parent, manifest, animal_id: str, stage: str) -> bool:
+    """Ask for a reason and exclude ``animal_id`` in ``manifest``, noting the ``stage``.
 
     Returns False (nothing changes) if the dialog is cancelled.
     """
     dlg = ExcludeDialog(animal_id=animal_id, parent=parent)
     if not dlg.exec():
         return False
-    manifest.exclude_sleep_qc(animal_id, dlg.reason())
+    manifest.exclude_sleep_qc(animal_id, dlg.reason(), stage)
     return True

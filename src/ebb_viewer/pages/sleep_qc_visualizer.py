@@ -48,7 +48,12 @@ from ebb.process.sleep_compute import (
     compute_sleep_bins_df_offset,
 )
 from ebb.process.sleep_flagging import METRIC_BY_KEY, flagged_metrics, metrics_table
-from ebb_viewer.pipeline.manifest import READY_STATUSES, Manifest, spindle_output_dir
+from ebb_viewer.pipeline.manifest import (
+    READY_STATUSES,
+    STAGE_SLEEP_QC,
+    Manifest,
+    spindle_output_dir,
+)
 from ebb_viewer.pipeline.swd_review import swd_review_gaps
 from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
@@ -1290,7 +1295,7 @@ class SleepQCGridPage(QWidget):
         if not animal or self._manifest.get(animal) is None:
             return
         if excluded:
-            if not exclude_with_reason(self, self._manifest, animal):
+            if not exclude_with_reason(self, self._manifest, animal, STAGE_SLEEP_QC):
                 self._refresh_legend()  # cancelled: pop the toggle back out
                 return
             self.manifest_changed.emit()

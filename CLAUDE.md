@@ -61,7 +61,7 @@ Key model:
 Valid statuses: `sleep_qc` ∈ `{None, "ok", "needs_review", "excluded"}`; `psd_status` ∈ `{None, "ok", "needs_drink_mask", "drink_mask_applied"}`.
 
 Exclusion rules (details in `docs/sleep_qc_and_exclusion.md`):
-- `"excluded"` needs a reason (`Manifest.exclude_sleep_qc`), appended to `notes` as an `Excluded: ...` line.
+- `"excluded"` needs a reason (`Manifest.exclude_sleep_qc`), appended to `notes` as an `Excluded (<stage>): ...` line (stage = Sleep QC or PSD review).
 - `READY_STATUSES = {"ok", "excluded"}` ("Sleep QC decided") gate PSD compute and the exports, so an excluded animal is still computed.
 - Only `"ok"` animals are in PSD review: the review queues use `== "ok"`, `psd_status` / `drink_mask` exist only while `sleep_qc == "ok"` (any other status clears them), and `flag_psd` raises for a non-ok animal.
 - Finalize snapshots the exclusions into the sealed outputs; the manifest is the live record.

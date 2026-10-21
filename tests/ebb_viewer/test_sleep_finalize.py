@@ -136,7 +136,7 @@ def test_sleep_export_marks_excluded_animals_and_reports_them(tmp_path: Path):
     for animal in ("Animal1", "Animal2"):
         (tmp_path / "standard" / f"{animal}_PREPROCESSED.edf").write_bytes(b"")
     m = _seed(tmp_path, {"Animal1": "ok", "Animal2": "excluded"})
-    m.exclude_sleep_qc("Animal2", "electrode fell out")
+    m.exclude_sleep_qc("Animal2", "electrode fell out", "Sleep QC")
 
     with patch(
         "ebb.process.sleep_compute.read_edf_start_datetime", return_value=datetime(2024, 1, 1, 6)
@@ -146,6 +146,6 @@ def test_sleep_export_marks_excluded_animals_and_reports_them(tmp_path: Path):
     assert result.exported == ["Animal1", "Animal2"] and result.excluded == ["Animal2"]
     whole = pd.read_csv(result.written["sleep_whole_file"], keep_default_na=False)
     assert whole.groupby("mouse_id")["excluded"].all().to_dict() == {"Animal1": False, "Animal2": True}
-    assert set(whole.loc[whole.mouse_id == "Animal2", "exclusion_reason"]) == {"electrode fell out"}
+    assert set(whole.loc[whole.mouse_id == "Animal2", "exclusion_reason"]) == {"Sleep QC: electrode fell out"}
     listed = (result.out_dir / "excluded_animals.csv").read_text()
-    assert "Animal2,electrode fell out" in listed
+    assert "Animal2,Sleep QC: electrode fell out" in listed

@@ -489,3 +489,10 @@ def test_double_click_notes_column_cancel_does_not_change_manifest(
 
     assert Manifest.load(tmp_path).get("AM001").notes == "original note"
     assert emitted == []
+
+
+def test_excluded_animal_psd_status_is_a_dash_not_pending(qapp, tmp_path: Path):
+    """Excluded animals are never PSD-reviewed, so the cell must not read "pending"."""
+    _seed_manifest(tmp_path, psd_status={}, sleep_qc="excluded")
+    page = _make_page(qapp, tmp_path)
+    assert _psd_status_cell(page) == "—"
