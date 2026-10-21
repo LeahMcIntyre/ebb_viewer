@@ -39,10 +39,13 @@ Pages in pipeline order:
 4. `ReclassifyPage` — NREM gap fill + EMG gate (`ebb.process.nrem_reclass`); writes `reclass_state` and `final_state` into each `spindle_outputs/<COMBO>/*.csv` and records the gate decision in the manifest
 4b. `SwdReviewPage` — optional (project opt-in): step through epochs that overlap an SWD and fix their states; writes `swd_reclassification` and updates `final_state`
 5. `SleepQCGridPage` — opens on an **Overview** of boxplots of the flagging metrics (`ebb.process.sleep_flagging`; thresholds in `Manifest.flag_thresholds`) where animals past a threshold are highlighted and can be flagged, then the by-hour grid with per-animal OK / Review / Exclude buttons. Exclude requires a reason, appended to `notes` (`Manifest.exclude_sleep_qc`). Metrics and plots use the reclassified states (`final_state`); **Show original** switches to the original SPINDLE states.
-6. `PSDPage` — computes PSDs, writes `psd/<RUN>/psds_<COMBO>.pkl`
-7. `PSDVisualizer` — review PSDs, flag drink mask artifacts
+6. `PSDPage` — computes PSDs, writes `psd/<RUN>/psds_<COMBO>.pkl` (ok **and** excluded animals)
+7. `PSDVisualizer` — review PSDs of `ok` animals, flag drink mask artifacts; shows excluded animals with a banner, and has an Exclude button (reason required)
+8. `DrinkMaskPage` — re-run PSDs with drink masks for the animals flagged `needs_drink_mask`
+9. `FinalizePage` — seals `psds_final.pkl` and the sleep export; keeps excluded animals and marks them (`excluded` / `exclusion_reason`, `excluded_animals.csv`)
+10. `ExportMasksPage` — exports masks (includes excluded animals, unmarked: a known gap)
 
-How the states are produced and consumed is documented in `docs/sleep_reclassification.md`. In short: **all analysis reads `final_state`** and raises `NotReclassifiedError` if it is missing; the original states are only for the "original" comparison views (`STATE_COLUMNS`).
+How the states are produced and consumed is documented in `docs/sleep_reclassification.md`; how Sleep QC, PSD review, Finalize and exclusions fit together (statuses, queues, what each step does with an excluded animal, known gaps) is in `docs/sleep_qc_and_exclusion.md`. In short: **all analysis reads `final_state`** and raises `NotReclassifiedError` if it is missing; the original states are only for the "original" comparison views (`STATE_COLUMNS`).
 
 ### Manifest
 
@@ -55,7 +58,13 @@ Key model:
 
 `Manifest.build_from_standard(root)` is the standard constructor on the home page — it loads existing state and syncs new files from disk without overwriting existing flags.
 
-Valid statuses: `sleep_qc` ∈ `{None, "ok", "needs_review", "excluded"}` (`"ok"` and `"excluded"` are both "decided": `READY_STATUSES` gate PSD compute and the exports, so an excluded animal is still computed, but only `"ok"` animals are in PSD review: excluded animals are in no review queue, have their PSD status cleared and cannot be flagged OK / drink mask (`flag_psd` raises); the manifest is the only record of the exclusion, and the analysis step reads it from there); `psd_status` ∈ `{None, "ok", "needs_drink_mask", "drink_mask_applied"}`.
+Valid statuses: `sleep_qc` ∈ `{None, "ok", "needs_review", "excluded"}`; `psd_status` ∈ `{None, "ok", "needs_drink_mask", "drink_mask_applied"}`.
+
+Exclusion rules (details in `docs/sleep_qc_and_exclusion.md`):
+- `"excluded"` needs a reason (`Manifest.exclude_sleep_qc`), appended to `notes` as an `Excluded: ...` line.
+- `READY_STATUSES = {"ok", "excluded"}` ("Sleep QC decided") gate PSD compute and the exports, so an excluded animal is still computed.
+- Only `"ok"` animals are in PSD review: the review queues use `== "ok"`, `psd_status` / `drink_mask` exist only while `sleep_qc == "ok"` (any other status clears them), and `flag_psd` raises for a non-ok animal.
+- Finalize snapshots the exclusions into the sealed outputs; the manifest is the live record.
 
 `manifest._entry_from_dict` still reads the pre-single-combo format (marked TEMPORARY) — delete it once existing projects have been re-saved.
 
