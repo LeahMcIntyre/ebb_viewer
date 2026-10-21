@@ -71,6 +71,7 @@ _EXISTS_COLOR = QColor("#d4edda")  # green
 
 _SLEEP_QC_LABEL: dict[str, str] = {
     "needs_review": "Review EDF",
+    "excluded": "Excluded",
 }
 
 
@@ -162,7 +163,8 @@ def compute_pipeline_status(
     n_review = len(manifest.needs_review())
     n_pending_qc = len(manifest.pending_sleep_qc())
     n_animals = len(manifest)
-    n_ok = len(manifest.ready_for_psd())
+    n_ok = len(manifest.ready_for_psd())  # ok + excluded
+    n_excluded = sum(1 for e in manifest.ready_for_psd() if e.sleep_qc == "excluded")
     n_psd_pending = len(manifest.all_pending_psd_review())
 
     # --- Step 1: Preprocess ---
@@ -241,7 +243,10 @@ def compute_pipeline_status(
 
     # --- Step 5: Sleep QC ---
     if step3_done and n_pending_qc == 0 and n_review == 0 and n_ok > 0:
-        s4 = StepStatus("done", f"{n_ok} animal{'s' if n_ok != 1 else ''} marked ok")
+        excluded = f", {n_excluded} excluded" if n_excluded else ""
+        s4 = StepStatus(
+            "done", f"{n_ok - n_excluded} animal{'s' if n_ok - n_excluded != 1 else ''} marked ok{excluded}"
+        )
     elif step3_done and (n_review > 0 or n_pending_qc > 0):
         parts = []
         if n_review:
@@ -266,9 +271,10 @@ def compute_pipeline_status(
             "done", f"{n_runs} run{'s' if n_runs != 1 else ''} computed — PSDs ready"
         )
     elif all_ready_for_psd:
+        excluded = f" ({n_excluded} excluded, still computed)" if n_excluded else " marked ok"
         s5 = StepStatus(
             "active",
-            f"Ready — {n_animals} animal{'s' if n_animals != 1 else ''} marked ok",
+            f"Ready — {n_animals} animal{'s' if n_animals != 1 else ''}{excluded}",
         )
     elif n_ok > 0:
         n_not_ready = n_animals - n_ok
@@ -759,7 +765,7 @@ class HomePage(QWidget):
             make_cell("✓" if spindle_out_ok else "—", _EXISTS_COLOR if spindle_out_ok else None),
         )
         self.table.setItem(
-            row_idx, _COL_SLEEP_QC, self._build_sleep_qc_cell(entry.sleep_qc, spindle_out_ok)
+            row_idx, _COL_SLEEP_QC, self._build_sleep_qc_cell(entry.sleep_qc, spindle_out_ok, entry.notes)
         )
         self.table.setItem(
             row_idx,
@@ -775,14 +781,19 @@ class HomePage(QWidget):
             make_cell("📝" if entry.notes.strip() else "—", tooltip=entry.notes or None),
         )
 
-    def _build_sleep_qc_cell(self, sleep_qc: str | None, spindle_out_ok: bool):
-        """Build the Sleep QC column cell (pending / needs_review / ok)."""
+    def _build_sleep_qc_cell(self, sleep_qc: str | None, spindle_out_ok: bool, notes: str = ""):
+        """Build the Sleep QC column cell (pending / needs_review / ok / excluded).
+
+        An excluded cell's tooltip is the animal's notes, which hold the reason.
+        """
         if sleep_qc is None:
             txt = "pending" if spindle_out_ok else "—"
             bg = _PENDING_COLOR if spindle_out_ok else None
         else:
             txt = _SLEEP_QC_LABEL.get(sleep_qc, sleep_qc)
             bg = _STATUS_COLOR.get(sleep_qc)
+            if sleep_qc == "excluded":
+                return make_cell(txt, bg, tooltip=notes or None)
         return make_cell(txt, bg)
 
     def _build_psd_status_cell(

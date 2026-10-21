@@ -89,6 +89,11 @@ A CSV without `final_state` raises `NotReclassifiedError` ("run the Reclassify s
   to the original SPINDLE states for comparison. Animals without `final_state` stay original and
   are counted in a label; if none are reclassified, the page says so and the button is disabled.
   EMG-gated animals are tagged `[EMG gate]` (from the manifest).
+- **Sleep QC flagging** reads `final_state` too: the Overview boxplots (short NREM bouts, NREM
+  bouts per dark hour, REM %, NREM %, Wake %, max REM % in a 2-hour bin) come from
+  `ebb.process.sleep_flagging`, and the cutoffs from `flag_thresholds` in `manifest.json`.
+  Exclusions (`sleep_qc == "excluded"`, reason in `notes`) do not remove an animal from PSD or
+  the exports; they are only recorded in the manifest.
 - **EDF viewer:** the "R" pill beside the state bar starts lit (reclassified states); click it
   for the original bar.
 - **Export Masks** writes `state_column: final_state` into each export's meta file.

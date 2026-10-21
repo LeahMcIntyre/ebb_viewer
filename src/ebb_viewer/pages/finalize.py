@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 from ebb.core.naming import parse_animal_id
 from ebb.process.state_presets import PRESET_DISPLAY
 from ebb_viewer.pipeline import psd_params
-from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.pipeline.manifest import READY_STATUSES, Manifest
 from ebb_viewer.widgets.swd_warning import confirm_unfinished_swd_review
 
 CH_LABELS = ["LFC", "RSC", "LSC"]
@@ -405,8 +405,9 @@ class FinalizePage(QWidget):
             self._btn_export_sleep.setEnabled(False)
             return
 
-        missing = [a for a in with_runs if manifest.get(a).sleep_qc != "ok"]
+        missing = [a for a in with_runs if manifest.get(a).sleep_qc not in READY_STATUSES]
         n_ok = len(with_runs) - len(missing)
+        n_excluded = sum(1 for a in with_runs if manifest.get(a).sleep_qc == "excluded")
         if missing:
             preview = ", ".join(missing[:8]) + ("…" if len(missing) > 8 else "")
             self._sleep_status_lbl.setText(
@@ -415,7 +416,8 @@ class FinalizePage(QWidget):
             )
             self._sleep_status_lbl.setStyleSheet("color: #8a4400;")
         else:
-            self._sleep_status_lbl.setText(f"✓ All {n_ok} animals have accepted sleep QC.")
+            excluded = f" ({n_excluded} excluded)" if n_excluded else ""
+            self._sleep_status_lbl.setText(f"✓ All {n_ok} animals have accepted sleep QC{excluded}.")
             self._sleep_status_lbl.setStyleSheet("color: #1a5c1a;")
         self._btn_export_sleep.setEnabled(n_ok > 0)
 

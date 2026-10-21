@@ -38,7 +38,7 @@ Pages in pipeline order:
 3. `SpindleUploadPage` — upload/download via `SleepyRatWorker`
 4. `ReclassifyPage` — NREM gap fill + EMG gate (`ebb.process.nrem_reclass`); writes `reclass_state` and `final_state` into each `spindle_outputs/<COMBO>/*.csv` and records the gate decision in the manifest
 4b. `SwdReviewPage` — optional (project opt-in): step through epochs that overlap an SWD and fix their states; writes `swd_reclassification` and updates `final_state`
-5. `SleepQCGridPage` — per-animal OK/Review flagging. Opens on the reclassified states (`final_state`); **Show original** switches both views to the original SPINDLE states. View-only.
+5. `SleepQCGridPage` — opens on an **Overview** of boxplots of the flagging metrics (`ebb.process.sleep_flagging`; thresholds in `Manifest.flag_thresholds`) where animals past a threshold are highlighted and can be flagged, then the by-hour grid with per-animal OK / Review / Exclude buttons. Exclude requires a reason, appended to `notes` (`Manifest.exclude_sleep_qc`). Metrics and plots use the reclassified states (`final_state`); **Show original** switches to the original SPINDLE states.
 6. `PSDPage` — computes PSDs, writes `psd/<RUN>/psds_<COMBO>.pkl`
 7. `PSDVisualizer` — review PSDs, flag drink mask artifacts
 
@@ -55,7 +55,7 @@ Key model:
 
 `Manifest.build_from_standard(root)` is the standard constructor on the home page — it loads existing state and syncs new files from disk without overwriting existing flags.
 
-Valid statuses: `sleep_qc` ∈ `{None, "ok", "needs_review"}`; `psd_status` ∈ `{None, "ok", "needs_drink_mask", "drink_mask_applied"}`.
+Valid statuses: `sleep_qc` ∈ `{None, "ok", "needs_review", "excluded"}` (`"ok"` and `"excluded"` are both "decided": `READY_STATUSES` gate PSD compute and the exports, so an excluded animal is still computed; the manifest is the only record of the exclusion, and the analysis step reads it from there); `psd_status` ∈ `{None, "ok", "needs_drink_mask", "drink_mask_applied"}`.
 
 `manifest._entry_from_dict` still reads the pre-single-combo format (marked TEMPORARY) — delete it once existing projects have been re-saved.
 

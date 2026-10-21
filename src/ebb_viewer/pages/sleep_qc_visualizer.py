@@ -51,6 +51,7 @@ from ebb.process.sleep_flagging import METRIC_BY_KEY, flagged_metrics, metrics_t
 from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
 from ebb_viewer.pipeline.swd_review import swd_review_gaps
 from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
+from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.sleep_flag_overview import FlagOverview
 
@@ -984,7 +985,10 @@ class SleepQCGridPage(QWidget):
                         continue
                     dm[metric] = dm[metric].fillna(0)
                     dm = dm.sort_values(x_col)
-                    if self._highlighted_animal:
+                    entry = self._manifest.get(mid)
+                    if entry is not None and entry.sleep_qc == "excluded":
+                        alpha = 50  # greyed out
+                    elif self._highlighted_animal:
                         alpha = 255 if mid == self._highlighted_animal else 80
                     else:
                         alpha = 255
@@ -1101,8 +1105,9 @@ class SleepQCGridPage(QWidget):
 
         bg = STATUS_COLOR_HEX.get(status)
         row_w.setObjectName("legendRow")
+        text = "color: #8a8a8a;" if status == "excluded" else ""
         row_w.setStyleSheet(
-            f"QWidget#legendRow {{ background-color: {bg or 'transparent'}; border-radius: 3px; }}"
+            f"QWidget#legendRow {{ background-color: {bg or 'transparent'}; border-radius: 3px; {text} }}"
         )
         return row_w, row_l
 
@@ -1118,8 +1123,9 @@ class SleepQCGridPage(QWidget):
         status: str | None,
         on_ok_toggled,
         on_review_toggled,
+        on_exclude_toggled,
     ) -> None:
-        """Build the OK + Review pair for one legend row.
+        """Build the OK + Review + Exclude buttons for one legend row.
 
         Shared by ``_update_legend_group`` (group mode) and
         ``_update_legend_animal`` (animal mode). Click handlers are passed
@@ -1140,6 +1146,14 @@ class SleepQCGridPage(QWidget):
         btn_review.setChecked(status == "needs_review")
         btn_review.clicked.connect(on_review_toggled)
         row_l.addWidget(btn_review)
+
+        btn_exclude = QPushButton("Exclude")
+        btn_exclude.setFixedHeight(22)
+        btn_exclude.setCheckable(True)
+        btn_exclude.setChecked(status == "excluded")
+        btn_exclude.setToolTip("Exclude this animal from analysis (a reason is required)")
+        btn_exclude.clicked.connect(on_exclude_toggled)
+        row_l.addWidget(btn_exclude)
 
     def _update_legend_group(
         self, mice: list[str], mouse_colors: dict, show_ref: bool = False
@@ -1195,6 +1209,7 @@ class SleepQCGridPage(QWidget):
                         m, "needs_review" if checked else None
                     )
                 ),
+                on_exclude_toggled=lambda checked, m=mid: self._exclude_sleep_qc(m, checked),
             )
 
             self.legend_layout.addWidget(row_w, i // 2, i % 2)
@@ -1244,6 +1259,7 @@ class SleepQCGridPage(QWidget):
             on_review_toggled=lambda checked: self._flag_sleep_qc(
                 animal, "needs_review" if checked else None
             ),
+            on_exclude_toggled=lambda checked: self._exclude_sleep_qc(animal, checked),
         )
         self.legend_layout.addWidget(row_w, 0, 0)
 
@@ -1265,6 +1281,27 @@ class SleepQCGridPage(QWidget):
     # ------------------------------------------------------------------
     # Manifest flagging
     # ------------------------------------------------------------------
+    def _exclude_sleep_qc(self, animal: str, excluded: bool) -> None:
+        """Exclude ``animal`` (asking for a reason) or, when un-excluding, send it back to review."""
+        if not animal or self._manifest.get(animal) is None:
+            return
+        if excluded:
+            if not exclude_with_reason(self, self._manifest, animal):
+                self._refresh_legend()  # cancelled: pop the toggle back out
+                return
+            self.manifest_changed.emit()
+            self._update_nav_hint()
+            self._refresh_legend()
+        else:
+            self._flag_sleep_qc(animal, "needs_review")
+
+    def _refresh_legend(self) -> None:
+        if self._mode == "group" and not self.btn_overview.isChecked():
+            mice = self._get_page_mice()
+            self._update_legend_group(mice, self._build_mouse_color_map(mice), self._show_ref_median)
+        else:
+            self._update_all_plots()
+
     def _flag_sleep_qc(self, animal: str, status: str | None) -> None:
         """Set (or, with ``None``, reset) an animal's sleep QC flag and refresh the view."""
         if not animal or self._manifest.get(animal) is None:
@@ -1275,11 +1312,7 @@ class SleepQCGridPage(QWidget):
             self._manifest.flag_sleep_qc(animal, status)
         self.manifest_changed.emit()
         self._update_nav_hint()
-        if self._mode == "group" and not self.btn_overview.isChecked():
-            mice = self._get_page_mice()
-            self._update_legend_group(mice, self._build_mouse_color_map(mice), self._show_ref_median)
-        else:
-            self._update_all_plots()
+        self._refresh_legend()
 
 
 # ---------------------------------------------------------------------------

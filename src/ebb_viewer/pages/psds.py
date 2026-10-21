@@ -221,7 +221,7 @@ class PSDPage(QWidget):
         combo_v.addLayout(btn_row)
 
         self.combo_table = QTableWidget(0, 4)
-        self.combo_table.setHorizontalHeaderLabels(["Combo", "CSVs", "Ok Animals", "PKL Status"])
+        self.combo_table.setHorizontalHeaderLabels(["Combo", "CSVs", "Ready Animals", "PKL Status"])
         self.combo_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.combo_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self.combo_table.setColumnWidth(1, 60)
@@ -571,7 +571,9 @@ class PSDPage(QWidget):
         manifest = Manifest.load(self.project_root)
 
         combo = manifest.combo
-        ok_count = len(manifest.ready_for_psd())
+        ready = manifest.ready_for_psd()
+        ok_count = len(ready)
+        n_excluded = sum(1 for e in ready if e.sleep_qc == "excluded")
 
         self.combo_table.blockSignals(True)
         self.combo_table.setRowCount(0)
@@ -586,7 +588,8 @@ class PSDPage(QWidget):
         self.combo_table.setItem(0, 0, QTableWidgetItem(combo))
         self.combo_table.setItem(0, 1, QTableWidgetItem(str(csv_count)))
 
-        ok_item = QTableWidgetItem(str(ok_count) if ok_count else "—")
+        ok_text = f"{ok_count} ({n_excluded} excluded)" if n_excluded else str(ok_count)
+        ok_item = QTableWidgetItem(ok_text if ok_count else "—")
         if ok_count > 0:
             ok_item.setForeground(QColor("#2a7a2a"))
         self.combo_table.setItem(0, 2, ok_item)
@@ -631,6 +634,13 @@ class PSDPage(QWidget):
             self._log(
                 f"⚠ {combo}: no state CSV for {', '.join(missing)}"
                 f" — {'this animal' if len(missing) == 1 else 'these animals'} will be skipped"
+            )
+
+        excluded_ids = [e.animal_id for e in manifest.ready_for_psd() if e.sleep_qc == "excluded"]
+        if excluded_ids:
+            self._log(
+                f"{combo}: {', '.join(excluded_ids)} excluded in Sleep QC — computed anyway, "
+                "marked excluded in the manifest only"
             )
 
         # Pull all mask + filter params from the widget; channels + fs stay
@@ -827,7 +837,7 @@ class PSDPage(QWidget):
             else:
                 self._gate_label.setText(
                     f"{n_not_ready} animal{'s' if n_not_ready != 1 else ''} "
-                    "not ready — each needs sleep QC marked ok"
+                    "not ready — each needs sleep QC marked ok or excluded"
                 )
             self._summary_label.setText("")
         elif not has_combos:
@@ -853,8 +863,10 @@ class PSDPage(QWidget):
         else:
             self._gate_label.setText("")
             # Build summary: "LFC_RSC (8 animals) → psds_LFC_RSC.pkl"
+            n_excluded = sum(1 for e in manifest.ready_for_psd() if e.sleep_qc == "excluded")
+            excluded = f", {n_excluded} excluded" if n_excluded else ""
             self._summary_label.setText(
-                f"{manifest.combo} ({n_ready} animal{'s' if n_ready != 1 else ''})"
+                f"{manifest.combo} ({n_ready} animal{'s' if n_ready != 1 else ''}{excluded})"
                 f" → psds_{manifest.combo}.pkl"
             )
 
