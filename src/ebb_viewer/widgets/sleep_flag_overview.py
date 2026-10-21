@@ -29,6 +29,7 @@ _GRAY = (110, 110, 110, 180)
 _RED = (210, 70, 50, 220)
 _BLUE = (50, 110, 220, 230)
 _EXCLUDED = (200, 200, 200, 140)
+_THRESHOLD = (150, 20, 20)  # dark red, distinct from the grey box and the dots
 _STATUS_PEN = {
     "ok": pg.mkPen((40, 150, 70), width=2),
     "needs_review": pg.mkPen((230, 140, 0), width=2.4),
@@ -163,9 +164,9 @@ class FlagOverview(QWidget):
                 pg.InfiniteLine(
                     pos=cutoff,
                     angle=0,
-                    pen=pg.mkPen((0, 0, 0), width=1, style=Qt.PenStyle.DashLine),
+                    pen=pg.mkPen(_THRESHOLD, width=2.5, style=Qt.PenStyle.DashLine),
                     label=f"{m.direction} {cutoff:g}",
-                    labelOpts={"position": 0.97, "color": (0, 0, 0), "anchors": [(1, 1), (1, 1)]},
+                    labelOpts={"position": 0.97, "color": _THRESHOLD, "anchors": [(1, 1), (1, 1)]},
                 )
             )
             flagged = np.array([past_threshold(v, m.direction, cutoff) for v in values])
