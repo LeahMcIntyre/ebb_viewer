@@ -50,12 +50,14 @@ from ebb_viewer.widgets.table_helpers import make_cell
 _COLUMNS = [
     "Animal",
     "Spindle Output",
+    "SWD",
     "QC Status",
     "PSD Status",
     "Notes",
 ]
 _COL_ANIMAL = _COLUMNS.index("Animal")
 _COL_SPINDLE_OUT = _COLUMNS.index("Spindle Output")
+_COL_SWD = _COLUMNS.index("SWD")
 _COL_SLEEP_QC = _COLUMNS.index("QC Status")
 _COL_PSD_STATUS = _COLUMNS.index("PSD Status")
 _COL_NOTES = _COLUMNS.index("Notes")
@@ -63,6 +65,9 @@ _COL_NOTES = _COLUMNS.index("Notes")
 _STATUS_COLOR = {k: QColor(v) for k, v in STATUS_COLOR_HEX.items()}
 _PENDING_COLOR = QColor("#f0f0f0")  # light gray = reached but not yet flagged
 _EXISTS_COLOR = QColor("#d4edda")  # green
+
+_SWD_REVIEW_LABEL = {"done": "reviewed ✓", "in_progress": "in progress", "not_started": "to review"}
+_SWD_MISSING_COLOR = QColor("#fff3cd")  # amber
 
 _SLEEP_QC_LABEL: dict[str, str] = {
     "needs_review": "Review EDF",
@@ -370,6 +375,8 @@ class HomePage(QWidget):
         # _on_cell_double_clicked so the row index always resolves against
         # what the user actually sees, not a freshly-reloaded manifest.
         self._table_rows: list[ManifestEntry] = []
+        self._swd_files: dict[str, Path | None] = {}
+        self._swd_review_enabled = False
         self._build_ui()
         self._refresh()
 
@@ -629,6 +636,10 @@ class HomePage(QWidget):
         # picks a single run and filters the PSD Status cell to it.
         run_filter: str | None = self.cmb_run_filter.currentData()
 
+        self._swd_review_enabled = manifest.swd_review_enabled
+        self._swd_files = {
+            e.animal_id: find_swd_file(self.project_root, e.animal_id) for e in manifest
+        }
         facts = [
             (entry, *self._row_facts(entry, manifest.combo, psd_runs, run_filter))
             for entry in manifest
@@ -660,6 +671,10 @@ class HomePage(QWidget):
                 psd_status=psd_status,
             )
         self.table.resizeRowsToContents()
+        # The SWD column only matters when SWD files exist or review is on.
+        self.table.setColumnHidden(
+            _COL_SWD, not (manifest.swd_review_enabled or any(self._swd_files.values()))
+        )
 
         self._refresh_attention_zone(manifest)
         # Reuse psd_runs from above; saves a second scan of project/psd/.
@@ -749,6 +764,7 @@ class HomePage(QWidget):
             _COL_SPINDLE_OUT,
             make_cell("✓" if spindle_out_ok else "—", _EXISTS_COLOR if spindle_out_ok else None),
         )
+        self.table.setItem(row_idx, _COL_SWD, self._build_swd_cell(entry))
         self.table.setItem(
             row_idx,
             _COL_SLEEP_QC,
@@ -762,6 +778,21 @@ class HomePage(QWidget):
             _COL_NOTES,
             make_cell("📝" if entry.notes.strip() else "—", tooltip=entry.notes or None),
         )
+
+    def _build_swd_cell(self, entry: ManifestEntry):
+        """SWD column: file found (with review progress when review is on) or missing.
+
+        Missing is amber because PSD compute with SWD masking, and SWD review, both
+        need a file for every animal; a waived animal is confirmed as having none.
+        """
+        if self._swd_files.get(entry.animal_id) is None:
+            if entry.swd_waived:
+                return make_cell("none (waived)")
+            return make_cell("missing", _SWD_MISSING_COLOR)
+        if not self._swd_review_enabled:
+            return make_cell("✓", _EXISTS_COLOR)
+        status = swd_review_status(entry)
+        return make_cell(_SWD_REVIEW_LABEL[status], _EXISTS_COLOR if status == "done" else None)
 
     def _build_sleep_qc_cell(self, sleep_qc: str | None, spindle_out_ok: bool, notes: str = ""):
         """Build the QC Status column cell (pending / needs_review / ok / excluded).

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ebb_viewer.pages.home import _COL_NOTES, _COL_PSD_STATUS, _COL_SLEEP_QC
+from ebb_viewer.pages.home import _COL_NOTES, _COL_PSD_STATUS, _COL_SLEEP_QC, _COL_SWD
 from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
 
 
@@ -530,3 +530,25 @@ def test_next_banner_points_at_first_unfinished_step(qapp, tmp_path: Path):
     page = _make_page(qapp, tmp_path)
     assert page._next_page is not None
     assert page._next_page != "preprocess"
+
+
+def test_swd_column_hidden_without_swd_files(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, psd_status={})
+    page = _make_page(qapp, tmp_path)
+    assert page.table.isColumnHidden(_COL_SWD)
+
+
+def test_swd_column_shows_found_and_missing(qapp, tmp_path: Path):
+    """With some .mat files present, an animal without one is flagged missing."""
+    m = Manifest(tmp_path)
+    for animal_id in ("AM001", "AM002"):
+        m._entries[animal_id] = ManifestEntry(
+            animal_id=animal_id, preprocessed_edf="", has_spindle=True, sleep_qc="ok"
+        )
+    m.save()
+    (tmp_path / "swd").mkdir()
+    (tmp_path / "swd" / "AM001.mat").touch()
+    page = _make_page(qapp, tmp_path)
+    assert not page.table.isColumnHidden(_COL_SWD)
+    assert page.table.item(0, _COL_SWD).text() == "✓"
+    assert page.table.item(1, _COL_SWD).text() == "missing"
