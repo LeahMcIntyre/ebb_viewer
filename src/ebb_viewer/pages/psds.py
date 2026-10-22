@@ -2,13 +2,13 @@
 
 Drives the initial PSD computation step of the pipeline. Each run writes one
 ``psd/<run_name>/psds_<combo>.pkl`` for the project's channel combo, consumed by
-the visualizer. Only the combo's channels are computed.
+the visualizer.
 
 The page is structured as:
 
 1. A status card — the combo, its CSVs, how many animals are ready, the run name
    and the output file (all read-only except the run name)
-2. States to compute
+2. States and channels to compute
 3. ``MaskParamsWidget`` — shared editor for state-group selection and the
    SWD / annotation / hour-window / artifact mask params (same widget the
    Export Masks page uses, with ``show_drink_mask=False`` since the PSD
@@ -30,6 +30,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -60,31 +61,18 @@ DEFAULT_FS = 250
 CH_LABELS = ["LFC", "RSC", "LSC"]
 
 
-def combo_channels(combo: str) -> list[int]:
-    """Indices into ``CH_LABELS`` of the channels named by a combo like ``"LFC_RSC"``.
-
-    Raises:
-        ValueError: if the combo names a channel that is not in ``CH_LABELS``.
-    """
-    names = combo.split("_")
-    unknown = [n for n in names if n not in CH_LABELS]
-    if unknown:
-        raise ValueError(f"Unknown channel(s) {', '.join(unknown)} in combo {combo!r}")
-    return [CH_LABELS.index(n) for n in names]
-
-
 class PSDPage(QWidget):
     """Sidebar page #6 — drives the PSD compute step of the pipeline.
 
     Owns: the run name, the status card for the project combo, the shared
     ``MaskParamsWidget`` (states + SWD + annotation + hour-window + artifact
-    params), the sampling frequency, and a worker thread that runs
-    ``batch_estimate`` for the combo and writes one PKL + ``psd_params.json``
-    per run. The channels computed are the combo's (``selected_channels``).
+    params), the channel checkboxes, the sampling frequency, and a worker
+    thread that runs ``batch_estimate`` for the combo and writes one PKL +
+    ``psd_params.json`` per run.
 
     Run state lives in the mask widget (round-trippable to/from the saved
-    JSON via ``to_params``/``from_params``) plus the sampling-frequency
-    spinbox. Initial values are loaded from the most recently modified saved
+    JSON via ``to_params``/``from_params``) plus the channel checkboxes and
+    the sampling-frequency spinbox. Initial values are loaded from the most recently modified saved
     run when the page is constructed.
     """
 
@@ -211,6 +199,22 @@ class PSDPage(QWidget):
         states_v.addWidget(self.mask_widget.states_inner_widget())
         root.addWidget(self.states_gb)
 
+        self.channels_gb = QGroupBox("Channels")
+        self.channels_gb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        ch_h = QHBoxLayout(self.channels_gb)
+        self._channel_boxes: list[QCheckBox] = []
+        for label in CH_LABELS:
+            cb = QCheckBox(label)
+            cb.setChecked(True)
+            cb.toggled.connect(lambda _checked: self._validate())
+            self._channel_boxes.append(cb)
+            ch_h.addWidget(cb)
+        ch_h.addStretch(1)
+        self.chk_all = QCheckBox("Select all")
+        self.chk_all.setChecked(True)
+        ch_h.addWidget(self.chk_all)
+        root.addWidget(self.channels_gb)
+
         # ----- Filters & masks -----
         masks_row = QHBoxLayout()
         zone_masks = QLabel("FILTERS & MASKS")
@@ -220,7 +224,8 @@ class PSDPage(QWidget):
         self.btn_restore_defaults = QPushButton("Restore defaults")
         self.btn_restore_defaults.setToolTip(
             "Reset states, SD, spindle noise, commutator, SWD, annotation, "
-            "and hour-window settings to their defaults. Sampling freq is not affected."
+            "and hour-window settings to their defaults. Channels and sampling "
+            "freq are not affected."
         )
         self.btn_restore_defaults.clicked.connect(self._on_restore_defaults)
         masks_row.addWidget(self.btn_restore_defaults)
@@ -306,12 +311,14 @@ class PSDPage(QWidget):
 
         # Styling
         self.states_gb.setObjectName("statesBox")
+        self.channels_gb.setObjectName("channelsBox")
         self.setStyleSheet("""
-        QGroupBox#statesBox { font: 550; }
-        QGroupBox#statesBox * { font: 400; }
+        QGroupBox#statesBox, QGroupBox#channelsBox { font: 550; }
+        QGroupBox#statesBox *, QGroupBox#channelsBox * { font: 400; }
         """)
 
     def _wire(self) -> None:
+        self.chk_all.toggled.connect(self._toggle_all_channels)
         self.btn_run_pipeline.clicked.connect(self._run_pipeline_clicked)
         self._run_name_edit.textChanged.connect(self._on_run_name_changed)
         # Re-validate when any mask-widget knob changes (states, ann_dir,
@@ -344,15 +351,15 @@ class PSDPage(QWidget):
     def _on_restore_defaults(self) -> None:
         """Reset the shared mask widget back to its built-in defaults.
 
-        Sampling freq is page-owned and intentionally preserved — it is
-        project-detected, not a user pref.
+        Channels and sampling freq are page-owned and intentionally
+        preserved — they're project-detected, not user prefs.
         """
         ret = QMessageBox.question(
             self,
             "Restore defaults?",
             "Reset states, SD, spindle noise, commutator, SWD, annotation, "
             "and hour-window settings to their defaults?\n\n"
-            "Sampling frequency is not affected.",
+            "Channels and sampling frequency are not affected.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -411,8 +418,16 @@ class PSDPage(QWidget):
             return
         self._run_name_edit.setText(run_name)
         self._refresh_run_name_hint()
+        # PSD-only knobs (channels + fs) stay on the page.
         if "fs" in params:
             self.spin_fs.setValue(params["fs"])
+        if "channels" in params:
+            for i, cb in enumerate(self._channel_boxes):
+                cb.setChecked(i in params["channels"])
+            all_checked = all(cb.isChecked() for cb in self._channel_boxes)
+            self.chk_all.blockSignals(True)
+            self.chk_all.setChecked(all_checked)
+            self.chk_all.blockSignals(False)
         # Everything else (states + mask params) lives in the widget.
         self.mask_widget.from_params(params)
 
@@ -425,13 +440,9 @@ class PSDPage(QWidget):
 
         combo_dir = self.project_root / "spindle_outputs" / combo
         csv_count = len(list(combo_dir.glob("*.csv"))) if combo_dir.is_dir() else 0
-        try:
-            channels = ", ".join(CH_LABELS[i] for i in combo_channels(combo))
-        except ValueError:
-            channels = "unknown channels"
         excluded = f" ({n_excluded} excluded)" if n_excluded else ""
         self._status_lbl.setText(
-            f"<b>{combo}</b> · channels {channels} · {csv_count} state CSV"
+            f"<b>{combo}</b> · {csv_count} state CSV"
             f"{'s' if csv_count != 1 else ''} · "
             f"{len(ready)} of {len(manifest)} animals ready{excluded}"
         )
@@ -545,7 +556,7 @@ class PSDPage(QWidget):
             (spindle_root / combo, psd_run_dir / f"psds_{combo}.pkl")
         ]
 
-        # Compose params for the worker: widget params + the combo's
+        # Compose params for the worker: widget params + page-owned
         # channels + fs.
         params = {
             **widget_params,
@@ -607,12 +618,12 @@ class PSDPage(QWidget):
     # ---------- Channels API ----------
 
     def selected_channels(self) -> list[int]:
-        """Indices (into ``CH_LABELS``) of the project combo's channels.
+        """Return indices of checked channel boxes (in CH_LABELS order)."""
+        return [i for i, cb in enumerate(self._channel_boxes) if cb.isChecked()]
 
-        Raises:
-            ValueError: if the combo names an unknown channel.
-        """
-        return combo_channels(Manifest.load(self.project_root).combo)
+    def _toggle_all_channels(self, checked: bool) -> None:
+        for cb in self._channel_boxes:
+            cb.setChecked(checked)
 
     # ---------- Internals ----------
 
@@ -650,11 +661,7 @@ class PSDPage(QWidget):
                 ann_ok = False
 
         states_ok = bool(widget_params.get("states"))
-        try:
-            combo_channels(manifest.combo)
-            channels_ok = True
-        except ValueError:
-            channels_ok = False
+        channels_ok = bool(self.selected_channels())
 
         self.btn_run_pipeline.setEnabled(
             has_standard
@@ -696,10 +703,7 @@ class PSDPage(QWidget):
             self._gate_label.setText("Select at least one state group to compute")
             self._summary_label.setText("")
         elif not channels_ok:
-            self._gate_label.setText(
-                f"Unknown channel in combo {manifest.combo!r} — expected names from "
-                f"{', '.join(CH_LABELS)}"
-            )
+            self._gate_label.setText("Select at least one channel to compute")
             self._summary_label.setText("")
         else:
             self._gate_label.setText("")

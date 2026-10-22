@@ -8,7 +8,7 @@ exact kwargs that would have been forwarded.
 After Stage B-2 the page delegates state-group, SD-mask, spindle-noise,
 SWD, annotation, and hour-window params to the shared
 ``MaskParamsWidget`` (``page.mask_widget``); the page itself only owns
-the run name + fs (channels come from the project combo). Tests that previously inspected ``page._masking_params``
+channels + fs + the run name. Tests that previously inspected ``page._masking_params``
 now route through ``page.mask_widget.to_params()``. The dialog-specific
 tests (``test_b3_dialog_*``) are dropped — equivalent coverage exists in
 ``test_mask_params_widget.py``.
@@ -258,8 +258,9 @@ def test_full_masking_roundtrip_psd_params_json(qapp, tmp_path: Path):
     assert wp["hw_enabled"] is True
     assert wp["hour_windows"] == [(6.0, 18.0)]
     assert wp["selected_days"] == [0, 1, 2]
-    # And the page-local fs reloaded; channels come from the project combo, not the file.
+    # And the page-local channels + fs both reloaded.
     assert page.spin_fs.value() == 250
+    assert page.selected_channels() == [0, 1, 2]
 
 
 # ---------------------------------------------------------------------------
@@ -286,18 +287,32 @@ def _ready_project(tmp_path: Path, combo: str = "LFC_RSC"):
     m.save()
 
 
-def test_channels_follow_project_combo(qapp, tmp_path: Path):
-    """Only the combo's channels are computed: LFC_RSC -> LFC + RSC, not LSC."""
+def test_all_channels_selected_by_default(qapp, tmp_path: Path):
+    """LSC is computed too, whatever the project combo is."""
     _ready_project(tmp_path, "LFC_RSC")
-    assert _make_page(qapp, tmp_path).selected_channels() == [0, 1]
+    assert _make_page(qapp, tmp_path).selected_channels() == [0, 1, 2]
 
 
-def test_unknown_combo_channel_gates_run(qapp, tmp_path: Path):
-    """A combo naming a channel the PSD step doesn't know blocks Run with a clear label."""
-    _ready_project(tmp_path, "LFC_XYZ")
+def test_empty_channel_selection_disables_run_button(qapp, tmp_path: Path):
+    """Unchecking every channel gates Run with a dedicated label: ``estimate_psd``'s
+    ``channels=None`` default only applies to None, so an empty list would crash or
+    silently produce nothing."""
+    _ready_project(tmp_path)
     page = _make_page(qapp, tmp_path)
+    assert page.btn_run_pipeline.isEnabled()
+    for cb in page._channel_boxes:
+        cb.setChecked(False)
     assert not page.btn_run_pipeline.isEnabled()
-    assert "combo" in page._gate_label.text().lower()
+    assert "channel" in page._gate_label.text().lower()
+
+
+def test_select_all_toggles_every_channel(qapp, tmp_path: Path):
+    _ready_project(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    page.chk_all.setChecked(False)
+    assert page.selected_channels() == []
+    page.chk_all.setChecked(True)
+    assert page.selected_channels() == [0, 1, 2]
 
 
 def test_run_enabled_for_a_ready_project(qapp, tmp_path: Path):
