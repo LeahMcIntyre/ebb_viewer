@@ -303,6 +303,9 @@ class MaskParamsWidget(QWidget):
         self._sections["annotation"].set_subtitle(_annotation_subtitle(p))
         self._sections["hour_window"].set_subtitle(_hour_window_subtitle(p))
         self._sections["drink"].set_subtitle(_drink_subtitle(p))
+        # Event-based masks are the ones switched on and off run to run; accent them when on.
+        for key in ("swd", "annotation", "hour_window", "drink"):
+            self._sections[key].set_active(self._sections[key].subtitle() != "off")
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -1374,6 +1377,30 @@ def _drink_subtitle(p: dict) -> str:
     if not p.get("use_drink_mask"):
         return "off"
     return f"on · {p['drink_pad']}s pad"
+
+
+def mask_summary_lines(p: dict) -> list[str]:
+    """One line per mask or filter that is on (event-based first), for run summaries.
+
+    ``p`` is :meth:`MaskParamsWidget.to_params` output.
+    """
+    lines = []
+    for label, sub in (
+        ("SWD mask", _swd_subtitle(p)),
+        ("Annotation mask", _annotation_subtitle(p)),
+        ("Compute hours", _hour_window_subtitle(p)),
+    ):
+        if sub != "off":
+            lines.append(f"{label}: {sub}")
+    lines += [
+        f"Commutator mask: {_commutator_subtitle(p)}",
+        f"SD mask: {_sd_subtitle(p)}",
+        f"Spindle noise mask: {_spindle_subtitle(p)}",
+    ]
+    notch = _notch_subtitle(p)
+    if notch != "off":
+        lines.append(f"60 Hz notch: {notch}")
+    return lines
 
 
 def _subzone_header(text: str) -> QLabel:
