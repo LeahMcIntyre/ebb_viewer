@@ -55,6 +55,7 @@ from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
 from ebb_viewer.widgets.collapsible_section import CollapsibleSection
 from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget, mask_summary_lines
 from ebb_viewer.widgets.no_scroll_spinbox import NoScrollSpinBox
+from ebb_viewer.widgets.readiness import Check, blockers, checks_html, first_fix, fix_button_text
 from ebb_viewer.widgets.swd_warning import confirm_unfinished_swd_review
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
@@ -62,23 +63,6 @@ DEFAULT_FS = 250
 CH_LABELS = ["LFC", "RSC", "LSC"]
 
 _RUN_PANEL_WIDTH_PX = 380
-# Page names (main_window navigation keys) that fix a failing readiness check.
-_FIX_PAGE_LABEL = {
-    "preprocess": "Preprocess",
-    "sleep_qc": "Sleep QC",
-    "spindle_upload": "Spindle Upload",
-    "swd_review": "SWD Review",
-}
-
-
-@dataclasses.dataclass(frozen=True)
-class _Check:
-    """One line of the readiness checklist."""
-
-    ok: bool
-    text: str  # what is true when ok, what to fix when not
-    blocking: bool = True  # a failing blocking check disables Run
-    page: str | None = None  # page that fixes it, when there is one
 
 
 class PSDPage(QWidget):
@@ -625,17 +609,17 @@ class PSDPage(QWidget):
 
     # ---------- Internals ----------
 
-    def _readiness(self, manifest: Manifest, widget_params: dict) -> list[_Check]:
+    def _readiness(self, manifest: Manifest, widget_params: dict) -> list[Check]:
         """The checklist behind the Run button, in the order problems should be fixed."""
         ready = manifest.ready_for_psd()
         ready_ids = {e.animal_id for e in ready}
         n_animals = len(manifest)
         n_excluded = sum(1 for e in ready if e.sleep_qc == "excluded")
-        checks: list[_Check] = []
+        checks: list[Check] = []
 
         has_standard = self.standard_folder is not None and self.standard_folder.exists()
         checks.append(
-            _Check(
+            Check(
                 has_standard,
                 "Standard EDFs found"
                 if has_standard
@@ -645,11 +629,11 @@ class PSDPage(QWidget):
         )
 
         if n_animals == 0:
-            checks.append(_Check(False, "No animals in manifest", page="preprocess"))
+            checks.append(Check(False, "No animals in manifest", page="preprocess"))
         elif len(ready) != n_animals:
             n = n_animals - len(ready)
             checks.append(
-                _Check(
+                Check(
                     False,
                     f"{n} animal{'s' if n != 1 else ''} not ready — "
                     "each needs sleep QC marked ok or excluded",
@@ -658,12 +642,12 @@ class PSDPage(QWidget):
             )
         else:
             excluded = f" ({n_excluded} excluded)" if n_excluded else ""
-            checks.append(_Check(True, f"Sleep QC decided for all {n_animals} animals{excluded}"))
+            checks.append(Check(True, f"Sleep QC decided for all {n_animals} animals{excluded}"))
 
         spindle_dir = self.project_root / "spindle_outputs" / manifest.combo
         has_combos = any(spindle_dir.glob("*.csv"))
         checks.append(
-            _Check(
+            Check(
                 has_combos,
                 "State CSVs found"
                 if has_combos
@@ -687,12 +671,12 @@ class PSDPage(QWidget):
                 )
             else:
                 text = "SWD files found for every animal"
-            checks.append(_Check(not missing, text))
+            checks.append(Check(not missing, text))
             if manifest.swd_review_enabled:
                 gaps = swd_review_gaps(self.project_root, manifest, ready_ids)
                 n_gaps = len(gaps.unfinished)
                 checks.append(
-                    _Check(
+                    Check(
                         n_gaps == 0,
                         "SWD review finished"
                         if n_gaps == 0
@@ -708,23 +692,23 @@ class PSDPage(QWidget):
             ann_keywords = (widget_params.get("ann_keywords") or "").strip()
             if ann_dir is None or not Path(ann_dir).is_dir():
                 checks.append(
-                    _Check(False, "Annotation mask enabled — select a valid annotation directory")
+                    Check(False, "Annotation mask enabled — select a valid annotation directory")
                 )
             elif not ann_keywords:
-                checks.append(_Check(False, "Annotation mask enabled — enter at least one keyword"))
+                checks.append(Check(False, "Annotation mask enabled — enter at least one keyword"))
             else:
-                checks.append(_Check(True, "Annotation mask configured"))
+                checks.append(Check(True, "Annotation mask configured"))
 
         states_ok = bool(widget_params.get("states"))
         checks.append(
-            _Check(
+            Check(
                 states_ok,
                 "States selected" if states_ok else "Select at least one state group to compute",
             )
         )
         channels_ok = bool(self.selected_channels())
         checks.append(
-            _Check(
+            Check(
                 channels_ok,
                 "Channels selected" if channels_ok else "Select at least one channel to compute",
             )
@@ -757,25 +741,14 @@ class PSDPage(QWidget):
         widget_params = self.mask_widget.to_params()
         checks = self._readiness(manifest, widget_params)
 
-        blockers = [c for c in checks if not c.ok and c.blocking]
-        self.btn_run_pipeline.setEnabled(not blockers)
+        self.btn_run_pipeline.setEnabled(not blockers(checks))
+        self._checks_lbl.setText(checks_html(checks))
 
-        rows = []
-        for c in checks:
-            if c.ok:
-                rows.append(f"<span style='color:#2a7a2a'>✓</span> {c.text}")
-            else:
-                color = "#c0392b" if c.blocking else "#b06000"
-                rows.append(
-                    f"<span style='color:{color}'>{'✗' if c.blocking else '⚠'}</span> {c.text}"
-                )
-        self._checks_lbl.setText("<br>".join(rows))
-
-        first_fix = next((c for c in checks if not c.ok and c.page), None)
-        self._fix_page = first_fix.page if first_fix else None
-        self.btn_fix.setVisible(first_fix is not None)
-        if first_fix:
-            self.btn_fix.setText(f"Open {_FIX_PAGE_LABEL.get(first_fix.page, first_fix.page)} →")
+        fix = first_fix(checks)
+        self._fix_page = fix.page if fix else None
+        self.btn_fix.setVisible(fix is not None)
+        if fix:
+            self.btn_fix.setText(fix_button_text(fix))
 
         self._settings_lbl.setText(self._settings_summary(widget_params))
 
