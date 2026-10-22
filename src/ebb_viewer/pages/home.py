@@ -352,7 +352,9 @@ def compute_pipeline_status(
     n_sealed = sum(1 for rn in psd_runs if (root / "psd" / rn / "psds_final.pkl").exists())
     export_dir = sleep_export_dir(root)
     sleep_exported = export_dir.is_dir() and any(export_dir.iterdir())
-    if not any_psd_pkl or s6.kind == "attention" or s7.kind == "attention":
+    if s4.kind != "done":
+        s8 = StepStatus("blocked", "Requires Sleep QC (step 5)")
+    elif not any_psd_pkl or s6.kind == "attention" or s7.kind == "attention":
         s8 = StepStatus("blocked", "Requires PSD review and drink masks (steps 7-8)")
     elif psd_runs and n_sealed == len(psd_runs) and sleep_exported:
         n = len(psd_runs)
