@@ -449,3 +449,18 @@ def test_finalize_step_tracks_sealed_runs_and_sleep_export(tmp_path: Path):
     (tmp_path / "sleep_export").mkdir()
     (tmp_path / "sleep_export" / "bins.csv").touch()
     assert compute_pipeline_status(tmp_path, manifest, psd_runs=["r1"])[-1].kind == "done"
+
+
+def test_psd_review_step_counts_pending_drink_verification(tmp_path: Path):
+    """After masks are applied the step asks for verification instead of saying all reviewed,
+    and Finalize stays blocked."""
+    manifest = _make_manifest(
+        tmp_path,
+        {"A001": dict(sleep_qc="ok", psd_status={"default": "drink_mask_applied"})},
+    )
+    _setup_filesystem(tmp_path, combos=[manifest.combo])
+    _setup_psd_run(tmp_path)
+    statuses = compute_pipeline_status(tmp_path, manifest, psd_runs=["default"])
+    assert statuses[7].kind == "attention"
+    assert "verify" in statuses[7].description
+    assert statuses[-1].kind == "blocked"

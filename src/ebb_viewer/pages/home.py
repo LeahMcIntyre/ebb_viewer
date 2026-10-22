@@ -37,6 +37,7 @@ from ebb_viewer.pipeline.manifest import (
     Manifest,
     ManifestEntry,
     psd_path,
+    psd_status_label,
     spindle_edf_dir,
     spindle_output_dir,
     swd_review_status,
@@ -186,6 +187,7 @@ def compute_pipeline_status(
     n_ok = len(manifest.ready_for_psd())  # ok + excluded
     n_excluded = sum(1 for e in manifest.ready_for_psd() if e.sleep_qc == "excluded")
     n_psd_pending = len(manifest.all_pending_psd_review())
+    n_verify = len(manifest.all_pending_drink_verification())
 
     # --- Step 1: Preprocess ---
     if step1_done:
@@ -315,6 +317,11 @@ def compute_pipeline_status(
     if n_psd_pending > 0:
         s6 = StepStatus(
             "attention", f"{n_psd_pending} PSD{'s' if n_psd_pending != 1 else ''} to review"
+        )
+    elif n_verify > 0:
+        s6 = StepStatus(
+            "attention",
+            f"{n_verify} drink-masked PSD{'s' if n_verify != 1 else ''} to verify",
         )
     elif n_needs_drink > 0 and any_psd_pkl:
         s6 = StepStatus(
@@ -852,16 +859,15 @@ class HomePage(QWidget):
         if entry.sleep_qc == "excluded":
             txt, bg = "—", None  # excluded animals are never PSD-reviewed
         elif psd_status == "drink_mask_applied":
-            txt, bg = "drink mask applied", _STATUS_COLOR["drink_mask_applied"]
+            txt, bg = psd_status_label(psd_status), _STATUS_COLOR["drink_mask_applied"]
         elif psd_status == "needs_drink_mask":
-            if has_drink_mask:
-                txt, bg = "drink mask ready", _STATUS_COLOR["needs_drink_mask"]
-            else:
-                txt, bg = "needs drink mask", _STATUS_COLOR["needs_drink_mask"]
+            label = psd_status_label(psd_status)
+            txt = f"{label} (file ready)" if has_drink_mask else label
+            bg = _STATUS_COLOR["needs_drink_mask"]
         elif psd_status == "ok":
-            txt, bg = "ok", _EXISTS_COLOR
+            txt, bg = psd_status_label(psd_status), _EXISTS_COLOR
         elif psd_file_ok:
-            txt, bg = "pending", _PENDING_COLOR
+            txt, bg = psd_status_label(None), _PENDING_COLOR
         else:
             txt, bg = "—", None
         return make_cell(txt, bg)

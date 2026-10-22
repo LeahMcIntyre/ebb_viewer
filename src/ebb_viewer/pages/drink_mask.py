@@ -44,7 +44,7 @@ from PyQt6.QtWidgets import (
 from ebb.process.psd_compute import rerun_with_drink_masks
 from ebb.process.state_presets import PRESET_DISPLAY
 from ebb_viewer.pipeline import psd_params
-from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.pipeline.manifest import Manifest, psd_status_label
 from ebb_viewer.pipeline.naming import drink_mask_rel
 from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
 from ebb_viewer.widgets.collapsible_section import CollapsibleSection
@@ -484,14 +484,20 @@ class DrinkMaskPage(QWidget):
             flagged, ready, applied = [], [], []
 
         ready_ids = {e.animal_id for e in ready}
-        rows = [(e, "needs mask") for e in flagged] + [(e, "applied") for e in applied]
+        rows = [(e, "needs_drink_mask") for e in flagged] + [
+            (e, "drink_mask_applied") for e in applied
+        ]
         self._table.setRowCount(0)
         for entry, status in rows:
             has_file = (self.project_root / drink_mask_rel(entry.animal_id)).is_file()
-            missing = status == "needs mask" and entry.animal_id not in ready_ids
+            missing = status == "needs_drink_mask" and entry.animal_id not in ready_ids
             mask_item = QTableWidgetItem("✓ found" if has_file else "✗ missing")
             mask_item.setForeground(QColor("#2a7a2a") if has_file else QColor("#aa2222"))
-            items = [QTableWidgetItem(entry.animal_id), QTableWidgetItem(status), mask_item]
+            items = [
+                QTableWidgetItem(entry.animal_id),
+                QTableWidgetItem(psd_status_label(status)),
+                mask_item,
+            ]
             if missing:
                 for item in items:
                     item.setBackground(self._AMBER)

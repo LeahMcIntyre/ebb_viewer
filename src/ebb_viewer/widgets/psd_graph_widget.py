@@ -29,7 +29,7 @@ from specparam.utils import interpolate_spectrum
 
 from ebb.process.state_presets import gather_states_from_store
 from ebb_viewer.pipeline import psd_params
-from ebb_viewer.pipeline.manifest import STAGE_PSD_REVIEW, Manifest
+from ebb_viewer.pipeline.manifest import STAGE_PSD_REVIEW, Manifest, psd_status_label
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
@@ -630,19 +630,19 @@ class PSDGridPage(QWidget):
         if status == "ok":
             self._btn_flag_ok.setChecked(True)
             self._btn_flag_drink.setChecked(False)
-            self._status_label.setText("✓ OK")
+            self._status_label.setText(f"✓ {psd_status_label('ok')}")
             self._status_label.setStyleSheet("color: green; font-weight: bold;")
             self._guidance_label.setVisible(False)
         elif status == "needs_drink_mask":
             self._btn_flag_ok.setChecked(False)
             self._btn_flag_drink.setChecked(True)
-            self._status_label.setText("⚠ Drink Mask")
+            self._status_label.setText(f"⚠ {psd_status_label('needs_drink_mask')}")
             self._status_label.setStyleSheet("color: orange; font-weight: bold;")
             self._guidance_label.setVisible(self.manifest is not None)
         elif animal_id in self._pending_animal_ids():
             self._btn_flag_ok.setChecked(False)
             self._btn_flag_drink.setChecked(False)
-            self._status_label.setText("pending")
+            self._status_label.setText(psd_status_label(status))
             self._status_label.setStyleSheet("color: gray;")
             self._guidance_label.setVisible(False)
         else:
