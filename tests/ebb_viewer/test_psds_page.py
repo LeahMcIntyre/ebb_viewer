@@ -303,7 +303,7 @@ def test_empty_channel_selection_disables_run_button(qapp, tmp_path: Path):
     for cb in page._channel_boxes:
         cb.setChecked(False)
     assert not page.btn_run_pipeline.isEnabled()
-    assert "channel" in page._gate_label.text().lower()
+    assert "channel" in page._checks_lbl.text().lower()
 
 
 def test_select_all_toggles_every_channel(qapp, tmp_path: Path):
@@ -326,7 +326,8 @@ def test_status_card_summarises_combo_and_output(qapp, tmp_path: Path):
     page = _make_page(qapp, tmp_path)
     assert "LFC_RSC" in page._status_lbl.text()
     assert "1 of 1 animals ready" in page._status_lbl.text()
-    assert "not computed yet" in page._output_lbl.text()
+    assert "psds_LFC_RSC.pkl" in page._output_lbl.text()
+    assert "new run" in page._run_msg_lbl.text().lower()
 
 
 def test_radius_two_decimals_no_rounding(qapp, tmp_path: Path):
@@ -435,7 +436,7 @@ def test_page_widget_changed_propagates_to_gate_label(qapp, tmp_path: Path):
         cb.setChecked(False)
     # The widget.changed → page._validate wiring should re-render the gate
     # without us calling _validate explicitly.
-    assert "state" in page._gate_label.text().lower()
+    assert "state" in page._checks_lbl.text().lower()
     assert not page.btn_run_pipeline.isEnabled()
 
 
@@ -506,11 +507,52 @@ def _page_with_animals(qapp, tmp_path: Path, statuses: dict[str, str | None]):
 def test_excluded_animals_count_as_ready_and_are_called_out(qapp, tmp_path: Path):
     page = _page_with_animals(qapp, tmp_path, {"AM001": "ok", "AM002": "excluded"})
     assert page.btn_run_pipeline.isEnabled()
-    assert "2 animals, 1 excluded" in page._summary_label.text()
     assert "2 of 2 animals ready (1 excluded)" in page._status_lbl.text()
 
 
 def test_unresolved_animal_blocks_run_and_names_both_ready_statuses(qapp, tmp_path: Path):
     page = _page_with_animals(qapp, tmp_path, {"AM001": "excluded", "AM002": "needs_review"})
     assert not page.btn_run_pipeline.isEnabled()
-    assert "ok or excluded" in page._gate_label.text()
+    assert "ok or excluded" in page._checks_lbl.text()
+
+
+def test_checklist_lists_blockers_and_offers_the_fixing_page(qapp, tmp_path: Path):
+    page = _page_with_animals(qapp, tmp_path, {"AM001": "ok", "AM002": "needs_review"})
+    assert "1 animal not ready" in page._checks_lbl.text()
+    assert not page.btn_fix.isHidden()
+    assert page._fix_page == "sleep_qc"
+    assert "Sleep QC" in page.btn_fix.text()
+
+
+def test_ready_project_checklist_is_all_ok(qapp, tmp_path: Path):
+    _ready_project(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    assert "✗" not in page._checks_lbl.text()
+    assert page.btn_fix.isHidden()
+
+
+def test_swd_mask_blocks_run_naming_animals_without_files(qapp, tmp_path: Path):
+    page = _page_with_animals(qapp, tmp_path, {"AM001": "ok", "AM002": "ok"})
+    (tmp_path / "swd").mkdir()
+    (tmp_path / "swd" / "AM001.mat").write_text("")
+    page._refresh_swd_status()  # enables the SWD option now that a .mat exists
+    page.mask_widget.from_params({"swd_mode": "mask_out"})
+    assert not page.btn_run_pipeline.isEnabled()
+    assert "AM002" in page._checks_lbl.text()
+
+
+def test_settings_summary_lists_states_channels_and_active_masks(qapp, tmp_path: Path):
+    _ready_project(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    text = page._settings_lbl.text()
+    assert "LFC, RSC, LSC" in text
+    assert "250 Hz" in text
+    assert "Commutator mask" in text
+    assert "SWD mask" not in text  # off by default
+
+
+def test_log_hidden_until_first_message(qapp, tmp_path: Path):
+    page = _make_page(qapp, tmp_path)
+    assert page.log_box.isHidden()
+    page._log("hello")
+    assert not page.log_box.isHidden()
