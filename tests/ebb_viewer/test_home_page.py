@@ -80,7 +80,7 @@ def test_psd_status_drink_mask_applied_beats_needs_drink_mask(qapp, tmp_path: Pa
         },
     )
     page = _make_page(qapp, tmp_path)
-    assert _psd_status_cell(page) == "drink mask applied"
+    assert _psd_status_cell(page) == "mask applied — verify"
 
 
 def test_psd_status_drink_mask_applied_beats_ok(qapp, tmp_path: Path):
@@ -93,7 +93,7 @@ def test_psd_status_drink_mask_applied_beats_ok(qapp, tmp_path: Path):
         },
     )
     page = _make_page(qapp, tmp_path)
-    assert _psd_status_cell(page) == "drink mask applied"
+    assert _psd_status_cell(page) == "mask applied — verify"
 
 
 def test_psd_status_ok_beats_needs_drink_mask(qapp, tmp_path: Path):
@@ -116,8 +116,8 @@ def test_psd_status_needs_drink_mask_alone(qapp, tmp_path: Path):
         psd_status={"default": "needs_drink_mask"},
     )
     page = _make_page(qapp, tmp_path)
-    # Without an on-disk drink-mask npy, the cell reads "needs drink mask".
-    assert _psd_status_cell(page) == "needs drink mask"
+    # Without an on-disk drink-mask npy, the cell reads "needs mask".
+    assert _psd_status_cell(page) == "needs mask"
 
 
 def test_psd_status_empty_dict_falls_through_to_dash(qapp, tmp_path: Path):
@@ -256,7 +256,7 @@ def test_run_filter_default_uses_best_wins(qapp, tmp_path: Path):
 
 
 def test_run_filter_specific_run_overrides_best_wins(qapp, tmp_path: Path):
-    """Selecting "dark_phase" shows that run's status ("needs drink mask")
+    """Selecting "dark_phase" shows that run's status ("needs mask")
     even though "default" is ok — this is exactly the visibility the
     dropdown is meant to enable."""
     _seed_two_run_project(
@@ -266,7 +266,7 @@ def test_run_filter_specific_run_overrides_best_wins(qapp, tmp_path: Path):
     page = _make_page(qapp, tmp_path)
     idx = page.cmb_run_filter.findData("dark_phase")
     page.cmb_run_filter.setCurrentIndex(idx)
-    assert _psd_status_cell(page) == "needs drink mask"
+    assert _psd_status_cell(page) == "needs mask"
 
 
 def test_run_filter_specific_run_with_no_entry_shows_dash(qapp, tmp_path: Path):

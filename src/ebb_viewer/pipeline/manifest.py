@@ -47,6 +47,31 @@ STAGE_PSD_REVIEW = "PSD review"
 _EXCLUDED_LINE = re.compile(r"Excluded \(([^)]*)\):\s*(.*)")
 PSD_STATUSES = frozenset({"ok", "needs_drink_mask", "drink_mask_applied"})
 
+# User-facing names for the PSD review states, shared by every page that shows them.
+# An animal with no status yet for a run is waiting for its first review.
+PSD_STATUS_LABEL = {
+    None: "needs review",
+    "ok": "ok",
+    "needs_drink_mask": "needs mask",
+    "drink_mask_applied": "mask applied — verify",
+}
+
+
+def psd_status_label(status: str | None) -> str:
+    """The user-facing name of a ``psd_status`` value (``None`` = not reviewed yet)."""
+    return PSD_STATUS_LABEL[status]
+
+
+@dataclass(frozen=True)
+class DrinkLoopCounts:
+    """Where the animals of one PSD run are in the review → drink mask → verify loop."""
+
+    unreviewed: int  # waiting for the first review (pass 1)
+    flagged: int  # flagged needs_drink_mask
+    ready: int  # ... of which the mask file is on disk
+    to_verify: int  # mask applied, waiting for verification (pass 2)
+    ok: int
+
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -398,6 +423,18 @@ class Manifest:
         if not psd_path(self.combo, self.project_root, run_name).exists():
             return []
         return self._filter(lambda e: e.sleep_qc == "ok" and run_name not in e.psd_status)
+
+    def drink_loop_counts(self, run_name: str) -> DrinkLoopCounts:
+        """Counts for the review → drink mask → verify loop of one PSD run."""
+        return DrinkLoopCounts(
+            unreviewed=len(self.pending_psd_review(run_name)),
+            flagged=len(self.needs_drink_mask(run_name)),
+            ready=len(self.needs_drink_mask_rerun(run_name)),
+            to_verify=len(self.pending_drink_verification(run_name)),
+            ok=len(
+                self._filter(lambda e: e.sleep_qc == "ok" and e.psd_status.get(run_name) == "ok")
+            ),
+        )
 
     def needs_drink_mask(self, run_name: str) -> list[ManifestEntry]:
         """Animals flagged as having drinking sidebands in the PSD for run_name."""

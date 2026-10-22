@@ -790,3 +790,30 @@ def test_flag_reasons_kept_only_while_needs_review(tmp_path):
     assert Manifest.load(tmp_path).get("AM001").flag_reasons == ["nrem_short", "pct_rem"]
     m.flag_sleep_qc("AM001", "ok", ["nrem_short"])
     assert Manifest.load(tmp_path).get("AM001").flag_reasons == []
+
+
+def test_drink_loop_counts_and_labels(tmp_path):
+    from ebb_viewer.pipeline.manifest import psd_path, psd_status_label
+
+    psd_path("LFC_RSC", tmp_path, "r1").parent.mkdir(parents=True)
+    psd_path("LFC_RSC", tmp_path, "r1").touch()
+    m = _make_manifest(
+        tmp_path,
+        {
+            "A1": dict(sleep_qc="ok"),
+            "A2": dict(sleep_qc="ok", psd_status={"r1": "ok"}),
+            "A3": dict(sleep_qc="ok", psd_status={"r1": "needs_drink_mask"}),
+            "A4": dict(sleep_qc="ok", psd_status={"r1": "drink_mask_applied"}),
+            "A5": dict(sleep_qc="excluded"),
+        },
+    )
+    counts = m.drink_loop_counts("r1")
+    assert (counts.unreviewed, counts.flagged, counts.ready, counts.to_verify, counts.ok) == (
+        1,
+        1,
+        0,
+        1,
+        1,
+    )
+    assert psd_status_label(None) == "needs review"
+    assert psd_status_label("drink_mask_applied") == "mask applied — verify"

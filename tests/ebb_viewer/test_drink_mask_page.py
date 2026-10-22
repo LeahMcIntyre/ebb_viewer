@@ -55,7 +55,7 @@ def test_table_lists_flagged_and_applied_animals(qapp, tmp_path: Path):
     assert rows == [
         ("AM001", "needs mask", "✓ found"),
         ("AM002", "needs mask", "✗ missing"),
-        ("AM003", "applied", "✓ found"),
+        ("AM003", "mask applied — verify", "✓ found"),
     ]
 
 

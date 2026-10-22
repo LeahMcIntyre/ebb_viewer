@@ -307,11 +307,11 @@ class FinalizePage(QWidget):
                 else:
                     parts = []
                     if n_review:
-                        parts.append(f"{n_review} pending review")
+                        parts.append(f"{n_review} need review")
                     if n_drink:
-                        parts.append(f"{n_drink} need drink mask")
+                        parts.append(f"{n_drink} need a drink mask")
                     if n_verify:
-                        parts.append(f"{n_verify} pending verification")
+                        parts.append(f"{n_verify} to verify")
                     pending_text = "⚠ " + ", ".join(parts)
                     pending_style = "color: #8a4400;"
             except Exception:
