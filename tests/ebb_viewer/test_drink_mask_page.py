@@ -120,3 +120,14 @@ def test_log_hidden_until_first_message(qapp, tmp_path: Path):
     assert page.log_box.isHidden()
     page._log("hello")
     assert not page.log_box.isHidden()
+
+
+def test_loop_strip_shows_the_three_steps_with_counts(qapp, tmp_path: Path):
+    _project(
+        tmp_path, {"AM001": "needs_drink_mask", "AM002": "drink_mask_applied"}, masks=("AM001",)
+    )
+    page = _make_page(qapp, tmp_path)
+    text = page._loop_lbl.text()
+    assert "1 Review PSDs" in text
+    assert "2 Add masks: 1 flagged, 1 with a mask file" in text
+    assert "3 Verify: 1 to check" in text

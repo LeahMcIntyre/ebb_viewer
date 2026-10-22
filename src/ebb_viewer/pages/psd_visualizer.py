@@ -36,6 +36,7 @@ from ebb_viewer.pipeline.manifest import (
     psd_path,
 )
 from ebb_viewer.widgets.collapsible_section import CollapsibleSection
+from ebb_viewer.widgets.drink_loop import REVIEW_STEP, VERIFY_STEP, loop_summary_html
 from ebb_viewer.widgets.psd_graph_widget import PSDGridPage
 
 _CHANNEL_NAMES = ["LFC", "RSC", "LSC"]
@@ -55,6 +56,8 @@ class PSDVisualizer(QWidget):
     """Sidebar page #7 — pick a pass and review animals via PSDGridPage."""
 
     navigate_to = pyqtSignal(str)
+    run_changed = pyqtSignal(str)  # the user picked another PSD run
+    manifest_changed = pyqtSignal()  # a review flag changed
 
     def __init__(self, parent=None, *, project_root: Path):
         super().__init__(parent)
@@ -117,6 +120,7 @@ class PSDVisualizer(QWidget):
         source_v.addLayout(pass_row)
 
         self._loop_lbl = QLabel("")
+        self._loop_lbl.setTextFormat(Qt.TextFormat.RichText)
         self._loop_lbl.setStyleSheet("color: #555; font-size: 11px;")
         source_v.addWidget(self._loop_lbl)
 
@@ -220,6 +224,17 @@ class PSDVisualizer(QWidget):
         self._refresh_pkl_list()
         self._refresh_passes()
         self._auto_plot()
+        self.run_changed.emit(self._current_run_name())
+
+    def set_run(self, run_name: str) -> None:
+        """Switch to ``run_name`` without plotting (the page plots when it is shown)."""
+        if run_name == self.cmb_run.currentText() or self.cmb_run.findText(run_name) < 0:
+            return
+        self.cmb_run.blockSignals(True)
+        self.cmb_run.setCurrentText(run_name)
+        self.cmb_run.blockSignals(False)
+        self._refresh_pkl_list()
+        self._refresh_passes()
 
     def _refresh_pkl_list(self):
         """Scan psd/<run_name>/ for psds_*.pkl and repopulate the "other file" combo."""
@@ -268,13 +283,9 @@ class PSDVisualizer(QWidget):
             "masks on the Drink Mask page."
         )
 
-        parts = [f"{counts.unreviewed} to review", f"{counts.ok} ok"]
-        if counts.flagged:
-            ready = f" ({counts.ready} with a mask file)" if counts.ready else ""
-            parts.insert(1, f"{counts.flagged} need a mask{ready}")
-        if counts.to_verify:
-            parts.insert(-1, f"{counts.to_verify} to verify")
-        self._loop_lbl.setText(" · ".join(parts))
+        self._loop_lbl.setText(
+            loop_summary_html(counts, VERIFY_STEP if self.btn_verify.isChecked() else REVIEW_STEP)
+        )
 
         # Next step in the loop
         if counts.unreviewed:
@@ -423,6 +434,7 @@ class PSDVisualizer(QWidget):
         self.psd_page.navigate_to.connect(self.navigate_to)
         if is_final_view:
             self.psd_page.manifest_changed.connect(self._check_done_hint)
+            self.psd_page.manifest_changed.connect(self.manifest_changed)
             self._check_done_hint()
         else:
             self._refresh_passes()
