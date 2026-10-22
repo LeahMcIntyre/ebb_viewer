@@ -8,7 +8,7 @@ exact kwargs that would have been forwarded.
 After Stage B-2 the page delegates state-group, SD-mask, spindle-noise,
 SWD, annotation, and hour-window params to the shared
 ``MaskParamsWidget`` (``page.mask_widget``); the page itself only owns
-channels + fs. Tests that previously inspected ``page._masking_params``
+channels + fs + the run name. Tests that previously inspected ``page._masking_params``
 now route through ``page.mask_widget.to_params()``. The dialog-specific
 tests (``test_b3_dialog_*``) are dropped — equivalent coverage exists in
 ``test_mask_params_widget.py``.
@@ -268,36 +268,16 @@ def test_full_masking_roundtrip_psd_params_json(qapp, tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_empty_channel_selection_disables_run_button(qapp, tmp_path: Path):
-    """Unchecking every channel must gate the Run button.
-
-    Background: ``estimate_psd``'s ``channels=None`` default only kicks in
-    when channels is ``None``, not ``[]`` — so an empty list would either
-    crash the compute or silently produce nothing.
-    """
-    page = _make_page(qapp, tmp_path)
-    for cb in page._channel_boxes:
-        cb.setChecked(False)
-    page._validate()
-    assert not page.btn_run_pipeline.isEnabled()
-    # Toggling channels also fires the signal-driven validate; confirm
-    # the live wiring still gates the button.
-    page._channel_boxes[0].setChecked(True)
-    assert not page.btn_run_pipeline.isEnabled()  # other gates still fail
-    for cb in page._channel_boxes:
-        cb.setChecked(True)
-
-
-def test_channel_gate_label_when_channels_are_sole_failure(qapp, tmp_path: Path):
-    """When every other gate passes, the empty-channels gate must surface
-    its dedicated label so the user understands why Run is disabled."""
-    (tmp_path / "standard").mkdir()
-    spindle = tmp_path / "spindle_outputs" / "LFC_RSC"
-    spindle.mkdir(parents=True)
-    (spindle / "AM001_LFC_RSC.csv").write_text("rawstate\n")
+def _ready_project(tmp_path: Path, combo: str = "LFC_RSC"):
+    """A project whose only animal is ready, so the channel gate is the sole possible failure."""
     from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
 
+    (tmp_path / "standard").mkdir()
+    spindle = tmp_path / "spindle_outputs" / combo
+    spindle.mkdir(parents=True)
+    (spindle / f"AM001_{combo}.csv").write_text("rawstate\n")
     m = Manifest(tmp_path)
+    m.combo = combo
     m._entries["AM001"] = ManifestEntry(
         animal_id="AM001",
         preprocessed_edf="AM001_PREPROCESSED.edf",
@@ -306,12 +286,47 @@ def test_channel_gate_label_when_channels_are_sole_failure(qapp, tmp_path: Path)
     )
     m.save()
 
+
+def test_all_channels_selected_by_default(qapp, tmp_path: Path):
+    """LSC is computed too, whatever the project combo is."""
+    _ready_project(tmp_path, "LFC_RSC")
+    assert _make_page(qapp, tmp_path).selected_channels() == [0, 1, 2]
+
+
+def test_empty_channel_selection_disables_run_button(qapp, tmp_path: Path):
+    """Unchecking every channel gates Run with a dedicated label: ``estimate_psd``'s
+    ``channels=None`` default only applies to None, so an empty list would crash or
+    silently produce nothing."""
+    _ready_project(tmp_path)
     page = _make_page(qapp, tmp_path)
+    assert page.btn_run_pipeline.isEnabled()
     for cb in page._channel_boxes:
         cb.setChecked(False)
-    page._validate()
     assert not page.btn_run_pipeline.isEnabled()
     assert "channel" in page._gate_label.text().lower()
+
+
+def test_select_all_toggles_every_channel(qapp, tmp_path: Path):
+    _ready_project(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    page.chk_all.setChecked(False)
+    assert page.selected_channels() == []
+    page.chk_all.setChecked(True)
+    assert page.selected_channels() == [0, 1, 2]
+
+
+def test_run_enabled_for_a_ready_project(qapp, tmp_path: Path):
+    _ready_project(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    assert page.btn_run_pipeline.isEnabled()
+
+
+def test_status_card_summarises_combo_and_output(qapp, tmp_path: Path):
+    _ready_project(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    assert "LFC_RSC" in page._status_lbl.text()
+    assert "1 of 1 animals ready" in page._status_lbl.text()
+    assert "not computed yet" in page._output_lbl.text()
 
 
 def test_radius_two_decimals_no_rounding(qapp, tmp_path: Path):
@@ -492,8 +507,7 @@ def test_excluded_animals_count_as_ready_and_are_called_out(qapp, tmp_path: Path
     page = _page_with_animals(qapp, tmp_path, {"AM001": "ok", "AM002": "excluded"})
     assert page.btn_run_pipeline.isEnabled()
     assert "2 animals, 1 excluded" in page._summary_label.text()
-    assert page.combo_table.item(0, 2).text() == "2 (1 excluded)"
-    assert page.combo_table.horizontalHeaderItem(2).text() == "Ready Animals"
+    assert "2 of 2 animals ready (1 excluded)" in page._status_lbl.text()
 
 
 def test_unresolved_animal_blocks_run_and_names_both_ready_statuses(qapp, tmp_path: Path):
