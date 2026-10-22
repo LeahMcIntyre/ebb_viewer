@@ -53,7 +53,7 @@ How the states are produced and consumed is documented in `docs/sleep_reclassifi
 
 Key model:
 - `Manifest` — ordered dict of `ManifestEntry` objects, one per animal, plus the project-level `combo` (default `LFC_RSC`; stored at the top level of `manifest.json`)
-- `ManifestEntry` — `preprocessed_edf` path, `has_spindle`, `sleep_qc`, `reclass_gate_applied`, `swd_reviewed` / `swd_total` / `swd_waived`, `psd_status`, `drink_mask`, `notes`. A project has exactly one channel combo, so there is no per-combo run state.
+- `ManifestEntry` — `preprocessed_edf` path, `has_spindle`, `sleep_qc`, `flag_reasons` (metrics past threshold when flagged, shown on Home), `reclass_gate_applied`, `swd_reviewed` / `swd_total` / `swd_waived`, `psd_status`, `drink_mask`, `notes`. A project has exactly one channel combo, so there is no per-combo run state.
 - The project-level SWD review opt-in is `Manifest.swd_review_enabled` (top level of `manifest.json`, next to `combo`).
 
 `Manifest.build_from_standard(root)` is the standard constructor on the home page — it loads existing state and syncs new files from disk without overwriting existing flags.

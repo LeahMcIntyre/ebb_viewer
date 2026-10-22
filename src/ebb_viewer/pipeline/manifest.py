@@ -67,6 +67,10 @@ class ManifestEntry:
 
     # Sleep QC
     sleep_qc: str | None = None  # None | "ok" | "needs_review" | "excluded"
+    # Metric keys (``ebb.process.sleep_flagging``) that were past their threshold when the animal
+    # was flagged for review: a snapshot for display, empty when flagged without that context.
+    # Only meaningful while sleep_qc == "needs_review".
+    flag_reasons: list[str] = field(default_factory=list)
 
     # NREM reclassification — whether the EMG gate was applied when
     # ``reclass_state`` was written to the spindle CSV (None = not run yet)
@@ -145,6 +149,7 @@ def _entry_to_dict(entry: ManifestEntry) -> dict:
         "notes": entry.notes,
         "has_spindle": entry.has_spindle,
         "sleep_qc": entry.sleep_qc,
+        "flag_reasons": entry.flag_reasons,
         "reclass_gate_applied": entry.reclass_gate_applied,
         "swd_reviewed": entry.swd_reviewed,
         "swd_total": entry.swd_total,
@@ -182,6 +187,7 @@ def _entry_from_dict(animal_id: str, d: dict, combo: str) -> ManifestEntry:
         notes=d.get("notes", ""),
         has_spindle=d.get("has_spindle", False),
         sleep_qc=d.get("sleep_qc"),
+        flag_reasons=list(d.get("flag_reasons") or []),
         reclass_gate_applied=d.get("reclass_gate_applied"),
         swd_reviewed=int(d.get("swd_reviewed", 0)),
         swd_total=d.get("swd_total"),
@@ -446,10 +452,11 @@ class Manifest:
     # Flagging
     # ------------------------------------------------------------------
 
-    def flag_sleep_qc(self, animal_id: str, status: str) -> None:
+    def flag_sleep_qc(self, animal_id: str, status: str, reasons: list[str] | None = None) -> None:
         """Set the sleep QC flag for an animal.
 
         Leaving "ok" clears PSD review progress, which is only valid while sleep_qc == "ok".
+        ``reasons`` (metric keys past their threshold) are kept only for "needs_review".
         """
         if status not in _FLAGGABLE_STATUSES:
             raise ValueError(
@@ -457,6 +464,8 @@ class Manifest:
                 "(use exclude_sleep_qc to exclude)"
             )
         self._set_sleep_qc(animal_id, status)
+        if status == "needs_review":
+            self._entries[animal_id].flag_reasons = list(reasons or [])
         self.save()
 
     def exclude_sleep_qc(self, animal_id: str, reason: str, stage: str) -> None:
@@ -485,6 +494,8 @@ class Manifest:
         if status != "ok":
             entry.psd_status = {}
             entry.drink_mask = None
+        if status != "needs_review":
+            entry.flag_reasons = []
         entry.sleep_qc = status
 
     def flag_psd(self, animal_id: str, status: str, run_name: str = "default") -> None:
