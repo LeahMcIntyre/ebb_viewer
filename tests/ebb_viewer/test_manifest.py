@@ -781,3 +781,12 @@ def test_excluded_reason_carries_the_stage(tmp_path):
     m.exclude_sleep_qc("A1", "lost signal", "Sleep QC")
     m.exclude_sleep_qc("A2", "ghost peak", "PSD review")
     assert m.excluded_animals() == {"A1": "Sleep QC: lost signal", "A2": "PSD review: ghost peak"}
+
+
+def test_flag_reasons_kept_only_while_needs_review(tmp_path):
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(animal_id="AM001", preprocessed_edf="", has_spindle=True)
+    m.flag_sleep_qc("AM001", "needs_review", ["nrem_short", "pct_rem"])
+    assert Manifest.load(tmp_path).get("AM001").flag_reasons == ["nrem_short", "pct_rem"]
+    m.flag_sleep_qc("AM001", "ok", ["nrem_short"])
+    assert Manifest.load(tmp_path).get("AM001").flag_reasons == []

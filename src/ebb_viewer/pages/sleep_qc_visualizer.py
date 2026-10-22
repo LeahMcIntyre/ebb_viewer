@@ -1318,10 +1318,18 @@ class SleepQCGridPage(QWidget):
         if status is None:
             self._manifest.reset_sleep_qc(animal)
         else:
-            self._manifest.flag_sleep_qc(animal, status)
+            reasons = self._flagged_keys(animal) if status == "needs_review" else None
+            self._manifest.flag_sleep_qc(animal, status, reasons)
         self.manifest_changed.emit()
         self._update_nav_hint()
         self._refresh_legend()
+
+    def _flagged_keys(self, animal: str) -> list[str]:
+        """Metric keys currently past their threshold for ``animal`` (empty without metrics)."""
+        table = self._get_flag_table()
+        if table is None or animal not in table.index:
+            return []
+        return flagged_metrics(table.loc[animal].to_dict(), self._manifest.flag_thresholds)
 
 
 # ---------------------------------------------------------------------------

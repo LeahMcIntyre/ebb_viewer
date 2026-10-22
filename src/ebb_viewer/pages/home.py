@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
 
 from ebb.core.naming import parse_animal_id
 from ebb.io.spindle_csv import FINAL_COLUMN, has_column
+from ebb.process.sleep_flagging import METRIC_BY_KEY
 from ebb_viewer.edf_viewer.eeg_viewer import launch_edf_window
 from ebb_viewer.pipeline import psd_params as _psd_params
 from ebb_viewer.pipeline.manifest import (
@@ -888,6 +889,12 @@ class HomePage(QWidget):
         lbl_type = QLabel("Review EDF")
         lbl_type.setStyleSheet("color: #7a6000; font-style: italic;")
         h.addWidget(lbl_type)
+        reasons = [METRIC_BY_KEY[k] for k in entry.flag_reasons if k in METRIC_BY_KEY]
+        if reasons:
+            lbl_why = QLabel("Flagged: " + ", ".join(m.short for m in reasons))
+            lbl_why.setStyleSheet("color: #b02a2a; font-weight: bold;")
+            lbl_why.setToolTip("\n".join(m.label for m in reasons))
+            h.addWidget(lbl_why)
         h.addStretch(1)
 
         btn_open = QPushButton("Open EDF")
