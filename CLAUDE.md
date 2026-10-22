@@ -42,7 +42,7 @@ Pages in pipeline order:
 6. `PSDPage` — computes PSDs, writes `psd/<RUN>/psds_<COMBO>.pkl` (ok **and** excluded animals)
 7. `PSDVisualizer` — review PSDs of `ok` animals, flag drink mask artifacts; shows excluded animals with a banner, and has an Exclude button (reason required)
 8. `DrinkMaskPage` — re-run PSDs with drink masks for the animals flagged `needs_drink_mask`
-9. `FinalizePage` — seals `psds_final.pkl` and the sleep export; keeps excluded animals and marks them (`excluded` / `exclusion_reason`, `excluded_animals.csv`)
+9. `FinalizePage` — seals `psds_final.pkl`; keeps excluded animals and marks them (`excluded` / `exclusion_reason`, `excluded_animals.csv`). Sleep analysis is not a page: users copy `notebooks/sleep_by_hour.ipynb` (settings + Run All) or `sleep_by_hour_walkthrough.ipynb` (the same calculation explained step by step); both compute in the open from `final_state` and leave out excluded animals
 10. `ExportMasksPage` — exports masks (includes excluded animals, unmarked: a known gap)
 
 How the states are produced and consumed is documented in `docs/sleep_reclassification.md`; how Sleep QC, PSD review, Finalize and exclusions fit together (statuses, queues, what each step does with an excluded animal, known gaps) is in `docs/sleep_qc_and_exclusion.md`. In short: **all analysis reads `final_state`** and raises `NotReclassifiedError` if it is missing; the original states are only for the "original" comparison views (`STATE_COLUMNS`).

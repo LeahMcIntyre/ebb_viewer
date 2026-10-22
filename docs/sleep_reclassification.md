@@ -144,8 +144,7 @@ with a **Confirm no SWD** button (`swd_waived` in the manifest; Undo is availabl
 **Progress and warnings.** The page shows `—` / `In progress (k of N)` / `✓ N of N` from the CSV
 column and keeps `swd_reviewed` / `swd_total` in the manifest in step (a cache so the home page
 and warnings never read CSVs). While review is on and unfinished (animals missing a file or not
-fully reviewed): Sleep QC shows an orange line, and the PSD pipeline, Finalize (sleep export and
-finalize) and Export Masks ask for confirmation (Cancel is the default). Nothing is blocked,
+fully reviewed): Sleep QC shows an orange line, and the PSD pipeline, Finalize and Export Masks ask for confirmation (Cancel is the default). Nothing is blocked,
 because unreviewed epochs keep a valid state.
 
 **Re-running Reclassify keeps your SWD work.** Both old columns are still in the CSV at that

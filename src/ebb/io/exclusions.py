@@ -1,6 +1,6 @@
 """Mark animals excluded in Sleep QC inside sealed outputs.
 
-Excluded animals are still computed and exported; Finalize records the exclusions
+Excluded animals are still computed and kept in the sealed PSD outputs; Finalize records the exclusions
 as of the moment it runs so a file loaded on its own says which animals to leave
 out. ``excluded`` maps animal ID to the exclusion reason.
 """
@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
-
-import pandas as pd
 
 from ebb.core.naming import parse_animal_id
 
@@ -28,14 +26,6 @@ def annotate_records(items, excluded: dict[str, str]):
         rec["excluded"] = animal in excluded
         rec["exclusion_reason"] = excluded.get(animal, "")
     return items
-
-
-def annotate_table(df: pd.DataFrame, excluded: dict[str, str], id_col: str = "mouse_id") -> pd.DataFrame:
-    """Append ``excluded`` and ``exclusion_reason`` columns, keyed on ``id_col``."""
-    out = df.copy()
-    out["excluded"] = out[id_col].isin(excluded)
-    out["exclusion_reason"] = out[id_col].map(excluded).fillna("")
-    return out
 
 
 def write_excluded_animals(directory: str | Path, excluded: dict[str, str]) -> Path:

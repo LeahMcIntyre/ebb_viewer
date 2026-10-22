@@ -118,19 +118,6 @@ def test_sleep_qc_hides_label_when_review_is_off(qapp, tmp_path):
     assert SleepQCGridPage(project_root=tmp_path).lbl_swd.isHidden()
 
 
-def test_finalize_sleep_export_stops_when_user_cancels(qapp, tmp_path):
-    from ebb_viewer.pages.finalize import FinalizePage
-
-    _project(tmp_path, {"A1": (0, 5)})
-    page = FinalizePage(project_root=tmp_path)
-    with (
-        patch("ebb_viewer.pages.finalize.confirm_unfinished_swd_review", return_value=False),
-        patch("ebb_viewer.pipeline.sleep_finalize.build_sleep_export") as build,
-    ):
-        page._on_export_sleep()
-    assert not build.called
-
-
 def test_psd_run_stops_when_user_cancels(qapp, tmp_path):
     from ebb_viewer.pages.psds import PSDPage
 
