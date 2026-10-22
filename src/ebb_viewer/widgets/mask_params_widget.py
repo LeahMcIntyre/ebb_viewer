@@ -104,6 +104,9 @@ class MaskParamsWidget(QWidget):
             sections. Off by default — pages that already provide their
             own zone framing (e.g. PSD compute) can opt in to surface the
             distinction.
+        event_masks_first: If True, list the event-based masks (SWD,
+            annotation, hours) before the artifact masks, which are usually
+            left at their defaults.
     """
 
     changed = pyqtSignal()
@@ -117,6 +120,7 @@ class MaskParamsWidget(QWidget):
         show_drink_mask: bool = True,
         expose_states_externally: bool = False,
         show_subzone_headers: bool = False,
+        event_masks_first: bool = False,
     ):
         super().__init__(parent)
         self._project_root = Path(project_root) if project_root else None
@@ -124,6 +128,7 @@ class MaskParamsWidget(QWidget):
         self._show_drink_mask = show_drink_mask
         self._expose_states_externally = expose_states_externally
         self._show_subzone_headers = show_subzone_headers
+        self._event_masks_first = event_masks_first
         self._ann_dir: Path | None = None
         # Cached EDF (rec_start, n_samples) tuples for the hour-window
         # preview. Lazy-populated on first preview refresh; reset when
@@ -373,9 +378,14 @@ class MaskParamsWidget(QWidget):
              and (k != "drink" or self._show_drink_mask)),
             None,
         )
-        for key, section in self._sections.items():
+        keys = list(self._sections)
+        if self._event_masks_first:
+            # Stable sort: artifact masks (and the notch filter) move after the rest.
+            keys.sort(key=lambda k: k in _ARTIFACT_KEYS or k == "notch")
+        for key in keys:
+            section = self._sections[key]
             if self._show_subzone_headers and key == first_artifact:
-                root.addWidget(_subzone_header("ARTIFACT MASKS"))
+                root.addWidget(_subzone_header("ARTIFACT MASKS · usually left at defaults"))
             if self._show_subzone_headers and key == first_event:
                 root.addWidget(_subzone_header("EVENT-BASED MASKS"))
             root.addWidget(section)
