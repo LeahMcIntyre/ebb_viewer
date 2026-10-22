@@ -126,11 +126,22 @@ not whether it removed anything — check the `*_out_frac` for that.
 
 ## 6. Review and drink-mask rerun
 
-PSDs are reviewed in the PSD visualizer. An animal showing drinking
-artifact is flagged `needs_drink_mask`; the drink mask is then built (§3),
-and only those animals are recomputed with identical parameters plus the
-drink mask. Rerun outputs go to separate files and never overwrite the
-originals (§7).
+PSDs are reviewed in the PSD visualizer in a short loop:
+
+1. **Review PSDs** (`psds_<COMBO>.pkl`): each animal is flagged `ok`, or
+   `needs_drink_mask` if it shows drinking artifact.
+2. **Add masks** (Drink Mask page): the drink mask is built (§3) and only the
+   flagged animals are recomputed with identical parameters plus the drink
+   mask. Rerun outputs go to separate files and never overwrite the originals
+   (§7). Each recomputed animal becomes `drink_mask_applied` ("mask applied —
+   verify").
+3. **Verify drink masks** (`psds_<COMBO>_drink.pkl`, listing only the animals
+   to verify): **Mask worked** marks the animal `ok`; **Redo mask** sets it
+   back to `needs_drink_mask`.
+
+The PSD visualizer and Drink Mask pages show where the animals are in this
+loop (`Manifest.drink_loop_counts`) and stay on the same PSD run. Finalize waits
+until nothing is unreviewed, flagged or waiting for verification.
 
 ## 7. Outputs
 

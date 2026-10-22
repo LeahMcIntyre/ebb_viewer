@@ -149,3 +149,31 @@ def test_redo_sends_the_animal_back_to_needs_mask(qapp, tmp_path: Path):
     page = _open(qapp, tmp_path)
     page.psd_page._flag_drink_mask()
     assert Manifest.load(tmp_path).get("AM001").psd_status == {"r1": "needs_drink_mask"}
+
+
+def test_run_follows_between_visualizer_and_drink_mask_page(qapp, tmp_path: Path):
+    """Choosing a run on one page of the loop moves the other, so navigating never lands on
+    an unrelated run."""
+    from ebb_viewer.pages.drink_mask import DrinkMaskPage
+
+    _project(tmp_path, {"AM001": "needs_drink_mask"}, drink_pkl=False)
+    psd_params.save(tmp_path, "r2", {"fs": 250, "channels": [0, 1], "states": ["wake"]})
+    viz = PSDVisualizer(project_root=tmp_path)
+    drink = DrinkMaskPage(project_root=tmp_path)
+    drink._refresh_run_selector()
+    viz.run_changed.connect(drink.set_run)
+    drink.run_changed.connect(viz.set_run)
+
+    viz.cmb_run.setCurrentText("r2")
+    assert drink.cmb_run.currentText() == "r2"
+    drink.cmb_run.setCurrentText("r1")
+    assert viz.cmb_run.currentText() == "r1"
+
+
+def test_flagging_in_the_visualizer_notifies_the_main_window(qapp, tmp_path: Path):
+    _project(tmp_path, {"AM001": None}, drink_pkl=False)
+    page = _open(qapp, tmp_path)
+    seen = []
+    page.manifest_changed.connect(lambda: seen.append(True))
+    page.psd_page._flag_psd_ok()
+    assert seen

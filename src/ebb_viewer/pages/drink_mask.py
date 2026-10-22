@@ -48,6 +48,7 @@ from ebb_viewer.pipeline.manifest import Manifest, psd_status_label
 from ebb_viewer.pipeline.naming import drink_mask_rel
 from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
 from ebb_viewer.widgets.collapsible_section import CollapsibleSection
+from ebb_viewer.widgets.drink_loop import MASK_STEP, loop_summary_html
 from ebb_viewer.widgets.readiness import Check, blockers, checks_html, first_fix, fix_button_text
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
@@ -86,6 +87,7 @@ class DrinkMaskPage(QWidget):
 
     manifest_changed = pyqtSignal()
     navigate_to = pyqtSignal(str)
+    run_changed = pyqtSignal(str)  # the user picked another PSD run
 
     # Highlight color for rows whose .npy is missing.
     _AMBER = QColor("#fff3cd")
@@ -137,6 +139,12 @@ class DrinkMaskPage(QWidget):
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #555; font-size: 12px;")
         root.addWidget(desc)
+
+        self._loop_lbl = QLabel("")
+        self._loop_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._loop_lbl.setWordWrap(True)
+        self._loop_lbl.setStyleSheet("color: #555; font-size: 11px;")
+        root.addWidget(self._loop_lbl)
 
         zone_animals = QLabel("ANIMALS")
         zone_animals.setStyleSheet(zone_header_qss())
@@ -305,6 +313,16 @@ class DrinkMaskPage(QWidget):
         self._refresh()
 
     def _on_run_changed(self):
+        self._refresh()
+        self.run_changed.emit(self._current_run_name())
+
+    def set_run(self, run_name: str) -> None:
+        """Switch to ``run_name`` (used to follow the PSD Visualizer's run)."""
+        if run_name == self.cmb_run.currentText() or self.cmb_run.findText(run_name) < 0:
+            return
+        self.cmb_run.blockSignals(True)
+        self.cmb_run.setCurrentText(run_name)
+        self.cmb_run.blockSignals(False)
         self._refresh()
 
     # ------------- Data refresh -------------
@@ -483,6 +501,11 @@ class DrinkMaskPage(QWidget):
         except Exception:
             flagged, ready, applied = [], [], []
 
+        self._loop_lbl.setText(
+            loop_summary_html(
+                Manifest.load(self.project_root).drink_loop_counts(run_name), MASK_STEP
+            )
+        )
         ready_ids = {e.animal_id for e in ready}
         rows = [(e, "needs_drink_mask") for e in flagged] + [
             (e, "drink_mask_applied") for e in applied

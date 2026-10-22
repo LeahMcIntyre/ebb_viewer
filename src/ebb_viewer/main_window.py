@@ -198,9 +198,15 @@ class MainWindow(QMainWindow):
             self.swd_review_page,
             self.sleep_qc_page,
             self.psd_page,
+            self.psd_visualizer_page,
             self.drink_mask_page,
         ):
             page.manifest_changed.connect(self._refresh_badges)
+
+        # The PSD Visualizer and Drink Mask pages are two halves of one loop: keep them on the
+        # same PSD run so jumping between them never lands on an unrelated run.
+        self.psd_visualizer_page.run_changed.connect(self.drink_mask_page.set_run)
+        self.drink_mask_page.run_changed.connect(self.psd_visualizer_page.set_run)
 
         # Pages that emit navigate_to(name) → move sidebar selection.
         for page in (
