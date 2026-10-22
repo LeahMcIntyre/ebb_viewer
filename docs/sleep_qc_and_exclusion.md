@@ -88,7 +88,7 @@ Excluded rows are greyed in the legend and their lines are dimmed in the grid.
 | 8 Drink Mask (queue: ok and `needs_drink_mask`) | masks applied | **not listed** |
 | 7 PSD Visualizer, pass 2 (queue: ok and `drink_mask_applied`) | verified | **not queued** |
 | 9 Finalize, PSD | in `psds_final.pkl` | **in `psds_final.pkl`, marked** |
-| Sleep analysis (`notebooks/sleep_by_hour.ipynb`) | analysed | **left out** by default (`INCLUDE_EXCLUDED = True` keeps and marks them) |
+| Sleep analysis (`notebooks/sleep_by_hour.ipynb`, `sleep_by_hour_walkthrough.ipynb`) | analysed | **left out** by default (`INCLUDE_EXCLUDED = True` keeps and marks them) |
 | 10 Export Masks | exported | exported, **not marked** (see section 7) |
 
 The review queues (`pending_psd_review`, `needs_drink_mask`, `needs_drink_mask_rerun`,
@@ -143,4 +143,4 @@ The computed `psds_<combo>.pkl` files are never modified. The analysis step drop
 | PSD review bar, banner, grey curves | `src/ebb_viewer/widgets/psd_graph_widget.py` |
 | Markers in the sealed outputs | `src/ebb/io/exclusions.py`, `build_run_final_pkl` in `ebb/process/psd_compute.py`, `ebb/io/psd_export.py` |
 | Finalize page | `src/ebb_viewer/pages/finalize.py` |
-| Sleep analysis and its exclusion handling | `notebooks/sleep_by_hour.ipynb` (reads `manifest.json`) |
+| Sleep analysis and its exclusion handling | `notebooks/sleep_by_hour*.ipynb` (read `manifest.json`) |

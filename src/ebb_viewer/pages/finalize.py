@@ -206,9 +206,9 @@ class FinalizePage(QWidget):
 
         # Sleep analysis is done in a notebook, not here.
         sleep_note = QLabel(
-            "To analyse sleep, copy <b>notebooks/sleep_by_hour.ipynb</b> and point it at this "
-            "project. It reads the reclassified states and leaves out excluded animals, and "
-            "shows every calculation."
+            "To analyse sleep, copy <b>notebooks/sleep_by_hour.ipynb</b>, set the project folder "
+            "and groups, and Run All. It reads the reclassified states and leaves out excluded "
+            "animals. <b>sleep_by_hour_walkthrough.ipynb</b> explains every calculation step by step."
         )
         sleep_note.setTextFormat(Qt.TextFormat.RichText)
         sleep_note.setWordWrap(True)
