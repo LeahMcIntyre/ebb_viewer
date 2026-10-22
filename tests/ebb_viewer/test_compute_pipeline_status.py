@@ -286,7 +286,7 @@ def test_step6_done_when_all_reviewed_no_pending_work(tmp_path):
 def test_reclassify_blocked_until_spindle_outputs_exist(tmp_path):
     m = _make_manifest(tmp_path, {"A001": {}})
     statuses = compute_pipeline_status(tmp_path, m)
-    assert len(statuses) == 9
+    assert len(statuses) == 10
     assert statuses[3].kind == "blocked"
 
 
@@ -429,3 +429,23 @@ def test_spindle_edfs_step_done_once_outputs_exist(tmp_path: Path):
         edf.unlink()
     statuses = compute_pipeline_status(tmp_path, manifest, psd_runs=[])
     assert statuses[1].kind == "done"
+
+
+def test_finalize_step_tracks_sealed_runs_and_sleep_export(tmp_path: Path):
+    manifest = _make_manifest(tmp_path, {"A001": {"sleep_qc": "ok", "psd_status": {"r1": "ok"}}})
+    _setup_filesystem(tmp_path, combos=[manifest.combo])
+    from ebb_viewer.pipeline.manifest import psd_path
+
+    pkl = psd_path(manifest.combo, tmp_path, "r1")
+    pkl.parent.mkdir(parents=True)
+    pkl.touch()
+    assert compute_pipeline_status(tmp_path, manifest, psd_runs=["r1"])[-1].kind == "active"
+
+    (pkl.parent / "psds_final.pkl").touch()
+    status = compute_pipeline_status(tmp_path, manifest, psd_runs=["r1"])[-1]
+    assert status.kind == "attention"
+    assert "sleep export not written" in status.description
+
+    (tmp_path / "sleep_export").mkdir()
+    (tmp_path / "sleep_export" / "bins.csv").touch()
+    assert compute_pipeline_status(tmp_path, manifest, psd_runs=["r1"])[-1].kind == "done"
