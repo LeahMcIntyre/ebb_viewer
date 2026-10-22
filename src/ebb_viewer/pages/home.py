@@ -42,7 +42,6 @@ from ebb_viewer.pipeline.manifest import (
     spindle_output_dir,
     swd_review_status,
 )
-from ebb_viewer.pipeline.sleep_finalize import sleep_export_dir
 from ebb_viewer.pipeline.naming import drink_mask_rel
 from ebb_viewer.pipeline.swd_review import find_swd_file, swd_review_gaps
 from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
@@ -353,27 +352,25 @@ def compute_pipeline_status(
     else:
         s7 = StepStatus("done", "No drink masks needed")
 
-    # --- Step 9: Finalize (seal each PSD run + the sleep export) ---
-    # Sealing is detected by the files existing; a change made after sealing (a new exclusion,
-    # a re-run drink mask) is not detected, so Finalize shows done until re-run.
-    n_sealed = sum(1 for rn in psd_runs if (root / "psd" / rn / "psds_final.pkl").exists())
-    export_dir = sleep_export_dir(root)
-    sleep_exported = export_dir.is_dir() and any(export_dir.iterdir())
+    # --- Step 9: Finalize (seal each computed PSD run into psds_final.pkl) ---
+    # Sealing is detected by the file existing; a change made after sealing (a new exclusion,
+    # a re-run drink mask) is not detected, so Finalize shows done until re-run. The sleep
+    # export is not part of this step.
+    computed = [rn for rn in psd_runs if psd_path(manifest.combo, root, rn).exists()]
+    n_sealed = sum(1 for rn in computed if (root / "psd" / rn / "psds_final.pkl").exists())
+    n_unsealed = len(computed) - n_sealed
     if s4.kind != "done":
         s8 = StepStatus("blocked", "Requires Sleep QC (step 5)")
     elif not any_psd_pkl or s6.kind == "attention" or s7.kind == "attention":
         s8 = StepStatus("blocked", "Requires PSD review and drink masks (steps 7-8)")
-    elif psd_runs and n_sealed == len(psd_runs) and sleep_exported:
-        n = len(psd_runs)
-        s8 = StepStatus("done", f"{n} run{'s' if n != 1 else ''} sealed, sleep export written")
+    elif n_unsealed == 0:
+        s8 = StepStatus("done", f"{n_sealed} run{'s' if n_sealed != 1 else ''} finalized")
+    elif n_sealed:
+        s8 = StepStatus("attention", f"{n_sealed} of {len(computed)} runs finalized")
     else:
-        todo = []
-        if n_sealed < len(psd_runs):
-            todo.append(f"{len(psd_runs) - n_sealed} of {len(psd_runs)} runs not sealed")
-        if not sleep_exported:
-            todo.append("sleep export not written")
-        kind = "attention" if (n_sealed or sleep_exported) else "active"
-        s8 = StepStatus(kind, "Ready — " + ", ".join(todo) if kind == "active" else ", ".join(todo))
+        s8 = StepStatus(
+            "active", f"Ready — {n_unsealed} run{'s' if n_unsealed != 1 else ''} to finalize"
+        )
 
     return [s1, s2, s3, s_reclass, s_swd, s4, s5, s6, s7, s8]
 

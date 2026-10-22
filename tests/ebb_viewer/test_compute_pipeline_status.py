@@ -431,7 +431,8 @@ def test_spindle_edfs_step_done_once_outputs_exist(tmp_path: Path):
     assert statuses[1].kind == "done"
 
 
-def test_finalize_step_tracks_sealed_runs_and_sleep_export(tmp_path: Path):
+def test_finalize_step_only_cares_about_psd_runs_being_finalized(tmp_path: Path):
+    """The sleep export is not part of the Finalize step: sealing the PSD runs completes it."""
     manifest = _make_manifest(tmp_path, {"A001": {"sleep_qc": "ok", "psd_status": {"r1": "ok"}}})
     _setup_filesystem(tmp_path, combos=[manifest.combo])
     from ebb_viewer.pipeline.manifest import psd_path
@@ -439,16 +440,13 @@ def test_finalize_step_tracks_sealed_runs_and_sleep_export(tmp_path: Path):
     pkl = psd_path(manifest.combo, tmp_path, "r1")
     pkl.parent.mkdir(parents=True)
     pkl.touch()
-    assert compute_pipeline_status(tmp_path, manifest, psd_runs=["r1"])[-1].kind == "active"
+    status = compute_pipeline_status(tmp_path, manifest, psd_runs=["r1"])[-1]
+    assert status.kind == "active"
+    assert "1 run to finalize" in status.description
 
     (pkl.parent / "psds_final.pkl").touch()
     status = compute_pipeline_status(tmp_path, manifest, psd_runs=["r1"])[-1]
-    assert status.kind == "attention"
-    assert "sleep export not written" in status.description
-
-    (tmp_path / "sleep_export").mkdir()
-    (tmp_path / "sleep_export" / "bins.csv").touch()
-    assert compute_pipeline_status(tmp_path, manifest, psd_runs=["r1"])[-1].kind == "done"
+    assert status.kind == "done"  # no sleep_export/ needed
 
 
 def test_psd_review_step_counts_pending_drink_verification(tmp_path: Path):
