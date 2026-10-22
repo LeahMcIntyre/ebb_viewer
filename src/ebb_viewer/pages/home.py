@@ -1,19 +1,20 @@
-"""Home page — pipeline dashboard, attention zone, and animal/run summary.
+"""Home page — what to do next, per-animal work, and the animal summary.
 
-Hosts the top-level pipeline-step guide (7 steps fed by
-``compute_pipeline_status``), a "Needs Attention" zone surfacing per-animal
-work (review-EDF / drink-mask), a per-animal summary table, and the project file tree. Manifest mutations triggered from
-attention-card buttons persist via ``Manifest.flag_sleep_qc``'s internal
-``save()``.
+Top to bottom: a "next step" banner and a compact progress strip (one chip
+per step, fed by ``compute_pipeline_status``), a "Needs Attention" zone
+grouped by reason (review-EDF / drink-mask; hidden when empty), and a
+per-animal status table. Manifest mutations triggered from attention-card
+buttons persist via ``Manifest.flag_sleep_qc``'s internal ``save()``.
 """
 
 import contextlib
 from pathlib import Path
 from typing import Literal, NamedTuple
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import QColor, QDesktopServices
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QHBoxLayout,
     QHeaderView,
@@ -44,25 +45,18 @@ from ebb_viewer.pipeline.swd_review import find_swd_file, swd_review_gaps
 from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
 from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.table_helpers import make_cell
-from ebb_viewer.widgets.tree_view import ProjectTree
 
 # Pipeline stage columns
 _COLUMNS = [
     "Animal",
-    "Preprocessed",
-    "Spindle EDF",
     "Spindle Output",
     "QC Status",
-    "PSD File",
     "PSD Status",
     "Notes",
 ]
 _COL_ANIMAL = _COLUMNS.index("Animal")
-_COL_PREPROCESSED = _COLUMNS.index("Preprocessed")
-_COL_SPINDLE_EDF = _COLUMNS.index("Spindle EDF")
 _COL_SPINDLE_OUT = _COLUMNS.index("Spindle Output")
 _COL_SLEEP_QC = _COLUMNS.index("QC Status")
-_COL_PSD_FILE = _COLUMNS.index("PSD File")
 _COL_PSD_STATUS = _COLUMNS.index("PSD Status")
 _COL_NOTES = _COLUMNS.index("Notes")
 
@@ -111,6 +105,20 @@ _STEP_PAGE_NAMES = [
     "drink_mask",
 ]
 
+# Short chip labels for the progress strip, parallel to _STEP_LABELS.
+_STEP_SHORT = [
+    "Preprocess",
+    "Spindle EDFs",
+    "Upload",
+    "Reclassify",
+    "SWD Review",
+    "Sleep QC",
+    "PSDs",
+    "PSD Review",
+    "Drink Mask",
+]
+_SWD_STEP_IDX = _STEP_PAGE_NAMES.index("swd_review")
+
 _GUIDE_ICON = {"done": "✓", "attention": "⚠", "active": "→", "blocked": "○", "off": "–"}
 _GUIDE_ICON_COLOR = {
     "done": "#3a7d44",
@@ -125,6 +133,7 @@ _GUIDE_ROW_HIGHLIGHT = "#eef4fc"
 # and _attn_layout.setSpacing.
 _ATTN_CARD_HEIGHT_PX = 42
 _ATTN_CARD_STRIDE_PX = 48  # card + per-card layout overhead
+_ATTN_HEADER_STRIDE_PX = 24  # group header label + spacing
 
 
 def compute_pipeline_status(
@@ -176,7 +185,7 @@ def compute_pipeline_status(
         s1 = StepStatus("active", "Start here — run preprocessor on raw EDF files")
 
     # --- Step 2: Spindle EDFs ---
-    if step2_done:
+    if step2_done or step3_done:  # outputs downloaded ⇒ EDFs were written (even if since deleted)
         s2 = StepStatus("done", "Spindle EDFs written")
     elif step1_done:
         s2 = StepStatus("active", "Ready — write spindle EDFs from standard/")
@@ -336,6 +345,17 @@ def _any_file_for_animal(root: Path, subdir: str, channels: str, animal_id: str)
     return d.is_dir() and any(d.glob(f"{animal_id}*"))
 
 
+def _needs_attention(
+    entry: ManifestEntry, spindle_out_ok: bool, psd_file_ok: bool, psd_status: str | None
+) -> bool:
+    """True if this animal has outstanding Sleep QC or PSD work. Excluded animals never do."""
+    if entry.sleep_qc == "excluded":
+        return False
+    if entry.sleep_qc == "needs_review" or (entry.sleep_qc is None and spindle_out_ok):
+        return True
+    return psd_status == "needs_drink_mask" or (psd_file_ok and psd_status is None)
+
+
 class HomePage(QWidget):
     manifest_changed = pyqtSignal()
     navigate_to = pyqtSignal(str)  # page name — see _STEP_PAGE_NAMES
@@ -367,6 +387,11 @@ class HomePage(QWidget):
         hdr.addWidget(lbl)
         hdr.addStretch(1)
 
+        self.btn_reveal = QPushButton("Reveal in Finder")
+        self.btn_reveal.setToolTip("Open the project folder in the file manager")
+        self.btn_reveal.clicked.connect(self._reveal_project)
+        hdr.addWidget(self.btn_reveal)
+
         self.btn_refresh = QPushButton("Refresh")
         self.btn_refresh.setToolTip("Reload manifest from disk")
         self.btn_refresh.clicked.connect(self._refresh)
@@ -387,32 +412,43 @@ class HomePage(QWidget):
         self._import_lbl.setVisible(False)
         root_layout.addWidget(self._import_lbl)
 
-        # --- pipeline steps guide (collapsible) ---
-        self.btn_guide_toggle = QPushButton("▼  Pipeline Steps")
-        self.btn_guide_toggle.setCheckable(True)
-        self.btn_guide_toggle.setChecked(True)
-        self.btn_guide_toggle.setStyleSheet(
-            "font-weight: bold; font-size: 13px; text-align: left; border: none; padding: 0;"
+        # --- next-step banner ---
+        self._next_frame = QWidget()
+        self._next_frame.setObjectName("nextBanner")
+        next_h = QHBoxLayout(self._next_frame)
+        next_h.setContentsMargins(10, 6, 10, 6)
+        self._next_lbl = QLabel("")
+        self._next_lbl.setWordWrap(True)
+        next_h.addWidget(self._next_lbl, 1)
+        self.btn_next = QPushButton("Open →")
+        self.btn_next.setStyleSheet(
+            "QPushButton { padding: 3px 12px; font-weight: bold; "
+            "color: #1a5fa8; border: 1px solid #1a5fa8; }"
         )
-        self.btn_guide_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_guide_toggle.toggled.connect(self._toggle_guide)
-        root_layout.addWidget(self.btn_guide_toggle)
+        self._next_page: str | None = None
+        self.btn_next.clicked.connect(
+            lambda: self._next_page and self.navigate_to.emit(self._next_page)
+        )
+        next_h.addWidget(self.btn_next)
+        root_layout.addWidget(self._next_frame)
 
-        self._guide_container = QWidget()
-        self._guide_vbox = QVBoxLayout(self._guide_container)
-        self._guide_vbox.setContentsMargins(4, 2, 4, 4)
-        self._guide_vbox.setSpacing(1)
-        root_layout.addWidget(self._guide_container)
+        # --- progress strip: one chip per pipeline step ---
+        self._strip_container = QWidget()
+        self._strip_layout = QHBoxLayout(self._strip_container)
+        self._strip_layout.setContentsMargins(0, 0, 0, 0)
+        self._strip_layout.setSpacing(4)
+        root_layout.addWidget(self._strip_container)
+        self._build_progress_strip()
 
-        # --- needs attention zone ---
-        lbl_attn = QLabel("Needs Attention")
-        lbl_attn.setStyleSheet("font-weight: bold; font-size: 13px;")
-        root_layout.addWidget(lbl_attn)
+        # --- needs attention zone (hidden when nothing needs attention) ---
+        self._attn_title = QLabel("Needs Attention")
+        self._attn_title.setStyleSheet("font-weight: bold; font-size: 13px;")
+        root_layout.addWidget(self._attn_title)
 
-        # Cached count of currently-rendered attention cards. Set by
+        # Cached height of the rendered attention content. Set by
         # _refresh_attention_zone; read by _update_attn_max_height from
         # both that refresh and resizeEvent.
-        self._attn_card_count = 0
+        self._attn_content_px = 0
 
         self._attn_container = QWidget()
         self._attn_layout = QVBoxLayout(self._attn_container)
@@ -423,24 +459,21 @@ class HomePage(QWidget):
         self._attn_scroll.setWidget(self._attn_container)
         self._attn_scroll.setWidgetResizable(True)
         self._attn_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._attn_scroll.setMinimumHeight(160)
-        self._attn_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        root_layout.addWidget(self._attn_scroll, 1)
+        self._attn_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        root_layout.addWidget(self._attn_scroll)
 
-        # --- pipeline summary table (collapsible) ---
+        # --- animals table ---
         summary_hdr = QHBoxLayout()
 
-        self.btn_table_toggle = QPushButton("▼  Pipeline Summary")
-        self.btn_table_toggle.setCheckable(True)
-        self.btn_table_toggle.setChecked(True)
-        self.btn_table_toggle.setStyleSheet(
-            "font-weight: bold; font-size: 13px; text-align: left; border: none; padding: 0;"
-        )
-        self.btn_table_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_table_toggle.toggled.connect(self._toggle_table)
-        summary_hdr.addWidget(self.btn_table_toggle)
+        self._animals_lbl = QLabel("Animals")
+        self._animals_lbl.setStyleSheet("font-weight: bold; font-size: 13px;")
+        summary_hdr.addWidget(self._animals_lbl)
 
         summary_hdr.addStretch(1)
+
+        self.chk_attention_only = QCheckBox("Only animals needing attention")
+        self.chk_attention_only.toggled.connect(self._refresh)
+        summary_hdr.addWidget(self.chk_attention_only)
 
         # PSD-run filter — visible only when 2+ runs exist (with 0 or 1 runs,
         # "All runs (best)" and any single run would render identically).
@@ -449,7 +482,7 @@ class HomePage(QWidget):
         summary_hdr.addWidget(self._run_filter_lbl)
         self.cmb_run_filter = QComboBox()
         self.cmb_run_filter.setToolTip(
-            "Filter PSD File / PSD Status columns to a specific run. "
+            "Filter the PSD Status column to a specific run. "
             "Default 'All runs (best)' shows the analysis-readiest state across runs."
         )
         self.cmb_run_filter.currentIndexChanged.connect(self._on_run_filter_changed)
@@ -466,132 +499,79 @@ class HomePage(QWidget):
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.verticalHeader().setVisible(False)
-        self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-
-        hh = self.table.horizontalHeader()
-        for col in range(len(_COLUMNS)):
-            mode = (
-                QHeaderView.ResizeMode.Stretch
-                if col == _COL_PREPROCESSED
-                else QHeaderView.ResizeMode.ResizeToContents
-            )
-            hh.setSectionResizeMode(col, mode)
-
+        self.table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
-        root_layout.addWidget(self.table)
+        root_layout.addWidget(self.table, 1)
 
-        # --- file tree ---
-        self.btn_files_toggle = QPushButton("▼  Project Files")
-        self.btn_files_toggle.setCheckable(True)
-        self.btn_files_toggle.setChecked(True)
-        self.btn_files_toggle.setStyleSheet(
-            "font-weight: bold; font-size: 13px; text-align: left; border: none; padding: 0;"
-        )
-        self.btn_files_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_files_toggle.toggled.connect(self._toggle_file_tree)
-        root_layout.addWidget(self.btn_files_toggle)
-
-        self.edf_tree = ProjectTree()
-        self.edf_tree.set_root(root_path=self.project_root)
-        root_layout.addWidget(self.edf_tree, stretch=2)
-
-        root_layout.addStretch(1)
-
-        self._build_pipeline_guide()
-
-    def _build_pipeline_guide(self) -> None:
-        """Build one step row per ``_STEP_LABELS`` and store the (icon_lbl,
-        name_lbl, desc_lbl, btn) refs for ``_refresh_pipeline_guide``."""
-        self._guide_row_refs: list[tuple[QLabel, QLabel, QLabel, QPushButton]] = []
-        for i, label in enumerate(_STEP_LABELS):
-            row_w = QWidget()
-            row_h = QHBoxLayout(row_w)
-            row_h.setContentsMargins(4, 2, 4, 2)
-            row_h.setSpacing(8)
-
-            icon_lbl = QLabel("○")
-            icon_lbl.setFixedWidth(14)
-            icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            row_h.addWidget(icon_lbl)
-
-            name_lbl = QLabel(label)
-            name_lbl.setFixedWidth(150)
-            row_h.addWidget(name_lbl)
-
-            desc_lbl = QLabel("")
-            desc_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-            row_h.addWidget(desc_lbl)
-
-            btn = QPushButton("Open →")
-            btn.setFixedHeight(22)
+    def _build_progress_strip(self) -> None:
+        """One flat chip per ``_STEP_SHORT``; stored for ``_refresh_progress``."""
+        self._chips: list[QPushButton] = []
+        for i, short in enumerate(_STEP_SHORT):
+            chip = QPushButton(short)
+            chip.setFlat(True)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
             page_name = _STEP_PAGE_NAMES[i]
-            btn.clicked.connect(lambda _, p=page_name: self.navigate_to.emit(p))
-            row_h.addWidget(btn)
+            chip.clicked.connect(lambda _, p=page_name: self.navigate_to.emit(p))
+            self._strip_layout.addWidget(chip)
+            self._chips.append(chip)
+        self._strip_layout.addStretch(1)
 
-            self._guide_vbox.addWidget(row_w)
-            self._guide_row_refs.append((icon_lbl, name_lbl, desc_lbl, btn))
-
-    def _toggle_guide(self, checked: bool) -> None:
-        self.btn_guide_toggle.setText("▼  Pipeline Steps" if checked else "►  Pipeline Steps")
-        self._guide_container.setVisible(checked)
-
-    def _refresh_pipeline_guide(
-        self, manifest: Manifest, psd_runs: list[str] | None = None
-    ) -> None:
+    def _refresh_progress(self, manifest: Manifest, psd_runs: list[str] | None = None) -> None:
+        """Update the next-step banner and the progress-strip chips."""
         statuses = compute_pipeline_status(self.project_root, manifest, psd_runs=psd_runs)
         next_idx: int | None = next(
             (i for i, s in enumerate(statuses) if s.kind in ("active", "attention")),
             None,
         )
-        for i, (st, (icon_lbl, name_lbl, desc_lbl, btn)) in enumerate(
-            zip(statuses, self._guide_row_refs, strict=True)
-        ):
+        for i, (st, chip, short) in enumerate(zip(statuses, self._chips, _STEP_SHORT, strict=True)):
+            chip.setVisible(not (i == _SWD_STEP_IDX and st.kind == "off"))
             color = _GUIDE_ICON_COLOR[st.kind]
-            icon_lbl.setText(_GUIDE_ICON[st.kind])
-            icon_lbl.setStyleSheet(f"color: {color}; font-weight: bold;")
-            desc_lbl.setText(st.description)
-            desc_lbl.setStyleSheet(f"color: {color};")
-
-            is_next = i == next_idx
-            name_lbl.setStyleSheet("font-weight: bold;" if is_next else "")
-            row_w = icon_lbl.parent()
-            row_w.setStyleSheet(
-                f"background-color: {_GUIDE_ROW_HIGHLIGHT}; border-radius: 3px;" if is_next else ""
+            chip.setText(f"{_GUIDE_ICON[st.kind]} {short}")
+            chip.setToolTip(f"{_STEP_LABELS[i]}: {st.description}")
+            weight = "bold" if i == next_idx else "normal"
+            bg = _GUIDE_ROW_HIGHLIGHT if i == next_idx else "transparent"
+            chip.setStyleSheet(
+                f"QPushButton {{ color: {color}; font-weight: {weight}; background: {bg}; "
+                f"border: 1px solid #d0d0d0; border-radius: 10px; padding: 2px 8px; }}"
             )
-            if st.kind == "blocked":
-                btn.setStyleSheet("QPushButton { padding: 2px 8px; color: #aaaaaa; }")
-            elif is_next:
-                btn.setStyleSheet(
-                    "QPushButton { padding: 2px 8px; font-weight: bold; "
-                    "color: #1a5fa8; border: 1px solid #1a5fa8; }"
-                )
-            else:
-                btn.setStyleSheet("QPushButton { padding: 2px 8px; }")
+
+        if next_idx is None:
+            self._next_page = None
+            self._next_lbl.setText("<b style='color:#3a7d44'>✓ All pipeline steps complete</b>")
+            self._next_frame.setStyleSheet(
+                "QWidget#nextBanner { background-color: #e8f4ea; border-radius: 4px; }"
+            )
+            self.btn_next.setVisible(False)
+            return
+        st = statuses[next_idx]
+        color = _GUIDE_ICON_COLOR[st.kind]
+        self._next_page = _STEP_PAGE_NAMES[next_idx]
+        self._next_lbl.setText(
+            f"<b>Next: {_STEP_LABELS[next_idx]}</b> — "
+            f"<span style='color:{color}'>{st.description}</span>"
+        )
+        self._next_frame.setStyleSheet(
+            f"QWidget#nextBanner {{ background-color: {_GUIDE_ROW_HIGHLIGHT}; border-radius: 4px; }}"
+        )
+        self.btn_next.setText(f"Open {_STEP_SHORT[next_idx]} →")
+        self.btn_next.setVisible(True)
+
+    def _reveal_project(self) -> None:
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.project_root)))
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._update_attn_max_height()
 
     def _update_attn_max_height(self) -> None:
-        """Size the attention scroll area to content, capped at half the page."""
-        n = self._attn_card_count
-        if n == 0:
-            self._attn_scroll.setMinimumHeight(0)
-            self._attn_scroll.setMaximumHeight(40)
-        else:
-            content_h = _ATTN_CARD_STRIDE_PX * n + 12
-            cap = max(160, self.height() // 2)
-            clamped = min(content_h, cap)
-            self._attn_scroll.setMinimumHeight(min(80, clamped))
-            self._attn_scroll.setMaximumHeight(clamped)
-
-    def _toggle_table(self, checked: bool) -> None:
-        self.btn_table_toggle.setText("▼  Pipeline Summary" if checked else "►  Pipeline Summary")
-        self.table.setVisible(checked)
-
-    def _toggle_file_tree(self, checked: bool) -> None:
-        self.btn_files_toggle.setText("▼  Project Files" if checked else "►  Project Files")
-        self.edf_tree.setVisible(checked)
+        """Size the attention scroll area to content, capped at 40% of the page."""
+        content = self._attn_content_px
+        self._attn_title.setVisible(content > 0)
+        self._attn_scroll.setVisible(content > 0)
+        if content > 0:
+            cap = max(120, self.height() * 2 // 5)
+            self._attn_scroll.setFixedHeight(min(content + 12, cap))
 
     # ---------------------------------------------------------------
     # Actions
@@ -643,33 +623,47 @@ class HomePage(QWidget):
     def _refresh(self):
         manifest = Manifest.load(self.project_root)
 
-        # One row per animal. Cache so _on_cell_double_clicked resolves row
-        # indices against the exact rendered list rather than a stale fresh-load.
-        rows = list(manifest)
-        self._table_rows = rows
-
         psd_runs = _psd_params.list_runs(self.project_root)
         self._refresh_run_filter(psd_runs)
         # None → "All runs (best)" (best-wins precedence across runs); a string
-        # picks a single run and filters PSD File / PSD Status cells to it.
+        # picks a single run and filters the PSD Status cell to it.
         run_filter: str | None = self.cmb_run_filter.currentData()
 
-        self.table.setRowCount(len(rows))
-        for row_idx, entry in enumerate(rows):
-            self._build_table_row(
-                row_idx, entry, manifest.combo, psd_runs=psd_runs, run_filter=run_filter
-            )
+        facts = [
+            (entry, *self._row_facts(entry, manifest.combo, psd_runs, run_filter))
+            for entry in manifest
+        ]
+        n_attention = sum(
+            1 for e, out_ok, f_ok, st in facts if _needs_attention(e, out_ok, f_ok, st)
+        )
+        n_excluded = sum(1 for e, *_ in facts if e.sleep_qc == "excluded")
+        parts = [f"{len(facts)} animal{'s' if len(facts) != 1 else ''}"]
+        if n_attention:
+            parts.append(f"{n_attention} need attention")
+        if n_excluded:
+            parts.append(f"{n_excluded} excluded")
+        self._animals_lbl.setText("Animals — " + " · ".join(parts))
 
+        if self.chk_attention_only.isChecked():
+            facts = [f for f in facts if _needs_attention(*f)]
+
+        # Cache the rendered rows so _on_cell_double_clicked resolves row
+        # indices against exactly what the user sees, not a stale fresh-load.
+        self._table_rows = [f[0] for f in facts]
+        self.table.setRowCount(len(facts))
+        for row_idx, (entry, spindle_out_ok, psd_file_ok, psd_status) in enumerate(facts):
+            self._build_table_row(
+                row_idx,
+                entry,
+                spindle_out_ok=spindle_out_ok,
+                psd_file_ok=psd_file_ok,
+                psd_status=psd_status,
+            )
         self.table.resizeRowsToContents()
 
-        # Shrink table height to content so attention zone / file tree get remaining space
-        total_h = self.table.horizontalHeader().height()
-        for r in range(self.table.rowCount()):
-            total_h += self.table.rowHeight(r)
-        self.table.setMaximumHeight(total_h + 4)
         self._refresh_attention_zone(manifest)
         # Reuse psd_runs from above; saves a second scan of project/psd/.
-        self._refresh_pipeline_guide(manifest, psd_runs=psd_runs)
+        self._refresh_progress(manifest, psd_runs=psd_runs)
 
     def _refresh_run_filter(self, psd_runs: list[str]) -> None:
         """Repopulate the PSD-run filter dropdown, preserving the current selection.
@@ -699,37 +693,20 @@ class HomePage(QWidget):
     def _on_run_filter_changed(self) -> None:
         self._refresh()
 
-    def _build_table_row(
+    def _row_facts(
         self,
-        row_idx: int,
         entry: ManifestEntry,
         combo: str,
-        *,
         psd_runs: list[str],
-        run_filter: str | None = None,
-    ) -> None:
-        """Populate one row in the pipeline summary table.
+        run_filter: str | None,
+    ) -> tuple[bool, bool, str | None]:
+        """Return ``(spindle_out_ok, psd_file_ok, psd_status)`` for one animal.
 
-        Pulled out of ``_refresh`` so the cell-by-cell rendering logic
-        is isolated and testable. Mutates ``self.table`` in place at the
-        given ``row_idx``.
-
-        Args:
-            row_idx: Zero-based row index to fill.
-            entry: Animal entry for this row.
-            combo: The project's channel combo (``Manifest.combo``).
-            psd_runs: Pre-fetched list of PSD run names. Passed in so a
-                single ``_refresh`` doesn't scan ``project/psd/`` once
-                per row.
-            run_filter: When ``None`` (the "All runs (best)" default), PSD
-                File / PSD Status cells use best-wins precedence across
-                ``psd_runs``. When set to a specific run name, both cells
-                reflect that run only — making "this run isn't computed
-                yet" or "this run still needs review" visible from Home.
+        With ``run_filter=None`` (the "All runs (best)" default) the PSD file /
+        status use best-wins precedence across ``psd_runs``; with a run name
+        they reflect that run only, making "this run isn't computed yet" or
+        "this run still needs review" visible from Home.
         """
-        spindle_edf_ok = _any_file_for_animal(
-            self.project_root, "spindle_edfs", combo, entry.animal_id
-        )
         spindle_out_ok = _any_file_for_animal(
             self.project_root, "spindle_outputs", combo, entry.animal_id
         )
@@ -753,17 +730,20 @@ class HomePage(QWidget):
         else:
             psd_file_ok = psd_path(combo, self.project_root, run_filter).is_file()
             psd_status = psd_status_dict.get(run_filter)
+        return spindle_out_ok, psd_file_ok, psd_status
 
-        self.table.setItem(row_idx, _COL_ANIMAL, make_cell(entry.animal_id))
-
-        pre = Path(entry.preprocessed_edf).name if entry.preprocessed_edf else "—"
-        self.table.setItem(row_idx, _COL_PREPROCESSED, make_cell(pre))
-
-        self.table.setItem(
-            row_idx,
-            _COL_SPINDLE_EDF,
-            make_cell("✓" if spindle_edf_ok else "—", _EXISTS_COLOR if spindle_edf_ok else None),
-        )
+    def _build_table_row(
+        self,
+        row_idx: int,
+        entry: ManifestEntry,
+        *,
+        spindle_out_ok: bool,
+        psd_file_ok: bool,
+        psd_status: str | None,
+    ) -> None:
+        """Populate one row in the animals table (see ``_row_facts`` for the args)."""
+        pre = Path(entry.preprocessed_edf).name if entry.preprocessed_edf else None
+        self.table.setItem(row_idx, _COL_ANIMAL, make_cell(entry.animal_id, tooltip=pre))
         self.table.setItem(
             row_idx,
             _COL_SPINDLE_OUT,
@@ -773,11 +753,6 @@ class HomePage(QWidget):
             row_idx,
             _COL_SLEEP_QC,
             self._build_sleep_qc_cell(entry.sleep_qc, spindle_out_ok, entry.notes),
-        )
-        self.table.setItem(
-            row_idx,
-            _COL_PSD_FILE,
-            make_cell("✓" if psd_file_ok else "—", _EXISTS_COLOR if psd_file_ok else None),
         )
         self.table.setItem(
             row_idx, _COL_PSD_STATUS, self._build_psd_status_cell(entry, psd_status, psd_file_ok)
@@ -848,19 +823,20 @@ class HomePage(QWidget):
         reviewing = manifest.needs_review()
         drink_mask = manifest.all_needs_drink_mask()
 
-        self._attn_card_count = len(reviewing) + len(drink_mask)
+        self._attn_content_px = 0
+        for title, entries, make_card in (
+            ("Review EDF", reviewing, self._make_review_card),
+            ("Drink mask needed", drink_mask, self._make_drink_mask_card),
+        ):
+            if not entries:
+                continue
+            header = QLabel(f"{title} ({len(entries)})")
+            header.setStyleSheet("color: #555; font-weight: bold; padding-top: 2px;")
+            self._attn_layout.addWidget(header)
+            for entry in entries:
+                self._attn_layout.addWidget(make_card(entry))
+            self._attn_content_px += _ATTN_HEADER_STRIDE_PX + _ATTN_CARD_STRIDE_PX * len(entries)
         self._update_attn_max_height()
-
-        if not reviewing and not drink_mask:
-            lbl = QLabel("All caught up ✓")
-            lbl.setStyleSheet("color: #5a9a5a; font-weight: bold; padding: 4px;")
-            self._attn_layout.addWidget(lbl)
-            return
-
-        for entry in reviewing:
-            self._attn_layout.addWidget(self._make_review_card(entry))
-        for entry in drink_mask:
-            self._attn_layout.addWidget(self._make_drink_mask_card(entry))
 
     def _make_card_frame(self, bg_color: str) -> "tuple[QWidget, QHBoxLayout]":
         """Create an attention card frame. Returns (widget, layout)."""

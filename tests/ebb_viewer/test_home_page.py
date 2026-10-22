@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ebb_viewer.pages.home import _COL_NOTES, _COL_PSD_FILE, _COL_PSD_STATUS, _COL_SLEEP_QC
+from ebb_viewer.pages.home import _COL_NOTES, _COL_PSD_STATUS, _COL_SLEEP_QC
 from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
 
 
@@ -282,9 +282,6 @@ def test_run_filter_specific_run_with_no_entry_shows_dash(qapp, tmp_path: Path):
     page.cmb_run_filter.setCurrentIndex(idx)
     # No psd_status entry for "dark_phase" and no pkl on disk → "—".
     assert _psd_status_cell(page) == "—"
-    # PSD File should also reflect the chosen run, not best-wins.
-    file_cell = page.table.item(0, _COL_PSD_FILE).text()
-    assert file_cell == "—"
 
 
 def test_run_filter_selection_preserved_across_refresh(qapp, tmp_path: Path):
@@ -496,3 +493,40 @@ def test_excluded_animal_psd_status_is_a_dash_not_pending(qapp, tmp_path: Path):
     _seed_manifest(tmp_path, psd_status={}, sleep_qc="excluded")
     page = _make_page(qapp, tmp_path)
     assert _psd_status_cell(page) == "—"
+
+
+# ---------------------------------------------------------------------------
+# Layout: next-step banner, attention-only filter
+# ---------------------------------------------------------------------------
+
+
+def test_attention_only_filter_hides_finished_animals(qapp, tmp_path: Path):
+    """Only animals with outstanding work stay in the table when the filter is on."""
+    m = Manifest(tmp_path)
+    for animal_id, qc in (("AM001", "ok"), ("AM002", "needs_review"), ("AM003", "excluded")):
+        m._entries[animal_id] = ManifestEntry(
+            animal_id=animal_id, preprocessed_edf="", has_spindle=True, sleep_qc=qc
+        )
+    m.save()
+    page = _make_page(qapp, tmp_path)
+    assert page.table.rowCount() == 3
+    page.chk_attention_only.setChecked(True)
+    assert [e.animal_id for e in page._table_rows] == ["AM002"]
+    assert page.table.rowCount() == 1
+
+
+def test_attention_zone_hidden_when_nothing_needs_attention(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, psd_status={}, sleep_qc="ok")
+    page = _make_page(qapp, tmp_path)
+    assert page._attn_content_px == 0
+    assert page._attn_scroll.isHidden()
+
+
+def test_next_banner_points_at_first_unfinished_step(qapp, tmp_path: Path):
+    """With an animal under review the banner offers the Sleep QC page."""
+    (tmp_path / "standard").mkdir()
+    (tmp_path / "standard" / "AM001_PREPROCESSED.edf").touch()
+    _seed_manifest(tmp_path, psd_status={}, sleep_qc="needs_review")
+    page = _make_page(qapp, tmp_path)
+    assert page._next_page is not None
+    assert page._next_page != "preprocess"
