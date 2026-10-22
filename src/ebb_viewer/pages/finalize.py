@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
 from ebb.core.naming import parse_animal_id
 from ebb.process.state_presets import PRESET_DISPLAY
 from ebb_viewer.pipeline import psd_params
-from ebb_viewer.pipeline.manifest import READY_STATUSES, Manifest
+from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.widgets.swd_warning import confirm_unfinished_swd_review
 
 CH_LABELS = ["LFC", "RSC", "LSC"]
@@ -204,41 +204,20 @@ class FinalizePage(QWidget):
         self._no_runs_lbl.setVisible(False)
         root.addWidget(self._no_runs_lbl)
 
-        # ── Sleep section ─────────────────────────────────────────────────
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #dee2e6;")
-        root.addWidget(sep)
-
-        sleep_hdr = QLabel("Sleep")
-        sleep_hdr.setStyleSheet("font-weight: bold; font-size: 13px; color: #333;")
-        root.addWidget(sleep_hdr)
-
-        sleep_desc = QLabel(
-            "Consolidate each animal's accepted sleep scoring into one "
-            "export bundle under sleep_export/: the chosen SPINDLE CSVs plus "
-            "rotate-to-6AM binned metrics, per-day averages, and whole-recording "
-            "summaries (as tidy CSVs and an Excel workbook)."
+        # Sleep analysis is done in a notebook, not here.
+        sleep_note = QLabel(
+            "To analyse sleep, copy <b>notebooks/sleep_by_hour.ipynb</b> and point it at this "
+            "project. It reads the reclassified states and leaves out excluded animals, and "
+            "shows every calculation."
         )
-        sleep_desc.setWordWrap(True)
-        sleep_desc.setStyleSheet("color: #555; font-size: 12px;")
-        root.addWidget(sleep_desc)
-
-        sleep_row = QHBoxLayout()
-        self._sleep_status_lbl = QLabel("—")
-        self._sleep_status_lbl.setWordWrap(True)
-        sleep_row.addWidget(self._sleep_status_lbl, 1)
-        self._btn_export_sleep = QPushButton("Export Sleep Data")
-        self._btn_export_sleep.setStyleSheet("font-weight: bold;")
-        self._btn_export_sleep.clicked.connect(self._on_export_sleep)
-        sleep_row.addWidget(self._btn_export_sleep)
-        root.addLayout(sleep_row)
+        sleep_note.setTextFormat(Qt.TextFormat.RichText)
+        sleep_note.setWordWrap(True)
+        sleep_note.setStyleSheet("color: #555; font-size: 12px;")
+        root.addWidget(sleep_note)
 
     # ------------------------------------------------------------------
 
     def _refresh(self):
-        self._refresh_sleep_section()
-
         # Clear existing cards (keep the trailing stretch)
         while self._cards_layout.count() > 1:
             item = self._cards_layout.takeAt(0)
@@ -394,73 +373,6 @@ class FinalizePage(QWidget):
             btn_settings.setEnabled(False)
 
         return card
-
-    # ------------------------------------------------------------------
-    # Sleep section
-    # ------------------------------------------------------------------
-
-    def _refresh_sleep_section(self):
-        try:
-            manifest = Manifest.load(self.project_root)
-        except Exception:
-            self._sleep_status_lbl.setText("Could not read manifest.")
-            self._sleep_status_lbl.setStyleSheet("color: gray;")
-            self._btn_export_sleep.setEnabled(False)
-            return
-
-        with_runs = [e.animal_id for e in manifest if e.has_spindle]
-        if not with_runs:
-            self._sleep_status_lbl.setText("No animals have sleep scoring yet.")
-            self._sleep_status_lbl.setStyleSheet("color: gray;")
-            self._btn_export_sleep.setEnabled(False)
-            return
-
-        missing = [a for a in with_runs if manifest.get(a).sleep_qc not in READY_STATUSES]
-        n_ok = len(with_runs) - len(missing)
-        n_excluded = sum(1 for a in with_runs if manifest.get(a).sleep_qc == "excluded")
-        if missing:
-            preview = ", ".join(missing[:8]) + ("…" if len(missing) > 8 else "")
-            self._sleep_status_lbl.setText(
-                f"⚠ {n_ok} of {len(with_runs)} animals have accepted sleep QC. "
-                f"Not yet accepted: {preview}"
-            )
-            self._sleep_status_lbl.setStyleSheet("color: #8a4400;")
-        else:
-            excluded = f" ({n_excluded} excluded)" if n_excluded else ""
-            self._sleep_status_lbl.setText(f"✓ All {n_ok} animals have accepted sleep QC{excluded}.")
-            self._sleep_status_lbl.setStyleSheet("color: #1a5c1a;")
-        self._btn_export_sleep.setEnabled(n_ok > 0)
-
-    def _on_export_sleep(self):
-        from ebb_viewer.pipeline.sleep_finalize import build_sleep_export
-
-        if not confirm_unfinished_swd_review(self, self.project_root):
-            return
-
-        try:
-            result = build_sleep_export(self.project_root)
-        except Exception as e:
-            QMessageBox.critical(self, "Sleep Export Failed", str(e))
-            return
-
-        lines = [
-            f"Exported {len(result.exported)} animal(s) to:",
-            str(result.out_dir),
-            "",
-            "Wrote sleep_bins.csv, sleep_bins_avg.csv, sleep_whole_file.csv, "
-            "sleep_export.xlsx, excluded_animals.csv, and chosen_csvs/.",
-        ]
-        if result.excluded:
-            lines += [
-                "",
-                f"Excluded animals are kept and marked (excluded column): {', '.join(result.excluded)}",
-            ]
-        if result.missing_ok:
-            lines += ["", f"Skipped — sleep QC not accepted: {', '.join(result.missing_ok)}"]
-        if result.missing_csv:
-            lines += ["", f"Skipped — CSV missing on disk: {', '.join(result.missing_csv)}"]
-        QMessageBox.information(self, "Sleep Data Exported", "\n".join(lines))
-        self._refresh()
 
     def _on_finalize(self, run_name: str):
         from ebb.process.psd_compute import build_run_final_pkl

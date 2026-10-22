@@ -1,17 +1,14 @@
-"""Tests for marking excluded animals in sealed outputs (final PSD pkl, sleep export, Prism workbook)."""
+"""Tests for marking excluded animals in sealed outputs (final PSD pkl, Prism workbook)."""
 
 import csv
 import pickle
-from datetime import datetime
 from pathlib import Path
-from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
 
 from ebb.io import exclusions as ex
 from ebb.io.psd_export import export_psds_to_xlsx
-from ebb.io.sleep_export import export_sleep
 from ebb.process.psd_compute import build_run_final_pkl
 
 EXCLUDED = {"AM002": "signal lost"}
@@ -51,19 +48,6 @@ def test_annotate_records_marks_each_record_by_animal():
 def test_annotate_records_accepts_a_single_dict():
     rec = ex.annotate_records(_rec("AM002"), EXCLUDED)
     assert rec["excluded"] is True and rec["exclusion_reason"] == "signal lost"
-
-
-def test_annotate_table_adds_columns_without_touching_the_input():
-    df = pd.DataFrame({"mouse_id": ["AM001", "AM002"], "frac_time": [0.1, 0.2]})
-    out = ex.annotate_table(df, EXCLUDED)
-    assert list(out["excluded"]) == [False, True]
-    assert list(out["exclusion_reason"]) == ["", "signal lost"]
-    assert "excluded" not in df.columns
-
-
-def test_annotate_table_handles_empty_tables():
-    out = ex.annotate_table(pd.DataFrame(columns=["mouse_id", "state"]), EXCLUDED)
-    assert list(out.columns) == ["mouse_id", "state", "excluded", "exclusion_reason"]
 
 
 def test_excluded_list_is_always_written_header_only_when_empty(tmp_path):
@@ -138,45 +122,3 @@ def test_prism_workbook_gets_an_excluded_sheet_only_when_marked(tmp_path):
     assert "AM002" in pd.read_excel(out, sheet_name=data_sheet).columns  # still in the data
     assert "excluded_animals" not in sheets(export_psds_to_xlsx(plain, tmp_path / "plain.xlsx"))
     assert "excluded_animals" not in sheets(export_psds_to_xlsx(unmarked, tmp_path / "unmarked.xlsx"))
-
-
-# --- sleep export -----------------------------------------------------------
-
-
-def _sleep_project(tmp_path: Path) -> tuple[Path, Path]:
-    state_dir, edf_dir = tmp_path / "chosen", tmp_path / "standard"
-    state_dir.mkdir()
-    edf_dir.mkdir()
-    for animal in ("AM001", "AM002"):
-        with (state_dir / f"{animal}_LFC_RSC.csv").open("w", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["rawstate", "final_state"])
-            for s in ["w"] * 900 + ["n"] * 900:
-                w.writerow([s, s])
-        (edf_dir / f"{animal}_PREPROCESSED.edf").write_bytes(b"")
-    return state_dir, edf_dir
-
-
-def test_sleep_export_marks_excluded_animals_in_every_table(tmp_path):
-    state_dir, edf_dir = _sleep_project(tmp_path)
-    out = tmp_path / "sleep_export"
-    with patch("ebb.process.sleep_compute.read_edf_start_datetime", return_value=datetime(2024, 1, 1, 6)):
-        written = export_sleep(state_dir, edf_dir, out, excluded=EXCLUDED)
-
-    for name in ("sleep_bins", "sleep_bins_avg", "sleep_whole_file"):
-        df = pd.read_csv(written[name], keep_default_na=False)
-        assert set(df["mouse_id"]) == {"AM001", "AM002"}  # kept
-        flagged = df.groupby("mouse_id")["excluded"].all().to_dict()
-        assert flagged == {"AM001": False, "AM002": True}
-        assert set(df.loc[df.mouse_id == "AM002", "exclusion_reason"]) == {"signal lost"}
-        assert pd.read_excel(written["workbook"], sheet_name=name).shape[1] == df.shape[1]
-    assert _read_csv(out / "excluded_animals.csv") == [["animal", "reason"], ["AM002", "signal lost"]]
-
-
-def test_sleep_export_without_exclusions_argument_adds_nothing(tmp_path):
-    state_dir, edf_dir = _sleep_project(tmp_path)
-    out = tmp_path / "sleep_export"
-    with patch("ebb.process.sleep_compute.read_edf_start_datetime", return_value=datetime(2024, 1, 1, 6)):
-        written = export_sleep(state_dir, edf_dir, out)
-    assert "excluded" not in pd.read_csv(written["sleep_whole_file"]).columns
-    assert not (out / "excluded_animals.csv").exists()

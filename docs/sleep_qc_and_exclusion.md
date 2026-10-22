@@ -88,7 +88,7 @@ Excluded rows are greyed in the legend and their lines are dimmed in the grid.
 | 8 Drink Mask (queue: ok and `needs_drink_mask`) | masks applied | **not listed** |
 | 7 PSD Visualizer, pass 2 (queue: ok and `drink_mask_applied`) | verified | **not queued** |
 | 9 Finalize, PSD | in `psds_final.pkl` | **in `psds_final.pkl`, marked** |
-| 9 Finalize, sleep export | in the tables | **in the tables, marked** |
+| Sleep analysis (`notebooks/sleep_by_hour.ipynb`) | analysed | **left out** by default (`INCLUDE_EXCLUDED = True` keeps and marks them) |
 | 10 Export Masks | exported | exported, **not marked** (see section 7) |
 
 The review queues (`pending_psd_review`, `needs_drink_mask`, `needs_drink_mask_rerun`,
@@ -113,8 +113,7 @@ Finalize after changing an exclusion to refresh the markers.
 | Output | Marker |
 |---|---|
 | `psd/<run>/psds_final.pkl` | every record has `excluded` (bool) and `exclusion_reason` |
-| `sleep_export/sleep_bins.csv`, `sleep_bins_avg.csv`, `sleep_whole_file.csv` and the workbook | the same two columns |
-| `psd/<run>/excluded_animals.csv`, `sleep_export/excluded_animals.csv` | `animal, reason`; always written, header only when nothing is excluded |
+| `psd/<run>/excluded_animals.csv` | `animal, reason`; always written, header only when nothing is excluded |
 | Prism workbook (Export on the Finalize page) | an `excluded_animals` sheet, only when the sealed pkl marks any; the animal columns are unchanged |
 
 The reason is the animal's `Excluded (<stage>):` note lines, each as `<stage>: <reason>`, joined with "; " (`Manifest.excluded_animals()`),
@@ -142,5 +141,6 @@ The computed `psds_<combo>.pkl` files are never modified. The analysis step drop
 | Required-reason dialog | `src/ebb_viewer/widgets/exclude_dialog.py` |
 | EDF viewer Exclude action | `src/ebb_viewer/edf_viewer/eeg_viewer.py` |
 | PSD review bar, banner, grey curves | `src/ebb_viewer/widgets/psd_graph_widget.py` |
-| Markers in the sealed outputs | `src/ebb/io/exclusions.py`, `build_run_final_pkl` in `ebb/process/psd_compute.py`, `ebb/io/sleep_export.py`, `ebb/io/psd_export.py` |
-| Finalize page and sleep export gather | `src/ebb_viewer/pages/finalize.py`, `src/ebb_viewer/pipeline/sleep_finalize.py` |
+| Markers in the sealed outputs | `src/ebb/io/exclusions.py`, `build_run_final_pkl` in `ebb/process/psd_compute.py`, `ebb/io/psd_export.py` |
+| Finalize page | `src/ebb_viewer/pages/finalize.py` |
+| Sleep analysis and its exclusion handling | `notebooks/sleep_by_hour.ipynb` (reads `manifest.json`) |

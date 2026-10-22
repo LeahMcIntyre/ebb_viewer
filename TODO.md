@@ -16,9 +16,6 @@ Sleep QC (`pages/sleep_qc_visualizer.py`) now opens on the reclassified states (
 
 Tests: toggle uses the column (no EDF needed), missing-column warning, gate tag from the manifest, toggle disabled with no columns.
 
-### sleep_export: Decide whether to keep `chosen_csvs/` (single-combo branch)
-With one project combo (`feature/single-combo`), `build_sleep_export` no longer needs to pick a CSV per animal across combo folders, so copying CSVs into `sleep_export/chosen_csvs/` is no longer needed for that purpose. It still does two things: it limits the export to ok animals (`export_sleep` takes a directory and exports every CSV in it), and it leaves a record of exactly which CSVs went into an export. Option A: remove it — change `ebb.io.sleep_export.export_sleep` to take a list of CSV paths, have `build_sleep_export` pass the ok animals' CSVs straight from `spindle_outputs/<combo>/`, and drop the folder, its rebuild-from-scratch step, the "chosen_csvs/" text on the Finalize page, and the related tests. Option B: keep it as the export's provenance record. Undecided — revisit after trying the single-combo branch for a while.
-
 ## In progress: UX polish mode (P2)
 
 Done across recent rounds: preprocess Rescan + wording (✓), rerun
