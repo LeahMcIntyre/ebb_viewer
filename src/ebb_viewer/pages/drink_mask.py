@@ -318,8 +318,13 @@ class DrinkMaskPage(QWidget):
 
     def set_run(self, run_name: str) -> None:
         """Switch to ``run_name`` (used to follow the PSD Visualizer's run)."""
-        if run_name == self.cmb_run.currentText() or self.cmb_run.findText(run_name) < 0:
+        if run_name == self.cmb_run.currentText():
             return
+        if self.cmb_run.findText(run_name) < 0:
+            # The list is only filled when the page is shown, so it may be empty or stale.
+            self._refresh_run_selector()
+            if self.cmb_run.findText(run_name) < 0 or run_name == self.cmb_run.currentText():
+                return
         self.cmb_run.blockSignals(True)
         self.cmb_run.setCurrentText(run_name)
         self.cmb_run.blockSignals(False)

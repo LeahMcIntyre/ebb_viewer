@@ -177,3 +177,20 @@ def test_flagging_in_the_visualizer_notifies_the_main_window(qapp, tmp_path: Pat
     page.manifest_changed.connect(lambda: seen.append(True))
     page.psd_page._flag_psd_ok()
     assert seen
+
+
+def test_drink_page_follows_the_visualizer_run_before_it_was_ever_shown(qapp, tmp_path: Path):
+    """The Drink Mask page fills its run list only when shown; the run chosen in the
+    visualizer must still carry over (it used to fall back to the first run)."""
+    from ebb_viewer.pages.drink_mask import DrinkMaskPage
+
+    _project(tmp_path, {"AM001": "needs_drink_mask"}, drink_pkl=False)
+    psd_params.save(tmp_path, "r2", {"fs": 250, "channels": [0, 1], "states": ["wake"]})
+    viz = PSDVisualizer(project_root=tmp_path)
+    drink = DrinkMaskPage(project_root=tmp_path)  # run list still empty
+    viz.run_changed.connect(drink.set_run)
+
+    viz.cmb_run.setCurrentText("r2")
+    assert drink.cmb_run.currentText() == "r2"
+    drink._refresh_run_selector()  # what showing the page does
+    assert drink.cmb_run.currentText() == "r2"

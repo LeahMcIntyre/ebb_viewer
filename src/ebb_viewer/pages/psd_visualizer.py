@@ -228,8 +228,12 @@ class PSDVisualizer(QWidget):
 
     def set_run(self, run_name: str) -> None:
         """Switch to ``run_name`` without plotting (the page plots when it is shown)."""
-        if run_name == self.cmb_run.currentText() or self.cmb_run.findText(run_name) < 0:
+        if run_name == self.cmb_run.currentText():
             return
+        if self.cmb_run.findText(run_name) < 0:
+            self._refresh_run_selector()  # a run may have been computed since the list was filled
+            if self.cmb_run.findText(run_name) < 0 or run_name == self.cmb_run.currentText():
+                return
         self.cmb_run.blockSignals(True)
         self.cmb_run.setCurrentText(run_name)
         self.cmb_run.blockSignals(False)
