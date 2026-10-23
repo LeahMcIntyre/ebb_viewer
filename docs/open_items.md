@@ -4,14 +4,14 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 
 ## A. Need your answer or knowledge
 
-- [ ] **Blinding.** How is the QC reviewer blinded to genotype in practice? File names carry genotype tags (e.g. `..._KO_...`). *(log §5)*
 - [ ] **Upstream EBB.** What did you keep from EBB (Caudill) and what did you rewrite? Fix the credit lines in `README.txt`. *(log §10)*
 - [ ] **Pre-sweep data.** Were any paper datasets processed before the 2026-05-12 cleanup sweep? If so, rerun or note it. *(log §10)*
 - [ ] **Reasons for the architecture** marked **(you)**: library/GUI split, manifest. *(log §10)*
-- [ ] **Which channels does SPINDLE receive** (EEG pair plus EMG?). *(log §2)*
-- [ ] **Inverse filter.** Source of the coefficients (preamp model and derivation). Is it applied only in the review plots or also in stored/exported PSDs? *(log §6)*
+- [x] SPINDLE receives the selected EEG channels plus the EMG (always included, per the Spindle EDFs page). Update log §2 "Still to confirm".
+- [ ] **Inverse filter.** Source of the coefficients (preamp model and derivation). (It is display-only: stored and exported PSDs are uncorrected. Confirm that is intended for the paper's figures.) *(log §6)*
 - [ ] **Bin edges.** How is a bout that spans a 2-hour bin edge counted? *(log §9)*
 - [ ] **Gate rule.** Light period (code) or dark hours (PLAN.md)? Where did the 10% tolerance come from? *(log §3)*
+
 
 ## B. Evidence to find or link
 
@@ -22,6 +22,8 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 - [ ] **Bout counts before vs. after reclassification** (the central result for the reclassification step). The validation repo's `sleep_by_hour_reclass.ipynb` may already have it. *(log §9)*
 - [ ] SWD review: count of changed epochs (validation repo `swd_in_*` notebooks). *(log §4)*
 - [ ] Citation or description of the lab's MATLAB SWD detector. *(log §4)*
+- [ ] Description or citation of the network that detects drinking events from video (for the methods). *(log §6)*
+- [ ] Paste an example of the drink-mask offsets CSV into the user guide (Drink Mask section).
 - [ ] Acquisition system documentation for the hardware high-pass. *(log §1)*
 - [ ] Check that a *preprocessed* EDF keeps µV. *(log §1)*
 - [ ] Optional: rerun a Welch resolution comparison on one dataset (the original runs were lost). *(log §6)*
@@ -34,10 +36,17 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 - [ ] Provenance: write a project summary or run log at Finalize (trim/downsample, combo, SWD, reclassification, PSD params, exclusions, drink masks). Also record SPINDLE scoring date/version. *(log §8, §2)*
 - [ ] Drop the "Confirm no SWD" button in favor of empty `.mat` files? *(log §4)*
 - [ ] QC thresholds: replace the placeholder wake cutoff (70) and document where REM = 10 came from. *(log §5)*
-- [ ] Add a project option to hide genotype in animal names, if blinding is not otherwise handled. *(log §5)*
 
 ## D. Code or doc changes (small, ready to do)
 
+- [ ] `manifest.json` already says `combo: LFC_RSC` right after Preprocess, before the user has chosen a combo (it is the default). Make clear whether the user has actually chosen it.
+- [ ] **Combo is set implicitly** by writing SPINDLE EDFs (stored in `manifest.json`). Clarify in the UI where the project combo is set and shown, and how to change it. Show the combo on Home.
+- [ ] **Home is empty until Preprocess** (animals come from `standard/`). Consider listing raw EDFs on Home or showing a "run Preprocess first" message.
+
+- [ ] Combine is command-line only. Consider a GUI page or a check at Preprocess that warns when short chunks are still in the project folder (Preprocess globs every `*.edf` there).
+- [ ] **`ebb-combine edf` needs a lot of memory** on 5 kHz data (about 55 GB for two chunks; it loads each 24 h chunk whole). It completed on a 48 GB Mac only after other programs were closed. Consider changing `combine_edf` to read and write in blocks.
+- [ ] Fix the Preprocess page's file-name note: files only need to be named `AnimalID_anything.edf` (tracked in `TODO.md`). Also no cancel button (see `TODO.md`).
+- [ ] PSD page: an animal with no annotation file runs without the annotation mask and no warning is shown. Add a readiness warning listing animals with no annotation file when the annotation mask is on.
 - [ ] Remove `s_prob` from the UI and `psd_compute.py`. *(log §6)*
 - [ ] Update `psd_methods.md` §4: it says "no other filtering" but the review step has the inverse-filter and interpolation toggles.
 - [ ] Update `psd_methods.md` §7 and `CLAUDE.md`: the merged PSD file no longer exists.

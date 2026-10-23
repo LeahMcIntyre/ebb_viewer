@@ -19,11 +19,28 @@ Sections for the other stages are not written yet.
 - **Chosen:** Trim each recording to the largest of 48 h / 72 h that fits (stop sample rounded up to a whole second). Recordings shorter than 48 h raise an error.
 - **Alternatives:** Keep full-length recordings.
 - **Why:** Analyses need whole days (multiples of 24 h) for both sleep and PSD. Recordings start at different times of day, so untrimmed files would over-represent some times of day in some animals and not others. 72 h is preferred because it gives more data. 48 h is used when that is all that is available.
+- **For other users:** The app lets the trim targets be changed (down to 1 hour). The 48/72 h rule is this project's choice, not a requirement of the software.
 - **Evidence:** None needed (design reasoning).
 - **Confidence:** settled
 - **Affects results?** Yes. State the trim rule and how many animals had 48 h vs. 72 h.
 - **Where in code:** `src/ebb/preprocess/edf.py`
 - **Revisit if:** A dataset has recordings between 48 and 72 h, or shorter than 48 h, that you would still want to use. Mixing 48 h and 72 h animals in one comparison is worth a sentence in the methods.
+
+### Restarted recordings are combined, 24 h from each chunk
+- **Stage:** Before Preprocess (command line: `ebb-combine`)
+- **Problem:** Some 3-day recordings stopped early and were restarted, leaving one animal with several short EDFs.
+- **Chosen:** Take the first 24 h of each chunk, in start-time order, and concatenate them (and shift the matching SWD and annotation files by 24 h per chunk). 2 chunks give 48 h, 3 give 72 h.
+- **Why:** The analysis should cover 24 straight hours per chunk. If a 28 h chunk were combined with a 24 h one in full, some hours of the day would be represented three times in the PSDs and others twice. Taking exactly 24 h from each keeps every hour of the day equally represented.
+- **Caveats to state:**
+  - Only the first 24 h of each chunk is used, so a 28 h chunk loses 4 h.
+  - Chunks shorter than 24 h are not handled; they would shift everything after them off the 24 h grid.
+  - The real time gap between chunks is ignored, so clock time within the combined file drifts from true clock time by the restart offset. For `CW0DC4_P096` and `_P098` the second chunk started 22 minutes before the 24 h grid from the first chunk would put it. Sleep-by-hour bins use the first chunk's start time, so this matters for the hourly analysis. Clock drift is not handled. The number of animals combined can be reported.
+  - EDFs are ordered by header start time, SWD and annotation files by their `_P###` number. These must agree.
+- **Confidence:** settled
+- **Affects results?** Yes, for every animal that was restarted. Report how many animals were combined.
+- **Memory:** `combine_edf` reads each full 24 h chunk into memory (about 14 GB per chunk at 5 kHz, four channels) and holds the joined data twice. On a 48 GB machine the first attempt was killed (out of memory); after closing other programs it completed. The walkthrough result is exactly 48.0 h.
+- **Where in code:** `src/ebb/io/combine.py` (`ebb-combine edf | swd | annotations`)
+- **Related:** `TODO.md` has items to extend combine to drink-mask `.npy` files and `.tsv` annotations.
 
 ### Sampling: 5000 Hz acquired, downsampled by 20 to 250 Hz
 - **Stage:** Preprocess
@@ -78,7 +95,8 @@ Sections for the other stages are not written yet.
 - **Evidence:** TODO: link the slides with the combo comparison. They used older annotations, so state that.
 - **Confidence:** settled
 - **Affects results?** Yes.
-- **Still to confirm:** Which channels SPINDLE receives (the EEG pair plus EMG?).
+- **Channels SPINDLE receives:** The EEG channels selected on the Spindle EDFs page plus the EMG, which is always included.
+- **Where the combo is set:** Implicitly, on the Spindle EDFs page: writing the files stores it as the project combo. This is unclear to users (open item).
 
 ### Epoch length 4 s and the three states
 - **Chosen:** Kept SPINDLE's 4 s epochs and w / n / r labels.
@@ -146,7 +164,7 @@ Evidence lives in `/Users/leahmcintyre/Developer/nri/ebb-research/` (`nrem_recla
 
 ### Every animal needs an SWD file; the preferred answer for "no SWDs" is an empty file
 - **Chosen:** If an animal has no SWD file and you don't want one, create an empty `.mat` file. The app also has a "Confirm no SWD" (`swd_waived`) button, but an empty file is better.
-- **Why:** An empty file records the decision in the data folder, where the project can be reproduced, and not only in the manifest.
+- **Why:** The SWD mask in the PSD step also looks for the file, so an empty file keeps that step working, and it records the decision in the data folder, where the project can be reproduced, and not only in the manifest.
 - **Possible follow-up:** The docs and UI currently present the waive button as an equal option. Consider making the empty file the documented default, and possibly removing the waive button.
 
 ### SWD masking in PSDs: no separate policy needed
@@ -186,7 +204,8 @@ Details of the statuses and what each step does with an excluded animal: [sleep_
 ### Reviewer is blind to genotype
 - **Chosen:** The person doing the QC review is blind to genotype.
 - **Why:** So that exclusions cannot be influenced by the expected result.
-- **Caveat:** Blinding is by workflow, not enforced by the app. Some file names carry genotype (for example the example file `CW0DC4_P098_KO_...`), and the Sleep QC grid shows animal IDs. State precisely how the blinding was achieved (for example, renamed files or a second person assigning the IDs), or add a project option to hide that part of the name. *Needs your answer.*
+- **How:** File names generally do not carry genotype, and the review screens show animal IDs, so the review is blind as long as the reviewer does not know which IDs belong to which group. (Some files in the walkthrough do include a tag such as `KO` in the name; if a project's files do, rename them or have someone else assign IDs.)
+- **Confidence:** settled
 
 ### Excluded animals are kept and marked, not dropped
 - **Chosen:** Excluded animals are still processed (including PSD compute). Finalize marks them (`excluded` / `exclusion_reason`, `excluded_animals.csv`) and the analysis notebooks leave them out.
@@ -239,7 +258,7 @@ Details of the statuses and what each step does with an excluded animal: [sleep_
 - **Confidence:** needs discussion until the coefficients are documented
 - **Affects results?** Yes, if reported PSDs include the correction.
 - **Where in code:** `INVERSE_FILTER` and `FILTER_RANGE` in `src/ebb_viewer/widgets/psd_graph_widget.py`.
-- **Open question:** In the code, the inverse filter and the interpolation are toggles in the PSD plot, applied to a copy of the data at display time. Is the correction also applied in the finalized PSDs and the exports, or only in the review plots? The methods text depends on the answer.
+- **Scope (confirmed from the code):** The inverse filter and the interpolation are toggles in the PSD review plot, applied to a copy of the data at display time. Nothing else in the code uses them: the stored PSD files, `psds_final.pkl` and the Prism/xlsx export contain the **uncorrected** PSDs. The methods should say that the low-frequency correction was applied only for visual review, unless you apply it elsewhere (for example in the analysis notebooks).
 
 ### Masked samples are removed, not zeroed
 - **Stage:** PSD estimation
@@ -306,6 +325,7 @@ Details of the statuses and what each step does with an excluded animal: [sleep_
 - **Confidence:** settled (*to confirm that it was checked against the artifact*)
 - **Affects results?** Yes, for animals rerun with the drink mask.
 - **Where in code:** `src/ebb/masking/events.py`
+- **Where the events come from:** The drink-event files (1 Hz `.npy`) are made outside this pipeline, with the lab's network that detects drinking events from the video exported from the PVFS file. **TODO:** cite or describe that network for the methods.
 - **Offsets:** The per-animal offset is the time from the start of the recording to the start of the video, read from the animal's PVFS file and saved in the offsets CSV (`Animal,Offset`).
 
 ### Drink artifacts are flagged by eye, not automatically
