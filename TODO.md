@@ -275,9 +275,6 @@ The button flow appears broken in some cases — needs reproduction and a specif
 ### spindle_upload: Project names should propagate on page shown
 The remote folder name auto-defaults to `project_root.stem + '_' + combo` on combo selection but may not fire on `showEvent`. Ensure it pre-fills correctly whenever the page is navigated to. Use the SleepyRat manifest to note if there has been a project selected already. 
 
-### psd: SWD masks — decide policy on TS (needs scientific discussion)
-Whether to mask out or include the transition state (TS) in PSD computation is a scientific decision that must be made before any implementation. Once policy is settled, add mask support + optional export to `.npy` (consistent with drink mask format).
-
 ### general: Run log / settings provenance
 `psd/psd_params.json` already tracks PSD params. Consider extending to a `run_log.jsonl` that appends one entry per pipeline action (timestamp, what ran, which animals, params used). Low urgency but valuable for reproducibility and debugging.
 
