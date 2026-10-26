@@ -16,7 +16,7 @@ This page gets you from nothing to finished results. It lists only what you **ne
 | 3 | **3. Spindle Upload** | Pick your name, click **Upload & Download** | **often over an hour** (SleepyRat scores your files) |
 | 4 | **4. Reclassify** | Click **Run reclassification** | a minute or two |
 | 4b | **4b. SWD Review** | *Optional.* Check epochs that overlap spike-wave discharges | depends on the animal |
-| 5 | **5. Sleep QC** | Mark **every** animal **OK** or **Exclude** | your time |
+| 5 | **5. Sleep QC** | In the Sleep tab mark each animal OK, Review or Exclude; then on Home settle each Review as OK or Exclude | your time |
 | 6 | **6. PSD Computation** | Click **Run PSD Pipeline** | a few minutes to an hour |
 | 7 | **7. PSD Visualizer** | Mark each animal **OK** or **Drink Mask** | your time |
 | 8 | **8. Drink Mask** | *Only if you flagged animals in step 7.* Apply the masks and verify | minutes |
@@ -33,11 +33,6 @@ You need three things: **conda** (Miniconda is fine), **git**, and access to the
 
 Follow the click-by-click [Windows setup guide](windows_setup.md). It takes you from nothing to a working install. (This quick start is written for Windows; commands below are typed into **Anaconda Prompt**.)
 
-The environment already includes everything the analysis notebooks need (seaborn and JupyterLab). **If you created your environment before that was added**, run this once with `(ebb-dev)` active (or run `conda env update -f envs\ebb-dev.yml --prune` from the `ebb_viewer` folder):
-
-```bat
-pip install seaborn jupyterlab
-```
 
 **Start the app** (every time: open **Anaconda Prompt**, activate the environment, then run it):
 
@@ -84,7 +79,60 @@ This keeps the first 24 h of each chunk and joins them into one `…_COMBINED.ed
 
 ---
 
-## Part 3. The steps
+## Part 3. Extra files you may need
+
+Besides the raw EDFs, some steps use extra files that **you prepare**. You only need the ones for the steps you will use:
+
+- **Sleep staging and PSDs only:** nothing beyond the EDFs (plus a groups file if you want one for the notebooks).
+- **Add SWD files** if you want SWD review (step 4b) or the SWD mask in step 6.
+- **Add annotation files** if you want to mask jerks and jumps in step 6.
+- **Add drink-event files and an offsets file** only if the PSD review (step 7) shows the drinking artifact.
+
+Put each file in the project folder (the one you choose when ebb-viewer starts) unless the table says otherwise. **In every file name, the animal ID is the part before the first `_`, and it must match the EDF's animal ID exactly, including capitals** (`CW0DC4`, not `cw0dc4`).
+
+| File | Needed for | Put it in | Name it | Where it comes from |
+|---|---|---|---|---|
+| **SWD file**, one per animal (`.mat`) | Step 4b (SWD Review) and the SWD mask in step 6 | `swd/` in the project folder | `AnimalID_anything.mat`, for example `CW0DC4_P098_DEL_ts.mat` | The lab's MATLAB SWD detection. An animal with no SWDs still gets a file: an empty one (below). |
+| **Annotation file**, one per animal (`.txt`) | The annotation mask in step 6 (jerks and jumps) | Any folder; `annotations/` in the project folder is easiest. You choose the folder on the PSD page. | `AnimalID_anything.txt`, for example `CW0DC4_P098_KO_….txt` | Exported from the Pinnacle recording software, where the events were annotated (labels such as `Jerk - NREM` or `Jump - REM`). |
+| **Drink-event file**, one per flagged animal (`.npy`) | Step 8 (Drink Mask) | `drink_masks/` in the project folder | Exactly `AnimalID.npy`, for example `CW0DC4.npy` | Made outside ebb-viewer with the lab's drinking-detection network, run on the recording video (exported from the PVFS file). In our lab, ask Claudia. |
+| **Offsets file**, one for the whole project (`.csv`) | Step 8, unless the video and the EEG started at exactly the same moment | `drink_masks/`; it must be the **only** `.csv` there | Any name ending in `.csv`, for example `offsets.csv` | You write it. For each animal, the seconds from the start of the EEG recording to the start of the video, read from the PVFS file. |
+| **Groups file** (`.csv`) | The notebooks in step 10 (instead of typing the groups) | Anywhere; next to the notebook is easiest. You type its path into the notebook. | Any name, for example `groups.csv` | You write it from your experiment records. |
+
+**What goes inside**
+
+- **SWD file:** a variable called `DEL_ts` holding one row per SWD, `[start, stop]`, in seconds from the start of the recording. For an animal with no SWDs, make an empty file. Open **Anaconda Prompt**, activate `ebb-dev`, go to the project folder (`cd C:\path\to\project`), and run this with the animal's ID in the name:
+
+```bat
+python -c "import numpy as np; from scipy.io import savemat; savemat('swd/CW0DB1_DEL_ts.mat', {'DEL_ts': np.empty((0, 2))})"
+```
+
+- **Annotation file:** use it exactly as exported (tab-separated, six lines of header, then a row per event with the columns `Time From Start` and `Annotation`). In step 6 you type keywords that appear in the annotation labels, such as `Jerk, Jump`.
+- **Drink-event file:** a list of True/False values, **one value per second of the recording**, with True where the animal was drinking.
+- **Offsets file:** two columns, `Animal` and `Offset`, one row per animal. The offset is in seconds, and **positive means the video started after the EEG**. Get these values manually from the PVFS file. For example (made-up numbers):
+
+```
+Animal,Offset
+CW0DC4,125
+CW0DB1,98
+```
+
+- **Groups file:** the easiest layout is one row per animal, with the columns `animal` and `group`:
+
+```
+animal,group
+Mice-1248,WT
+Mice-1251,MUT
+```
+
+  One column per group (the group name on top, its animals below) also works.
+
+**Restarted recordings:** the SWD and annotation files of an animal whose recording was restarted are combined together with its EDFs (Part 2).
+
+**Files ebb-viewer makes for you** (do not create these): `standard/`, `spindle_edfs/`, `spindle_outputs/`, `psd/`, `exports/`, and `manifest.json`.
+
+---
+
+## Part 4. The steps
 
 Each step has the same three parts: **Do this**, **You're done when**, and **Watch out**.
 
@@ -118,7 +166,7 @@ Each step has the same three parts: **Do this**, **You're done when**, and **Wat
 2. Under **SleepyRat project**, choose **your own name**. If it is not in the list, click **New…** and enter it. If it is already there, do not create it again.
 3. Leave **Remote folder name** as filled in.
 4. Click **Upload & Download**.
-5. The first time, a browser tab asks you to approve access for ebb. Approve it.
+5. The first time, a browser tab asks you to approve access for ebb. Log in with the appropriate credentials and approve it.
 6. **Leave the app open.** It uploads, waits for SleepyRat to score the files, then downloads the results. With many files this often takes **more than an hour**, and that is normal.
 
 **You're done when** the green bar says "Done. Labels downloaded — ready to reclassify."
@@ -140,7 +188,7 @@ Each step has the same three parts: **Do this**, **You're done when**, and **Wat
 Do this step only if your project needs it (for example, if SWDs could make sleep look more fragmented in one genotype).
 
 **Do this**
-1. Put **one `.mat` file per animal** in `swd/`, named with the animal ID. For an animal with no SWDs, still add an empty `.mat` file (user guide, step 4b, has the one-line command).
+1. Put **one `.mat` file per animal** in `swd/`, named with the animal ID (see Part 3). For an animal with no SWDs, still add an empty `.mat` file (Part 3 has the one-line command).
 2. Click **4b. SWD Review** and tick **Review SWD epochs for this project**.
 3. Click **Review…** next to an animal. For each epoch that contains an SWD (highlighted in yellow): press **Space** to accept its state and move on, or press **w**, **n** or **r** to change it, then **Space**.
 4. Click **Save**. You can save half-way and come back.
@@ -151,16 +199,23 @@ Do this step only if your project needs it (for example, if SWDs could make slee
 
 ### Step 5. Sleep QC
 
-**Every animal must end up either OK or Excluded.** PSD computation will not start until they all are.
+**Every animal must end up either OK or Excluded.** PSD computation will not start until they all are. You do this in **two passes: first in the Sleep tab, then on Home.**
+
+**Why animals get flagged.** The Overview marks an animal when a measure of its sleep goes past a threshold. The measures are ones that, in our own past data, made us suspicious of a noisy or misclassified recording: many very short NREM bouts (the sleep looks chopped up), too many NREM bouts per dark hour, too much or too little of one state (REM %, NREM %, wake %), or a big spike of REM in one 2-hour stretch. These are warning signs, **not rules**: a flagged animal may be fine, and an unflagged one may not be, so you still look at every animal.
 
 **Do this**
 1. Click **5. Sleep QC**. You start on the **Overview**: one boxplot per sleep measure, one dot per animal. Animals past a threshold are red.
-2. Animals past a threshold with no decision yet are **flagged for review automatically** (a red line lists them, and they appear on **Home** under **Needs Attention**).
-3. Look at each flagged animal: on **Home**, click **Open EDF** on its card (a card marked **[EMG gate]** means the EMG gate was used on that animal), or open the **Sleep** view and judge from the by-hour plots.
-4. For **every** animal, in the **Sleep** view, press **OK** (the sleep scoring looks fine) or **Exclude** (it looks wrong, or the EEG/EMG is very noisy). **Review** is not a decision: it only flags an animal for a closer look.
+2. Animals past a threshold that have no decision yet are **flagged for review automatically** (a red line lists them). You do not need to flag them yourself.
+3. **First pass, the Sleep tab.** Click **Sleep** (top right) and go through **every** animal (use **Group** to see them together or **Animal** to see one at a time). Judge from the by-hour plots, then mark each animal:
+   - **OK**: the sleep scoring looks fine.
+   - **Review**: something looks off and you want to look at the actual recording.
+   - **Exclude**: it is clearly wrong, or the EEG/EMG is very noisy. A written reason is required.
+4. **Second pass, Home.** Go to **Home**. **Needs Attention** lists every animal you marked **Review** (and the automatically flagged ones), with the measures that flagged it. A card marked **[EMG gate]** means the EMG gate was used on that animal. For each card, click **Open EDF**, look at the recording, then mark the animal **OK** or **Exclude** (in the viewer's toolbar: **✓ Mark OK** or **Exclude**, or click **✓ OK** on the card if the animal is fine).
 5. **Exclude needs a written reason.** Say where the problem is and what you saw, for example "lots of misclassification after hour 20, LSC channel noisy".
 
-**You're done when** every animal is OK or Excluded and the page says "All spindle metrics checked — ready for PSD computation."
+**Review is not a final answer.** Every animal you mark Review (or that was flagged automatically) must end as OK or Exclude after you look at it on Home.
+
+**You're done when** every animal is OK or Excluded, nothing is left under **Needs Attention** for review, and the Sleep QC page says "All spindle metrics checked — ready for PSD computation."
 
 **Watch out:** do this review **blind to genotype**. If the first or last time bin looks odd in the default view, switch **Time axis** to *Rotate to 6AM* or *From Start* and look again before deciding. An excluded animal is kept and marked, not deleted.
 
@@ -169,7 +224,7 @@ Do this step only if your project needs it (for example, if SWDs could make slee
 **Do this**
 1. Click **6. PSD Computation**. Check that every line in **READINESS** has a ✓ (a red ✗ blocks the run; the **Open … →** button takes you to the page that fixes it).
 2. Leave the settings as they are.
-3. If you use them, turn on the **SWD mask** (choose **Mask out SWDs**; needs a `.mat` for every animal) and the **annotation mask** (tick **Apply annotation mask**, choose the annotation folder, and enter keywords such as `Jerk, Jump`).
+3. If you use them, turn on the **SWD mask** (choose **Mask out SWDs**; needs a `.mat` for every animal in `swd/`) and the **annotation mask** (tick **Apply annotation mask**, choose the annotation folder, and enter keywords such as `Jerk, Jump`). The files are described in Part 3.
 4. Type a **Run name** that says what the run is for (for example `default` or `final_run`).
 5. Click **Run PSD Pipeline**.
 
@@ -190,7 +245,7 @@ Do this step only if your project needs it (for example, if SWDs could make slee
 
 ### Step 8. Drink Mask (only if you flagged animals)
 
-**You need** a drink-event file for each flagged animal, `drink_masks/<AnimalID>.npy`, and **one** offsets CSV in `drink_masks/` with the columns `Animal` and `Offset` (seconds from the start of the EEG recording to the start of the video). These come from outside ebb-viewer; in our lab, ask Claudia.
+**You need** a drink-event file for each flagged animal, `drink_masks/<AnimalID>.npy`, and, unless the video and the EEG started at exactly the same moment, **one** offsets CSV in `drink_masks/` with the columns `Animal` and `Offset` (see Part 3 for what they contain and where they come from). These come from outside ebb-viewer; in our lab, ask Claudia.
 
 **Do this**
 1. Click **8. Drink Mask** and choose the same **PSD run**.
@@ -215,7 +270,7 @@ Both notebooks are in the `notebooks/` folder. **Make a copy for each analysis.*
 
 **PSD results**: copy `psd_analysis.ipynb` **and `psd_utils.py`** into the same folder, then set:
 - `RUNS`: the path to each `psd/<run>/psds_final.pkl` (one entry per time point).
-- `GROUPS` (type the animal IDs in each group) **or** `GROUPS_CSV` (a CSV file; easiest is one row per animal with columns `animal` and `group`).
+- `GROUPS` (type the animal IDs in each group) **or** `GROUPS_CSV` (the path to a groups file; see Part 3).
 - `OUT_DIR` can stay as it is: results go in a `psd_analysis` folder next to your project's `psd` folder. The notebook prints the exact folder when it starts and finishes.
 
 **Sleep results**: copy `sleep_by_hour.ipynb` and set `PROJECT_ROOT` (your project folder), `GROUPS` or `GROUPS_CSV`, and **`TZ` (your time zone: the default is `America/Chicago`)**. Results go in `<project>/sleep_analysis/`.
@@ -245,12 +300,13 @@ Both notebooks are in the `notebooks/` folder. **Make a copy for each analysis.*
 
 - [ ] One new folder per time point, with the raw EDFs (`AnimalID_anything.edf`, channels LFC, RSC, LSC, EMG)
 - [ ] Restarted recordings combined (if any)
+- [ ] Extra files in place for the steps you will use (Part 3): SWD files, annotation files, drink-event files and offsets file, groups file
 - [ ] 1. Preprocess
 - [ ] 2. Spindle EDFs (project combo set)
 - [ ] 3. Spindle Upload (labels downloaded)
 - [ ] 4. Reclassify
 - [ ] 4b. SWD Review (if your project uses it)
-- [ ] 5. Sleep QC: **every animal OK or Excluded**
+- [ ] 5. Sleep QC: Sleep tab (OK / Review / Exclude), then Home (each Review settled): **every animal OK or Excluded**
 - [ ] 6. PSD Computation
 - [ ] 7. PSD Visualizer: every animal reviewed
 - [ ] 8. Drink Mask: applied and verified (if any animal was flagged)
