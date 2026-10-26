@@ -107,15 +107,16 @@ def records_to_df(
     """Long-format table (one row per animal x state x channel) from PSD records.
 
     Columns: ``animal``, ``state``, ``ch``, ``channel``, ``spectra`` (1-D array, uV^2/Hz),
-    ``excluded``, ``n_estimates`` and the fraction of samples masked by each source. The animal ID
+    ``excluded``, ``exclusion_reason`` (which includes the step: Sleep QC or PSD review),
+    ``n_estimates`` and the fraction of samples masked by each source. The animal ID
     is the part of the EDF file name before the first ``_``.
 
     Args:
         records: the list from :func:`load_psd_records`.
         apply_inverse_filter: multiply 0.5-3.5 Hz by :data:`INVERSE_FILTER` (needs 0.5 Hz bins).
             The records themselves are not modified.
-        include_excluded: keep animals excluded in Sleep QC (marked in the ``excluded`` column).
-            By default they are left out and listed.
+        include_excluded: keep animals excluded in Sleep QC or PSD review (marked in the
+            ``excluded`` column). By default they are left out and listed with their reasons.
         channel_names: label for each channel index.
     """
     if not records:
@@ -146,6 +147,7 @@ def records_to_df(
                     "channel": channel_names.get(ch, f"ch{ch}"),
                     "spectra": spectrum,
                     "excluded": bool(rec.get("excluded", False)),
+                    "exclusion_reason": rec.get("exclusion_reason", ""),
                     "n_estimates": rec.get("n_estimates"),
                     "spindle_out_frac": rec.get("spindle_out_frac"),
                     "comm_out_frac": rec.get("comm_out_frac"),
@@ -155,9 +157,14 @@ def records_to_df(
                 }
             )
     df = pd.DataFrame(rows)
-    left_out = sorted(df.loc[df["excluded"], "animal"].unique())
-    if left_out and not include_excluded:
-        print(f"Left out {len(left_out)} animal(s) excluded in Sleep QC: {', '.join(left_out)}")
+    if not include_excluded:
+        dropped = df[df["excluded"]].drop_duplicates("animal").sort_values("animal")
+        if len(dropped):
+            print(
+                f"Left out {len(dropped)} excluded animal(s) (reason, with the step that set it):"
+            )
+            for _, row in dropped.iterrows():
+                print(f"  {row['animal']}: {row['exclusion_reason'] or 'no reason recorded'}")
         df = df[~df["excluded"]].reset_index(drop=True)
     df.attrs["freqs"] = tuple(freqs.tolist())  # a tuple: pandas compares attrs with ==
     return df

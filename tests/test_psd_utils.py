@@ -72,17 +72,21 @@ def test_inverse_filter_needs_half_hertz_bins():
     assert len(u.records_to_df([rec], apply_inverse_filter=False)) == 3
 
 
-def test_excluded_animals_are_left_out_unless_asked(capsys):
-    recs = _records(("A1", "A2"))
+def test_excluded_animals_are_left_out_unless_asked_and_listed_with_their_reasons(capsys):
+    recs = _records(("A1", "A2", "A3"))
     for r in recs:
         if "A2" in str(r["path"]):
-            r["excluded"] = True
+            r["excluded"], r["exclusion_reason"] = True, "Sleep QC: bad file"
+        if "A3" in str(r["path"]):
+            r["excluded"], r["exclusion_reason"] = True, "PSD review: extra bad"
     df = u.records_to_df(recs, apply_inverse_filter=False)
     assert set(df["animal"]) == {"A1"}
-    assert "A2" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "A2: Sleep QC: bad file" in out and "A3: PSD review: extra bad" in out
     kept = u.records_to_df(recs, apply_inverse_filter=False, include_excluded=True)
-    assert set(kept["animal"]) == {"A1", "A2"}
-    assert kept.loc[kept["animal"] == "A2", "excluded"].all()
+    assert set(kept["animal"]) == {"A1", "A2", "A3"}
+    assert kept.loc[kept["animal"] == "A3", "excluded"].all()
+    assert kept.loc[kept["animal"] == "A3", "exclusion_reason"].iloc[0] == "PSD review: extra bad"
 
 
 def test_load_psd_runs_adds_time_and_keeps_the_frequency_axis(tmp_path: Path):

@@ -527,10 +527,10 @@ The pipeline ends at `psds_final.pkl` and the reclassified sleep states. Two set
 **Settings to edit**
 - `RUNS`: the sealed file for each time point, `{label: path to psd/<run>/psds_final.pkl}`. One entry for one time point; add a second (for example `pre` and `post`) to compare time points.
 - `GROUPS`: `{group: [animal IDs]}`. Leave empty for one group with everyone.
-- Usually leave alone: `INCLUDE_EXCLUDED` (False: animals excluded in Sleep QC are left out), `APPLY_INVERSE_FILTER` (True), `INTERP_RANGES` (see below), `NORM_BAND` (1–100 Hz), `BANDS`, `FREQ_RANGE`, `COLOR_MAP`, `SEX_MAP` (orders Prism columns males first).
+- Usually leave alone: `INCLUDE_EXCLUDED` (False: animals excluded in Sleep QC or in PSD review are left out), `APPLY_INVERSE_FILTER` (True), `INTERP_RANGES` (see below), `NORM_BAND` (1–100 Hz), `BANDS`, `FREQ_RANGE`, `COLOR_MAP`, `SEX_MAP` (orders Prism columns males first).
 
 **What it does**
-1. Loads each `psds_final.pkl` and prints which excluded animals were left out.
+1. Loads each `psds_final.pkl` and prints which excluded animals were left out, each with its reason (which starts with the step that excluded it: Sleep QC or PSD review).
 2. Applies the low-frequency correction (the "inverse filter", 0.5–3.5 Hz). **This is where the correction is applied; the saved PSD files do not include it.**
 3. Bridges the line noise by interpolation (`INTERP_RANGES`, default 56–64 Hz and 118–122 Hz; see below), and builds a *normalized* spectrum (each spectrum divided by its own power from 1 to 100 Hz).
 4. Plots group mean spectra with standard-error bands (channel by state), the low-frequency view, the normalized spectra, and (with two time points) every group at every time point overlaid.
