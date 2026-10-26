@@ -87,6 +87,19 @@ def load_psd_records(path: str | Path) -> list[dict]:
     return list(records)
 
 
+def default_output_dir(psds_final: str | Path) -> Path:
+    """Where results go when ``OUT_DIR`` is not set.
+
+    For ``<project>/psd/<run>/psds_final.pkl`` that is ``<project>/psd_analysis``, next to the
+    ``psd/`` folder. For a pickle anywhere else it is a ``psd_analysis`` folder beside the file.
+    The notebook's own folder is never used.
+    """
+    path = Path(psds_final).expanduser().resolve()
+    if path.parent.parent.name == "psd":
+        return path.parent.parent.parent / "psd_analysis"
+    return path.parent / "psd_analysis"
+
+
 def get_freqs(df: pd.DataFrame) -> np.ndarray:
     """The frequency axis (Hz) shared by every spectrum in ``df``."""
     freqs = df.attrs.get("freqs")
