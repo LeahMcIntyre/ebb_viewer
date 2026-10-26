@@ -1,4 +1,4 @@
-"""Mark animals excluded in Sleep QC inside sealed outputs.
+"""Mark excluded animals (Sleep QC or PSD review) inside sealed outputs.
 
 Excluded animals are still computed and kept in the sealed PSD outputs; Finalize records the exclusions
 as of the moment it runs so a file loaded on its own says which animals to leave

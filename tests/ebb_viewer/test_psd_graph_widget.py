@@ -232,7 +232,8 @@ def test_banner_and_grey_curves_follow_the_selected_animal(qapp, tmp_path: Path)
     page.cmb_animal.setCurrentText("AM002_drink")  # store keys carry a _drink suffix
     assert not page._excluded_banner.isHidden()
     text = page._excluded_banner.text()
-    assert "EXCLUDED" in text and "electrode fell out" in text and "cage change" in text
+    assert "EXCLUDED in Sleep QC" in text
+    assert "electrode fell out" in text and "cage change" in text
     assert _gray(page)
 
     page.cmb_animal.setCurrentText("AM001")
@@ -253,7 +254,7 @@ def test_excluded_animals_are_greyed_in_the_dropdown(qapp, tmp_path: Path):
     _seed_excluded(tmp_path)
     page = _make_page(qapp, project_root=tmp_path, store=_FakeStoreTwoAnimals())
     assert page.cmb_animal.itemData(1, Qt.ItemDataRole.ForegroundRole) is not None
-    assert page.cmb_animal.itemData(1, Qt.ItemDataRole.ToolTipRole) == "Excluded"
+    assert page.cmb_animal.itemData(1, Qt.ItemDataRole.ToolTipRole) == "Excluded in Sleep QC"
     assert page.cmb_animal.itemData(0, Qt.ItemDataRole.ForegroundRole) is None
     assert page.cmb_animal.itemText(1) == "AM002_drink"  # key unchanged
 
@@ -307,6 +308,7 @@ def test_exclude_button_excludes_with_reason_and_updates_the_view(qapp, tmp_path
     assert m.get("AM001").notes == "Excluded (PSD review): saturated signal"
     assert page._btn_flag_exclude.isChecked()
     assert not page._excluded_banner.isHidden() and "saturated signal" in page._excluded_banner.text()
+    assert "EXCLUDED in PSD review" in page._excluded_banner.text()  # not "in Sleep QC"
     assert emitted == [True]
     assert Manifest.load(tmp_path).get("AM001").sleep_qc == "excluded"
 

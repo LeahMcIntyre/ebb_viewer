@@ -89,7 +89,7 @@ def export_psds_to_xlsx(
                     df[animal] = np.asarray(pair[1], float)
             df.to_excel(writer, sheet_name=_sheet_name(channel, state), index=False)
         # Prism reads the per-combo sheets; this extra sheet (only when the sealed pkl marks
-        # exclusions) says which animal columns were excluded in Sleep QC.
+        # exclusions) says which animal columns were excluded (in Sleep QC or PSD review).
         excluded = _excluded_in_pkl(pkl_path)
         if excluded:
             pd.DataFrame(

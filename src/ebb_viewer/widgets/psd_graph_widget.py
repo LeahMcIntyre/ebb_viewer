@@ -31,7 +31,12 @@ from specparam.utils import interpolate_spectrum
 
 from ebb.process.state_presets import gather_states_from_store
 from ebb_viewer.pipeline import psd_params
-from ebb_viewer.pipeline.manifest import STAGE_PSD_REVIEW, Manifest, psd_status_label
+from ebb_viewer.pipeline.manifest import (
+    STAGE_PSD_REVIEW,
+    Manifest,
+    exclusion_stage,
+    psd_status_label,
+)
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
@@ -606,9 +611,9 @@ class PSDGridPage(QWidget):
             self.cmb_animal.setItemData(
                 i, QColor(140, 140, 140) if excluded else None, Qt.ItemDataRole.ForegroundRole
             )
-            self.cmb_animal.setItemData(
-                i, "Excluded" if excluded else None, Qt.ItemDataRole.ToolTipRole
-            )
+            stage = exclusion_stage(entry.notes) if excluded else None
+            tip = (f"Excluded in {stage}" if stage else "Excluded") if excluded else None
+            self.cmb_animal.setItemData(i, tip, Qt.ItemDataRole.ToolTipRole)
 
     @staticmethod
     def _animal_id_of(key: str) -> str:
@@ -633,13 +638,15 @@ class PSDGridPage(QWidget):
         return entry.notes.strip()
 
     def _update_excluded_marker(self) -> None:
-        """Banner and grey curves while the current animal is excluded in Sleep QC."""
+        """Banner and grey curves while the current animal is excluded (in Sleep QC or here)."""
         notes = self._excluded_notes()
         excluded = notes is not None
         self._excluded_banner.setVisible(excluded)
         if excluded:
+            stage = exclusion_stage(notes)
+            where = f" in {stage}" if stage else ""
             self._excluded_banner.setText(
-                "<b>EXCLUDED in Sleep QC</b> — shown for reference; the analysis leaves this "
+                f"<b>EXCLUDED{where}</b> — shown for reference; the analysis leaves this "
                 "animal out." + (f"<br>{notes.replace(chr(10), '<br>')}" if notes else "")
             )
         pen = pg.mkPen((140, 140, 140) if excluded else (0, 0, 0), width=1.5)

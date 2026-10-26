@@ -604,3 +604,18 @@ def test_home_page_hides_hint_once_animals_exist(qapp, tmp_path: Path):
     page = _make_page(qapp, tmp_path)
     page._refresh()
     assert page._empty_lbl.isHidden()
+
+
+# ---------------------------------------------------------------------------
+# Which step excluded an animal
+# ---------------------------------------------------------------------------
+
+
+def test_excluded_cell_names_the_step_that_excluded_the_animal(qapp, tmp_path: Path):
+    page = _make_page(qapp, tmp_path)
+    notes_qc = "Excluded (Sleep QC): noisy EMG"
+    notes_psd = "Excluded (Sleep QC): noisy\nExcluded (PSD review): extra bad"
+    assert page._build_sleep_qc_cell("excluded", True, notes_qc).text() == "Excluded (Sleep QC)"
+    assert page._build_sleep_qc_cell("excluded", True, notes_psd).text() == "Excluded (PSD review)"
+    # No reason recorded (manifest edited by hand): just "Excluded".
+    assert page._build_sleep_qc_cell("excluded", True, "").text() == "Excluded"

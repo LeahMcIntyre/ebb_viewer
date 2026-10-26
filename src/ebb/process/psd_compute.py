@@ -720,7 +720,7 @@ def build_run_final_pkl(
     Prefers `psds_<combo>_drink.pkl` (which contains drink-masked overrides —
     see `rerun_with_drink_masks`) over `psds_<combo>.pkl`.
 
-    ``excluded`` maps animal ID to the Sleep QC exclusion reason. Excluded animals stay in
+    ``excluded`` maps animal ID to the exclusion reason (Sleep QC or PSD review). Excluded animals stay in
     the file; every record gets ``excluded`` / ``exclusion_reason`` fields and an
     ``excluded_animals.csv`` is written beside it (header only when ``excluded`` is empty).
     With ``excluded=None`` the records are copied unchanged.

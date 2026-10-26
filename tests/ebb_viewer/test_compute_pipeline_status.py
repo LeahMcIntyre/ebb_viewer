@@ -416,7 +416,7 @@ def test_excluded_sleep_qc_cell_is_labelled_and_carries_the_reason(qapp):
     from ebb_viewer.pages.home import HomePage
 
     cell = HomePage._build_sleep_qc_cell(None, "excluded", True, "Excluded (Sleep QC): lost signal")
-    assert cell.text() == "Excluded"
+    assert cell.text() == "Excluded (Sleep QC)"
     assert cell.toolTip() == "Excluded (Sleep QC): lost signal"
     assert HomePage._build_sleep_qc_cell(None, "ok", True, "x").toolTip() == ""
 

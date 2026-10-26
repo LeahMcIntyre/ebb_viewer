@@ -36,6 +36,7 @@ from ebb_viewer.pipeline import psd_params as _psd_params
 from ebb_viewer.pipeline.manifest import (
     Manifest,
     ManifestEntry,
+    exclusion_stage,
     psd_path,
     psd_status_label,
     spindle_edf_dir,
@@ -877,6 +878,10 @@ class HomePage(QWidget):
             txt = _SLEEP_QC_LABEL.get(sleep_qc, sleep_qc)
             bg = _STATUS_COLOR.get(sleep_qc)
             if sleep_qc == "excluded":
+                # The status is shared by both exclusion points; say which one was used.
+                stage = exclusion_stage(notes)
+                if stage:
+                    txt = f"{txt} ({stage})"
                 return make_cell(txt, bg, tooltip=notes or None)
         return make_cell(txt, bg)
 
