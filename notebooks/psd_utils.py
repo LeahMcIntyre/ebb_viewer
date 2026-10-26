@@ -16,6 +16,7 @@ Conventions (these match the ebb pipeline's output):
 
 from __future__ import annotations
 
+import csv
 import pathlib
 import pickle
 import warnings
@@ -206,6 +207,56 @@ def load_psd_runs(
 # ----------------------------------------------------------------------------------------------
 # Groups, line noise, normalization, band power
 # ----------------------------------------------------------------------------------------------
+def read_groups_csv(path):
+    """``{group: [animal IDs]}`` from a CSV, in either of two layouts.
+
+    * One row per animal, with columns named ``animal`` and ``group`` (other columns are ignored).
+    * One column per group: the group name in the first row, its animal IDs below it.
+
+    Blank cells and rows are skipped, and a group with no animals is dropped. An animal listed
+    in two groups is an error.
+    """
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        lines = [
+            (n, [cell.strip() for cell in row]) for n, row in enumerate(csv.reader(f), start=1)
+        ]
+    lines = [(n, row) for n, row in lines if any(row)]
+    if not lines:
+        raise ValueError(f"{path} is empty")
+    header, body = lines[0][1], lines[1:]
+    lowered = [name.lower() for name in header]
+
+    groups = {}
+    if "animal" in lowered and "group" in lowered:
+        i_animal, i_group = lowered.index("animal"), lowered.index("group")
+        for n, row in body:
+            animal = row[i_animal] if i_animal < len(row) else ""
+            group = row[i_group] if i_group < len(row) else ""
+            if animal and group:
+                groups.setdefault(group, []).append(animal)
+            elif animal or group:
+                raise ValueError(f"{path}, line {n}: a row needs both an animal and a group")
+    else:
+        for col, name in enumerate(header):
+            animals = [row[col] for _, row in body if col < len(row) and row[col]]
+            if animals and not name:
+                raise ValueError(
+                    f"{path}: column {col + 1} has animals but no group name in its first row"
+                )
+            if name:
+                groups[name] = animals
+
+    groups = {group: list(dict.fromkeys(animals)) for group, animals in groups.items() if animals}
+    owner = {}
+    for group, animals in groups.items():
+        for animal in animals:
+            if owner.setdefault(animal, group) != group:
+                raise ValueError(
+                    f"{path}: {animal} is in more than one group ({owner[animal]}, {group})"
+                )
+    return groups
+
+
 def assign_groups(df: pd.DataFrame, groups: Mapping[str, Sequence[str]]) -> pd.DataFrame:
     """Add ``group`` (and ``group_time`` when there is a ``time`` column).
 

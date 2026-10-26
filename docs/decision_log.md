@@ -391,6 +391,13 @@ Most of it lives in `manifest.json`, `psd_params.json` and the project folders. 
 - **Output:** `<project>/sleep_analysis/` with Prism-ready workbooks (`prism_sleep_by_hour.xlsx`, `prism_sleep_whole_file.xlsx`), tidy CSVs and PNG plots.
 - **Confidence:** settled
 
+### Groups can be typed or read from a CSV
+- **Stage:** Analysis notebooks (PSD analysis, sleep by hour, walkthrough)
+- **Chosen:** Besides a typed `GROUPS` dictionary, each notebook accepts `GROUPS_CSV`, the path to a CSV in either of two layouts: one row per animal (`animal`, `group` columns), or one column per group with the animal IDs below the group name. The layout is detected from the header.
+- **Recommended layout:** One row per animal. Each animal appears once, so a duplicate assignment is easy to see (and is an error), and the file can be sorted and filtered. The one-column-per-group layout is accepted because it is quick to type and matches Prism's layout.
+- **Where in code:** `read_groups_csv` in `notebooks/psd_utils.py`. The two sleep notebooks are self-contained, so each carries an identical copy; a test checks that the copies match.
+- **Confidence:** settled
+
 ### Time bins: 2-hour bins aligned to clock time, starting at 6 AM
 - **Chosen:** Rotate each recording so its first 6 AM (lights on, ZT 0) is position 0 and cut it into 2-hour bins. Lights off is ZT 12. All of these are settings (`BIN_HOURS = 2`, `BEGIN_HR = 6`, `DARK_ONSET_ZT = 12`).
 - **Why:** Clock-aligned bins are how similar analyses are done in the literature. Each recording starts at a different time of day, so the start times (read from the EDF header) are needed to align files to each other. They have not caused problems.
