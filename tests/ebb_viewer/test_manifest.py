@@ -817,3 +817,13 @@ def test_drink_loop_counts_and_labels(tmp_path):
     )
     assert psd_status_label(None) == "needs review"
     assert psd_status_label("drink_mask_applied") == "mask applied — verify"
+
+
+def test_exclusion_stage_is_the_stage_of_the_last_excluded_line():
+    from ebb_viewer.pipeline.manifest import exclusion_stage
+
+    assert exclusion_stage("") is None
+    assert exclusion_stage("just a note") is None
+    assert exclusion_stage("Excluded (Sleep QC): noisy") == "Sleep QC"
+    both = "Excluded (Sleep QC): noisy\nback in\nExcluded (PSD review): artifact"
+    assert exclusion_stage(both) == "PSD review"

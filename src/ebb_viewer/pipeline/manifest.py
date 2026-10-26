@@ -45,6 +45,18 @@ READY_STATUSES = frozenset({"ok", "excluded"})
 STAGE_SLEEP_QC = "Sleep QC"
 STAGE_PSD_REVIEW = "PSD review"
 _EXCLUDED_LINE = re.compile(r"Excluded \(([^)]*)\):\s*(.*)")
+
+
+def exclusion_stage(notes: str) -> str | None:
+    """Where an excluded animal was excluded: the stage of the last ``Excluded (<stage>)`` note.
+
+    ``None`` when the notes have no such line (excluded without a reason, e.g. by editing
+    manifest.json). The last line wins, so excluding again at another stage updates the answer.
+    """
+    stages = [m.group(1) for ln in notes.splitlines() if (m := _EXCLUDED_LINE.match(ln.strip()))]
+    return stages[-1] if stages else None
+
+
 PSD_STATUSES = frozenset({"ok", "needs_drink_mask", "drink_mask_applied"})
 
 # User-facing names for the PSD review states, shared by every page that shows them.
