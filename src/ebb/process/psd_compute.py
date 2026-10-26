@@ -466,6 +466,19 @@ def _star_call(fn_args):
     return fn(*args)
 
 
+def annotation_files_by_animal(ann_dir: str | Path) -> dict[str, Path]:
+    """``{animal_id: path}`` of the ``.txt`` / ``.csv`` / ``.tsv`` annotation files in ``ann_dir``.
+
+    Empty when ``ann_dir`` is not a directory. If several files share an animal ID, the last one
+    found wins.
+    """
+    ann_dir = Path(ann_dir)
+    if not ann_dir.is_dir():
+        return {}
+    files = [f for pattern in ("*.txt", "*.csv", "*.tsv") for f in ann_dir.glob(pattern)]
+    return {parse_animal_id(f): f for f in files}
+
+
 def _prepare_estimator_kwargs(
     kwargs: dict,
     ann_params: dict | None = None,
@@ -504,13 +517,8 @@ def _prepare_estimator_kwargs(
     ann_by_animal: dict[str, Path] = {}
     if ann_params:
         ann_dir = ann_params.get("ann_dir")
-        if ann_dir and Path(ann_dir).is_dir():
-            for f in (
-                list(Path(ann_dir).glob("*.txt"))
-                + list(Path(ann_dir).glob("*.csv"))
-                + list(Path(ann_dir).glob("*.tsv"))
-            ):
-                ann_by_animal[parse_animal_id(f)] = f
+        if ann_dir:
+            ann_by_animal = annotation_files_by_animal(ann_dir)
         kwargs.update(
             {
                 "ann_keywords": ann_params.get("keywords") or [],
