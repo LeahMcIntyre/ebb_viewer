@@ -248,7 +248,7 @@ Decisions: [log §2](decision_log.md).
 2. **SleepyRat project:** choose **your own name** from the list. This is how your files are kept separate from other users' on SleepyRat. **If your name is not in the list, click "New…"**, type your name (and, optionally, a description), and it is created and selected. If your name is already in the list, do not create it again. **Refresh** reloads the list.
 3. **Remote folder name:** the folder inside your SleepyRat project that holds this project's files. It is filled in for you from the project folder's name and the combo (for example `Walk_Through_LFC_RSC`); change it only if you want a different name. A line under the box tells you whether the folder already exists ("Existing folder — already-uploaded edf files will be skipped; missing labels will be downloaded") or will be created ("New folder — will be created on upload").
 4. Click **Upload & Download**. The button stays disabled until a project and a folder name are set; hover over it to see what is missing.
-5. **First time only:** a browser tab opens asking you to approve access for ebb. Approve it there; the app waits. The approval is remembered on this computer.
+5. **First time only:** a browser tab opens asking you to approve access for ebb. Log in with the appropriate credentials and approve it there; the app waits. The approval is remembered on this computer.
 6. Watch the log. For files not yet on SleepyRat it uploads them, then waits for SleepyRat to finish scoring (this can take a long time: with many files, more than an hour is still normal, so leave the app open), then downloads one label CSV per animal.
 7. When the green bar says "Done. Labels downloaded — ready to reclassify.", click **→ Reclassify**.
 
@@ -328,13 +328,15 @@ python -c "import numpy as np; from scipy.io import savemat; savemat('swd/CW0DB1
 Details: [sleep_reclassification.md](sleep_reclassification.md) §5. Decisions: [log §4](decision_log.md).
 
 ### 5. Sleep QC
-**Goal:** decide for every animal whether its sleep data are trustworthy: **OK**, **needs review**, or **exclude**. The sleep and PSD analyses depend on this decision, so do it carefully. Do the review **blind to genotype**. File names generally do not carry genotype, so the review is blind as long as the person doing it does not know which animal ID belongs to which group.
+**Goal:** decide for every animal whether its sleep data are trustworthy. **Every animal must end up either OK or Excluded**; PSD computation does not start until all of them are. You do this in **two passes**: first in the **Sleep** view, where you mark each animal **OK**, **Review** or **Exclude**, and then on **Home**, where you look at each animal marked Review and settle it as OK or Exclude. The sleep and PSD analyses depend on these decisions, so do it carefully. Do the review **blind to genotype**. File names generally do not carry genotype, so the review is blind as long as the person doing it does not know which animal ID belongs to which group.
 
 **Before you start:** Reclassify has run (and SWD review, if your project uses it). The page uses the reclassified states. **Show original** switches the plots to SPINDLE's original states, for comparison; nothing is written to disk.
 
 **The page has two views** (the **VIEW** buttons at the top right): **Overview** (the default) and **Sleep** (the by-hour plots).
 
 **Step 1: Overview.** One boxplot per metric, one dot per animal, with the raw points shown. Animals past a threshold are red and labelled.
+
+**Why animals are flagged.** The metrics below are ones that, in our own past data, made us suspicious of a noisy or misclassified recording: many very short NREM bouts (the sleep looks chopped up), too many NREM bouts per dark hour, too much or too little of one state (REM %, NREM %, wake %), or a big spike of REM in one 2-hour stretch. They are warning signs, **not rules**: a flagged animal may be fine and an unflagged one may not be, so you still look at every animal.
 
 | Metric | Default threshold |
 |---|---|
@@ -347,14 +349,12 @@ Details: [sleep_reclassification.md](sleep_reclassification.md) §5. Decisions: 
 
 An animal that passes the threshold on **any** of the six metrics usually has suspicious sleep data, which may mean noise or misclassification. These thresholds came from our own data; **use them as a starting point**, not as rules. **Animals past a threshold are flagged for review automatically** when the page loads its data, if they have no decision yet: a red line under the page description lists them ("Flagged for review automatically"), and they appear on Home under Needs Attention. Animals you have already marked OK, Excluded or Review are never changed. You can also flag any other animal yourself: **click its dot, then click "Flag for Review"**. This marks it `needs_review`. To clear an automatic flag, click **Review** again on that animal (it goes back to not decided; the page flags it again the next time it loads its data if it is still past a threshold).
 
-**Step 2: Review flagged animals.**
-- To look at an animal's EEG directly: go to **Home** and click the animal in the **Needs Attention** section (**Open EDF**). There you can mark it **✓ OK**. A card shows which metrics flagged the animal, and **[EMG gate]** (in brackets) when the EMG gate was applied to that animal during Reclassify, since the gate changes how its states were corrected.
-- Or open the **Sleep** view and judge from the by-hour plots.
-
-**Step 3: Sleep view.** For each animal, look for anything very out of place or wrong looking: is the sleep too fragmented, are the fractions of time in each state about what you would expect? Under DISPLAY, **Group** shows all animals together (page by page with **◄ Prev** / **Next ►**) and **Animal** shows a single animal at a time.
+**Step 2: First pass, the Sleep view.** Click **Sleep** (the **VIEW** buttons, top right) and go through **every** animal. For each, look for anything very out of place or wrong looking: is the sleep too fragmented, are the fractions of time in each state about what you would expect? Under DISPLAY, **Group** shows all animals together (page by page with **◄ Prev** / **Next ►**) and **Animal** shows a single animal at a time.
 - **Time axis:** **Clock-aligned** (default), **Rotate to 6AM**, **From Start**. In clock-aligned mode the first and last bins of an animal may be shorter than 2 hours, so they can look strange. If you are worried about the first or last bin, **switch to Rotate to 6AM or From Start and look again** before deciding.
 - **Median** draws a group-median reference line on the plots, so you can see how an animal compares with the others.
-- For each animal press **OK** (the data look fine), **Review** (look again later) or **Exclude**. The page tells you when every animal has a decision ("All spindle metrics checked — ready for PSD computation").
+- For each animal press **OK** (the sleep scoring looks fine), **Review** (something looks off and you want to look at the actual recording) or **Exclude** (it is clearly wrong or noisy; a reason is required, see below).
+
+**Step 3: Second pass, Home.** Go to **Home**. The **Needs Attention** section lists every animal marked **Review**, including the ones flagged automatically. A card shows which metrics flagged the animal, and **[EMG gate]** (in brackets) when the EMG gate was applied to that animal during Reclassify, since the gate changes how its states were corrected. For each card, click **Open EDF**, look at the recording, and settle the animal: in the viewer's toolbar press **✓ Mark OK** or **Exclude** (a reason is required), or click **✓ OK** on the card if the animal is fine. **Review is not a final answer:** every animal marked Review must end as OK or Excluded. The Sleep QC page tells you when every animal has a decision ("All spindle metrics checked — ready for PSD computation").
 
 **Excluding an animal.** Exclude when the sleep data look wrong and something about the EEG or EMG looks very noisy or wrong, for example lots of misclassification. Animals past a threshold should generally be excluded, but use your own judgment. **A reason is required, and it is saved with the animal.** Make it specific, so someone else can see what you saw:
 - Find **where in the recording** the major misclassification happens.
@@ -363,7 +363,7 @@ An animal that passes the threshold on **any** of the six metrics usually has su
 
 An excluded animal is not deleted. Its data are still processed and kept, and it is marked as excluded in the final files so you can reverse the decision or leave it out later. Un-excluding sets the animal back to `needs_review`.
 
-**Check your work:** every animal has OK or Excluded (no "needs review" left), and each excluded animal has a reason in its notes (visible on Home).
+**Check your work:** every animal has OK or Excluded (no "needs review" left, and no review cards left under Needs Attention on Home), and each excluded animal has a reason in its notes (visible on Home).
 
 **TODO:** screenshots of the Overview and the Sleep view.
 Details: [sleep_qc_and_exclusion.md](sleep_qc_and_exclusion.md). Decisions: [log §5](decision_log.md).
@@ -449,7 +449,7 @@ Details: [sleep_qc_and_exclusion.md](sleep_qc_and_exclusion.md) §5. Decisions: 
 **Before you start**
 - At least one animal is flagged `needs_drink_mask` in the PSD Visualizer.
 - **A drink-event file for each flagged animal**: `drink_masks/<AnimalID>.npy`, a 1 Hz array with one true/false value per second of the recording. These files are made **outside this pipeline**, with the lab's network that detects drinking events from the recording video. The video has to be exported from the PVFS file. **In our lab, ask Claudia.**
-- **One offsets CSV in `drink_masks/`** (only needed if the video and the EEG did not start at the same moment; with no CSV the page assumes they are aligned) with the columns `Animal` and `Offset` and one row per animal. The offset is the time, in seconds, from the start of the EEG recording to the start of the video (a positive number means the video starts after the EEG). Read it from the animal's PVFS file. Keep only one CSV in the folder. **TODO:** paste a small example of the CSV here.
+- **One offsets CSV in `drink_masks/`** (only needed if the video and the EEG did not start at the same moment; with no CSV the page assumes they are aligned) with the columns `Animal` and `Offset` and one row per animal. The offset is the time, in seconds, from the start of the EEG recording to the start of the video (a positive number means the video starts after the EEG). Get these values manually from the PVFS file. Keep only one CSV in the folder. **TODO:** paste a small example of the CSV here.
 
 **Steps**
 1. Open **8. Drink Mask**. The ANIMALS line tells you how many are flagged, how many are ready to apply and how many are missing a mask file (for example "1 flagged · 1 ready to apply"). The **Video offset CSV** section (collapsed) shows whether the offsets file is valid.
