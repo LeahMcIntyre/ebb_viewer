@@ -31,7 +31,6 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 
 ## C. Decisions to make
 
-- [ ] `psds_final.pkl` naming, or embed project/run/date inside the file. *(log §8)*
 - [ ] Mask export: mark or omit excluded animals. *(log §8)*
 - [ ] Provenance: write a project summary or run log at Finalize (trim/downsample, combo, SWD, reclassification, PSD params, exclusions, drink masks). Also record SPINDLE scoring date/version. *(log §8, §2)*
 - [ ] Drop the "Confirm no SWD" button in favor of empty `.mat` files? *(log §4)*
@@ -42,10 +41,14 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 - [ ] The combo is set implicitly by writing SPINDLE EDFs. Home now shows it ("default; set on 2. Spindle EDFs" until then); consider a deliberate way to see and change it.
 - [ ] Preprocess page: no cancel button (see `TODO.md`).
 
-- [ ] **`ebb-combine edf` needs a lot of memory** on 5 kHz data (about 55 GB for two chunks; it loads each 24 h chunk whole). It completed on a 48 GB Mac only after other programs were closed. Consider changing `combine_edf` to read and write in blocks.
-- [ ] Redraw `pipeline_flow.md` (still shows `needs_rerun`, the Rerun page and multi-combo).
-
 ## Done
+
+- [x] Deleted the stale slide diagrams (`pipeline_flow_slide.md`, `psd_flow_slide.md`, `storage_schematic_slide.md`). `pipeline_flow.md` now has two flowcharts and the folder layout.
+
+- [x] `pipeline_flow.md` redrawn for the current stages (branch `docs/pipeline-flow`).
+
+- [x] Decided: `psds_final.pkl` keeps its name.
+- [x] Decided: no change to `ebb-combine edf` memory use. The guide tells users to close other programs first (about 55 GB free for a two-chunk animal).
 
 - [x] Branch `fix/small-ui-fixes` (not merged): Preprocess file-name note and leftover-chunk warning; PSD readiness warning for animals without an annotation file; Home shows the combo and explains the empty table.
 
