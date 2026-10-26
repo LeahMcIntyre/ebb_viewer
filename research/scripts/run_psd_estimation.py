@@ -24,7 +24,6 @@ def main():
         fs=250,
         nstd=5,
         verbose=True,
-        s_prob = 0.99,
     )
 
     print(f"Computed {len(results)} PSD results")

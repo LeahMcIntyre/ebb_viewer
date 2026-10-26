@@ -10,6 +10,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
+import pickle
+
 import numpy as np
 import pandas as pd
 
@@ -25,6 +27,19 @@ _SHEET_NAME_MAX = 31
 def _sheet_name(channel: str, state: str) -> str:
     name = f"{channel}_{state}"
     return name[:_SHEET_NAME_MAX]
+
+
+def _excluded_in_pkl(pkl_path: Path) -> dict[str, str]:
+    """``{animal: reason}`` from the ``excluded`` fields Finalize writes into psds_final.pkl."""
+    with open(pkl_path, "rb") as f:
+        items = pickle.load(f)
+    if isinstance(items, dict):
+        items = [items]
+    return {
+        parse_animal_id(rec["path"]): rec.get("exclusion_reason", "")
+        for rec in items
+        if rec.get("excluded")
+    }
 
 
 def export_psds_to_xlsx(
@@ -73,5 +88,12 @@ def export_psds_to_xlsx(
                 else:
                     df[animal] = np.asarray(pair[1], float)
             df.to_excel(writer, sheet_name=_sheet_name(channel, state), index=False)
+        # Prism reads the per-combo sheets; this extra sheet (only when the sealed pkl marks
+        # exclusions) says which animal columns were excluded (in Sleep QC or PSD review).
+        excluded = _excluded_in_pkl(pkl_path)
+        if excluded:
+            pd.DataFrame(
+                {"animal": sorted(excluded), "reason": [excluded[a] for a in sorted(excluded)]}
+            ).to_excel(writer, sheet_name="excluded_animals", index=False)
 
     return out_path

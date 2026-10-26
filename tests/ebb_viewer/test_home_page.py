@@ -10,14 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ebb_viewer.pipeline.manifest import (
-    Manifest,
-    ManifestEntry,
-    RunEntry,
-)
-
-# Column index for "PSD Status" in the Pipeline Summary table.
-_PSD_STATUS_COL = 8
+from ebb_viewer.pages.home import _COL_NOTES, _COL_PSD_STATUS, _COL_SLEEP_QC, _COL_SWD
+from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
 
 
 def _make_page(qapp, tmp_path: Path):
@@ -32,19 +26,21 @@ def _seed_manifest(
     *,
     sleep_qc: str | None = "ok",
 ) -> None:
-    """One animal, one combo, with the given per-run psd_status dict."""
+    """One animal with the given per-run psd_status dict."""
     m = Manifest(tmp_path)
     m._entries["AM001"] = ManifestEntry(
         animal_id="AM001",
         preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={"LFC_RSC": RunEntry(sleep_qc=sleep_qc, psd_status=psd_status)},
+        has_spindle=True,
+        sleep_qc=sleep_qc,
+        psd_status=psd_status,
     )
     m.save()
 
 
 def _psd_status_cell(page) -> str:
     """Read the PSD Status column text for the first row."""
-    item = page.table.item(0, _PSD_STATUS_COL)
+    item = page.table.item(0, _COL_PSD_STATUS)
     return item.text() if item is not None else ""
 
 
@@ -62,21 +58,20 @@ def test_page_constructs_with_empty_project(qapp, tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# B4 — PSD-status column "best-wins" precedence
+# PSD-status column "best-wins" precedence
 #
 # Precedence (analysis-readiness, highest wins):
 #   drink_mask_applied > ok > needs_drink_mask
 #
-# Rationale: the column reflects the analysis-ready state for the
-# (animal, combo). Pending-work signal is surfaced separately via the
-# attention card (Manifest.all_needs_drink_mask) and per-run PSD Review.
+# Rationale: the column reflects the analysis-ready state for the animal.
+# Pending-work signal is surfaced separately via the attention card
+# (Manifest.all_needs_drink_mask) and per-run PSD Review.
 # ---------------------------------------------------------------------------
 
 
 def test_psd_status_drink_mask_applied_beats_needs_drink_mask(qapp, tmp_path: Path):
     """If any PSD run has drink_mask_applied, the column reads as such even
-    when other runs still need the mask. Pre-fix the column showed
-    'needs drink mask' here."""
+    when other runs still need the mask."""
     _seed_manifest(
         tmp_path,
         psd_status={
@@ -85,7 +80,7 @@ def test_psd_status_drink_mask_applied_beats_needs_drink_mask(qapp, tmp_path: Pa
         },
     )
     page = _make_page(qapp, tmp_path)
-    assert _psd_status_cell(page) == "drink mask applied"
+    assert _psd_status_cell(page) == "mask applied — verify"
 
 
 def test_psd_status_drink_mask_applied_beats_ok(qapp, tmp_path: Path):
@@ -98,7 +93,7 @@ def test_psd_status_drink_mask_applied_beats_ok(qapp, tmp_path: Path):
         },
     )
     page = _make_page(qapp, tmp_path)
-    assert _psd_status_cell(page) == "drink mask applied"
+    assert _psd_status_cell(page) == "mask applied — verify"
 
 
 def test_psd_status_ok_beats_needs_drink_mask(qapp, tmp_path: Path):
@@ -121,8 +116,8 @@ def test_psd_status_needs_drink_mask_alone(qapp, tmp_path: Path):
         psd_status={"default": "needs_drink_mask"},
     )
     page = _make_page(qapp, tmp_path)
-    # Without an on-disk drink-mask npy, the cell reads "needs drink mask".
-    assert _psd_status_cell(page) == "needs drink mask"
+    # Without an on-disk drink-mask npy, the cell reads "needs mask".
+    assert _psd_status_cell(page) == "needs mask"
 
 
 def test_psd_status_empty_dict_falls_through_to_dash(qapp, tmp_path: Path):
@@ -133,82 +128,11 @@ def test_psd_status_empty_dict_falls_through_to_dash(qapp, tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# B3 — compute_pipeline_status: step 5 must distinguish "rerun accepted"
-# from "rerun rejected" (target combo's sleep_qc must be ok, not rejected).
+# _open_windows must shrink when an opened window is destroyed.
 # ---------------------------------------------------------------------------
 
 
-def test_b3_step5_blocked_when_rerun_target_was_rejected(tmp_path: Path):
-    """A needs_rerun original whose rerun target ended up rejected (not ok)
-    must NOT show step 5 as ``done`` — there's no accepted rerun to take
-    forward. Pre-fix the count-only check incorrectly marked it done."""
-    from ebb_viewer.pages.home import compute_pipeline_status
-
-    # Set up minimal filesystem so step 3 passes.
-    (tmp_path / "standard").mkdir()
-    (tmp_path / "standard" / "AM001.edf").write_text("")
-    edf_dir = tmp_path / "spindle_edfs" / "LFC_RSC"
-    edf_dir.mkdir(parents=True)
-    (edf_dir / "AM001_LFC_RSC_spindle.edf").write_text("")
-    out_dir = tmp_path / "spindle_outputs" / "LFC_RSC"
-    out_dir.mkdir(parents=True)
-    (out_dir / "AM001_LFC_RSC.csv").write_text("rawstate\n")
-
-    # AM001: LFC_RSC needs_rerun → rerun_combo LSC_RSC was rejected.
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001",
-        preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={
-            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC_RSC"),
-            "LSC_RSC": RunEntry(sleep_qc="rejected"),
-        },
-    )
-    m.save()
-
-    statuses = compute_pipeline_status(tmp_path, m)
-    # Step indices are 0-based.
-    s5 = statuses[4]
-    assert s5.kind != "done", (
-        f"Step 5 must not be done when rerun target was rejected. Got: {s5}"
-    )
-
-
-def test_b3_step5_done_when_rerun_target_ok(tmp_path: Path):
-    """Happy path: rerun target accepted as ok → step 5 done."""
-    from ebb_viewer.pages.home import compute_pipeline_status
-
-    (tmp_path / "standard").mkdir()
-    (tmp_path / "standard" / "AM001.edf").write_text("")
-    edf_dir = tmp_path / "spindle_edfs" / "LFC_RSC"
-    edf_dir.mkdir(parents=True)
-    (edf_dir / "AM001_LFC_RSC_spindle.edf").write_text("")
-    out_dir = tmp_path / "spindle_outputs" / "LFC_RSC"
-    out_dir.mkdir(parents=True)
-    (out_dir / "AM001_LFC_RSC.csv").write_text("rawstate\n")
-
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001",
-        preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={
-            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC_RSC"),
-            "LSC_RSC": RunEntry(sleep_qc="ok"),
-        },
-    )
-    m.save()
-
-    statuses = compute_pipeline_status(tmp_path, m)
-    s5 = statuses[4]
-    assert s5.kind == "done", f"Step 5 should be done when rerun target is ok. Got: {s5}"
-
-
-# ---------------------------------------------------------------------------
-# B1 — _open_windows must shrink when an opened window is destroyed.
-# ---------------------------------------------------------------------------
-
-
-def test_b1_open_windows_prunes_on_destroy(qapp, tmp_path: Path):
+def test_open_windows_prunes_on_destroy(qapp, tmp_path: Path):
     """Closing an EDF viewer window must drop it from ``_open_windows`` so
     its (potentially large) recording data can be garbage-collected."""
     from PyQt6.QtCore import QCoreApplication, QEvent
@@ -216,7 +140,7 @@ def test_b1_open_windows_prunes_on_destroy(qapp, tmp_path: Path):
 
     page = _make_page(qapp, tmp_path)
     fake_win = QWidget()
-    # Wire the same way _open_edf_for_animal does after the fix.
+    # Wire the same way _open_edf_for_animal does.
     fake_win.destroyed.connect(lambda _, w=fake_win: page._on_window_closed(w))
     page._open_windows.append(fake_win)
     assert len(page._open_windows) == 1
@@ -229,7 +153,7 @@ def test_b1_open_windows_prunes_on_destroy(qapp, tmp_path: Path):
     assert len(page._open_windows) == 0
 
 
-def test_b1_on_window_closed_handles_unknown_window(qapp, tmp_path: Path):
+def test_on_window_closed_handles_unknown_window(qapp, tmp_path: Path):
     """Calling _on_window_closed with a window that was never in the list
     must not raise — the slot is connected via lambda and may fire after
     the list was already cleared (e.g. during page teardown)."""
@@ -243,20 +167,13 @@ def test_b1_on_window_closed_handles_unknown_window(qapp, tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# B4 — _on_cell_double_clicked must use the cached row list (matching what
-# the user sees), not re-derive from a fresh manifest load.
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Row-builder Sleep QC cell — covers the rerun → done / pending / needs_rerun
-# branches that previously lived inline in _refresh.
+# Sleep QC cell — pending / dash / needs_review branches.
 # ---------------------------------------------------------------------------
 
 
 def _sleep_qc_cell(page) -> str:
-    """Read the Sleep QC column text for the first row (column index 6)."""
-    item = page.table.item(0, 6)
+    """Read the Sleep QC column text for the first row."""
+    item = page.table.item(0, _COL_SLEEP_QC)
     return item.text() if item is not None else ""
 
 
@@ -276,107 +193,10 @@ def test_sleep_qc_cell_dash_when_no_spindle_output(qapp, tmp_path: Path):
     assert _sleep_qc_cell(page) == "—"
 
 
-def test_sleep_qc_cell_needs_review_shows_sibling_ok_hint(qapp, tmp_path: Path):
-    """A needs_review row whose sibling combo is OK should surface the
-    relationship inline: e.g. 'Review EDF (LFC_RSC ok)' + a tooltip.
-
-    Background: when the user clicks Review on a cascade-rejected sibling,
-    the manifest transitions it to 'needs_review' and *clears* the
-    rejected_by metadata. Without a hint in the cell, the summary table
-    looks like there are two competing flags for one animal.
-    """
-    from ebb_viewer.pipeline.manifest import (
-        Manifest,
-        ManifestEntry,
-        RunEntry,
-    )
-
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001",
-        preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={
-            "LFC_RSC": RunEntry(sleep_qc="ok"),
-            "LSC_RSC": RunEntry(sleep_qc="needs_review"),
-        },
-    )
-    m.save()
+def test_sleep_qc_cell_needs_review(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, psd_status={}, sleep_qc="needs_review")
     page = _make_page(qapp, tmp_path)
-
-    # Find the LSC_RSC row in the rendered table (order depends on dict
-    # insertion order, but both rows are rendered when hide_rejected
-    # filters nothing).
-    lsc_row = next(
-        i for i, (_e, c, _r) in enumerate(page._table_rows) if c == "LSC_RSC"
-    )
-    cell = page.table.item(lsc_row, 6)
-    assert "Review EDF" in cell.text()
-    assert "LFC_RSC ok" in cell.text()
-    assert "LFC_RSC" in cell.toolTip()
-
-
-def test_sleep_qc_cell_needs_review_without_sibling_ok_is_terse(qapp, tmp_path: Path):
-    """If no sibling is OK, the cell stays terse — just 'Review EDF'."""
-    from ebb_viewer.pipeline.manifest import (
-        Manifest,
-        ManifestEntry,
-        RunEntry,
-    )
-
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001",
-        preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={"LSC_RSC": RunEntry(sleep_qc="needs_review")},
-    )
-    m.save()
-    page = _make_page(qapp, tmp_path)
-
-    cell = page.table.item(0, 6)
-    assert cell.text() == "Review EDF"
-    assert cell.toolTip() == ""
-
-
-def test_sleep_qc_cell_rerun_done_when_target_ok(qapp, tmp_path: Path):
-    """A needs_rerun row whose rerun target is ok → 'rerun done ✓'."""
-    from ebb_viewer.pipeline.manifest import (
-        Manifest,
-        ManifestEntry,
-        RunEntry,
-    )
-
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001",
-        preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={
-            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC_RSC"),
-            "LSC_RSC": RunEntry(sleep_qc="ok"),
-        },
-    )
-    m.save()
-    page = _make_page(qapp, tmp_path)
-    # First row in the table is whichever combo iterates first (LFC_RSC).
-    assert _sleep_qc_cell(page) == "rerun done ✓"
-
-
-def test_sleep_qc_cell_rerun_pending_with_edit_hint(qapp, tmp_path: Path):
-    """needs_rerun + rerun_combo, no rerun EDF written yet → 'rerun → X  ✎'
-    with the double-click-to-change tooltip."""
-    from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
-
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001",
-        preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={"LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC_RSC")},
-    )
-    m.save()
-    page = _make_page(qapp, tmp_path)
-    text = _sleep_qc_cell(page)
-    assert "rerun → LSC_RSC" in text
-    assert "✎" in text
-    assert page.table.item(0, 6).toolTip().startswith("Double-click")
+    assert _sleep_qc_cell(page) == "Review EDF"
 
 
 # ---------------------------------------------------------------------------
@@ -385,13 +205,10 @@ def test_sleep_qc_cell_rerun_pending_with_edit_hint(qapp, tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-_PSD_FILE_COL = 7
-
-
 def _seed_two_run_project(tmp_path: Path, *, psd_status_by_run: dict[str, str]) -> None:
     """Create a project with two named PSD runs registered on disk plus a
     matching manifest entry. ``psd_status_by_run`` is written into the
-    single animal's ``RunEntry.psd_status``."""
+    single animal's ``psd_status``."""
     import json
 
     for run_name in ("default", "dark_phase"):
@@ -399,15 +216,7 @@ def _seed_two_run_project(tmp_path: Path, *, psd_status_by_run: dict[str, str]) 
         run_dir.mkdir(parents=True)
         (run_dir / "psd_params.json").write_text(json.dumps({}))
 
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001",
-        preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={
-            "LFC_RSC": RunEntry(sleep_qc="ok", psd_status=psd_status_by_run),
-        },
-    )
-    m.save()
+    _seed_manifest(tmp_path, psd_status=psd_status_by_run)
 
 
 def test_run_filter_hidden_when_fewer_than_two_runs(qapp, tmp_path: Path):
@@ -447,7 +256,7 @@ def test_run_filter_default_uses_best_wins(qapp, tmp_path: Path):
 
 
 def test_run_filter_specific_run_overrides_best_wins(qapp, tmp_path: Path):
-    """Selecting "dark_phase" shows that run's status ("needs drink mask")
+    """Selecting "dark_phase" shows that run's status ("needs mask")
     even though "default" is ok — this is exactly the visibility the
     dropdown is meant to enable."""
     _seed_two_run_project(
@@ -457,13 +266,13 @@ def test_run_filter_specific_run_overrides_best_wins(qapp, tmp_path: Path):
     page = _make_page(qapp, tmp_path)
     idx = page.cmb_run_filter.findData("dark_phase")
     page.cmb_run_filter.setCurrentIndex(idx)
-    assert _psd_status_cell(page) == "needs drink mask"
+    assert _psd_status_cell(page) == "needs mask"
 
 
 def test_run_filter_specific_run_with_no_entry_shows_dash(qapp, tmp_path: Path):
-    """If the chosen run has no psd_status for this (animal, combo) and the
-    on-disk pkl is missing, the cell shows "—" rather than the best-wins
-    state from other runs."""
+    """If the chosen run has no psd_status for this animal and the on-disk
+    pkl is missing, the cell shows "—" rather than the best-wins state from
+    other runs."""
     _seed_two_run_project(
         tmp_path,
         psd_status_by_run={"default": "ok"},  # dark_phase has no entry
@@ -473,9 +282,6 @@ def test_run_filter_specific_run_with_no_entry_shows_dash(qapp, tmp_path: Path):
     page.cmb_run_filter.setCurrentIndex(idx)
     # No psd_status entry for "dark_phase" and no pkl on disk → "—".
     assert _psd_status_cell(page) == "—"
-    # PSD File should also reflect the chosen run, not best-wins.
-    file_cell = page.table.item(0, _PSD_FILE_COL).text()
-    assert file_cell == "—"
 
 
 def test_run_filter_selection_preserved_across_refresh(qapp, tmp_path: Path):
@@ -511,177 +317,54 @@ def test_run_filter_falls_back_when_selection_disappears(qapp, tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
-# Review card "Rerun as:" dropdown exclusions
-#
-# A run flagged needs_review should not be offered rerun targets that would
-# either violate the one-ok invariant or silently rewire another combo's
-# existing rerun chain (see flag_sleep_qc:612 in manifest.py).
+# Needs Attention cards
 # ---------------------------------------------------------------------------
 
 
-def _rerun_combo_items(card) -> list[str]:
-    """Return userData for every item in the card's QComboBox (the rerun
-    target picker). Empty list if no QComboBox is present."""
+def _attention_button_texts(page) -> list[str]:
+    from PyQt6.QtWidgets import QPushButton
+
+    return [b.text() for b in page._attn_container.findChildren(QPushButton)]
+
+
+def test_review_card_offers_open_and_ok_only(qapp, tmp_path: Path):
+    """A needs_review animal gets a card with Open EDF / OK — no rerun controls."""
     from PyQt6.QtWidgets import QComboBox
 
-    combos = card.findChildren(QComboBox)
-    if not combos:
-        return []
-    cmb = combos[0]
-    return [cmb.itemData(i) for i in range(cmb.count())]
-
-
-def _no_targets_label(card) -> str | None:
-    """Return the 'No clean rerun targets' label text if present."""
-    from PyQt6.QtWidgets import QLabel
-
-    for lbl in card.findChildren(QLabel):
-        if "No clean rerun targets" in lbl.text():
-            return lbl.text()
-    return None
-
-
-def test_review_card_excludes_source_combo_from_rerun_dropdown(qapp, tmp_path: Path):
-    """The LSC card for AM0806 in the screenshot bug: when LSC is a rerun
-    sourced from LFC_RSC, LFC_RSC should not appear in the rerun dropdown."""
-    m = Manifest(tmp_path)
-    m._entries["AM0806"] = ManifestEntry(
-        animal_id="AM0806",
-        preprocessed_edf="AM0806_PREPROCESSED.edf",
-        runs={
-            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
-            "LSC": RunEntry(sleep_qc="needs_review", source_combo="LFC_RSC"),
-        },
-    )
-    m.save()
-
+    _seed_manifest(tmp_path, psd_status={}, sleep_qc="needs_review")
     page = _make_page(qapp, tmp_path)
-    card = page._make_review_card(m._entries["AM0806"], "LSC")
-
-    items = _rerun_combo_items(card)
-    assert "LFC_RSC" not in items, "source_combo must not appear as a rerun target"
+    assert _attention_button_texts(page) == ["Open EDF", "✓ OK"]
+    assert page._attn_container.findChildren(QComboBox) == []
 
 
-def test_review_card_excludes_needs_rerun_siblings(qapp, tmp_path: Path):
-    """Combos already in needs_rerun state must be hidden — flag_sleep_qc
-    silently overwrites their chain if picked as a fresh target."""
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001",
-        preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={
-            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
-            "LSC": RunEntry(sleep_qc="needs_review", source_combo="LFC_RSC"),
-        },
-    )
-    m.save()
-
+def test_review_card_ok_button_flags_animal_ok(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, psd_status={}, sleep_qc="needs_review")
     page = _make_page(qapp, tmp_path)
-    card = page._make_review_card(m._entries["AM001"], "LSC")
+    emitted: list = []
+    page.manifest_changed.connect(lambda: emitted.append(True))
 
-    items = _rerun_combo_items(card)
-    assert "LFC_RSC" not in items  # source AND needs_rerun
-    # Clean targets remain
-    assert set(items).issubset({"LFC_LSC", "RSC_LSC", "LFC", "RSC"})
+    page._queue_flag_ok("AM001")
+
+    assert Manifest.load(tmp_path).get("AM001").sleep_qc == "ok"
+    assert emitted == [True]
 
 
-def test_review_card_excludes_ok_siblings(qapp, tmp_path: Path):
-    """ok combos already exhausted the one-ok slot — not a valid rerun target."""
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001",
-        preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={
-            "LFC_RSC": RunEntry(sleep_qc="ok"),
-            "LSC": RunEntry(sleep_qc="needs_review"),
-        },
-    )
-    m.save()
-
+def test_drink_mask_card_links_to_drink_mask_page(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, psd_status={"default": "needs_drink_mask"})
+    (tmp_path / "psd" / "default").mkdir(parents=True)
+    (tmp_path / "psd" / "default" / "psd_params.json").write_text("{}")
+    (tmp_path / "psd" / "default" / "psds_LFC_RSC.pkl").touch()
     page = _make_page(qapp, tmp_path)
-    card = page._make_review_card(m._entries["AM001"], "LSC")
-
-    assert "LFC_RSC" not in _rerun_combo_items(card)
-
-
-def test_review_card_shows_empty_state_label_when_no_targets(qapp, tmp_path: Path):
-    """When every other combo is excluded, render the placeholder label
-    instead of silently dropping the rerun controls."""
-    # All other combos are queued for rerun → nothing clean remains.
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001",
-        preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={
-            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
-            "LFC_LSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
-            "RSC_LSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
-            "LFC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
-            "RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
-            "LSC": RunEntry(sleep_qc="needs_review"),
-        },
-    )
-    m.save()
-
-    page = _make_page(qapp, tmp_path)
-    card = page._make_review_card(m._entries["AM001"], "LSC")
-
-    assert _rerun_combo_items(card) == []
-    assert _no_targets_label(card) == "No clean rerun targets"
+    assert "→ Drink Mask page" in _attention_button_texts(page)
 
 
 # ---------------------------------------------------------------------------
-# _on_cell_double_clicked picker — same exclusion rule as the review card
+# _on_cell_double_clicked must use the cached row list (matching what the
+# user sees), not re-derive from a fresh manifest load.
 # ---------------------------------------------------------------------------
 
 
-def test_double_click_picker_excludes_needs_rerun_siblings(
-    qapp, tmp_path: Path, monkeypatch
-):
-    """The Pipeline Summary cell double-click picker must apply the same
-    exclusion rule as the attention-card dropdown so both UI paths agree."""
-    from PyQt6.QtWidgets import QInputDialog
-
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001",
-        preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={
-            # Two needs_rerun siblings: picking either as the new target would
-            # silently rewire its chain via flag_sleep_qc:612.
-            "LFC_RSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
-            "RSC_LSC": RunEntry(sleep_qc="needs_rerun", rerun_combo="LSC"),
-        },
-    )
-    m.save()
-
-    page = _make_page(qapp, tmp_path)
-    # The double-click handler reads _table_rows, which is populated by
-    # _refresh in __init__.
-    rows = page._table_rows
-    row_idx = next(
-        i for i, (e, combo, _r) in enumerate(rows)
-        if e.animal_id == "AM001" and combo == "LFC_RSC"
-    )
-
-    captured: dict = {}
-
-    def fake_getItem(parent, title, label, items, current, editable):
-        captured["items"] = list(items)
-        # Cancel the dialog so the test doesn't try to mutate.
-        return "", False
-
-    monkeypatch.setattr(QInputDialog, "getItem", fake_getItem)
-
-    from ebb_viewer.pages.home import _COL_SLEEP_QC
-    page._on_cell_double_clicked(row_idx, _COL_SLEEP_QC)
-
-    items = captured["items"]
-    assert "LFC_RSC" not in items  # current row
-    assert "RSC_LSC" not in items  # other needs_rerun sibling
-
-
-def test_b4_double_click_uses_cached_rendered_rows(qapp, tmp_path: Path):
+def test_double_click_uses_cached_rendered_rows(qapp, tmp_path: Path):
     """After ``_refresh`` renders the table, ``self._table_rows`` reflects
     exactly what was drawn. If the manifest is modified afterward,
     ``_on_cell_double_clicked`` must still resolve row indices against the
@@ -698,17 +381,17 @@ def test_b4_double_click_uses_cached_rendered_rows(qapp, tmp_path: Path):
     m2._entries["AM000"] = ManifestEntry(  # alphabetically first
         animal_id="AM000",
         preprocessed_edf="AM000_PREPROCESSED.edf",
-        runs={},
     )
     m2._entries["AM001"] = ManifestEntry(
         animal_id="AM001",
         preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={"LFC_RSC": RunEntry(sleep_qc="ok")},
+        has_spindle=True,
+        sleep_qc="ok",
     )
     m2.save()
 
     # The cached rows still describe what the table actually shows.
-    cached_animal_ids = [r[0].animal_id for r in page._table_rows]
+    cached_animal_ids = [e.animal_id for e in page._table_rows]
     assert "AM000" not in cached_animal_ids
 
 
@@ -716,34 +399,29 @@ def test_b4_double_click_uses_cached_rendered_rows(qapp, tmp_path: Path):
 # Notes column
 # ---------------------------------------------------------------------------
 
-_NOTES_COL = 9
 
-
-def test_notes_cell_dash_when_empty(qapp, tmp_path: Path):
+def _seed_notes_animal(tmp_path: Path, notes: str = "") -> None:
     m = Manifest(tmp_path)
     m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001", preprocessed_edf="AM001_PREPROCESSED.edf", runs={}
+        animal_id="AM001", preprocessed_edf="AM001_PREPROCESSED.edf", notes=notes
     )
     m.save()
 
+
+def test_notes_cell_dash_when_empty(qapp, tmp_path: Path):
+    _seed_notes_animal(tmp_path)
+
     page = _make_page(qapp, tmp_path)
-    item = page.table.item(0, _NOTES_COL)
+    item = page.table.item(0, _COL_NOTES)
     assert item.text() == "—"
     assert item.toolTip() == ""
 
 
 def test_notes_cell_shows_icon_and_tooltip_when_present(qapp, tmp_path: Path):
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001",
-        preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={},
-        notes="noisy EMG channel",
-    )
-    m.save()
+    _seed_notes_animal(tmp_path, notes="noisy EMG channel")
 
     page = _make_page(qapp, tmp_path)
-    item = page.table.item(0, _NOTES_COL)
+    item = page.table.item(0, _COL_NOTES)
     assert item.text() == "📝"
     assert item.toolTip() == "noisy EMG channel"
 
@@ -752,16 +430,10 @@ def test_double_click_notes_column_persists_and_emits(qapp, tmp_path: Path, monk
     """Double-clicking the Notes cell opens the editor and persists the text."""
     import ebb_viewer.pages.home as home_mod
 
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001", preprocessed_edf="AM001_PREPROCESSED.edf", runs={}
-    )
-    m.save()
+    _seed_notes_animal(tmp_path)
 
     page = _make_page(qapp, tmp_path)
-    row_idx = next(
-        i for i, (e, _combo, _r) in enumerate(page._table_rows) if e.animal_id == "AM001"
-    )
+    row_idx = next(i for i, e in enumerate(page._table_rows) if e.animal_id == "AM001")
 
     class FakeNotesDialog:
         def __init__(self, *, animal_id, initial_text, parent=None):
@@ -779,7 +451,7 @@ def test_double_click_notes_column_persists_and_emits(qapp, tmp_path: Path, monk
     emitted: list = []
     page.manifest_changed.connect(lambda: emitted.append(True))
 
-    page._on_cell_double_clicked(row_idx, _NOTES_COL)
+    page._on_cell_double_clicked(row_idx, _COL_NOTES)
 
     assert Manifest.load(tmp_path).get("AM001").notes == "new note"
     assert emitted == [True]
@@ -790,19 +462,10 @@ def test_double_click_notes_column_cancel_does_not_change_manifest(
 ):
     import ebb_viewer.pages.home as home_mod
 
-    m = Manifest(tmp_path)
-    m._entries["AM001"] = ManifestEntry(
-        animal_id="AM001",
-        preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={},
-        notes="original note",
-    )
-    m.save()
+    _seed_notes_animal(tmp_path, notes="original note")
 
     page = _make_page(qapp, tmp_path)
-    row_idx = next(
-        i for i, (e, _combo, _r) in enumerate(page._table_rows) if e.animal_id == "AM001"
-    )
+    row_idx = next(i for i, e in enumerate(page._table_rows) if e.animal_id == "AM001")
 
     class FakeNotesDialog:
         def __init__(self, *, animal_id, initial_text, parent=None):
@@ -819,7 +482,171 @@ def test_double_click_notes_column_cancel_does_not_change_manifest(
     emitted: list = []
     page.manifest_changed.connect(lambda: emitted.append(True))
 
-    page._on_cell_double_clicked(row_idx, _NOTES_COL)
+    page._on_cell_double_clicked(row_idx, _COL_NOTES)
 
     assert Manifest.load(tmp_path).get("AM001").notes == "original note"
     assert emitted == []
+
+
+def test_excluded_animal_psd_status_is_a_dash_not_pending(qapp, tmp_path: Path):
+    """Excluded animals are never PSD-reviewed, so the cell must not read "pending"."""
+    _seed_manifest(tmp_path, psd_status={}, sleep_qc="excluded")
+    page = _make_page(qapp, tmp_path)
+    assert _psd_status_cell(page) == "—"
+
+
+# ---------------------------------------------------------------------------
+# Layout: next-step banner, attention-only filter
+# ---------------------------------------------------------------------------
+
+
+def test_attention_only_filter_hides_finished_animals(qapp, tmp_path: Path):
+    """Only animals with outstanding work stay in the table when the filter is on."""
+    m = Manifest(tmp_path)
+    for animal_id, qc in (("AM001", "ok"), ("AM002", "needs_review"), ("AM003", "excluded")):
+        m._entries[animal_id] = ManifestEntry(
+            animal_id=animal_id, preprocessed_edf="", has_spindle=True, sleep_qc=qc
+        )
+    m.save()
+    page = _make_page(qapp, tmp_path)
+    assert page.table.rowCount() == 3
+    page.chk_attention_only.setChecked(True)
+    assert [e.animal_id for e in page._table_rows] == ["AM002"]
+    assert page.table.rowCount() == 1
+
+
+def test_attention_zone_hidden_when_nothing_needs_attention(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, psd_status={}, sleep_qc="ok")
+    page = _make_page(qapp, tmp_path)
+    assert page._attn_content_px == 0
+    assert page._attn_scroll.isHidden()
+
+
+def test_next_banner_points_at_first_unfinished_step(qapp, tmp_path: Path):
+    """With an animal under review the banner offers the Sleep QC page."""
+    (tmp_path / "standard").mkdir()
+    (tmp_path / "standard" / "AM001_PREPROCESSED.edf").touch()
+    _seed_manifest(tmp_path, psd_status={}, sleep_qc="needs_review")
+    page = _make_page(qapp, tmp_path)
+    assert page._next_page is not None
+    assert page._next_page != "preprocess"
+
+
+def test_swd_column_hidden_without_swd_files(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, psd_status={})
+    page = _make_page(qapp, tmp_path)
+    assert page.table.isColumnHidden(_COL_SWD)
+
+
+def test_swd_column_shows_found_and_missing(qapp, tmp_path: Path):
+    """With some .mat files present, an animal without one is flagged missing."""
+    m = Manifest(tmp_path)
+    for animal_id in ("AM001", "AM002"):
+        m._entries[animal_id] = ManifestEntry(
+            animal_id=animal_id, preprocessed_edf="", has_spindle=True, sleep_qc="ok"
+        )
+    m.save()
+    (tmp_path / "swd").mkdir()
+    (tmp_path / "swd" / "AM001.mat").touch()
+    page = _make_page(qapp, tmp_path)
+    assert not page.table.isColumnHidden(_COL_SWD)
+    assert page.table.item(0, _COL_SWD).text() == "✓"
+    assert page.table.item(1, _COL_SWD).text() == "missing"
+
+
+def test_review_card_shows_why_it_was_flagged(qapp, tmp_path: Path):
+    from PyQt6.QtWidgets import QLabel
+
+    _seed_manifest(tmp_path, psd_status={}, sleep_qc="needs_review")
+    m = Manifest.load(tmp_path)
+    m.flag_sleep_qc("AM001", "needs_review", ["nrem_short", "pct_wake"])
+    page = _make_page(qapp, tmp_path)
+    texts = [lbl.text() for lbl in page._attn_container.findChildren(QLabel)]
+    assert "Flagged: short NREM bouts, high wake" in texts
+
+
+# ---------------------------------------------------------------------------
+# Combo label and the empty-table hint
+# ---------------------------------------------------------------------------
+
+
+def test_combo_text_says_default_until_spindle_edfs_are_written(tmp_path: Path):
+    from ebb_viewer.pages.home import combo_text
+
+    assert "default" in combo_text(tmp_path, "LFC_RSC")
+    d = tmp_path / "spindle_edfs" / "LFC_RSC"
+    d.mkdir(parents=True)
+    (d / "AM001_SPINDLE.edf").write_text("")
+    assert combo_text(tmp_path, "LFC_RSC") == "Channel combo: LFC_RSC"
+
+
+def test_empty_animals_hint_counts_raw_edfs(tmp_path: Path):
+    from ebb_viewer.pages.home import empty_animals_hint
+
+    assert "no EDF files" in empty_animals_hint(tmp_path, 0)
+    (tmp_path / "AM001_a.edf").write_text("")
+    (tmp_path / "AM002_a.edf").write_text("")
+    assert "Found 2 EDF files" in empty_animals_hint(tmp_path, 0)
+    assert empty_animals_hint(tmp_path, 3) is None
+
+
+def test_home_page_shows_hint_and_combo_for_a_fresh_project(qapp, tmp_path: Path):
+    (tmp_path / "AM001_a.edf").write_text("")
+    page = _make_page(qapp, tmp_path)
+    page._refresh()
+    assert not page._empty_lbl.isHidden()
+    assert "1. Preprocess" in page._empty_lbl.text()
+    assert "Channel combo: LFC_RSC" in page._combo_lbl.text()
+
+
+def test_home_page_hides_hint_once_animals_exist(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {})
+    page = _make_page(qapp, tmp_path)
+    page._refresh()
+    assert page._empty_lbl.isHidden()
+
+
+# ---------------------------------------------------------------------------
+# Which step excluded an animal
+# ---------------------------------------------------------------------------
+
+
+def test_excluded_cell_names_the_step_that_excluded_the_animal(qapp, tmp_path: Path):
+    page = _make_page(qapp, tmp_path)
+    notes_qc = "Excluded (Sleep QC): noisy EMG"
+    notes_psd = "Excluded (Sleep QC): noisy\nExcluded (PSD review): extra bad"
+    assert page._build_sleep_qc_cell("excluded", True, notes_qc).text() == "Excluded (Sleep QC)"
+    assert page._build_sleep_qc_cell("excluded", True, notes_psd).text() == "Excluded (PSD review)"
+    # No reason recorded (manifest edited by hand): just "Excluded".
+    assert page._build_sleep_qc_cell("excluded", True, "").text() == "Excluded"
+
+
+# ---------------------------------------------------------------------------
+# Needs Attention card: EMG gate
+# ---------------------------------------------------------------------------
+
+
+def _card_texts(page, entry) -> list[str]:
+    from PyQt6.QtWidgets import QLabel
+
+    card = page._make_review_card(entry)  # keep a reference: the card has no parent
+    return [w.text() for w in card.findChildren(QLabel)]
+
+
+def test_review_card_shows_emg_gate_in_brackets_when_it_was_applied(qapp, tmp_path: Path):
+    page = _make_page(qapp, tmp_path)
+
+    def entry(animal, gate):
+        return ManifestEntry(
+            animal_id=animal,
+            preprocessed_edf="x.edf",
+            has_spindle=True,
+            sleep_qc="needs_review",
+            flag_reasons=["nrem_short"],
+            reclass_gate_applied=gate,
+        )
+
+    assert "[EMG gate]" in _card_texts(page, entry("AM001", True))
+    assert "[EMG gate]" not in _card_texts(page, entry("AM002", False))
+    assert "[EMG gate]" not in _card_texts(page, entry("AM003", None))
+    assert any(t.startswith("Flagged:") for t in _card_texts(page, entry("AM001", True)))

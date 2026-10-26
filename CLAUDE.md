@@ -36,23 +36,37 @@ Pages in pipeline order:
 1. `PreprocessPage` — raw EDFs → `standard/`
 2. `SpindleWritePage` — `standard/` → `spindle_edfs/<COMBO>/`
 3. `SpindleUploadPage` — upload/download via `SleepyRatWorker`
-4. `SleepQCGridPage` — per-animal, per-combo OK/Review/Rerun flagging
-5. `RerunPage` — queue of animals needing reruns; writes new spindle EDFs + upload
-6. `PSDPage` — computes PSDs, writes `psd/psds_<COMBO>.pkl`
-7. `PSDVisualizer` — review PSDs, flag drink mask artifacts
+4. `ReclassifyPage` — NREM gap fill + EMG gate (`ebb.process.nrem_reclass`); writes `reclass_state` and `final_state` into each `spindle_outputs/<COMBO>/*.csv` and records the gate decision in the manifest
+4b. `SwdReviewPage` — optional (project opt-in): step through epochs that overlap an SWD and fix their states; writes `swd_reclassification` and updates `final_state`
+5. `SleepQCGridPage` — opens on an **Overview** of boxplots of the flagging metrics (`ebb.process.sleep_flagging`; thresholds in `Manifest.flag_thresholds`) where animals past a threshold are highlighted and can be flagged, then the by-hour grid with per-animal OK / Review / Exclude buttons. Exclude requires a reason, appended to `notes` (`Manifest.exclude_sleep_qc`). Metrics and plots use the reclassified states (`final_state`); **Show original** switches to the original SPINDLE states.
+6. `PSDPage` — computes PSDs, writes `psd/<RUN>/psds_<COMBO>.pkl` (ok **and** excluded animals)
+7. `PSDVisualizer` — review PSDs of `ok` animals, flag drink mask artifacts; shows excluded animals with a banner, and has an Exclude button (reason required)
+8. `DrinkMaskPage` — re-run PSDs with drink masks for the animals flagged `needs_drink_mask`
+9. `FinalizePage` — seals `psds_final.pkl`; keeps excluded animals and marks them (`excluded` / `exclusion_reason`, `excluded_animals.csv`). Sleep analysis is not a page: users copy `notebooks/sleep_by_hour.ipynb` (settings + Run All) or `sleep_by_hour_walkthrough.ipynb` (the same calculation explained step by step); both compute in the open from `final_state` and leave out excluded animals
+10. `ExportMasksPage` — exports masks (includes excluded animals, unmarked: a known gap)
+
+How the states are produced and consumed is documented in `docs/sleep_reclassification.md`; how Sleep QC, PSD review, Finalize and exclusions fit together (statuses, queues, what each step does with an excluded animal, known gaps) is in `docs/sleep_qc_and_exclusion.md`. In short: **all analysis reads `final_state`** and raises `NotReclassifiedError` if it is missing; the original states are only for the "original" comparison views (`STATE_COLUMNS`).
 
 ### Manifest
 
 `pipeline/manifest.py` is the authoritative pipeline state store. It persists to `project_root/manifest.json` (atomic write via `.tmp` rename).
 
 Key model:
-- `Manifest` — ordered dict of `ManifestEntry` objects, one per animal
-- `ManifestEntry` — holds `preprocessed_edf` path + `runs: dict[str, RunEntry]`
-- `RunEntry` — per (animal × channel combo): `sleep_qc`, `rerun_combo`, `psd_status`, `drink_mask`
+- `Manifest` — ordered dict of `ManifestEntry` objects, one per animal, plus the project-level `combo` (default `LFC_RSC`; stored at the top level of `manifest.json`)
+- `ManifestEntry` — `preprocessed_edf` path, `has_spindle`, `sleep_qc`, `flag_reasons` (metrics past threshold when flagged, shown on Home), `reclass_gate_applied`, `swd_reviewed` / `swd_total` / `swd_waived`, `psd_status`, `drink_mask`, `notes`. A project has exactly one channel combo, so there is no per-combo run state.
+- The project-level SWD review opt-in is `Manifest.swd_review_enabled` (top level of `manifest.json`, next to `combo`).
 
 `Manifest.build_from_standard(root)` is the standard constructor on the home page — it loads existing state and syncs new files from disk without overwriting existing flags.
 
-Valid statuses: `sleep_qc` ∈ `{None, "ok", "needs_review", "needs_rerun"}`; `psd_status` ∈ `{None, "ok", "needs_drink_mask", "drink_mask_applied"}`.
+Valid statuses: `sleep_qc` ∈ `{None, "ok", "needs_review", "excluded"}`; `psd_status` ∈ `{None, "ok", "needs_drink_mask", "drink_mask_applied"}`.
+
+Exclusion rules (details in `docs/sleep_qc_and_exclusion.md`):
+- `"excluded"` needs a reason (`Manifest.exclude_sleep_qc`), appended to `notes` as an `Excluded (<stage>): ...` line (stage = Sleep QC or PSD review).
+- `READY_STATUSES = {"ok", "excluded"}` ("Sleep QC decided") gate PSD compute and the exports, so an excluded animal is still computed.
+- Only `"ok"` animals are in PSD review: the review queues use `== "ok"`, `psd_status` / `drink_mask` exist only while `sleep_qc == "ok"` (any other status clears them), and `flag_psd` raises for a non-ok animal.
+- Finalize snapshots the exclusions into the sealed outputs; the manifest is the live record.
+
+`manifest._entry_from_dict` still reads the pre-single-combo format (marked TEMPORARY) — delete it once existing projects have been re-saved.
 
 ### EDF viewer component
 
@@ -65,9 +79,7 @@ Valid statuses: `sleep_qc` ∈ `{None, "ok", "needs_review", "needs_rerun"}`; `p
 
 ### SleepyRat upload/download
 
-`SleepyRatWorker` (in `pages/spindle_upload.py`) is a `QThread` subclass with two modes:
-- `files=<list of Paths>` — upload exactly those files, no remote skip check (used by `RerunPage`)
-- `upload_dir=<Path>` — glob directory, skip files already on remote (used by `SpindleUploadPage`)
+`SleepyRatWorker` (in `pages/spindle_upload.py`) is a `QObject` worker that globs `upload_dir=<Path>`, skips files already on the remote, uploads the rest, and downloads label CSVs.
 
 The low-level HTTP calls live in `ebb/io/sleepyrat.py`.
 
@@ -76,7 +88,7 @@ The low-level HTTP calls live in `ebb/io/sleepyrat.py`.
 - `fs = 250` Hz (hardcoded in multiple places)
 - `ch_names = ("LFC", "RSC", "LSC", "EMG")`
 - EDF stem format: `AnimalID_..._PREPROCESSED.edf` — animal ID is the first `_`-delimited token
-- Channel combo strings (e.g. `"LFC_RSC"`) are used as directory names and dict keys throughout
+- The project's channel combo string (`Manifest.combo`, e.g. `"LFC_RSC"`) names the `spindle_edfs/`, `spindle_outputs/` and `psd/<RUN>/psds_<COMBO>.pkl` locations
 
 ## Working conventions
 
@@ -103,15 +115,3 @@ styling quirks. Read the relevant section before touching `pages/`,
 `pipeline/manifest.py`, or `ebb/process/psd_compute.py`. Skim it before
 running auto-formatters or aggressive simplifications — there are
 several seams that linters love to delete.
-
-## Non-obvious design intents
-
-### Sleep QC review mode: ✓ Accept on the *original* combo is intentional
-In `pages/sleep_qc_visualizer.py` `_update_legend_animal`, when review
-mode is on, every combo in `drawn_combos` (including the non-rerun
-original where `run.source_combo is None`) gets a `✓ Accept` button.
-This *looks* like a bug because clicking Accept on the original
-cascade-rejects the rerun the user just waited for — but it's the
-intended affordance. After seeing the rerun's metrics, the user may
-decide the original was fine and choose to keep it. Don't gate this
-button on `source_combo is not None`.

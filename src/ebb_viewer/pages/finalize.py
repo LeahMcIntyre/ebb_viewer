@@ -32,6 +32,7 @@ from ebb.core.naming import parse_animal_id
 from ebb.process.state_presets import PRESET_DISPLAY
 from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.widgets.swd_warning import confirm_unfinished_swd_review
 
 CH_LABELS = ["LFC", "RSC", "LSC"]
 
@@ -203,41 +204,20 @@ class FinalizePage(QWidget):
         self._no_runs_lbl.setVisible(False)
         root.addWidget(self._no_runs_lbl)
 
-        # ── Sleep section ─────────────────────────────────────────────────
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("color: #dee2e6;")
-        root.addWidget(sep)
-
-        sleep_hdr = QLabel("Sleep")
-        sleep_hdr.setStyleSheet("font-weight: bold; font-size: 13px; color: #333;")
-        root.addWidget(sleep_hdr)
-
-        sleep_desc = QLabel(
-            "Consolidate each animal's accepted-combo sleep scoring into one "
-            "export bundle under sleep_export/: the chosen SPINDLE CSVs plus "
-            "rotate-to-6AM binned metrics, per-day averages, and whole-recording "
-            "summaries (as tidy CSVs and an Excel workbook)."
+        # Sleep analysis is done in a notebook, not here.
+        sleep_note = QLabel(
+            "To analyse sleep, copy <b>notebooks/sleep_by_hour.ipynb</b>, set the project folder "
+            "and groups, and Run All. It reads the reclassified states and leaves out excluded "
+            "animals. <b>sleep_by_hour_walkthrough.ipynb</b> explains every calculation step by step."
         )
-        sleep_desc.setWordWrap(True)
-        sleep_desc.setStyleSheet("color: #555; font-size: 12px;")
-        root.addWidget(sleep_desc)
-
-        sleep_row = QHBoxLayout()
-        self._sleep_status_lbl = QLabel("—")
-        self._sleep_status_lbl.setWordWrap(True)
-        sleep_row.addWidget(self._sleep_status_lbl, 1)
-        self._btn_export_sleep = QPushButton("Export Sleep Data")
-        self._btn_export_sleep.setStyleSheet("font-weight: bold;")
-        self._btn_export_sleep.clicked.connect(self._on_export_sleep)
-        sleep_row.addWidget(self._btn_export_sleep)
-        root.addLayout(sleep_row)
+        sleep_note.setTextFormat(Qt.TextFormat.RichText)
+        sleep_note.setWordWrap(True)
+        sleep_note.setStyleSheet("color: #555; font-size: 12px;")
+        root.addWidget(sleep_note)
 
     # ------------------------------------------------------------------
 
     def _refresh(self):
-        self._refresh_sleep_section()
-
         # Clear existing cards (keep the trailing stretch)
         while self._cards_layout.count() > 1:
             item = self._cards_layout.takeAt(0)
@@ -306,11 +286,11 @@ class FinalizePage(QWidget):
                 else:
                     parts = []
                     if n_review:
-                        parts.append(f"{n_review} pending review")
+                        parts.append(f"{n_review} need review")
                     if n_drink:
-                        parts.append(f"{n_drink} need drink mask")
+                        parts.append(f"{n_drink} need a drink mask")
                     if n_verify:
-                        parts.append(f"{n_verify} pending verification")
+                        parts.append(f"{n_verify} to verify")
                     pending_text = "⚠ " + ", ".join(parts)
                     pending_style = "color: #8a4400;"
             except Exception:
@@ -322,9 +302,20 @@ class FinalizePage(QWidget):
         status_lbl.setStyleSheet(pending_style)
         layout.addWidget(status_lbl)
 
+        excluded = manifest.excluded_animals() if manifest is not None else {}
+        if excluded:
+            excluded_lbl = QLabel(
+                f"{len(excluded)} excluded animal(s) are kept in psds_final.pkl and marked "
+                f"(excluded / exclusion_reason): {', '.join(sorted(excluded))}"
+            )
+            excluded_lbl.setWordWrap(True)
+            excluded_lbl.setStyleSheet("color: #555;")
+            layout.addWidget(excluded_lbl)
+
         # Source file that will be used
-        drink_src = psd_dir / "psds_channel_merged_drink.pkl"
-        base_src = psd_dir / "psds_channel_merged.pkl"
+        combo = Manifest.load(self.project_root).combo
+        drink_src = psd_dir / f"psds_{combo}_drink.pkl"
+        base_src = psd_dir / f"psds_{combo}.pkl"
         if drink_src.exists():
             src_text = f"Source: {drink_src.name} (drink masks applied)"
             src_style = "color: #1a5c8a;"
@@ -332,7 +323,7 @@ class FinalizePage(QWidget):
             src_text = f"Source: {base_src.name}"
             src_style = "color: #333;"
         else:
-            src_text = "Source: no merged PKL found yet"
+            src_text = "Source: no PSD PKL found yet"
             src_style = "color: gray;"
         src_lbl = QLabel(src_text)
         src_lbl.setStyleSheet(src_style + " font-size: 11px;")
@@ -383,75 +374,29 @@ class FinalizePage(QWidget):
 
         return card
 
-    # ------------------------------------------------------------------
-    # Sleep section
-    # ------------------------------------------------------------------
-
-    def _refresh_sleep_section(self):
-        try:
-            manifest = Manifest.load(self.project_root)
-        except Exception:
-            self._sleep_status_lbl.setText("Could not read manifest.")
-            self._sleep_status_lbl.setStyleSheet("color: gray;")
-            self._btn_export_sleep.setEnabled(False)
-            return
-
-        with_runs = [e.animal_id for e in manifest if e.runs]
-        if not with_runs:
-            self._sleep_status_lbl.setText("No animals have sleep scoring yet.")
-            self._sleep_status_lbl.setStyleSheet("color: gray;")
-            self._btn_export_sleep.setEnabled(False)
-            return
-
-        missing = [a for a in with_runs if manifest.ok_combo(a) is None]
-        n_ok = len(with_runs) - len(missing)
-        if missing:
-            preview = ", ".join(missing[:8]) + ("…" if len(missing) > 8 else "")
-            self._sleep_status_lbl.setText(
-                f"⚠ {n_ok} of {len(with_runs)} animals have an accepted combo. "
-                f"Not yet accepted: {preview}"
-            )
-            self._sleep_status_lbl.setStyleSheet("color: #8a4400;")
-        else:
-            self._sleep_status_lbl.setText(f"✓ All {n_ok} animals have an accepted combo.")
-            self._sleep_status_lbl.setStyleSheet("color: #1a5c1a;")
-        self._btn_export_sleep.setEnabled(n_ok > 0)
-
-    def _on_export_sleep(self):
-        from ebb_viewer.pipeline.sleep_finalize import build_sleep_export
-
-        try:
-            result = build_sleep_export(self.project_root)
-        except Exception as e:
-            QMessageBox.critical(self, "Sleep Export Failed", str(e))
-            return
-
-        lines = [
-            f"Exported {len(result.exported)} animal(s) to:",
-            str(result.out_dir),
-            "",
-            "Wrote sleep_bins.csv, sleep_bins_avg.csv, sleep_whole_file.csv, "
-            "sleep_export.xlsx, and chosen_csvs/.",
-        ]
-        if result.missing_ok:
-            lines += ["", f"Skipped — no accepted combo: {', '.join(result.missing_ok)}"]
-        if result.missing_csv:
-            lines += ["", f"Skipped — CSV missing on disk: {', '.join(result.missing_csv)}"]
-        QMessageBox.information(self, "Sleep Data Exported", "\n".join(lines))
-        self._refresh()
-
     def _on_finalize(self, run_name: str):
         from ebb.process.psd_compute import build_run_final_pkl
 
+        if not confirm_unfinished_swd_review(self, self.project_root):
+            return
+
+        manifest = Manifest.load(self.project_root)
+        excluded = manifest.excluded_animals()
         try:
-            out = build_run_final_pkl(self.project_root, run_name)
+            out = build_run_final_pkl(self.project_root, manifest.combo, run_name, excluded=excluded)
         except Exception as e:
             QMessageBox.critical(self, "Finalize Failed", str(e))
             return
+        note = (
+            f"\n\n{len(excluded)} excluded animal(s) are kept and marked (excluded / "
+            f"exclusion_reason, plus excluded_animals.csv): {', '.join(sorted(excluded))}"
+            if excluded
+            else "\n\nNo animals are excluded."
+        )
         QMessageBox.information(
             self,
             "Run Finalized",
-            f"psds_final.pkl written for run '{run_name}'.\n\n{out}",
+            f"psds_final.pkl written for run '{run_name}'.\n\n{out}{note}",
         )
         self._refresh()
 

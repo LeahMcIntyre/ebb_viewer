@@ -104,6 +104,9 @@ class MaskParamsWidget(QWidget):
             sections. Off by default — pages that already provide their
             own zone framing (e.g. PSD compute) can opt in to surface the
             distinction.
+        event_masks_first: If True, list the event-based masks (SWD,
+            annotation, hours) before the artifact masks, which are usually
+            left at their defaults.
     """
 
     changed = pyqtSignal()
@@ -117,6 +120,7 @@ class MaskParamsWidget(QWidget):
         show_drink_mask: bool = True,
         expose_states_externally: bool = False,
         show_subzone_headers: bool = False,
+        event_masks_first: bool = False,
     ):
         super().__init__(parent)
         self._project_root = Path(project_root) if project_root else None
@@ -124,6 +128,7 @@ class MaskParamsWidget(QWidget):
         self._show_drink_mask = show_drink_mask
         self._expose_states_externally = expose_states_externally
         self._show_subzone_headers = show_subzone_headers
+        self._event_masks_first = event_masks_first
         self._ann_dir: Path | None = None
         # Cached EDF (rec_start, n_samples) tuples for the hour-window
         # preview. Lazy-populated on first preview refresh; reset when
@@ -298,6 +303,9 @@ class MaskParamsWidget(QWidget):
         self._sections["annotation"].set_subtitle(_annotation_subtitle(p))
         self._sections["hour_window"].set_subtitle(_hour_window_subtitle(p))
         self._sections["drink"].set_subtitle(_drink_subtitle(p))
+        # Event-based masks are the ones switched on and off run to run; accent them when on.
+        for key in ("swd", "annotation", "hour_window", "drink"):
+            self._sections[key].set_active(self._sections[key].subtitle() != "off")
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
@@ -373,9 +381,14 @@ class MaskParamsWidget(QWidget):
              and (k != "drink" or self._show_drink_mask)),
             None,
         )
-        for key, section in self._sections.items():
+        keys = list(self._sections)
+        if self._event_masks_first:
+            # Stable sort: artifact masks (and the notch filter) move after the rest.
+            keys.sort(key=lambda k: k in _ARTIFACT_KEYS or k == "notch")
+        for key in keys:
+            section = self._sections[key]
             if self._show_subzone_headers and key == first_artifact:
-                root.addWidget(_subzone_header("ARTIFACT MASKS"))
+                root.addWidget(_subzone_header("ARTIFACT MASKS · usually left at defaults"))
             if self._show_subzone_headers and key == first_event:
                 root.addWidget(_subzone_header("EVENT-BASED MASKS"))
             root.addWidget(section)
@@ -1364,6 +1377,30 @@ def _drink_subtitle(p: dict) -> str:
     if not p.get("use_drink_mask"):
         return "off"
     return f"on · {p['drink_pad']}s pad"
+
+
+def mask_summary_lines(p: dict) -> list[str]:
+    """One line per mask or filter that is on (event-based first), for run summaries.
+
+    ``p`` is :meth:`MaskParamsWidget.to_params` output.
+    """
+    lines = []
+    for label, sub in (
+        ("SWD mask", _swd_subtitle(p)),
+        ("Annotation mask", _annotation_subtitle(p)),
+        ("Compute hours", _hour_window_subtitle(p)),
+    ):
+        if sub != "off":
+            lines.append(f"{label}: {sub}")
+    lines += [
+        f"Commutator mask: {_commutator_subtitle(p)}",
+        f"SD mask: {_sd_subtitle(p)}",
+        f"Spindle noise mask: {_spindle_subtitle(p)}",
+    ]
+    notch = _notch_subtitle(p)
+    if notch != "off":
+        lines.append(f"60 Hz notch: {notch}")
+    return lines
 
 
 def _subzone_header(text: str) -> QLabel:

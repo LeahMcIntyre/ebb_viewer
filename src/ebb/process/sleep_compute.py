@@ -20,6 +20,7 @@ the caller passes `sample_rate_hz` to match whatever rate `states` arrives at
 import csv
 import warnings
 from collections import Counter
+from collections.abc import Mapping, Sequence
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -29,7 +30,14 @@ import pandas as pd
 
 from ebb.core.naming import parse_animal_id
 from ebb.io.edf_header import read_edf_start_datetime
-from ebb.io.spindle_csv import NOISE_COLUMNS, STATE_COLUMNS, resolve_column
+from ebb.io.spindle_csv import (
+    FINAL_COLUMN,
+    NOISE_COLUMNS,
+    STATE_COLUMNS,
+    NotReclassifiedError,
+    read_analysis_states,
+    resolve_column,
+)
 
 # SPINDLE epoch length in seconds. Used to upsample 0.25 Hz epoch-rate state
 # arrays to 1 Hz second-rate when rotating to a fixed clock hour.
@@ -69,7 +77,10 @@ def seconds_until_target(start: datetime, h: int = 6) -> int:
 
 
 def read_rawstate_column(state_path: Path) -> list[str]:
-    """Read the per-epoch state column from a SPINDLE-scored CSV.
+    """Read the ORIGINAL per-epoch state column from a SPINDLE-scored CSV.
+
+    For the "original states" comparison views only; analysis reads
+    ``final_state`` via ``read_analysis_states``.
 
     Reads ``rawstate`` if present, else ``state`` (newer SPINDLE outputs
     store the same clean `w`/`n`/`r` values under `state` instead).
@@ -87,6 +98,13 @@ def read_rawstate_column(state_path: Path) -> list[str]:
         except ValueError:
             raise ValueError(f"'rawstate' column not found in {state_path.name}") from None
         return [row[idx] for row in reader if row]
+
+
+def _states_for(animal: str, state_path: Path, states_by_animal) -> list[str]:
+    """Epoch states for one animal: the override if given, else ``final_state``."""
+    if states_by_animal is not None and animal in states_by_animal:
+        return list(states_by_animal[animal])
+    return read_analysis_states(state_path)
 
 
 def _bouts_for_state(mask, sample_rate_hz):
@@ -181,15 +199,18 @@ def compute_sleep_metrics_per_mouse(
 def compute_sleep_bins_df(
     state_dir: str | Path,
     bin_hours: int = 2,
+    states_by_animal: Mapping[str, Sequence[str]] | None = None,
 ) -> pd.DataFrame:
     """Aggregate per-bin metrics across every SPINDLE CSV in `state_dir`.
 
     Each CSV's states are kept at the SPINDLE epoch rate (0.25 Hz).
+    `states_by_animal` (animal ID -> per-epoch states) replaces the CSV state
+    column for the animals it contains, e.g. with reclassified states.
     """
     sleep_dfs = []
     for state_path in Path(state_dir).glob("*.csv"):
         animal = parse_animal_id(state_path)
-        states = read_rawstate_column(state_path)
+        states = _states_for(animal, state_path, states_by_animal)
         df_mouse = compute_sleep_metrics_per_mouse(
             states, mouse_id=animal, bin_hours=bin_hours, sample_rate_hz=0.25
         )
@@ -204,6 +225,7 @@ def compute_sleep_bins_df_offset(
     begin_hr: int = 6,
     spindle_epoch_sec: int = DEFAULT_SPINDLE_EPOCH_SEC,
     tz: ZoneInfo | None = None,
+    states_by_animal: Mapping[str, Sequence[str]] | None = None,
 ) -> pd.DataFrame:
     """Like `compute_sleep_bins_df`, but rotates each animal's state array so
     that bin 0 starts at `begin_hr:00` clock time.
@@ -234,6 +256,9 @@ def compute_sleep_bins_df_offset(
     next ``begin_hr`` boundary) cannot be rotated and are skipped with a
     ``UserWarning``. Use ``compute_sleep_bins_df_clock_aligned`` to include
     those animals at their true circadian position.
+
+    ``states_by_animal`` (animal ID -> per-epoch states) replaces the CSV
+    state column for the animals it contains, e.g. with reclassified states.
     """
     edf_by_animal = {parse_animal_id(p): p for p in Path(edf_dir).glob("*PROCESSED.edf")}
 
@@ -253,7 +278,7 @@ def compute_sleep_bins_df_offset(
         if tz is not None:
             rec_start = rec_start.replace(tzinfo=tz)
 
-        states = read_rawstate_column(state_path)
+        states = _states_for(animal, state_path, states_by_animal)
         # SPINDLE epoch-rate (0.25 Hz) → per-second by repeating each epoch
         # spindle_epoch_sec times.
         expanded_states = [s for s in states for _ in range(spindle_epoch_sec)]
@@ -363,6 +388,7 @@ def compute_sleep_bins_df_clock_aligned(
     begin_hr: int = 6,
     spindle_epoch_sec: int = DEFAULT_SPINDLE_EPOCH_SEC,
     tz: ZoneInfo | None = None,
+    states_by_animal: Mapping[str, Sequence[str]] | None = None,
 ) -> pd.DataFrame:
     """Per-animal sleep bins, placed at their true circadian position.
 
@@ -394,7 +420,7 @@ def compute_sleep_bins_df_clock_aligned(
         if tz is not None:
             rec_start = rec_start.replace(tzinfo=tz)
 
-        states = read_rawstate_column(state_path)
+        states = _states_for(animal, state_path, states_by_animal)
         expanded_states = [s for s in states for _ in range(spindle_epoch_sec)]
         if not expanded_states:
             warnings.warn(
@@ -439,7 +465,7 @@ def compute_whole_file_metrics(
     - ``n_hours`` / ``n_days``: recording length, so any other per-time
       normalization is a downstream division.
 
-    States are read from the SPINDLE ``rawstate`` column at epoch rate; no
+    States are read from the ``final_state`` column at epoch rate; no
     EDF pairing or clock alignment is needed. Every animal gets one row per
     ``w``/``n``/``r`` state even if a state never occurs (zero-filled).
 
@@ -453,7 +479,7 @@ def compute_whole_file_metrics(
     rows: list[dict] = []
     for state_path in sorted(Path(state_dir).glob("*.csv")):
         animal = parse_animal_id(state_path)
-        states = np.asarray(read_rawstate_column(state_path))
+        states = np.asarray(read_analysis_states(state_path))
         n_epochs = len(states)
         n_hours = n_epochs * spindle_epoch_sec / 3600.0
         for raw in _RAW_STATE_TO_NAME:
@@ -493,13 +519,17 @@ def compute_whole_file_metrics(
 def compute_spindle_fractions(
     state_dir: str | Path,
     noise_prob_threshold: float = 0.5,
+    states_by_animal: Mapping[str, Sequence[str]] | None = None,
 ) -> pd.DataFrame:
     """Per-animal, per-state spindle mask fractions from SPINDLE output CSVs.
 
-    Reads the `rawstate` (or `state`, in newer outputs) column (`w`/`n`/`r`)
-    to determine sleep state and the `noise_probs` (or `noise_prob`) column
+    Reads the `final_state` column (`w`/`n`/`r`; raises `NotReclassifiedError`
+    if absent) to determine sleep state and the `noise_probs` (or `noise_prob`) column
     to determine whether each epoch is spindle-masked. An epoch is counted
     as spindle-masked when its noise probability is >= `noise_prob_threshold`.
+    `states_by_animal` (animal ID -> per-epoch states, same length as the CSV)
+    replaces the CSV state column for the animals it contains, so epochs are
+    counted under their reclassified state.
 
     Returns:
         Long-form DataFrame with one row per (animal × state) plus a "Total"
@@ -512,10 +542,12 @@ def compute_spindle_fractions(
         with open(state_path) as f:
             reader = csv.reader(f)
             header = next(reader)
-            try:
-                raw_idx = header.index(resolve_column(header, STATE_COLUMNS))
-            except ValueError:
-                raise ValueError(f"'rawstate' column not found in {state_path.name}") from None
+            override = states_by_animal.get(animal) if states_by_animal is not None else None
+            raw_idx = None
+            if override is None:
+                if FINAL_COLUMN not in header:
+                    raise NotReclassifiedError(state_path.name)
+                raw_idx = header.index(FINAL_COLUMN)
             try:
                 noise_idx = header.index(resolve_column(header, NOISE_COLUMNS))
             except ValueError:
@@ -523,8 +555,8 @@ def compute_spindle_fractions(
 
             clean_counts: Counter = Counter()
             spindle_counts: Counter = Counter()
-            for row in reader:
-                raw = row[raw_idx]
+            for i, row in enumerate(reader):
+                raw = row[raw_idx] if override is None else override[i]
                 if raw not in _VALID_RAW_STATES:
                     continue
                 if float(row[noise_idx]) >= noise_prob_threshold:

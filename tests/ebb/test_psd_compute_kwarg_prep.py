@@ -239,3 +239,19 @@ def test_full_widget_emitted_dict_does_not_crash_estimator_kwargs_prep():
     # Hour windows extracted to positional return
     assert hw == [(6, 18)]
     assert days == [0, 1]
+
+
+def test_annotation_files_by_animal_reads_txt_csv_and_tsv(tmp_path):
+    from ebb.process.psd_compute import annotation_files_by_animal
+
+    for name in ("AM001_P001_x.txt", "AM002_notes.csv", "AM003_notes.tsv", "AM004_notes.xlsx"):
+        (tmp_path / name).write_text("")
+    found = annotation_files_by_animal(tmp_path)
+    assert set(found) == {"AM001", "AM002", "AM003"}
+    assert found["AM001"].name == "AM001_P001_x.txt"
+
+
+def test_annotation_files_by_animal_is_empty_for_a_missing_directory(tmp_path):
+    from ebb.process.psd_compute import annotation_files_by_animal
+
+    assert annotation_files_by_animal(tmp_path / "nope") == {}

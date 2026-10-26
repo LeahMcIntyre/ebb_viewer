@@ -1,22 +1,17 @@
 """Param-flow + UX-state tests for ``pages/sleep_qc_visualizer.py``.
 
-These cover correctness defects and UX coherence properties — review-mode
-entry rollback, ``_get_ref_combo`` filtering, the consolidated flagging
-path, and the spindle-fraction plot's whisker math on tiny inputs.
+These cover the single-combo data cache, the consolidated flagging path,
+the animal dropdown ordering, and the overview wiring (thresholds, flagging).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 
-from ebb_viewer.pipeline.manifest import (
-    Manifest,
-    ManifestEntry,
-    RunEntry,
-)
+from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -29,434 +24,248 @@ def _make_page(qapp, tmp_path: Path):
     return SleepQCGridPage(project_root=tmp_path)
 
 
-def _seed_manifest(tmp_path: Path, runs: dict[str, dict[str, RunEntry]]) -> Manifest:
-    """Build + persist a manifest. ``runs`` maps animal_id → {combo: RunEntry}."""
+def _seed_manifest(tmp_path: Path, sleep_qc: dict[str, str | None]) -> Manifest:
+    """Build + persist a manifest. ``sleep_qc`` maps animal_id → status."""
     m = Manifest(tmp_path)
-    for animal_id, combo_runs in runs.items():
+    for animal_id, status in sleep_qc.items():
         m._entries[animal_id] = ManifestEntry(
             animal_id=animal_id,
             preprocessed_edf=f"{animal_id}_PREPROCESSED.edf",
-            runs=combo_runs,
+            has_spindle=True,
+            sleep_qc=status,
         )
     m.save()
     return m
 
 
-# ---------------------------------------------------------------------------
-# _get_ref_combo — the group-median reference is a sanity-check baseline,
-# used during initial QC before any animal has been flagged OK. It includes
-# every non-rejected animal, with LFC_RSC preferred when present.
-# ---------------------------------------------------------------------------
-
-
-def test_get_ref_combo_includes_non_ok_runs(qapp, tmp_path: Path):
-    """The median is for visual comparison during initial review, so it must
-    include pending / needs_review / needs_rerun animals — otherwise the
-    Median toggle is a no-op on the first pass through QC."""
-    _seed_manifest(
-        tmp_path,
-        {
-            "AM001": {"LFC_RSC": RunEntry(sleep_qc="needs_rerun")},
-            "AM002": {"LFC_RSC": RunEntry(sleep_qc="needs_review")},
-            "AM003": {"LFC_RSC": RunEntry(sleep_qc=None)},
-        },
-    )
-    page = _make_page(qapp, tmp_path)
-    page._available_combos = ["LFC_RSC"]
-    # All three are non-rejected → ref combo resolves rather than None.
-    assert page._get_ref_combo() == "LFC_RSC"
-
-
-def test_get_ref_combo_excludes_rejected_runs(qapp, tmp_path: Path):
-    """Rejected animals are data the user has explicitly thrown away —
-    don't count them when picking the reference combo. (The median itself
-    is still computed over the cached df, so rejection only affects combo
-    selection.)"""
-    _seed_manifest(
-        tmp_path,
-        {
-            "AM001": {
-                "LFC_RSC": RunEntry(sleep_qc="rejected"),
-                "LSC_RSC": RunEntry(sleep_qc="ok"),
-            },
-            "AM002": {
-                "LFC_RSC": RunEntry(sleep_qc="rejected"),
-                "LSC_RSC": RunEntry(sleep_qc="needs_review"),
-            },
-        },
-    )
-    page = _make_page(qapp, tmp_path)
-    page._available_combos = ["LFC_RSC", "LSC_RSC"]
-    # LFC_RSC has only rejected runs (0 counted); LSC_RSC has 2.
-    assert page._get_ref_combo() == "LSC_RSC"
-
-
-def test_b4_get_ref_combo_prefers_lfc_rsc_when_tied(qapp, tmp_path: Path):
-    """``LFC_RSC`` is the project's canonical combo — preferred on ties."""
-    _seed_manifest(
-        tmp_path,
-        {
-            "AM001": {
-                "LFC_RSC": RunEntry(sleep_qc="ok"),
-                "LSC_RSC": RunEntry(sleep_qc="ok"),
-            },
-        },
-    )
-    page = _make_page(qapp, tmp_path)
-    page._available_combos = ["LFC_RSC", "LSC_RSC"]
-    assert page._get_ref_combo() == "LFC_RSC"
-
-
-def test_get_ref_combo_returns_none_when_all_rejected(qapp, tmp_path: Path):
-    """Every available run is rejected → no median to draw."""
-    _seed_manifest(
-        tmp_path,
-        {"AM001": {"LFC_RSC": RunEntry(sleep_qc="rejected")}},
-    )
-    page = _make_page(qapp, tmp_path)
-    page._available_combos = ["LFC_RSC"]
-    assert page._get_ref_combo() is None
-
-
-# ---------------------------------------------------------------------------
-# B2 + U3 — review-mode entry with zero pending reruns must not mutate UI
-# ---------------------------------------------------------------------------
-
-
-def test_b2_review_mode_with_zero_pending_does_not_enter_review(qapp, tmp_path: Path):
-    """Clicking the reruns badge when no reruns are pending must leave the
-    page entirely in its non-review state — background, labels, button
-    checked-state, lbl_filter visibility all consistent."""
-    from PyQt6.QtWidgets import QMessageBox
-
-    page = _make_page(qapp, tmp_path)
-    # The zero-pending branch pops a real "No Pending Reruns" info dialog —
-    # mock it out (mirrors the QMessageBox.question mocking used elsewhere
-    # in this file) so .exec() doesn't block forever under the offscreen
-    # Qt platform this suite runs under headlessly.
-    with patch.object(QMessageBox, "information"):
-        page._on_review_mode_toggled(True)
-    assert page._review_mode is False
-    assert not page.btn_reruns_ready.isChecked()
-    assert page._lbl_animal.text() == "Animal:"
-    # isHidden() rather than isVisible() — the parent isn't shown in tests.
-    assert page._lbl_filter.isHidden()
-    # No blue background stylesheet should be sticking.
-    assert "#f0f4ff" not in page.styleSheet()
-
-
-def test_b2_review_mode_with_pending_reruns_enters_correctly(qapp, tmp_path: Path):
-    """Sanity check: when pending reruns *do* exist, review mode engages.
-
-    Tests the happy path so we know the rollback isn't over-aggressive.
-    """
-    # Need a CSV on disk for pending_rerun_review to consider the rerun real.
-    # Must include real rawstate/noise_probs data (not just a header) —
-    # entering review mode loads every available combo via _load_combo,
-    # which calls compute_spindle_fractions; a header-only CSV made that
-    # raise ValueError("'noise_probs' column not found"), which _load_combo
-    # surfaces via a real (unmocked) QMessageBox.critical — hanging this
-    # "happy path" test under the offscreen Qt platform instead of letting
-    # it reach the assertions below.
-    spindle = tmp_path / "spindle_outputs" / "LFC_LSC"
-    spindle.mkdir(parents=True)
-    (spindle / "AM001_LFC_LSC.csv").write_text(
-        "rawstate,noise_probs\nw,0.1\nn,0.2\nn,0.1\nr,0.3\n"
-    )
-    _seed_manifest(
-        tmp_path,
-        {
-            "AM001": {
-                "LFC_RSC": RunEntry(sleep_qc="ok"),
-                "LFC_LSC": RunEntry(sleep_qc=None, source_combo="LFC_RSC"),
-            },
-        },
-    )
-    page = _make_page(qapp, tmp_path)
-    page._on_review_mode_toggled(True)
-    assert page._review_mode is True
-    assert page._lbl_animal.text() == "Animal (review):"
-    assert not page._lbl_filter.isHidden()
-
-
-# ---------------------------------------------------------------------------
-# B3 — _has_pending_rerun must not hit the filesystem after manifest load
-# ---------------------------------------------------------------------------
-
-
-def test_b3_has_pending_rerun_uses_cache_no_filesystem_probe(qapp, tmp_path: Path):
-    """``_has_pending_rerun`` is called per animal in the dropdown sync
-    path; before the fix it called ``spindle_output_dir(...).glob(...)``
-    on every invocation. The fix caches a set populated after each
-    ``Manifest.load``."""
-    spindle = tmp_path / "spindle_outputs" / "LFC_LSC"
-    spindle.mkdir(parents=True)
-    (spindle / "AM001_LFC_LSC.csv").write_text("rawstate\n")
-    _seed_manifest(
-        tmp_path,
-        {
-            "AM001": {
-                "LFC_RSC": RunEntry(sleep_qc="ok"),
-                "LFC_LSC": RunEntry(sleep_qc=None, source_combo="LFC_RSC"),
-            },
-            "AM002": {"LFC_RSC": RunEntry(sleep_qc="ok")},
-        },
-    )
-    page = _make_page(qapp, tmp_path)
-
-    # After construction, the cache is populated. Patch the glob to assert
-    # that subsequent lookups never re-glob.
-    with patch("ebb_viewer.pages.sleep_qc_visualizer.spindle_output_dir") as mock:
-        assert page._has_pending_rerun("AM001") is True
-        assert page._has_pending_rerun("AM002") is False
-        assert page._has_pending_rerun("nonexistent") is False
-        mock.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# R1 — three flagging methods consolidated; verify each former call site
-# ---------------------------------------------------------------------------
-
-
 def _seed_one_animal(tmp_path: Path, status: str | None = None) -> None:
-    _seed_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry(sleep_qc=status)}})
+    _seed_manifest(tmp_path, {"AM001": status})
 
 
-def test_r1_flag_animal_ok_sets_ok_and_emits(qapp, tmp_path: Path):
+# ---------------------------------------------------------------------------
+# Data loading — cached until the CSV folder changes
+# ---------------------------------------------------------------------------
+
+
+def test_ensure_data_reloads_only_when_csvs_change(qapp, tmp_path: Path):
+    import ebb_viewer.pages.sleep_qc_visualizer as sqv_mod
+
+    out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    out.mkdir(parents=True)
+    (out / "AM001_a.csv").write_text("state\nw\n")
+    df = pd.DataFrame({"mouse_id": ["AM002", "AM001"], "state": ["w", "w"]})
+    compute = MagicMock(return_value=df)
+
+    with patch.multiple(
+        sqv_mod,
+        compute_sleep_bins_df=compute,
+        compute_sleep_bins_df_offset=MagicMock(return_value=df),
+        compute_sleep_bins_df_clock_aligned=MagicMock(return_value=df),
+        metrics_table=MagicMock(return_value=df),
+    ):
+        page = _make_page(qapp, tmp_path)
+        assert page._ensure_data() is True
+        assert page._mouse_ids == ["AM001", "AM002"]
+
+        assert page._ensure_data() is False  # nothing changed on disk
+        assert compute.call_count == 1
+
+        (out / "AM002_a.csv").write_text("state\nw\n")
+        assert page._ensure_data() is True
+        assert compute.call_count == 2
+
+
+def test_ensure_data_without_output_folder_leaves_no_data(qapp, tmp_path: Path):
+    page = _make_page(qapp, tmp_path)
+    page._ensure_data()
+    assert page._data is None
+    assert page._mouse_ids == []
+
+
+# ---------------------------------------------------------------------------
+# Animal dropdown — unreviewed animals first
+# ---------------------------------------------------------------------------
+
+
+def test_animal_dropdown_lists_unreviewed_first(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": "ok", "AM002": None, "AM003": "needs_review", "AM004": None})
+    page = _make_page(qapp, tmp_path)
+    page._mouse_ids = ["AM001", "AM002", "AM003", "AM004"]
+
+    page._refresh_animal_combo()
+
+    items = [page.cmb_animal.itemText(i) for i in range(page.cmb_animal.count())]
+    assert items == ["AM002", "AM004", "AM001", "AM003"]
+
+
+# ---------------------------------------------------------------------------
+# Flagging — one path for group mode, animal mode and the overview
+# ---------------------------------------------------------------------------
+
+
+def test_flag_sleep_qc_ok_sets_ok_and_emits(qapp, tmp_path: Path):
     _seed_one_animal(tmp_path)
     page = _make_page(qapp, tmp_path)
-    page.cmb_animal.addItems(["AM001"])
-    page.cmb_animal.setCurrentText("AM001")
     emitted: list = []
     page.manifest_changed.connect(lambda: emitted.append(True))
 
-    page._flag_animal_ok("LFC_RSC", checked=True)
+    page._flag_sleep_qc("AM001", "ok")
 
-    run = page._manifest.get_run("AM001", "LFC_RSC")
-    assert run is not None and run.sleep_qc == "ok"
+    assert page._manifest.get("AM001").sleep_qc == "ok"
+    assert Manifest.load(tmp_path).get("AM001").sleep_qc == "ok"
     assert emitted == [True]
 
 
-def test_r1_flag_animal_ok_unchecks_resets(qapp, tmp_path: Path):
+def test_flag_sleep_qc_none_resets(qapp, tmp_path: Path):
     _seed_one_animal(tmp_path, status="ok")
     page = _make_page(qapp, tmp_path)
-    page.cmb_animal.addItems(["AM001"])
-    page.cmb_animal.setCurrentText("AM001")
 
-    page._flag_animal_ok("LFC_RSC", checked=False)
+    page._flag_sleep_qc("AM001", None)
 
-    run = page._manifest.get_run("AM001", "LFC_RSC")
-    assert run is not None and run.sleep_qc is None
+    assert page._manifest.get("AM001").sleep_qc is None
 
 
-def test_r1_flag_animal_review_sets_needs_review(qapp, tmp_path: Path):
+def test_flag_sleep_qc_needs_review(qapp, tmp_path: Path):
     _seed_one_animal(tmp_path)
     page = _make_page(qapp, tmp_path)
-    page.cmb_animal.addItems(["AM001"])
-    page.cmb_animal.setCurrentText("AM001")
-
-    page._flag_animal_review("LFC_RSC", checked=True)
-
-    run = page._manifest.get_run("AM001", "LFC_RSC")
-    assert run is not None and run.sleep_qc == "needs_review"
-
-
-def test_r1_flag_sleep_qc_group_mode_path(qapp, tmp_path: Path):
-    """Group-mode path: combo comes from cmb_combo, animal passed in."""
-    _seed_one_animal(tmp_path)
-    page = _make_page(qapp, tmp_path)
-    page.cmb_combo.addItem("LFC_RSC")
-    page.cmb_combo.setCurrentText("LFC_RSC")
 
     page._flag_sleep_qc("AM001", "needs_review")
 
-    run = page._manifest.get_run("AM001", "LFC_RSC")
-    assert run is not None and run.sleep_qc == "needs_review"
+    assert page._manifest.get("AM001").sleep_qc == "needs_review"
+
+
+def test_flag_sleep_qc_unknown_animal_is_noop(qapp, tmp_path: Path):
+    _seed_one_animal(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    emitted: list = []
+    page.manifest_changed.connect(lambda: emitted.append(True))
+
+    page._flag_sleep_qc("NOPE", "ok")
+
+    assert emitted == []
+
+
+def test_overview_flag_requested_flags_needs_review(qapp, tmp_path: Path):
+    _seed_one_animal(tmp_path)
+    page = _make_page(qapp, tmp_path)
+
+    page._on_overview_flag_requested("AM001")
+
+    assert page._manifest.get("AM001").sleep_qc == "needs_review"
 
 
 # ---------------------------------------------------------------------------
-# B1 — SpindleFractionPlot.set_data graceful with <2 animals per state
+# Nav hint
 # ---------------------------------------------------------------------------
 
 
-def test_b1_spindle_fraction_plot_handles_single_animal_state(qapp):
-    """A state with only one animal must not trigger the IQR whisker math.
-
-    The fix is a defensive ``len(sdf) < 2: continue`` guard. The existing
-    ``_get_spindle_outlier_animals`` helper already has a ``< 4`` guard for
-    related reasons; the plot path was missing equivalent protection.
-    """
-    from ebb_viewer.pages.sleep_qc_visualizer import SpindleFractionPlot
-
-    df = pd.DataFrame(
-        {
-            "mouse_id": ["AM001", "AM002", "AM003", "AM004"],
-            "state": ["Wake", "Wake", "Wake", "NREM"],
-            "fraction": [0.1, 0.2, 0.3, 0.5],
-        }
-    )
-    plot = SpindleFractionPlot()
-    # NREM has 1 animal — the guard must skip whisker math without raising.
-    plot.set_data(df, title="LFC_RSC")
-    # If we got here without an exception, the guard worked.
-    assert plot is not None
+def test_nav_hint_points_home_when_any_animal_needs_review(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": "ok", "AM002": "needs_review"})
+    page = _make_page(qapp, tmp_path)
+    page._update_nav_hint()
+    assert page._nav_hint_dest == "home"
+    assert not page._hint_frame.isHidden()
 
 
-def test_b1_spindle_fraction_plot_handles_empty_dataframe(qapp):
-    """Empty df → no plot, no exception."""
-    from ebb_viewer.pages.sleep_qc_visualizer import SpindleFractionPlot
+def test_nav_hint_points_to_psd_when_all_ok(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": "ok", "AM002": "ok"})
+    page = _make_page(qapp, tmp_path)
+    page._update_nav_hint()
+    assert page._nav_hint_dest == "psd_compute"
+    assert not page._hint_frame.isHidden()
 
-    plot = SpindleFractionPlot()
-    plot.set_data(pd.DataFrame(columns=["mouse_id", "state", "fraction"]))
-    assert plot is not None
+
+def test_nav_hint_points_to_psd_when_all_ok_or_excluded(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": "ok", "AM002": "excluded", "AM003": "excluded"})
+    page = _make_page(qapp, tmp_path)
+    page._update_nav_hint()
+    assert page._nav_hint_dest == "psd_compute"
+    assert not page._hint_frame.isHidden()
+    assert "(2 excluded)" in page._hint_lbl.text()
+
+
+def test_nav_hint_has_no_excluded_note_when_none_are_excluded(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": "ok", "AM002": "ok"})
+    page = _make_page(qapp, tmp_path)
+    page._update_nav_hint()
+    assert "excluded" not in page._hint_lbl.text()
+
+
+def test_nav_hint_still_points_home_when_an_animal_needs_review_next_to_excluded(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": "excluded", "AM002": "needs_review"})
+    page = _make_page(qapp, tmp_path)
+    page._update_nav_hint()
+    assert page._nav_hint_dest == "home"
+
+
+def test_nav_hint_hidden_while_animals_pending_beside_excluded(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": "excluded", "AM002": None})
+    page = _make_page(qapp, tmp_path)
+    page._update_nav_hint()
+    assert page._hint_frame.isHidden()
+
+
+def test_nav_hint_hidden_while_animals_pending(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": "ok", "AM002": None})
+    page = _make_page(qapp, tmp_path)
+    page._update_nav_hint()
+    assert page._hint_frame.isHidden()
 
 
 # ---------------------------------------------------------------------------
-# Outlier-set caching — _get_spindle_outlier_animals is called once per
-# render AND once per legend rebuild; cache the result keyed by combo.
+# Automatic flagging of animals past a threshold
 # ---------------------------------------------------------------------------
 
 
-def test_outlier_cache_returns_same_set_on_repeat_calls(qapp, tmp_path: Path):
-    """Calling _get_spindle_outlier_animals twice for the same combo
-    should return the cached set (same object identity on second call)."""
-    page = _make_page(qapp, tmp_path)
-    # Seed _data_cache directly with a frac DataFrame so we don't depend
-    # on real CSVs / EDFs on disk.
-    df_frac = pd.DataFrame(
-        {
-            "mouse_id": ["AM001", "AM002", "AM003", "AM004", "AM005"],
-            "state": ["Wake"] * 5,
-            "fraction": [0.1, 0.12, 0.11, 0.13, 0.95],  # AM005 outlier
-        }
-    )
-    page._data_cache["LFC_RSC"] = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), df_frac)
-
-    first = page._get_spindle_outlier_animals("LFC_RSC")
-    second = page._get_spindle_outlier_animals("LFC_RSC")
-    assert first is second  # cached, not recomputed
-    assert "AM005" in first
-
-
-def test_confirm_review_returns_true_when_no_entry(qapp, tmp_path: Path):
-    """Calling the confirm helper for an unknown animal short-circuits to True."""
-    page = _make_page(qapp, tmp_path)
-    assert page._confirm_review_flip("UNKNOWN", "LFC_RSC") is True
-
-
-def test_confirm_review_returns_true_when_no_sibling_ok(qapp, tmp_path: Path):
-    """No sibling combo is OK → no dialog needed; returns True."""
-    _seed_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry(sleep_qc=None)}})
-    page = _make_page(qapp, tmp_path)
-    assert page._confirm_review_flip("AM001", "LFC_RSC") is True
-
-
-def test_confirm_review_yes_proceeds(qapp, tmp_path: Path):
-    """User confirms → helper returns True."""
-    from PyQt6.QtWidgets import QMessageBox
-
+def test_auto_flag_flags_only_undecided_animals_past_a_threshold(qapp, tmp_path: Path):
+    table = _flag_table()
+    table.loc["AM003"] = table.loc["AM002"]  # also past the threshold, but already OK
+    table.loc["AM004"] = table.loc["AM002"]  # also past, but already flagged
+    table.loc["AM005"] = table.loc["AM002"]  # also past, but excluded
     _seed_manifest(
         tmp_path,
-        {
-            "AM001": {
-                "LFC_RSC": RunEntry(sleep_qc="ok"),
-                "LSC_RSC": RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
-            }
-        },
+        {"AM001": None, "AM002": None, "AM003": "ok", "AM004": "needs_review", "AM005": "excluded"},
     )
     page = _make_page(qapp, tmp_path)
-    with patch.object(
-        QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
-    ):
-        assert page._confirm_review_flip("AM001", "LSC_RSC") is True
+    page._data_reclass = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), table)
+    emitted = []
+    page.manifest_changed.connect(lambda: emitted.append(True))
+
+    page._auto_flag_for_review()
+
+    m = Manifest.load(tmp_path)
+    assert m.get("AM002").sleep_qc == "needs_review"
+    assert m.get("AM002").flag_reasons == ["nrem_short"]
+    assert m.get("AM001").sleep_qc is None  # not past a threshold
+    assert m.get("AM003").sleep_qc == "ok" and m.get("AM005").sleep_qc == "excluded"
+    assert page._auto_flagged == ["AM002"] and emitted == [True]
+
+    page._update_nav_hint()
+    assert not page.lbl_auto.isHidden() and "AM002" in page.lbl_auto.text()
 
 
-def test_confirm_review_cancel_blocks(qapp, tmp_path: Path):
-    """User cancels → helper returns False; manifest unchanged."""
-    from PyQt6.QtWidgets import QMessageBox
-
-    _seed_manifest(
-        tmp_path,
-        {
-            "AM001": {
-                "LFC_RSC": RunEntry(sleep_qc="ok"),
-                "LSC_RSC": RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
-            }
-        },
-    )
+def test_auto_flag_is_idempotent_and_needs_reclassified_data(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": None, "AM002": None})
     page = _make_page(qapp, tmp_path)
-    with patch.object(
-        QMessageBox, "question", return_value=QMessageBox.StandardButton.Cancel
-    ):
-        assert page._confirm_review_flip("AM001", "LSC_RSC") is False
+    page._data = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), _flag_table())
+    page._auto_flag_for_review()  # no reclassified data: nothing is flagged
+    assert Manifest.load(tmp_path).get("AM002").sleep_qc is None
+
+    page._data_reclass = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), _flag_table())
+    page._auto_flag_for_review()
+    emitted = []
+    page.manifest_changed.connect(lambda: emitted.append(True))
+    page._auto_flag_for_review()  # second time: already flagged, nothing to do
+    assert emitted == [] and page._auto_flagged == ["AM002"]
 
 
-def test_group_review_clicked_cancel_does_not_change_manifest(qapp, tmp_path: Path):
-    """Group-mode wrapper: cancel keeps the manifest in its prior state."""
-    from PyQt6.QtWidgets import QMessageBox
-
-    _seed_manifest(
-        tmp_path,
-        {
-            "AM001": {
-                "LFC_RSC": RunEntry(sleep_qc="ok"),
-                "LSC_RSC": RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
-            }
-        },
-    )
+def test_auto_flag_note_disappears_once_the_animal_is_decided(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": None, "AM002": None})
     page = _make_page(qapp, tmp_path)
-    page.cmb_combo.addItem("LSC_RSC")
-    page.cmb_combo.setCurrentText("LSC_RSC")
-    with patch.object(
-        QMessageBox, "question", return_value=QMessageBox.StandardButton.Cancel
-    ):
-        page._group_review_clicked("AM001", "LSC_RSC", checked=True)
-    run = page._manifest.get_run("AM001", "LSC_RSC")
-    assert run is not None
-    assert run.sleep_qc == "rejected"  # unchanged
-
-
-def test_group_review_clicked_yes_flips_to_needs_review(qapp, tmp_path: Path):
-    """Group-mode wrapper: yes proceeds with the flag flip."""
-    from PyQt6.QtWidgets import QMessageBox
-
-    _seed_manifest(
-        tmp_path,
-        {
-            "AM001": {
-                "LFC_RSC": RunEntry(sleep_qc="ok"),
-                "LSC_RSC": RunEntry(sleep_qc="rejected", rejected_by="LFC_RSC"),
-            }
-        },
-    )
-    page = _make_page(qapp, tmp_path)
-    page.cmb_combo.addItem("LSC_RSC")
-    page.cmb_combo.setCurrentText("LSC_RSC")
-    with patch.object(
-        QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes
-    ):
-        page._group_review_clicked("AM001", "LSC_RSC", checked=True)
-    # Manifest reloaded inside _apply_sleep_qc → re-read from page.
-    run = page._manifest.get_run("AM001", "LSC_RSC")
-    assert run is not None
-    assert run.sleep_qc == "needs_review"
-
-
-def test_outlier_cache_invalidated_when_data_cache_repopulated(qapp, tmp_path: Path):
-    """_load_combo drops the outlier cache for the loaded combo so a
-    re-download with different data doesn't surface stale outliers."""
-    page = _make_page(qapp, tmp_path)
-    page._outlier_cache["LFC_RSC"] = {"STALE"}
-    # _load_combo's success path pops the outlier cache; simulate that
-    # without an actual disk load:
-    page._data_cache["LFC_RSC"] = (
-        pd.DataFrame(),
-        pd.DataFrame(),
-        pd.DataFrame(),
-        pd.DataFrame(),
-    )
-    page._outlier_cache.pop("LFC_RSC", None)  # mirrors _load_combo's pop
-    assert "LFC_RSC" not in page._outlier_cache
+    page._data_reclass = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), _flag_table())
+    page._auto_flag_for_review()
+    page._flag_sleep_qc("AM002", "ok")
+    assert page.lbl_auto.isHidden()
 
 
 # ---------------------------------------------------------------------------
@@ -502,7 +311,7 @@ def test_open_notes_dialog_accept_persists_and_emits(qapp, tmp_path: Path):
 def test_open_notes_dialog_prefills_existing_text(qapp, tmp_path: Path):
     import ebb_viewer.pages.sleep_qc_visualizer as sqv_mod
 
-    _seed_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry()}})
+    _seed_one_animal(tmp_path)
     m = Manifest.load(tmp_path)
     m.set_notes("AM001", "existing note")
 
@@ -524,7 +333,7 @@ def test_open_notes_dialog_prefills_existing_text(qapp, tmp_path: Path):
 def test_open_notes_dialog_cancel_does_not_change_manifest(qapp, tmp_path: Path):
     import ebb_viewer.pages.sleep_qc_visualizer as sqv_mod
 
-    _seed_manifest(tmp_path, {"AM001": {"LFC_RSC": RunEntry()}})
+    _seed_one_animal(tmp_path)
     m = Manifest.load(tmp_path)
     m.set_notes("AM001", "original note")
 
@@ -537,3 +346,265 @@ def test_open_notes_dialog_cancel_does_not_change_manifest(qapp, tmp_path: Path)
 
     assert page._manifest.get("AM001").notes == "original note"
     assert emitted == []
+
+
+# ---------------------------------------------------------------------------
+# Reclassified-by-default view + "Show original" toggle (reads final_state)
+# ---------------------------------------------------------------------------
+
+
+# Fixture CSVs: original state is ["w", "n"], final_state is ["n", "w"] (see
+# _setup_reclass_page), so the compute call that received final_state is identifiable.
+_FINAL = ["n", "w"]
+
+
+def _is_reclass(states_by_animal) -> bool:
+    return states_by_animal is not None and any(
+        list(v) == _FINAL for v in states_by_animal.values()
+    )
+
+
+def _patch_compute(sqv_mod, raw_df, reclass_df):
+    """Make the compute functions return ``reclass_df`` when given states that include
+    final_state and ``raw_df`` for the original states."""
+
+    def pick(*_a, states_by_animal=None, **_k):
+        return reclass_df if _is_reclass(states_by_animal) else raw_df
+
+    return patch.multiple(
+        sqv_mod,
+        compute_sleep_bins_df=MagicMock(side_effect=pick),
+        compute_sleep_bins_df_offset=MagicMock(side_effect=pick),
+        compute_sleep_bins_df_clock_aligned=MagicMock(side_effect=pick),
+        metrics_table=MagicMock(side_effect=pick),
+    )
+
+
+def _setup_reclass_page(qapp, tmp_path: Path, gates: dict[str, bool] | None = None):
+    """CSVs with a ``final_state`` column + manifest gate flags, one per animal in ``gates``."""
+    import ebb_viewer.pages.sleep_qc_visualizer as sqv_mod
+
+    gates = {"AM001": False} if gates is None else gates
+    out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    out.mkdir(parents=True)
+    for animal in gates:
+        (out / f"{animal}_a.csv").write_text("state,final_state\nw,n\nn,w\n")
+    m = _seed_manifest(tmp_path, dict.fromkeys(gates))
+    for animal, gate in gates.items():
+        m._entries[animal].reclass_gate_applied = gate
+    m.save()
+    raw = pd.DataFrame({"mouse_id": ["AM001"], "state": ["w"], "tag": ["raw"]})
+    rec = pd.DataFrame({"mouse_id": ["AM001"], "state": ["w"], "tag": ["reclass"]})
+    return sqv_mod, raw, rec
+
+
+def _reclass_calls(sqv_mod) -> list:
+    """``states_by_animal`` of each reclassified (non-raw) compute call."""
+    return [
+        c.kwargs["states_by_animal"]
+        for c in sqv_mod.metrics_table.call_args_list
+        if _is_reclass(c.kwargs.get("states_by_animal"))
+    ]
+
+
+def test_reclassified_is_default_and_show_original_swaps_both_views(qapp, tmp_path: Path):
+    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path, {"AM001": True})
+    with _patch_compute(sqv_mod, raw, rec):
+        page = _make_page(qapp, tmp_path)
+        page._ensure_data()
+        assert page._reclass_active  # reclassified without touching anything
+        assert not page.btn_original.isChecked() and page.btn_original.isEnabled()
+        assert page._get_df()["tag"].iloc[0] == "reclass"  # Sleep view
+        assert page._get_flag_table()["tag"].iloc[0] == "reclass"  # Overview
+        assert not page.lbl_reclass.isHidden()
+        assert "1 of 1" in page.lbl_reclass.text()
+        assert "AM001" in page.lbl_reclass.toolTip()
+
+        page.btn_original.setChecked(True)  # fires _on_original_toggled
+        assert not page._reclass_active
+        assert page._get_df()["tag"].iloc[0] == "raw"
+        assert page._get_flag_table()["tag"].iloc[0] == "raw"
+        assert "original" in page.lbl_reclass.text().lower()
+
+        page.btn_original.setChecked(False)
+        assert page._get_df()["tag"].iloc[0] == "reclass"
+
+
+def test_final_state_read_once_and_writes_nothing(qapp, tmp_path: Path):
+    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path)
+    csv_path = tmp_path / "spindle_outputs" / "LFC_RSC" / "AM001_a.csv"
+    before = csv_path.read_text()
+    with _patch_compute(sqv_mod, raw, rec):
+        page = _make_page(qapp, tmp_path)
+        page._ensure_data()
+        page.btn_original.setChecked(True)
+        page.btn_original.setChecked(False)
+        page.btn_original.setChecked(True)
+        assert _reclass_calls(sqv_mod) == [{"AM001": _FINAL}]
+    assert csv_path.read_text() == before
+
+
+def test_animals_without_final_state_stay_original_and_are_reported(qapp, tmp_path: Path):
+    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path)
+    (tmp_path / "spindle_outputs" / "LFC_RSC" / "AM002_a.csv").write_text("state\nw\n")
+    with _patch_compute(sqv_mod, raw, rec):
+        page = _make_page(qapp, tmp_path)
+        page._ensure_data()
+        page._mouse_ids = ["AM001", "AM002"]
+        page._update_reclass_label()
+        states = _reclass_calls(sqv_mod)[0]
+        assert states["AM001"] == _FINAL and states["AM002"] == ["w"]  # AM002: original states
+        assert "1 not reclassified" in page.lbl_reclass.text()
+
+
+def test_no_final_state_column_falls_back_with_loud_label(qapp, tmp_path: Path):
+    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path, {})
+    out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    (out / "AM001_a.csv").write_text("state\nw\n")  # no final_state column
+    with _patch_compute(sqv_mod, raw, rec):
+        page = _make_page(qapp, tmp_path)
+        page._ensure_data()
+        assert not page._reclass_active
+        assert not page.btn_original.isEnabled()  # nothing to compare against
+        assert page._get_df()["tag"].iloc[0] == "raw"
+        assert not page.lbl_reclass.isHidden()
+        assert "Not reclassified" in page.lbl_reclass.text()
+
+
+def test_reclassified_data_dropped_and_rebuilt_when_csvs_change(qapp, tmp_path: Path):
+    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path)
+    out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    with _patch_compute(sqv_mod, raw, rec):
+        page = _make_page(qapp, tmp_path)
+        page._ensure_data()
+        assert len(_reclass_calls(sqv_mod)) == 1
+
+        (out / "AM002_a.csv").write_text("state,final_state\nw,w\n")  # new CSV lands
+        assert page._ensure_data() is True
+        assert page._reclass_active
+        calls = _reclass_calls(sqv_mod)
+        assert len(calls) == 2 and set(calls[1]) == {"AM001", "AM002"}  # rebuilt
+
+
+# ---------------------------------------------------------------------------
+# EMG-gate indicators
+# ---------------------------------------------------------------------------
+
+
+def _legend_texts(page) -> str:
+    from PyQt6.QtWidgets import QLabel
+
+    return " ".join(lbl.text() for lbl in page.findChildren(QLabel))
+
+
+def test_gated_animals_empty_while_showing_original(qapp, tmp_path: Path):
+    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path, {"AM001": True, "AM002": False})
+    with _patch_compute(sqv_mod, raw, rec):
+        page = _make_page(qapp, tmp_path)
+        page._ensure_data()
+        assert page._gated_animals() == {"AM001"}
+        assert "EMG gate" in page._gate_tag_html("AM001")
+        assert page._gate_tag_html("AM002") == ""
+
+        page.btn_original.setChecked(True)
+        assert page._gated_animals() == set()
+        assert page._gate_tag_html("AM001") == ""
+
+
+def test_legend_rows_tag_gated_animals_in_group_and_animal_views(qapp, tmp_path: Path):
+    sqv_mod, raw, rec = _setup_reclass_page(qapp, tmp_path, {"AM001": True})
+    with _patch_compute(sqv_mod, raw, rec):
+        page = _make_page(qapp, tmp_path)
+        page._ensure_data()
+        page._flagged_animals = lambda: {}  # the mocked flag table has no metric columns
+
+        page._update_legend_group(["AM001"], {"AM001": "#123456"})
+        assert "[EMG gate]" in _legend_texts(page)
+
+        page.cmb_animal.addItem("AM001")
+        page.cmb_animal.setCurrentText("AM001")
+        page._update_legend_animal()
+        assert "[EMG gate]" in _legend_texts(page)
+
+        page.btn_original.setChecked(True)
+        page._update_legend_group(["AM001"], {"AM001": "#123456"})
+        page._update_legend_animal()
+        from PyQt6.QtCore import QCoreApplication, QEvent
+
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)  # drop old rows
+        assert "[EMG gate]" not in _legend_texts(page)
+
+
+def test_unreclassified_project_loads_original_states_without_error(qapp, tmp_path: Path):
+    """No CSV has final_state: the page must not raise NotReclassifiedError, and the
+    compute functions get the original states explicitly."""
+    import ebb_viewer.pages.sleep_qc_visualizer as sqv_mod
+
+    out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    out.mkdir(parents=True)
+    (out / "AM001_a.csv").write_text("state,noise_prob\nw,0.0\nn,0.0\n")
+    _seed_one_animal(tmp_path)
+    df = pd.DataFrame({"mouse_id": ["AM001"], "state": ["w"], "tag": ["raw"]})
+    with (
+        _patch_compute(sqv_mod, df, df),
+        patch.object(sqv_mod.QMessageBox, "critical") as critical,
+    ):
+        page = _make_page(qapp, tmp_path)
+        page._ensure_data()
+        assert not critical.called
+        sent = sqv_mod.metrics_table.call_args.kwargs["states_by_animal"]
+        assert sent == {"AM001": ["w", "n"]}
+        assert not page._reclass_active
+
+
+# ---------------------------------------------------------------------------
+# Overview — flagging metrics and thresholds
+# ---------------------------------------------------------------------------
+
+
+def _flag_table() -> pd.DataFrame:
+    base = {"nrem_short": 100, "dark_bouts_h": 5, "pct_rem": 8, "pct_nrem": 50,
+            "pct_wake": 42, "max_bin_rem": 10}
+    return pd.DataFrame({"AM001": base, "AM002": {**base, "nrem_short": 500}}).T.rename_axis("animal")
+
+
+def test_flagged_animals_uses_manifest_thresholds(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": None, "AM002": None})
+    page = _make_page(qapp, tmp_path)
+    page._data = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), _flag_table())
+
+    assert page._flagged_animals() == {"AM002": ["nrem_short"]}
+    assert "[short NREM bouts]" in page._flag_tag_html("AM002")
+    assert page._flag_tooltip("AM002") == (
+        "Short (1-2 epoch) NREM bouts per file: 500.0 (above 400)"
+    )
+    assert page._flag_tooltip("AM001") == ""
+    assert page._flag_tag_html("AM001") == ""
+
+    page._manifest.flag_thresholds["nrem_short"] = 600
+    assert page._flagged_animals() == {}
+
+
+def test_overview_shows_flag_table_with_statuses(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": "ok", "AM002": "needs_review"})
+    page = _make_page(qapp, tmp_path)
+    page._data = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), _flag_table())
+
+    page._refresh_overview()
+
+    assert page._overview.flagged_animals() == {"AM002": ["nrem_short"]}
+    page._on_overview_animal_selected("AM002")
+    assert page._overview.selected == "AM002"
+
+
+def test_flag_tag_names_at_most_two_metrics_then_counts_the_rest(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": None})
+    page = _make_page(qapp, tmp_path)
+    table = _flag_table().loc[["AM001"]].astype(float)
+    table.loc["AM001", ["nrem_short", "pct_nrem", "pct_wake", "pct_rem"]] = [500, 20, 80, 12]
+    page._data = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), table)
+
+    tag = page._flag_tag_html("AM001")
+
+    assert "[short NREM bouts, high REM +2]" in tag  # METRICS order, capped at two names
+    assert page._flag_tooltip("AM001").count("\n") == 3  # all four listed in the tooltip

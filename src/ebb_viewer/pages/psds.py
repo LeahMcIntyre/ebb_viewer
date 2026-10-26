@@ -1,19 +1,19 @@
 """PSD compute page — wraps :func:`ebb.process.psd_compute.batch_estimate`.
 
-Drives the initial PSD computation step of the pipeline. Each run produces
-one ``psds_<combo>.pkl`` per channel combination plus a merged
-``psds_channel_merged.pkl`` consumed by the visualizer.
+Drives the initial PSD computation step of the pipeline. Each run writes one
+``psd/<run_name>/psds_<combo>.pkl`` for the project's channel combo, consumed by
+the visualizer.
 
-The page is structured as:
+The page has two columns:
 
-1. Folder selection + run name (PSD-specific)
-2. Spindle output combos table (read-only summary)
-3. ``MaskParamsWidget`` — shared editor for state-group selection,
-   SD/spindle/SWD/annotation/hour-window mask params (same widget the
-   Export Masks page uses, with ``show_drink_mask=False`` since the PSD
-   compute step doesn't apply drink masks)
-4. PSD output settings — channels + sampling frequency
-5. Run button + status log + post-run hint
+- Left (scrolls): the settings — states and channels to compute, the shared
+  ``MaskParamsWidget`` (event-based masks first, then artifact masks; same widget
+  the Export Masks page uses, with ``show_drink_mask=False`` since the PSD compute
+  step doesn't apply drink masks) and Advanced (sampling frequency).
+- Right (the Run panel): the project combo and ready animals, the run name and
+  output file, a summary of what the run will do, a readiness checklist with a
+  button to the page that fixes the first problem, the Run button, the post-run
+  hint, and the status log (shown once there is output).
 
 Run params (mask + filter knobs + states) round-trip through
 ``project/psd/<run_name>/psd_params.json``. Drink masking is intentionally
@@ -24,19 +24,15 @@ from __future__ import annotations
 
 import dataclasses
 import pickle
+from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtCore import QObject, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QFileDialog,
-    QFormLayout,
     QFrame,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -44,39 +40,44 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
 from ebb.core.naming import parse_animal_id
 from ebb.io.edf_header import detect_fs_from_standard
-from ebb.process.psd_compute import batch_estimate, build_final_pkl
+from ebb.process.psd_compute import annotation_files_by_animal, batch_estimate
+from ebb.process.state_presets import PRESET_DISPLAY
 from ebb_viewer.pipeline import psd_params
-from ebb_viewer.pipeline.manifest import Manifest, merged_psd_path
+from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.pipeline.swd_review import swd_review_gaps
 from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
-from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget
+from ebb_viewer.widgets.collapsible_section import CollapsibleSection
+from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget, mask_summary_lines
 from ebb_viewer.widgets.no_scroll_spinbox import NoScrollSpinBox
+from ebb_viewer.widgets.readiness import Check, blockers, checks_html, first_fix, fix_button_text
+from ebb_viewer.widgets.swd_warning import confirm_unfinished_swd_review
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
 DEFAULT_FS = 250
 CH_LABELS = ["LFC", "RSC", "LSC"]
 
+_RUN_PANEL_WIDTH_PX = 380
+
 
 class PSDPage(QWidget):
     """Sidebar page #6 — drives the PSD compute step of the pipeline.
 
-    Owns: folder selection (standard EDFs + named run output dir), per-combo
-    status table, the shared ``MaskParamsWidget`` (states + SD + spindle +
-    SWD + annotation + hour-window params), channels + fs settings, and a
-    worker thread that runs ``batch_estimate`` per combo and writes one PKL
-    + the shared ``psd_params.json`` per run.
+    Owns: the run name, the status card for the project combo, the shared
+    ``MaskParamsWidget`` (states + SWD + annotation + hour-window + artifact
+    params), the channel checkboxes, the sampling frequency, and a worker
+    thread that runs ``batch_estimate`` for the combo and writes one PKL +
+    ``psd_params.json`` per run.
 
     Run state lives in the mask widget (round-trippable to/from the saved
-    JSON via ``to_params``/``from_params``) plus the channels + fs
-    spinboxes on the page. Initial values are loaded from the most recently
-    modified saved run when the page is constructed.
+    JSON via ``to_params``/``from_params``) plus the channel checkboxes and
+    the sampling-frequency spinbox. Initial values are loaded from the most recently modified saved
+    run when the page is constructed.
     """
 
     manifest_changed = pyqtSignal()
@@ -94,16 +95,15 @@ class PSDPage(QWidget):
         self._build_ui()
         self._wire()
         self._refresh_standard_folder()
-        self._refresh_combo_table()
+        self._refresh_status()
         self._refresh_swd_status()
         self._load_saved_params()
 
     def showEvent(self, event):
         super().showEvent(event)
         self._refresh_standard_folder()
-        self._refresh_combo_table()
+        self._refresh_status()
         self._refresh_swd_status()
-        self._refresh_run_name_hint()
         self._maybe_autodetect_fs()
 
     def _maybe_autodetect_fs(self) -> None:
@@ -119,13 +119,14 @@ class PSDPage(QWidget):
     # ---------------- UI ----------------
 
     def _build_ui(self) -> None:
-        outer = QVBoxLayout(self)
+        outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        outer.addWidget(scroll)
+        outer.addWidget(scroll, 1)
 
         content = QWidget()
         scroll.setWidget(content)
@@ -135,200 +136,62 @@ class PSDPage(QWidget):
         lbl = QLabel("PSD Computation")
         lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
         desc = QLabel(
-            "Compute power spectral densities from sleep-scored EDF files. "
-            "A separate PSD file is produced for each channel combination. "
-            "Each animal must have exactly one combination marked 'ok' in Sleep QC — "
-            "those ok runs are then merged into a single combined file per combo for downstream analysis."
+            "Compute power spectral densities for the project's channel combination from the "
+            "sleep-scored EDF files. Every animal needs a Sleep QC decision (ok or excluded); "
+            "excluded animals are computed too and stay marked excluded."
         )
         desc.setWordWrap(True)
         desc.setStyleSheet("color: #555; font-size: 12px;")
         root.addWidget(lbl)
         root.addWidget(desc)
 
-        # ----- Zone 1: SETUP -----
-        # ----- Zone 1: SETUP (collapsible) -----
-        # Setup is a "set once and forget" zone — collapse it to a one-line
-        # summary once the user has picked a folder + run name. Default
-        # expanded so it's discoverable on first visit.
-        zone1_row = QHBoxLayout()
-        zone1_row.setContentsMargins(0, 0, 0, 0)
-        zone1_label = QLabel("1. SETUP")
-        zone1_label.setStyleSheet(zone_header_qss())
-        zone1_row.addWidget(zone1_label)
-        zone1_row.addStretch(1)
-        self._setup_summary_lbl = QLabel("")
-        self._setup_summary_lbl.setStyleSheet(
-            "color: #888; font-size: 11px; font-style: italic; padding-right: 8px;"
-        )
-        self._setup_summary_lbl.setVisible(False)
-        zone1_row.addWidget(self._setup_summary_lbl)
-        self._btn_setup_toggle = QPushButton("▼")
-        self._btn_setup_toggle.setCheckable(True)
-        self._btn_setup_toggle.setChecked(True)
-        self._btn_setup_toggle.setFixedSize(28, 22)
-        self._btn_setup_toggle.setToolTip("Collapse the Setup section")
-        self._btn_setup_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_setup_toggle.clicked.connect(self._on_setup_toggled)
-        zone1_row.addWidget(self._btn_setup_toggle)
-        root.addLayout(zone1_row)
-
-        # Container wrapping the setup group boxes so we can hide them as
-        # a unit on collapse.
-        self._setup_container = QWidget()
-        setup_v = QVBoxLayout(self._setup_container)
-        setup_v.setContentsMargins(0, 0, 0, 0)
-        setup_v.setSpacing(4)
-        root.addWidget(self._setup_container)
-
-        # Folder Selection
-        self.folder_gb = QGroupBox("Folder Selection")
-        self.folder_gb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        top_form = QFormLayout(self.folder_gb)
-
-        standard_row = QHBoxLayout()
-        self.btn_standard = QPushButton("Browse…")
-        self.lbl_standard = QLineEdit("Looking for 'standard' in project root…")
-        self.lbl_standard.setReadOnly(True)
-        standard_row.addWidget(self.lbl_standard)
-        standard_row.addWidget(self.btn_standard)
-        top_form.addRow("Preprocessed EDF Folder:", standard_row)
-
-        run_name_row = QHBoxLayout()
-        self._run_name_edit = QLineEdit("default")
-        self._run_name_edit.setPlaceholderText("default")
-        self._run_name_edit.setMaximumWidth(200)
-        run_name_row.addWidget(self._run_name_edit)
-        self._run_name_hint = QLabel("")
-        self._run_name_hint.setStyleSheet("font-size: 10px; color: #888;")
-        run_name_row.addWidget(self._run_name_hint, 1)
-        top_form.addRow("Run name:", run_name_row)
-
-        self._run_name_warn = QLabel("")
-        self._run_name_warn.setStyleSheet("font-size: 10px; color: #c77800;")
-        self._run_name_warn.setWordWrap(True)
-        top_form.addRow("", self._run_name_warn)
-
-        setup_v.addWidget(self.folder_gb)
-
-        # Spindle Output Combos (Setup)
-        self.combo_gb = QGroupBox("Spindle Output Combos")
-        combo_v = QVBoxLayout(self.combo_gb)
-
-        btn_row = QHBoxLayout()
-        self.btn_refresh_table = QPushButton("Refresh")
-        btn_row.addWidget(self.btn_refresh_table)
-        btn_row.addStretch(1)
-        combo_v.addLayout(btn_row)
-
-        self.combo_table = QTableWidget(0, 4)
-        self.combo_table.setHorizontalHeaderLabels(["Combo", "CSVs", "Ok Runs", "PKL Status"])
-        self.combo_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.combo_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
-        self.combo_table.setColumnWidth(1, 60)
-        self.combo_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.combo_table.setColumnWidth(2, 70)
-        self.combo_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.combo_table.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        self.combo_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.combo_table.verticalHeader().setVisible(False)
-        # Table height auto-fits its row count (see _autofit_combo_table_height)
-        # instead of always reserving ~150 px — most projects have 1–3 combos.
-        self.combo_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        combo_v.addWidget(self.combo_table)
-
-        self._merged_pkl_label = QLabel()
-        self._merged_pkl_label.setStyleSheet("font-size: 10px; color: #555; padding-top: 2px;")
-        combo_v.addWidget(self._merged_pkl_label)
-
-        setup_v.addWidget(self.combo_gb)
-
         # Mask widget — built early so its States section can be re-parented
-        # into Zone 2 below. expose_states_externally=True keeps state
-        # ownership here while letting the page render the visual elsewhere.
-        # show_drink_mask=False because PSD initial compute never applies
-        # drink masks — those are added later by the Drink Mask page.
+        # into the "What to compute" box below. expose_states_externally=True
+        # keeps state ownership here while letting the page render the visual
+        # elsewhere. show_drink_mask=False because PSD initial compute never
+        # applies drink masks — those are added later by the Drink Mask page.
         self.mask_widget = MaskParamsWidget(
             project_root=self.project_root,
             swd_available=self._swd_available,
             show_drink_mask=False,
             expose_states_externally=True,
             show_subzone_headers=True,
+            event_masks_first=True,
         )
 
-        # ----- Zone 2: WHAT TO COMPUTE -----
-        zone2 = QLabel("2. WHAT TO COMPUTE")
-        zone2.setStyleSheet(zone_header_qss())
-        root.addWidget(zone2)
+        # ----- What to compute -----
+        zone_states = QLabel("WHAT TO COMPUTE")
+        zone_states.setStyleSheet(zone_header_qss())
+        root.addWidget(zone_states)
 
-        # States section (pulled from the mask widget) — wrapped in a plain
-        # QGroupBox so it visually matches the Channels box below it (no
-        # collapsible chevron / subtitle here; the box header is enough).
         self.states_gb = QGroupBox("States to Compute")
         self.states_gb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         states_v = QVBoxLayout(self.states_gb)
         states_v.addWidget(self.mask_widget.states_inner_widget())
         root.addWidget(self.states_gb)
 
-        # "&&" escapes the ampersand so Qt doesn't treat it as an accelerator.
-        self.psd_settings_gb = QGroupBox("Channels && Sampling freq")
-        self.psd_settings_gb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        psd_v = QVBoxLayout(self.psd_settings_gb)
-
-        ch_hdr = QHBoxLayout()
-        ch_hdr.addWidget(QLabel("Channels:"))
-        ch_hdr.addStretch(1)
-        self.chk_all = QCheckBox("Select all")
-        self.chk_all.setChecked(True)
-        ch_hdr.addWidget(self.chk_all)
-        psd_v.addLayout(ch_hdr)
-
-        channels_grid = QGridLayout()
-        channels_grid.setContentsMargins(0, 0, 0, 0)
-        channels_grid.setHorizontalSpacing(12)
-        channels_grid.setVerticalSpacing(4)
-        psd_v.addLayout(channels_grid)
-
+        self.channels_gb = QGroupBox("Channels")
+        self.channels_gb.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        ch_h = QHBoxLayout(self.channels_gb)
         self._channel_boxes: list[QCheckBox] = []
-        for i, label in enumerate(CH_LABELS):
+        for label in CH_LABELS:
             cb = QCheckBox(label)
             cb.setChecked(True)
             cb.toggled.connect(lambda _checked: self._validate())
             self._channel_boxes.append(cb)
-            r, c = divmod(i, 4)
-            channels_grid.addWidget(cb, r, c)
+            ch_h.addWidget(cb)
+        ch_h.addStretch(1)
+        self.chk_all = QCheckBox("Select all")
+        self.chk_all.setChecked(True)
+        ch_h.addWidget(self.chk_all)
+        root.addWidget(self.channels_gb)
 
-        fs_form = QFormLayout()
-        fs_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        # NoScrollSpinBox so a stray scroll-wheel inside the page doesn't
-        # accidentally change the value.
-        self.spin_fs = NoScrollSpinBox()
-        self.spin_fs.setRange(1, 100_000)
-        self.spin_fs.setSuffix(" Hz")
-        self.spin_fs.setValue(DEFAULT_FS)
-        # ↻ button reads fs from the first EDF in ``standard/`` and fills
-        # in the spinbox. No-op (with a log line) when no EDF is found.
-        self.btn_detect_fs = QPushButton("↻")
-        self.btn_detect_fs.setFixedSize(24, 22)
-        self.btn_detect_fs.setToolTip(
-            "Read sampling frequency from the first EDF in standard/"
-        )
-        self.btn_detect_fs.clicked.connect(self._on_detect_fs_clicked)
-        fs_row = QHBoxLayout()
-        fs_row.setContentsMargins(0, 0, 0, 0)
-        fs_row.addWidget(self.spin_fs)
-        fs_row.addWidget(self.btn_detect_fs)
-        fs_row.addStretch(1)
-        fs_form.addRow("Sampling freq:", fs_row)
-        psd_v.addLayout(fs_form)
-
-        root.addWidget(self.psd_settings_gb)
-
-        # ----- Zone 3: FILTERS & MASKS -----
-        zone3_row = QHBoxLayout()
-        zone3 = QLabel("3. FILTERS & MASKS")
-        zone3.setStyleSheet(zone_header_qss())
-        zone3_row.addWidget(zone3)
-        zone3_row.addStretch(1)
+        # ----- Filters & masks -----
+        masks_row = QHBoxLayout()
+        zone_masks = QLabel("FILTERS & MASKS")
+        zone_masks.setStyleSheet(zone_header_qss())
+        masks_row.addWidget(zone_masks)
+        masks_row.addStretch(1)
         self.btn_restore_defaults = QPushButton("Restore defaults")
         self.btn_restore_defaults.setToolTip(
             "Reset states, SD, spindle noise, commutator, SWD, annotation, "
@@ -336,116 +199,148 @@ class PSDPage(QWidget):
             "freq are not affected."
         )
         self.btn_restore_defaults.clicked.connect(self._on_restore_defaults)
-        zone3_row.addWidget(self.btn_restore_defaults)
-        root.addLayout(zone3_row)
+        masks_row.addWidget(self.btn_restore_defaults)
+        root.addLayout(masks_row)
 
-        # The mask widget renders its remaining filter sections (SD,
-        # Spindle Noise, SWD, Annotation, Compute Hours) here. States was
-        # already pulled into Zone 2 via the expose_states_externally flag.
+        # The mask widget renders the mask sections here (States was already
+        # pulled into the box above via expose_states_externally).
         root.addWidget(self.mask_widget)
 
-        # ----- Zone 4: RUN -----
-        zone4 = QLabel("4. RUN")
-        zone4.setStyleSheet(zone_header_qss())
-        root.addWidget(zone4)
-        btn_row2 = QHBoxLayout()
-        btn_row2.setSpacing(8)
-        self.btn_run_pipeline = QPushButton("Run PSD Pipeline")
-        self.btn_run_pipeline.setEnabled(False)
-        apply_primary_button(self.btn_run_pipeline)
-        self._gate_label = QLabel("")
-        self._gate_label.setStyleSheet("color: #888; font-size: 10px;")
-        btn_row2.addWidget(self.btn_run_pipeline)
-        btn_row2.addWidget(self._gate_label, 1)
-        root.addLayout(btn_row2)
+        # ----- Advanced: sampling frequency -----
+        adv_body = QWidget()
+        adv_h = QHBoxLayout(adv_body)
+        adv_h.addWidget(QLabel("Sampling freq:"))
+        # NoScrollSpinBox so a stray scroll-wheel inside the page doesn't
+        # accidentally change the value.
+        self.spin_fs = NoScrollSpinBox()
+        self.spin_fs.setRange(1, 100_000)
+        self.spin_fs.setSuffix(" Hz")
+        self.spin_fs.setValue(DEFAULT_FS)
+        self.spin_fs.valueChanged.connect(lambda _v: self._validate())
+        adv_h.addWidget(self.spin_fs)
+        # ↻ reads fs from the first EDF in ``standard/``. No-op (with a log
+        # line) when no EDF is found.
+        self.btn_detect_fs = QPushButton("↻")
+        self.btn_detect_fs.setFixedSize(24, 22)
+        self.btn_detect_fs.setToolTip("Read sampling frequency from the first EDF in standard/")
+        self.btn_detect_fs.clicked.connect(self._on_detect_fs_clicked)
+        adv_h.addWidget(self.btn_detect_fs)
+        adv_h.addStretch(1)
+        root.addWidget(CollapsibleSection("Advanced", adv_body, collapsed=True))
+        root.addStretch(1)
 
-        self._summary_label = QLabel("")
-        self._summary_label.setStyleSheet("color: #555; font-size: 10px;")
-        self._summary_label.setWordWrap(True)
-        root.addWidget(self._summary_label)
+        # ----- Run panel (right column) -----
+        panel = QFrame()
+        panel.setFrameShape(QFrame.Shape.StyledPanel)
+        panel.setFixedWidth(_RUN_PANEL_WIDTH_PX)
+        outer.addWidget(panel)
+        pv = QVBoxLayout(panel)
+        pv.setContentsMargins(10, 8, 10, 8)
+        pv.setSpacing(6)
 
-        # ----- Log -----
-        self.log_box = QPlainTextEdit()
-        self.log_box.setReadOnly(True)
-        self.log_box.setMaximumBlockCount(300)
-        self.log_box.setMinimumHeight(140)
-        self.log_box.setPlaceholderText("Status messages will appear here...")
-        root.addWidget(self.log_box)
+        zone_run = QLabel("RUN")
+        zone_run.setStyleSheet(zone_header_qss())
+        pv.addWidget(zone_run)
 
-        # Hint frame — updated dynamically after each step
+        self._status_lbl = QLabel("")
+        self._status_lbl.setWordWrap(True)
+        pv.addWidget(self._status_lbl)
+
+        run_name_row = QHBoxLayout()
+        run_name_row.addWidget(QLabel("Run name:"))
+        self._run_name_edit = QLineEdit("default")
+        self._run_name_edit.setPlaceholderText("default")
+        run_name_row.addWidget(self._run_name_edit, 1)
+        pv.addLayout(run_name_row)
+
+        self._run_msg_lbl = QLabel("")
+        self._run_msg_lbl.setWordWrap(True)
+        self._run_msg_lbl.setStyleSheet("font-size: 11px;")
+        pv.addWidget(self._run_msg_lbl)
+
+        self._output_lbl = QLabel("")
+        self._output_lbl.setWordWrap(True)
+        self._output_lbl.setStyleSheet("font-size: 11px; color: #666;")
+        pv.addWidget(self._output_lbl)
+
+        zone_will = QLabel("THIS RUN")
+        zone_will.setStyleSheet(zone_header_qss())
+        pv.addWidget(zone_will)
+        self._settings_lbl = QLabel("")
+        self._settings_lbl.setWordWrap(True)
+        self._settings_lbl.setStyleSheet("font-size: 11px;")
+        pv.addWidget(self._settings_lbl)
+
+        zone_ready = QLabel("READINESS")
+        zone_ready.setStyleSheet(zone_header_qss())
+        pv.addWidget(zone_ready)
+        self._checks_lbl = QLabel("")
+        self._checks_lbl.setWordWrap(True)
+        self._checks_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._checks_lbl.setStyleSheet("font-size: 11px;")
+        pv.addWidget(self._checks_lbl)
+        self._fix_page: str | None = None
+        self.btn_fix = QPushButton("")
+        self.btn_fix.clicked.connect(
+            lambda: self._fix_page and self.navigate_to.emit(self._fix_page)
+        )
+        self.btn_fix.setVisible(False)
+        pv.addWidget(self.btn_fix)
+
+        # Hint frame — shown after a successful run
         self._hint_frame = QFrame()
         self._hint_frame.setFrameShape(QFrame.Shape.StyledPanel)
         self._hint_frame.setStyleSheet(
             "QFrame { background: #d4edda; border: 1px solid #c3e6cb; border-radius: 4px; }"
         )
-        hint_layout = QHBoxLayout(self._hint_frame)
+        hint_layout = QVBoxLayout(self._hint_frame)
         hint_layout.setContentsMargins(10, 6, 10, 6)
         self._hint_lbl = QLabel()
-        hint_layout.addWidget(self._hint_lbl, 1)
+        self._hint_lbl.setWordWrap(True)
+        hint_layout.addWidget(self._hint_lbl)
         self._hint_btn_viz = QPushButton("→ PSD Visualizer")
         self._hint_btn_viz.clicked.connect(lambda: self.navigate_to.emit("psd_review"))
         self._hint_btn_viz.setVisible(False)
         hint_layout.addWidget(self._hint_btn_viz)
         self._hint_frame.setVisible(False)
-        root.addWidget(self._hint_frame)
+        pv.addWidget(self._hint_frame)
+
+        self.btn_run_pipeline = QPushButton("Run PSD Pipeline")
+        self.btn_run_pipeline.setEnabled(False)
+        apply_primary_button(self.btn_run_pipeline)
+        pv.addWidget(self.btn_run_pipeline)
+
+        # ----- Log (hidden until there is output) -----
+        self.log_box = QPlainTextEdit()
+        self.log_box.setReadOnly(True)
+        self.log_box.setMaximumBlockCount(300)
+        self.log_box.setMinimumHeight(120)
+        self.log_box.setVisible(False)
+        pv.addWidget(self.log_box, 1)
+        pv.addStretch(1)
 
         # Styling
-        self.folder_gb.setObjectName("folderBox")
-        self.combo_gb.setObjectName("comboBox")
         self.states_gb.setObjectName("statesBox")
-        self.psd_settings_gb.setObjectName("psdBox")
+        self.channels_gb.setObjectName("channelsBox")
         self.setStyleSheet("""
-        QGroupBox#folderBox, QGroupBox#comboBox, QGroupBox#statesBox, QGroupBox#psdBox {
-            font: 550;
-        }
-        QGroupBox#folderBox *, QGroupBox#comboBox *, QGroupBox#statesBox *, QGroupBox#psdBox * {
-            font: 400;
-        }
+        QGroupBox#statesBox, QGroupBox#channelsBox { font: 550; }
+        QGroupBox#statesBox *, QGroupBox#channelsBox * { font: 400; }
         """)
 
     def _wire(self) -> None:
         self.chk_all.toggled.connect(self._toggle_all_channels)
-        self.btn_standard.clicked.connect(self._choose_standard_folder)
-        self.btn_refresh_table.clicked.connect(self._refresh_combo_table)
         self.btn_run_pipeline.clicked.connect(self._run_pipeline_clicked)
-        self._run_name_edit.textChanged.connect(self._on_run_name_changed)
+        self._run_name_edit.textChanged.connect(self._refresh_status)
         # Re-validate when any mask-widget knob changes (states, ann_dir,
-        # ann_keywords, etc. all affect the gate / summary).
+        # ann_keywords, etc. all affect the readiness checks / summary).
         self.mask_widget.changed.connect(self._validate)
 
-    # ------------- Path / table refresh -------------
+    # ------------- Path / status refresh -------------
 
     def _run_name(self) -> str:
         """Return the current run name, defaulting to 'default'."""
         name = self._run_name_edit.text().strip()
         return name if name else "default"
-
-    def _on_run_name_changed(self) -> None:
-        name = self._run_name_edit.text().strip()
-        if name and not psd_params.valid_run_name(name):
-            self._run_name_warn.setText(
-                "Invalid name — use letters, numbers, hyphens, underscores (max 64 chars)."
-            )
-        else:
-            existing = psd_params.list_runs(self.project_root)
-            if name in existing:
-                self._run_name_warn.setText(
-                    f"⚠ Run '{name}' already exists — re-running will overwrite its results."
-                )
-            else:
-                self._run_name_warn.setText("")
-        self._refresh_run_name_tooltip()
-        self._refresh_combo_table()
-
-    def _refresh_run_name_tooltip(self) -> None:
-        """Keep the Run-name tooltip in sync with the derived output path.
-        The path used to live on the page as its own row, but it's fully
-        derived from project_root + 'psd/<run_name>'; the tooltip is enough
-        for discoverability without burning a row of vertical space.
-        """
-        out = self.project_root / "psd" / (self._run_name() or "default")
-        self._run_name_edit.setToolTip(f"PSD output: {out}")
-        self._refresh_setup_summary()
 
     def _on_restore_defaults(self) -> None:
         """Reset the shared mask widget back to its built-in defaults.
@@ -477,41 +372,9 @@ class PSDPage(QWidget):
         self.spin_fs.setValue(detected)
         self._log(f"Detected sampling freq: {detected} Hz")
 
-    def _refresh_setup_summary(self) -> None:
-        """Update the collapsed-state summary shown next to the SETUP header."""
-        self._setup_summary_lbl.setText(
-            f"{self.project_root.name} • run: {self._run_name() or 'default'}"
-        )
-
-    def _on_setup_toggled(self, checked: bool) -> None:
-        """Collapse / expand the Setup zone. The summary label is only
-        visible when the body is hidden."""
-        self._setup_container.setVisible(checked)
-        self._setup_summary_lbl.setVisible(not checked)
-        self._btn_setup_toggle.setText("▼" if checked else "▶")
-        self._btn_setup_toggle.setToolTip(
-            "Collapse the Setup section" if checked else "Expand the Setup section"
-        )
-
-    def _refresh_run_name_hint(self) -> None:
-        existing = psd_params.list_runs(self.project_root)
-        if existing:
-            self._run_name_hint.setText("Existing: " + ", ".join(existing))
-        else:
-            self._run_name_hint.setText("")
-
     def _refresh_standard_folder(self) -> None:
         cand_std = self.project_root / "standard"
-        if cand_std.exists() and cand_std.is_dir():
-            self.standard_folder = cand_std
-            self.lbl_standard.setText(str(cand_std))
-        else:
-            self.standard_folder = None
-            self.lbl_standard.setText(
-                f"No 'standard' folder found under {self.project_root}. "
-                "Run preprocessing first or browse manually."
-            )
-        self._refresh_run_name_tooltip()
+        self.standard_folder = cand_std if cand_std.is_dir() else None
 
     def _refresh_swd_status(self) -> None:
         """Update widget's SWD-available state from the project's swd/ dir."""
@@ -541,7 +404,6 @@ class PSDPage(QWidget):
         if params is None:
             return
         self._run_name_edit.setText(run_name)
-        self._refresh_run_name_hint()
         # PSD-only knobs (channels + fs) stay on the page.
         if "fs" in params:
             self.spin_fs.setValue(params["fs"])
@@ -555,71 +417,41 @@ class PSDPage(QWidget):
         # Everything else (states + mask params) lives in the widget.
         self.mask_widget.from_params(params)
 
-    def _autofit_combo_table_height(self) -> None:
-        """Resize the combo table to its content height — header + N rows
-        — so the box doesn't reserve ~150 px of empty space when the
-        project has only 1–3 combos.
-        """
-        n = self.combo_table.rowCount()
-        header_h = self.combo_table.horizontalHeader().height()
-        row_h = sum(self.combo_table.rowHeight(r) for r in range(n))
-        # Empty-state minimum: keep one row's worth of space so the
-        # placeholder reads as "no combos" rather than vanishing.
-        empty_row_h = self.combo_table.verticalHeader().defaultSectionSize()
-        body = max(row_h, empty_row_h if n == 0 else 0)
-        self.combo_table.setFixedHeight(header_h + body + 4)
-
-    def _refresh_combo_table(self) -> None:
-        spindle_root = self.project_root / "spindle_outputs"
-        psd_dir = self.project_root / "psd"
+    def _refresh_status(self) -> None:
+        """Update the Run panel's combo line, run-name message and output path."""
         manifest = Manifest.load(self.project_root)
+        combo = manifest.combo
+        ready = manifest.ready_for_psd()
+        n_excluded = sum(1 for e in ready if e.sleep_qc == "excluded")
 
-        # Count ok runs per combo across all animals
-        ok_runs_per_combo: dict[str, int] = {}
-        for entry in manifest:
-            for combo, run in entry.runs.items():
-                if run.sleep_qc == "ok":
-                    ok_runs_per_combo[combo] = ok_runs_per_combo.get(combo, 0) + 1
+        combo_dir = self.project_root / "spindle_outputs" / combo
+        csv_count = len(list(combo_dir.glob("*.csv"))) if combo_dir.is_dir() else 0
+        excluded = f" ({n_excluded} excluded)" if n_excluded else ""
+        self._status_lbl.setText(
+            f"<b>{combo}</b> · {csv_count} state CSV{'s' if csv_count != 1 else ''} · "
+            f"{len(ready)} of {len(manifest)} animals ready{excluded}"
+        )
 
-        self.combo_table.blockSignals(True)
-        self.combo_table.setRowCount(0)
-
+        existing = psd_params.list_runs(self.project_root)
+        self._run_name_edit.setToolTip("Existing runs: " + ", ".join(existing) if existing else "")
+        raw = self._run_name_edit.text().strip()
         run_name = self._run_name()
-        if spindle_root.is_dir():
-            for combo_dir in sorted(p for p in spindle_root.iterdir() if p.is_dir()):
-                combo = combo_dir.name
-                csv_count = len(list(combo_dir.glob("*.csv")))
-                ok_count = ok_runs_per_combo.get(combo, 0)
-                pkl_path = psd_dir / run_name / f"psds_{combo}.pkl"
-                pkl_status = "✓ exists" if pkl_path.exists() else "missing"
-
-                row = self.combo_table.rowCount()
-                self.combo_table.insertRow(row)
-                self.combo_table.setItem(row, 0, QTableWidgetItem(combo))
-                self.combo_table.setItem(row, 1, QTableWidgetItem(str(csv_count)))
-
-                ok_item = QTableWidgetItem(str(ok_count) if ok_count else "—")
-                if ok_count > 0:
-                    ok_item.setForeground(QColor("#2a7a2a"))
-                self.combo_table.setItem(row, 2, ok_item)
-
-                status_item = QTableWidgetItem(pkl_status)
-                if pkl_status.startswith("✓"):
-                    status_item.setForeground(QColor("#2a7a2a"))
-                self.combo_table.setItem(row, 3, status_item)
-
-        self.combo_table.blockSignals(False)
-        self._autofit_combo_table_height()
-
-        merged = merged_psd_path(self.project_root, run_name)
-        if merged.exists():
-            self._merged_pkl_label.setText("Channel merged PKL: ✓ exists")
-            self._merged_pkl_label.setStyleSheet(
-                "font-size: 10px; color: #2a7a2a; padding-top: 2px;"
+        if raw and not psd_params.valid_run_name(raw):
+            self._run_msg_lbl.setText(
+                "Invalid name — use letters, numbers, hyphens, underscores (max 64 chars)."
             )
+            self._run_msg_lbl.setStyleSheet("font-size: 11px; color: #c0392b;")
+        elif run_name in existing:
+            when = ""
+            params_file = self.project_root / "psd" / run_name / "psd_params.json"
+            if params_file.is_file():
+                when = f" (computed {datetime.fromtimestamp(params_file.stat().st_mtime):%Y-%m-%d})"
+            self._run_msg_lbl.setText(f"⚠ Run '{run_name}' exists{when} — Run will overwrite it.")
+            self._run_msg_lbl.setStyleSheet("font-size: 11px; color: #c77800;")
         else:
-            self._merged_pkl_label.setText("Channel merged PKL: not yet built")
-            self._merged_pkl_label.setStyleSheet("font-size: 10px; color: #555; padding-top: 2px;")
+            self._run_msg_lbl.setText("New run")
+            self._run_msg_lbl.setStyleSheet("font-size: 11px; color: #2a7a2a;")
+        self._output_lbl.setText(f"→ psd/{run_name}/psds_{combo}.pkl")
 
         self._validate(manifest)
 
@@ -636,35 +468,31 @@ class PSDPage(QWidget):
             return
 
         spindle_root = self.project_root / "spindle_outputs"
-        combos = (
-            sorted(
-                sd.name for sd in spindle_root.iterdir() if sd.is_dir() and any(sd.glob("*.csv"))
-            )
-            if spindle_root.is_dir()
-            else []
-        )
-        if not combos:
+        manifest = Manifest.load(self.project_root)
+        combo = manifest.combo
+        if not any((spindle_root / combo).glob("*.csv")):
             QMessageBox.warning(
-                self, "No Combos Found", "No spindle output combos with CSVs found."
+                self, "No Spindle Output", f"No spindle CSVs found in spindle_outputs/{combo}/."
             )
             return
 
-        manifest = Manifest.load(self.project_root)
-
         # Pre-flight: warn about ok animals with no state CSV (they'll be silently skipped)
-        for combo in combos:
-            csv_animal_ids = {parse_animal_id(p) for p in (spindle_root / combo).glob("*.csv")}
-            ok_animals = [
-                entry.animal_id
-                for entry in manifest
-                if any(c == combo and r.sleep_qc == "ok" for c, r in entry.runs.items())
-            ]
-            missing = [a for a in ok_animals if a not in csv_animal_ids]
-            if missing:
-                self._log(
-                    f"⚠ {combo}: no state CSV for {', '.join(missing)}"
-                    f" — {'this animal' if len(missing) == 1 else 'these animals'} will be skipped"
-                )
+        csv_animal_ids = {parse_animal_id(p) for p in (spindle_root / combo).glob("*.csv")}
+        missing = [
+            e.animal_id for e in manifest.ready_for_psd() if e.animal_id not in csv_animal_ids
+        ]
+        if missing:
+            self._log(
+                f"⚠ {combo}: no state CSV for {', '.join(missing)}"
+                f" — {'this animal' if len(missing) == 1 else 'these animals'} will be skipped"
+            )
+
+        excluded_ids = [e.animal_id for e in manifest.ready_for_psd() if e.sleep_qc == "excluded"]
+        if excluded_ids:
+            self._log(
+                f"{combo}: {', '.join(excluded_ids)} excluded — computed anyway, "
+                "marked excluded in the manifest only"
+            )
 
         # Pull all mask + filter params from the widget; channels + fs stay
         # on the page. The widget includes a few keys that the underlying
@@ -672,27 +500,15 @@ class PSDPage(QWidget):
         # those are stripped by ``_UI_ONLY_KWARGS`` in ``psd_compute``.
         widget_params = self.mask_widget.to_params()
 
-        # Pre-flight: SWD mask — all ok animals must have a .mat file
-        swd_dir: Path | None = None
-        if widget_params.get("use_swd_mask"):
-            swd_dir = self.project_root / "swd"
-            swd_animal_ids = {parse_animal_id(p) for p in swd_dir.glob("*.mat")}
-            all_ok_animals = {
-                entry.animal_id
-                for entry in manifest
-                if any(r.sleep_qc == "ok" for r in entry.runs.values())
-            }
-            missing_swd = sorted(all_ok_animals - swd_animal_ids)
-            if missing_swd:
-                QMessageBox.warning(
-                    self,
-                    "Missing SWD Files",
-                    "The following animals have no SWD .mat file in swd/:\n\n"
-                    + "\n".join(f"  • {a}" for a in missing_swd)
-                    + "\n\nProvide SWD files for all animals before running with SWD masking,"
-                    " or switch to 'No SWD mask'.",
-                )
-                return
+        # The SWD mask needs a .mat file for every animal; _readiness blocks Run until it does.
+        swd_dir: Path | None = (
+            self.project_root / "swd" if widget_params.get("use_swd_mask") else None
+        )
+
+        if not confirm_unfinished_swd_review(
+            self, self.project_root, {e.animal_id for e in manifest.ready_for_psd()}
+        ):
+            return
 
         run_name = self._run_name()
         if not psd_params.valid_run_name(run_name):
@@ -720,9 +536,7 @@ class PSDPage(QWidget):
 
         psd_run_dir = self.project_root / "psd" / run_name
         psd_run_dir.mkdir(parents=True, exist_ok=True)
-        pairs: list[tuple[Path, Path]] = [
-            (spindle_root / combo, psd_run_dir / f"psds_{combo}.pkl") for combo in combos
-        ]
+        pairs: list[tuple[Path, Path]] = [(spindle_root / combo, psd_run_dir / f"psds_{combo}.pkl")]
 
         # Compose params for the worker: widget params + page-owned
         # channels + fs.
@@ -754,8 +568,7 @@ class PSDPage(QWidget):
         # loaded above for the pre-flight checks rather than re-reading.
         try:
             for entry in manifest:
-                for run in entry.runs.values():
-                    run.psd_status.pop(run_name, None)
+                entry.psd_status.pop(run_name, None)
             manifest.save()
         except (OSError, ValueError) as e:
             self._log(f"⚠ Could not clear stale PSD review flags: {e}")
@@ -763,7 +576,8 @@ class PSDPage(QWidget):
         self._computing = True
         self._hint_frame.setVisible(False)
         self.btn_run_pipeline.setEnabled(False)
-        self._log(f"Running PSD pipeline for {len(combos)} combo(s): {', '.join(combos)}")
+        self._log(f"Running PSD pipeline for combo: {combo}")
+        self.log_box.setVisible(True)
 
         self.psd_thread = QThread(self)
         self.psd_worker = BatchEstimateWorker(
@@ -783,52 +597,152 @@ class PSDPage(QWidget):
             on_error=self._on_psd_error,
         )
 
-    def _build_final_pkl(self) -> None:
-        try:
-            run_name = self._run_name()
-            manifest = Manifest.load(self.project_root)
-            out = build_final_pkl(self.project_root, manifest, run_name)
-            self._log(f"Built channel merged PKL: {out}")
-            drink_pkl = self.project_root / "psd" / run_name / "psds_drink.pkl"
-            if drink_pkl.exists():
-                self._log(
-                    "Note: previously applied drink masks are preserved in psds_drink.pkl."
-                    " If PSD parameters changed since the last drink mask run,"
-                    " re-apply them on the Drink Mask page."
-                )
-            self.manifest_changed.emit()
-            self._hint_lbl.setText("✓ Channel merged PKL built — ready for PSD review.")
-            self._hint_btn_viz.setVisible(True)
-            self._hint_frame.setVisible(True)
-            self._refresh_combo_table()
-        except (OSError, ValueError, RuntimeError) as e:
-            self._log(f"ERROR building final PKL: {e}")
-            QMessageBox.critical(self, "Build Final PKL Error", str(e))
-
     # ---------- Channels API ----------
 
     def selected_channels(self) -> list[int]:
         """Return indices of checked channel boxes (in CH_LABELS order)."""
         return [i for i, cb in enumerate(self._channel_boxes) if cb.isChecked()]
 
-    # ---------- Internals ----------
-
     def _toggle_all_channels(self, checked: bool) -> None:
         for cb in self._channel_boxes:
             cb.setChecked(checked)
 
-    def _choose_standard_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(
-            self, "Select Standard EDF Folder", str(self.project_root)
+    # ---------- Internals ----------
+
+    def _readiness(self, manifest: Manifest, widget_params: dict) -> list[Check]:
+        """The checklist behind the Run button, in the order problems should be fixed."""
+        ready = manifest.ready_for_psd()
+        ready_ids = {e.animal_id for e in ready}
+        n_animals = len(manifest)
+        n_excluded = sum(1 for e in ready if e.sleep_qc == "excluded")
+        checks: list[Check] = []
+
+        has_standard = self.standard_folder is not None and self.standard_folder.exists()
+        checks.append(
+            Check(
+                has_standard,
+                "Standard EDFs found"
+                if has_standard
+                else "Standard folder not found — run preprocessing first",
+                page=None if has_standard else "preprocess",
+            )
         )
-        if not folder:
-            return
-        self.standard_folder = Path(folder).expanduser().resolve()
-        self.lbl_standard.setText(str(self.standard_folder))
-        self._validate()
+
+        if n_animals == 0:
+            checks.append(Check(False, "No animals in manifest", page="preprocess"))
+        elif len(ready) != n_animals:
+            n = n_animals - len(ready)
+            checks.append(
+                Check(
+                    False,
+                    f"{n} animal{'s' if n != 1 else ''} not ready — "
+                    "each needs sleep QC marked ok or excluded",
+                    page="sleep_qc",
+                )
+            )
+        else:
+            excluded = f" ({n_excluded} excluded)" if n_excluded else ""
+            checks.append(Check(True, f"Sleep QC decided for all {n_animals} animals{excluded}"))
+
+        spindle_dir = self.project_root / "spindle_outputs" / manifest.combo
+        has_combos = any(spindle_dir.glob("*.csv"))
+        checks.append(
+            Check(
+                has_combos,
+                "State CSVs found"
+                if has_combos
+                else f"No spindle output found for {manifest.combo} — "
+                "complete upload/download first",
+                page=None if has_combos else "spindle_upload",
+            )
+        )
+
+        if widget_params.get("use_swd_mask"):
+            swd_dir = self.project_root / "swd"
+            have = (
+                {parse_animal_id(p) for p in swd_dir.glob("*.mat")} if swd_dir.is_dir() else set()
+            )
+            missing = sorted(ready_ids - have)
+            if missing:
+                preview = ", ".join(missing[:6]) + ("…" if len(missing) > 6 else "")
+                text = (
+                    f"SWD mask is on but {len(missing)} animal{'s' if len(missing) != 1 else ''} "
+                    f"have no .mat file in swd/: {preview}"
+                )
+            else:
+                text = "SWD files found for every animal"
+            checks.append(Check(not missing, text))
+            if manifest.swd_review_enabled:
+                gaps = swd_review_gaps(self.project_root, manifest, ready_ids)
+                n_gaps = len(gaps.unfinished)
+                checks.append(
+                    Check(
+                        n_gaps == 0,
+                        "SWD review finished"
+                        if n_gaps == 0
+                        else f"SWD review unfinished for {n_gaps} animal"
+                        f"{'s' if n_gaps != 1 else ''}",
+                        blocking=False,
+                        page=None if n_gaps == 0 else "swd_review",
+                    )
+                )
+
+        if widget_params.get("ann_enabled"):
+            ann_dir = widget_params.get("ann_dir")
+            ann_keywords = (widget_params.get("ann_keywords") or "").strip()
+            if ann_dir is None or not Path(ann_dir).is_dir():
+                checks.append(
+                    Check(False, "Annotation mask enabled — select a valid annotation directory")
+                )
+            elif not ann_keywords:
+                checks.append(Check(False, "Annotation mask enabled — enter at least one keyword"))
+            else:
+                checks.append(Check(True, "Annotation mask configured"))
+                have = set(annotation_files_by_animal(ann_dir))
+                missing = sorted(ready_ids - have)
+                if missing:
+                    preview = ", ".join(missing[:6]) + ("…" if len(missing) > 6 else "")
+                    checks.append(
+                        Check(
+                            False,
+                            f"{len(missing)} animal{'s' if len(missing) != 1 else ''} "
+                            f"with no annotation file will run without the annotation mask: "
+                            f"{preview}",
+                            blocking=False,
+                        )
+                    )
+                else:
+                    checks.append(Check(True, "Annotation files found for every animal"))
+
+        states_ok = bool(widget_params.get("states"))
+        checks.append(
+            Check(
+                states_ok,
+                "States selected" if states_ok else "Select at least one state group to compute",
+            )
+        )
+        channels_ok = bool(self.selected_channels())
+        checks.append(
+            Check(
+                channels_ok,
+                "Channels selected" if channels_ok else "Select at least one channel to compute",
+            )
+        )
+        return checks
+
+    def _settings_summary(self, widget_params: dict) -> str:
+        """Rich text describing what the run will compute and which masks apply."""
+        states = ", ".join(PRESET_DISPLAY.get(s, s) for s in widget_params.get("states") or [])
+        channels = ", ".join(CH_LABELS[i] for i in self.selected_channels())
+        lines = [
+            f"<b>Computes</b> {states or 'no states'} · {channels or 'no channels'} · "
+            f"{int(self.spin_fs.value())} Hz",
+            *(f"• {line}" for line in mask_summary_lines(widget_params)),
+        ]
+        return "<br>".join(lines)
 
     def _validate(self, manifest: Manifest | None = None) -> None:
-        """Recompute the Run button's enabled state + status labels.
+        """Recompute the Run button's enabled state, checklist and run summary.
 
         Args:
             manifest: Optional pre-loaded manifest to avoid a redundant disk
@@ -836,96 +750,39 @@ class PSDPage(QWidget):
                 the manifest is loaded here.
         """
         if self._computing:
-            self._gate_label.setText("")
-            self._summary_label.setText("")
             return
-        has_standard = self.standard_folder is not None and self.standard_folder.exists()
-
         if manifest is None:
             manifest = Manifest.load(self.project_root)
-        n_animals = len(manifest)
-        n_ready = len(manifest.ready_for_psd())
-        all_ready = n_animals > 0 and n_ready == n_animals
-
-        spindle_root = self.project_root / "spindle_outputs"
-        has_combos = spindle_root.is_dir() and any(
-            sd.is_dir() and any(sd.glob("*.csv")) for sd in spindle_root.iterdir()
-        )
-
-        # Annotation mask gate — same shape as the legacy dialog: if
-        # annotation masking is enabled, dir + keywords must be valid.
         widget_params = self.mask_widget.to_params()
-        ann_ok = True
-        if widget_params.get("ann_enabled"):
-            ann_dir = widget_params.get("ann_dir")
-            ann_keywords = (widget_params.get("ann_keywords") or "").strip()
-            if ann_dir is None or not Path(ann_dir).is_dir() or not ann_keywords:
-                ann_ok = False
+        checks = self._readiness(manifest, widget_params)
 
-        states_ok = bool(widget_params.get("states"))
-        channels_ok = bool(self.selected_channels())
+        self.btn_run_pipeline.setEnabled(not blockers(checks))
+        self._checks_lbl.setText(checks_html(checks))
 
-        self.btn_run_pipeline.setEnabled(
-            has_standard
-            and all_ready
-            and has_combos
-            and ann_ok
-            and states_ok
-            and channels_ok
-        )
+        fix = first_fix(checks)
+        self._fix_page = fix.page if fix else None
+        self.btn_fix.setVisible(fix is not None)
+        if fix:
+            self.btn_fix.setText(fix_button_text(fix))
 
-        if not has_standard:
-            self._gate_label.setText("Standard folder not found — run preprocessing first")
-            self._summary_label.setText("")
-        elif not all_ready:
-            n_not_ready = n_animals - n_ready
-            if n_animals == 0:
-                self._gate_label.setText("No animals in manifest")
-            else:
-                self._gate_label.setText(
-                    f"{n_not_ready} animal{'s' if n_not_ready != 1 else ''} "
-                    "not ready — each needs exactly 1 ok run"
-                )
-            self._summary_label.setText("")
-        elif not has_combos:
-            self._gate_label.setText(
-                "No spindle output combos found — complete upload/download first"
-            )
-            self._summary_label.setText("")
-        elif not ann_ok:
-            ann_dir = widget_params.get("ann_dir")
-            if ann_dir is None or not Path(ann_dir).is_dir():
-                self._gate_label.setText(
-                    "Annotation mask enabled — select a valid annotation directory"
-                )
-            else:
-                self._gate_label.setText("Annotation mask enabled — enter at least one keyword")
-            self._summary_label.setText("")
-        elif not states_ok:
-            self._gate_label.setText("Select at least one state group to compute")
-            self._summary_label.setText("")
-        elif not channels_ok:
-            self._gate_label.setText("Select at least one channel to compute")
-            self._summary_label.setText("")
-        else:
-            self._gate_label.setText("")
-            # Build summary: "LFC_RSC (8 animals), LFC_LSC (5 animals) → psds_channel_merged.pkl"
-            ok_per_combo: dict[str, int] = {}
-            for entry in manifest:
-                for combo, run in entry.runs.items():
-                    if run.sleep_qc == "ok":
-                        ok_per_combo[combo] = ok_per_combo.get(combo, 0) + 1
-            parts = [
-                f"{c} ({n} animal{'s' if n != 1 else ''})" for c, n in sorted(ok_per_combo.items())
-            ]
-            self._summary_label.setText(", ".join(parts) + " → psds_channel_merged.pkl")
+        self._settings_lbl.setText(self._settings_summary(widget_params))
 
     def _on_psd_done(self) -> None:
         self._computing = False
         self._log("PSD computation finished.")
-        self._refresh_combo_table()
-        self._log("Building channel-merged PKL…")
-        self._build_final_pkl()
+        run_name = self._run_name()
+        drink_pkl = self.project_root / "psd" / run_name / "psds_drink.pkl"
+        if drink_pkl.exists():
+            self._log(
+                "Note: previously applied drink masks are preserved in psds_drink.pkl."
+                " If PSD parameters changed since the last drink mask run,"
+                " re-apply them on the Drink Mask page."
+            )
+        self.manifest_changed.emit()
+        self._hint_lbl.setText("✓ PSDs computed — ready for PSD review.")
+        self._hint_btn_viz.setVisible(True)
+        self._hint_frame.setVisible(True)
+        self._refresh_status()
 
     def _on_psd_error(self, msg: str) -> None:
         self._computing = False
@@ -934,7 +791,8 @@ class PSDPage(QWidget):
         self._validate()
 
     def _log(self, msg: str) -> None:
-        """Append a one-line status message to the page's log box."""
+        """Append a one-line status message to the page's log box, showing it if hidden."""
+        self.log_box.setVisible(True)
         self.log_box.appendPlainText(msg)
 
 

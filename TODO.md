@@ -1,5 +1,21 @@
 # TODO
 
+### Sleep QC: read `final_state` instead of reclassifying on the fly (DONE on feature/sleep-qc-final-state; steps 1-6 implemented, step 7 still open)
+The Reclassify page (stage 4) now writes `reclass_state` and `final_state` into each `spindle_outputs/<combo>/*.csv` and records `reclass_gate_applied` per animal in the manifest. `final_state` is the one resolved per-epoch state downstream code should read: `reclass_state`, overridden by `swd_reclassification` where that is non-blank once the SWD page exists. Without SWD review it is a plain copy of `reclass_state`, so analysis code is identical either way.
+
+Sleep QC (`pages/sleep_qc_visualizer.py`) now opens on the reclassified states (`final_state`) by default; a **Show original** toggle (formerly Reclassify) swaps to the original SPINDLE states. It reads the column instead of computing, and the EDF viewer's R pill starts lit too:
+1. Add `read_state_column(path, column)` next to `read_rawstate_column` in `ebb/process/sleep_compute.py`. `_ensure_reclass` builds `{animal: states}` from each CSV's `final_state` and passes it through the existing `states_by_animal` seam of `_compute_tables`. The raw view stays the default (`rawstate`/`state` via `STATE_COLUMNS`).
+2. Delete the compute path: the `reclassify_dir` call, `spin_gap`, `_gap_radius`, `_on_gap_radius_changed`, `_reclass_cache`, and the `GAP_RADIUS`/`NremReclass`/`reclassify_dir` imports. Gap radius is fixed at 1 in the Reclassify page.
+3. Source the EMG-gate tag (`_gated_animals`, `_gate_tag_html`, `lbl_reclass`) from `manifest.reclass_gate_applied` rather than `NremReclass.gate_applied`.
+4. Missing column: animals whose CSV has no `final_state` stay raw in reclass view, and `lbl_reclass` warns "N animal(s) not reclassified, run Reclassify". The toggle is disabled if no animal has it.
+5. Stale-results warning (no reset): if a CSV's `final_state` is newer than the CSV mtime recorded when QC flags were set, or the manifest has `sleep_qc` flags and Reclassify is re-run, show a warning only. Do not touch `sleep_qc` flags.
+6. EDF viewer reclass pill (`eeg_viewer.py`, `mask_builder.load_reclassified_state_masks`): read `final_state` from the CSV instead of recomputing.
+7. DONE (feature/downstream-final-state): analysis reads `final_state` only. `masking.state` (PSD compute, viewer mask export), `compute_*` sleep metrics, `build_state_intervals`, and sleep export raise `NotReclassifiedError` for CSVs without it; no silent fallback. The original states remain via `STATE_COLUMNS`/`read_rawstate_column` for the Sleep QC "Show original" view and the EDF viewer's original bar. Do NOT add `final_state` to `STATE_COLUMNS`: `read_states_and_noise` uses it as the *input* to reclassification, so re-runs would read their own output.
+
+**Done: script override for the reclassification requirement.** `estimate_psd` (and `batch_estimate` / `rerun_with_drink_masks`, which forward kwargs) take `state_columns`, defaulting to `final_state`. A script with no Reclassify step opts out explicitly with `state_columns=ebb.io.spindle_csv.STATE_COLUMNS`. The GUI never passes it.
+
+Tests: toggle uses the column (no EDF needed), missing-column warning, gate tag from the manifest, toggle disabled with no columns.
+
 ## In progress: UX polish mode (P2)
 
 Done across recent rounds: preprocess Rescan + wording (✓), rerun
@@ -259,9 +275,6 @@ The button flow appears broken in some cases — needs reproduction and a specif
 ### spindle_upload: Project names should propagate on page shown
 The remote folder name auto-defaults to `project_root.stem + '_' + combo` on combo selection but may not fire on `showEvent`. Ensure it pre-fills correctly whenever the page is navigated to. Use the SleepyRat manifest to note if there has been a project selected already. 
 
-### psd: SWD masks — decide policy on TS (needs scientific discussion)
-Whether to mask out or include the transition state (TS) in PSD computation is a scientific decision that must be made before any implementation. Once policy is settled, add mask support + optional export to `.npy` (consistent with drink mask format).
-
 ### general: Run log / settings provenance
 `psd/psd_params.json` already tracks PSD params. Consider extending to a `run_log.jsonl` that appends one entry per pipeline action (timestamp, what ran, which animals, params used). Low urgency but valuable for reproducibility and debugging.
 
@@ -351,3 +364,16 @@ restored sibling (mirroring what un-okaying does to the run itself).
 - **Drink Mask page: highlight missing .npy files**: The ✓/✗ in the table is subtle. Show `"Missing mask file"` in orange for animals where the `.npy` hasn't been placed yet.
 - **`SleepyRatAPI.wait_for_processing` should use `logging` instead of `print`**: Currently prints poll-status to stdout. Could move to a module-level logger, but doing this well requires deciding on log-level config and how Qt worker threads route log output to the GUI — likely larger than it sounds. Defer until a broader logging story is decided.
 - **Clear hint banners on PSD run switch**: When the active PSD run is changed (e.g., switching from one named run to another in the PSD page UI), any state-overlap or compute-status hint banners from the previous run can stick around and mislead. Make the page reset/hide all hint banners as part of the run-switch handler so each run starts visually clean.
+
+## Sleep walkthrough notebook: flexible time handling
+
+### research: allow "from start" and "per day" analysis
+`research/sleep_walkthrough.ipynb` currently rotates each recording to a
+fixed clock hour (default 6 AM) and averages across days (`hour_of_day`
+fold). Add options so users can instead:
+- skip the rotation and bin from the recording's first sample
+  (no `start_times.csv` needed in that mode), and
+- keep each day separate rather than averaging (the unfolded
+  `sleep_bins` table, one row per animal x bin x state).
+Likely shape: `ROTATE_TO_HOUR = 6 | None` and `AVERAGE_DAYS = True | False`
+config flags, with the walkthrough text explaining each mode.

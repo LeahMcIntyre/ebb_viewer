@@ -13,6 +13,7 @@ from PyQt6 import QtGui, QtWidgets
 from PyQt6.QtCore import Qt
 
 from ebb.io.edf_header import parse_edf_start_datetime
+from ebb.io.spindle_csv import FINAL_COLUMN, has_column
 from ebb.masking import get_offset
 from ebb.process.sleep_compute import DEFAULT_SPINDLE_EPOCH_SEC
 from ebb_viewer.edf_viewer.file_openers import (
@@ -26,6 +27,7 @@ from ebb_viewer.edf_viewer.mask_builder import (
     build_annotation_mask,
     build_default_masks,
     load_drink_mask,
+    load_reclassified_state_masks,
     load_state_masks,
     load_swd_mask,
     rebuild_annotation_mask,
@@ -36,8 +38,10 @@ from ebb_viewer.edf_viewer.mask_builder import (
 from ebb_viewer.edf_viewer.masks_dock import MasksDock
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
-from ebb_viewer.pipeline.naming import CHANNEL_COMBOS, parse_animal_id
+from ebb_viewer.pipeline.manifest import STAGE_SLEEP_QC
+from ebb_viewer.pipeline.naming import parse_animal_id
 from ebb_viewer.widgets.drink_mask_dialog import DrinkMaskDialogue
+from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.sleep_viewer import SleepPopup
 from ebb_viewer.widgets.stft_viewer import STFTBoundsDialog, STFTPopup
 
@@ -198,7 +202,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
     _QC_STYLES: dict[str, str] = {
         "ok": "color: green; font-weight: bold;",
         "needs_review": "color: #b8860b; font-weight: bold;",
-        "needs_rerun": "color: darkorange; font-weight: bold;",
+        "excluded": "color: #8a8a8a; font-weight: bold;",
     }
 
     def __init__(
@@ -207,7 +211,6 @@ class EegMainWindow(QtWidgets.QMainWindow):
         initial_dir: str = "",
         manifest=None,
         animal_id: str | None = None,
-        run_channels: str | None = None,
         parent=None,
     ):
         super().__init__(parent)
@@ -215,10 +218,11 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.initial_dir = initial_dir
         self.manifest = manifest
         self.animal_id = animal_id
-        self.run_channels = run_channels  # channel combo for the spindle run being reviewed
 
         self.mask_set = build_default_masks(recording)
-        self.state_set = None
+        self.state_set = None  # the state masks currently shown (raw or reclassified)
+        self._state_set_raw = None
+        self._state_set_reclass = None
         self.state_df = None
         self._annotations: list[tuple[float, str]] = []
         self._annotation_path = None
@@ -249,19 +253,33 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self.trace_view.set_masks(self.mask_set)
 
         if recording.csv_path is not None:
-            self.state_set = load_state_masks(recording.csv_path, int(recording.fs))
+            self.state_set = self._state_set_raw = load_state_masks(
+                recording.csv_path, int(recording.fs)
+            )
+            pill = self.trace_view.reclass_pill
+            has_final = has_column(recording.csv_path, FINAL_COLUMN)
+            if has_final:  # reclassified states (final_state) are the default view
+                try:
+                    self.state_set = self._state_set_reclass = load_reclassified_state_masks(
+                        recording.csv_path, int(recording.fs)
+                    )
+                    pill.set_checked(True)
+                except ValueError:
+                    has_final = False  # unreadable final_state: stay on the originals
             self.trace_view.set_state_masks(self.state_set)
+            pill.set_available(
+                has_final,
+                "R lit: reclassified states (final_state column) shown. Click to show the "
+                "original SPINDLE states. Display only; nothing is written.",
+            )
+            self.trace_view.reclass_pill.toggled.connect(self.on_toggle_reclass)
             self.state_df = _load_state_df(recording.csv_path)
 
         # actions/toolbars/menus
         self._build_actions()
         self._build_menus()
         self._build_toolbars()
-        if (
-            self.manifest is not None
-            and self.animal_id is not None
-            and self.run_channels is not None
-        ):
+        if self.manifest is not None and self.animal_id is not None:
             self._build_qc_toolbar()
         self._build_docks()
 
@@ -385,6 +403,27 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self._sleep_popup.show()
         self._sleep_popup.raise_()
 
+    def on_toggle_reclass(self, checked: bool) -> None:
+        """Swap the state bar between the CSV's ``final_state`` (checked) and the original states."""
+        pill = self.trace_view.reclass_pill
+        if checked and self._state_set_reclass is None:
+            try:
+                self._state_set_reclass = load_reclassified_state_masks(
+                    self.rec.csv_path, int(self.rec.fs)
+                )
+            except Exception as e:
+                pill.set_checked(False)
+                QtWidgets.QMessageBox.critical(
+                    self, "Error loading reclassified states", f"Could not read final_state:\n{e}"
+                )
+                return
+        new_set = self._state_set_reclass if checked else self._state_set_raw
+        for mask in new_set:  # keep the dock's per-state checkboxes where the user left them
+            mask.enabled = self.state_set.get(mask.name).enabled
+        self.state_set = new_set
+        self.trace_view.set_state_masks(new_set)
+        self.masks_dock.rebuild(self.mask_set, new_set)
+
     def _navigate_mask(self, mask, forward: bool) -> None:
         span = (
             mask.next_span_after(self.trace_view.center_sample)
@@ -429,44 +468,46 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         qc_tb.addSeparator()
 
-        # Rerun combo: pick a different combo from the current run_channels
-        self._rerun_combo = QtWidgets.QComboBox()
-        self._rerun_combo.addItems(CHANNEL_COMBOS)
-        run = self.manifest.get_run(self.animal_id, self.run_channels)
-        if run and run.rerun_combo and run.rerun_combo in CHANNEL_COMBOS:
-            self._rerun_combo.setCurrentText(run.rerun_combo)
-        else:
-            others = [c for c in CHANNEL_COMBOS if c != self.run_channels]
-            if others:
-                self._rerun_combo.setCurrentText(others[0])
-        qc_tb.addWidget(self._rerun_combo)
+        self._act_review = QtGui.QAction("Needs Review", self)
+        self._act_review.setCheckable(True)
+        self._act_review.triggered.connect(self._flag_qc_review)
+        qc_tb.addAction(self._act_review)
 
-        self._act_rerun = QtGui.QAction("Needs Rerun", self)
-        self._act_rerun.setCheckable(True)
-        self._act_rerun.triggered.connect(self._flag_qc_rerun)
-        qc_tb.addAction(self._act_rerun)
+        qc_tb.addSeparator()
+
+        self._act_exclude = QtGui.QAction("Exclude", self)
+        self._act_exclude.setCheckable(True)
+        self._act_exclude.setToolTip("Exclude this animal from analysis (a reason is required)")
+        self._act_exclude.triggered.connect(self._flag_qc_exclude)
+        qc_tb.addAction(self._act_exclude)
 
         self._update_qc_status()
 
     def _flag_qc_ok(self) -> None:
-        self.manifest.flag_sleep_qc(self.animal_id, self.run_channels, "ok")
+        self.manifest.flag_sleep_qc(self.animal_id, "ok")
         self._update_qc_status()
 
-    def _flag_qc_rerun(self) -> None:
-        rerun_combo = self._rerun_combo.currentText()
-        self.manifest.flag_sleep_qc(
-            self.animal_id, self.run_channels, "needs_rerun", rerun_combo=rerun_combo
-        )
+    def _flag_qc_review(self) -> None:
+        self.manifest.flag_sleep_qc(self.animal_id, "needs_review")
+        self._update_qc_status()
+
+    def _flag_qc_exclude(self, checked: bool) -> None:
+        """Exclude (asking for a reason); un-excluding sends the animal back to review."""
+        if checked:
+            exclude_with_reason(self, self.manifest, self.animal_id, STAGE_SLEEP_QC)
+        else:
+            self.manifest.flag_sleep_qc(self.animal_id, "needs_review")
         self._update_qc_status()
 
     def _update_qc_status(self) -> None:
-        run = self.manifest.get_run(self.animal_id, self.run_channels)
-        status = run.sleep_qc if run else None
+        entry = self.manifest.get(self.animal_id)
+        status = entry.sleep_qc if entry else None
         txt = (status or "unflagged").replace("_", " ")
-        self._qc_status_label.setText(f"QC [{self.run_channels}]: {txt}")
+        self._qc_status_label.setText(f"QC: {txt}")
         self._qc_status_label.setStyleSheet(self._QC_STYLES.get(status, ""))
         self._act_ok.setChecked(status == "ok")
-        self._act_rerun.setChecked(status == "needs_rerun")
+        self._act_review.setChecked(status == "needs_review")
+        self._act_exclude.setChecked(status == "excluded")
 
     def _on_mask_rebuild(self, mask) -> None:
         name = mask.name
@@ -657,7 +698,6 @@ def launch_edf_window(
     csv_path: Path | None = None,
     manifest=None,
     animal_id: str | None = None,
-    run_channels: str | None = None,
     initial_dir: str = "",
 ) -> EegMainWindow:
     """Load an EDF file and return a configured (not yet shown) EegMainWindow.
@@ -671,7 +711,6 @@ def launch_edf_window(
         initial_dir=initial_dir,
         manifest=manifest,
         animal_id=animal_id,
-        run_channels=run_channels,
     )
     win.setWindowTitle(f"{edf_path.stem} — EEG Viewer")
     return win

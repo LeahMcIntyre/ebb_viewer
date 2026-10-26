@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from ebb_viewer.pipeline import mask_export as me
-from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
+from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
 
 # ---------------------------------------------------------------------------
 # Manifest builders
@@ -24,15 +24,17 @@ from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
 
 
 def _make_manifest(tmp_path: Path, animal_id: str, combo: str) -> Manifest:
-    """Build a manifest with one OK run for a single animal/combo."""
+    """Build a manifest (project combo = ``combo``) with one OK animal."""
     m = Manifest(tmp_path)
+    m.combo = combo
     edf_rel = f"standard/{animal_id}_2025_01_01_00_00_00_PREPROCESSED.edf"
     (tmp_path / "standard").mkdir(parents=True, exist_ok=True)
     (tmp_path / edf_rel).touch()  # exists; contents irrelevant for path resolution
     entry = ManifestEntry(
         animal_id=animal_id,
         preprocessed_edf=edf_rel,
-        runs={combo: RunEntry(sleep_qc="ok")},
+        has_spindle=True,
+        sleep_qc="ok",
     )
     m._entries[animal_id] = entry
     return m
@@ -64,7 +66,7 @@ def test_resolve_paths_finds_edf_state_and_drink(tmp_path):
     state_csv = _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
     drink_full = _drop_drink_npy(tmp_path, "Mice-1")
 
-    paths = me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
+    paths = me.resolve_paths(tmp_path, manifest, "Mice-1")
     assert paths.edf == tmp_path / "standard/Mice-1_2025_01_01_00_00_00_PREPROCESSED.edf"
     assert paths.state == state_csv
     assert paths.drink == drink_full
@@ -79,7 +81,7 @@ def test_resolve_paths_finds_offset_csv_in_drink_masks_dir(tmp_path):
     _drop_drink_npy(tmp_path, "Mice-1")
     offset_csv = tmp_path / "drink_masks" / "offsets.csv"
     offset_csv.write_text("Animal,Offset\nMice-1,3.5\n")
-    paths = me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
+    paths = me.resolve_paths(tmp_path, manifest, "Mice-1")
     assert paths.offset_csv == offset_csv
 
 
@@ -160,7 +162,7 @@ def test_resolve_paths_raises_on_multiple_offset_csvs(tmp_path):
     (drink_dir / "offsets_a.csv").write_text("Animal,Offset\nMice-1,1.0\n")
     (drink_dir / "offsets_b.csv").write_text("Animal,Offset\nMice-1,2.0\n")
     with pytest.raises(ValueError, match="Expected at most one offset CSV"):
-        me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
+        me.resolve_paths(tmp_path, manifest, "Mice-1")
 
 
 def test_resolve_paths_drink_discovered_by_file_presence_only(tmp_path):
@@ -169,7 +171,7 @@ def test_resolve_paths_drink_discovered_by_file_presence_only(tmp_path):
     _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
     # No run.drink_mask set; just an .npy at the canonical path.
     drink_full = _drop_drink_npy(tmp_path, "Mice-1")
-    paths = me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
+    paths = me.resolve_paths(tmp_path, manifest, "Mice-1")
     assert paths.drink == drink_full
 
 
@@ -180,14 +182,25 @@ def test_resolve_paths_finds_swd_when_present(tmp_path):
     swd_dir.mkdir()
     swd_path = swd_dir / "Mice-1_2025_01_01.mat"
     swd_path.touch()
-    paths = me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
+    paths = me.resolve_paths(tmp_path, manifest, "Mice-1")
     assert paths.swd == swd_path
+
+
+def test_resolve_paths_finds_swd_named_with_the_bare_animal_id(tmp_path):
+    """Real projects name SWD files Mice-1256.mat (no underscore after the ID)."""
+    manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
+    _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
+    (tmp_path / "swd").mkdir()
+    (tmp_path / "swd" / "Mice-10.mat").touch()  # a different animal sharing the prefix
+    swd_path = tmp_path / "swd" / "Mice-1.mat"
+    swd_path.touch()
+    assert me.resolve_paths(tmp_path, manifest, "Mice-1").swd == swd_path
 
 
 def test_resolve_paths_no_swd_when_missing(tmp_path):
     manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
     _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
-    paths = me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
+    paths = me.resolve_paths(tmp_path, manifest, "Mice-1")
     assert paths.swd is None
 
 
@@ -195,14 +208,15 @@ def test_resolve_paths_unknown_animal_raises(tmp_path):
     manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
     _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
     with pytest.raises(ValueError, match="not in manifest"):
-        me.resolve_paths(tmp_path, manifest, "Mice-99", "LFC_RSC")
+        me.resolve_paths(tmp_path, manifest, "Mice-99")
 
 
-def test_resolve_paths_unknown_combo_raises(tmp_path):
+def test_resolve_paths_no_spindle_files_raises(tmp_path):
     manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
+    manifest.get("Mice-1").has_spindle = False
     _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
-    with pytest.raises(ValueError, match="no run for combo"):
-        me.resolve_paths(tmp_path, manifest, "Mice-1", "LSC_RSC")
+    with pytest.raises(ValueError, match="no spindle files"):
+        me.resolve_paths(tmp_path, manifest, "Mice-1")
 
 
 def test_resolve_paths_missing_edf_raises(tmp_path):
@@ -210,20 +224,20 @@ def test_resolve_paths_missing_edf_raises(tmp_path):
     _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
     (tmp_path / manifest.get("Mice-1").preprocessed_edf).unlink()
     with pytest.raises(ValueError, match="EDF not found"):
-        me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
+        me.resolve_paths(tmp_path, manifest, "Mice-1")
 
 
 def test_resolve_paths_missing_state_csv_raises(tmp_path):
     manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
     # No state CSV created.
     with pytest.raises(ValueError, match="No state CSV found"):
-        me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
+        me.resolve_paths(tmp_path, manifest, "Mice-1")
 
 
 def test_resolve_paths_no_drink_when_file_missing(tmp_path):
     manifest = _make_manifest(tmp_path, "Mice-1", "LFC_RSC")
     _make_state_csv(tmp_path, "Mice-1", "LFC_RSC")
-    paths = me.resolve_paths(tmp_path, manifest, "Mice-1", "LFC_RSC")
+    paths = me.resolve_paths(tmp_path, manifest, "Mice-1")
     assert paths.drink is None
 
 
@@ -298,20 +312,18 @@ def test_export_run_collects_failures_and_continues(tmp_path, monkeypatch):
 
     calls = []
 
-    def fake_export_animal(project_root, out_dir, manifest, animal_id, combo, params):
-        calls.append((animal_id, combo))
+    def fake_export_animal(project_root, out_dir, manifest, animal_id, params):
+        calls.append(animal_id)
         if animal_id == "BAD":
-            return me.AnimalExportResult(
-                animal_id=animal_id, combo=combo, status="error", message="boom"
-            )
-        return me.AnimalExportResult(animal_id=animal_id, combo=combo, status="ok")
+            return me.AnimalExportResult(animal_id=animal_id, status="error", message="boom")
+        return me.AnimalExportResult(animal_id=animal_id, status="ok")
 
     monkeypatch.setattr(me, "export_animal", fake_export_animal)
 
-    pairs = [("A", "LFC_RSC"), ("BAD", "LFC_RSC"), ("B", "LSC_RSC")]
-    result = me.export_run(tmp_path, out_dir, manifest, params={}, pairs=pairs)
+    animal_ids = ["A", "BAD", "B"]
+    result = me.export_run(tmp_path, out_dir, manifest, params={}, animal_ids=animal_ids)
 
-    assert calls == pairs  # ran every animal despite the failure in the middle
+    assert calls == animal_ids  # ran every animal despite the failure in the middle
     assert len(result.successes) == 2
     assert len(result.failures) == 1
     assert result.failures[0].animal_id == "BAD"
@@ -322,11 +334,11 @@ def test_export_run_creates_out_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(
         me,
         "export_animal",
-        lambda *a, **kw: me.AnimalExportResult(animal_id="A", combo="X", status="ok"),
+        lambda *a, **kw: me.AnimalExportResult(animal_id="A", status="ok"),
     )
     out_dir = tmp_path / "exports" / "fresh"
     assert not out_dir.exists()
-    me.export_run(tmp_path, out_dir, Manifest(tmp_path), params={}, pairs=[("A", "X")])
+    me.export_run(tmp_path, out_dir, Manifest(tmp_path), params={}, animal_ids=["A"])
     assert out_dir.is_dir()
 
 
@@ -334,7 +346,7 @@ def test_export_run_invokes_progress_callback(tmp_path, monkeypatch):
     monkeypatch.setattr(
         me,
         "export_animal",
-        lambda *a, **kw: me.AnimalExportResult(animal_id=a[3], combo=a[4], status="ok"),
+        lambda *a, **kw: me.AnimalExportResult(animal_id=a[3], status="ok"),
     )
     progress = []
     me.export_run(
@@ -342,10 +354,10 @@ def test_export_run_invokes_progress_callback(tmp_path, monkeypatch):
         tmp_path / "out",
         Manifest(tmp_path),
         params={},
-        pairs=[("A", "X"), ("B", "Y")],
-        progress_cb=lambda an, co, d, t: progress.append((an, co, d, t)),
+        animal_ids=["A", "B"],
+        progress_cb=lambda an, d, t: progress.append((an, d, t)),
     )
-    assert progress == [("A", "X", 1, 2), ("B", "Y", 2, 2)]
+    assert progress == [("A", 1, 2), ("B", 2, 2)]
 
 
 def test_export_run_progress_cb_failure_is_swallowed(tmp_path, monkeypatch):
@@ -353,7 +365,7 @@ def test_export_run_progress_cb_failure_is_swallowed(tmp_path, monkeypatch):
     monkeypatch.setattr(
         me,
         "export_animal",
-        lambda *a, **kw: me.AnimalExportResult(animal_id=a[3], combo=a[4], status="ok"),
+        lambda *a, **kw: me.AnimalExportResult(animal_id=a[3], status="ok"),
     )
 
     def bad_cb(*_):
@@ -364,39 +376,27 @@ def test_export_run_progress_cb_failure_is_swallowed(tmp_path, monkeypatch):
         tmp_path / "out",
         Manifest(tmp_path),
         params={},
-        pairs=[("A", "X"), ("B", "Y")],
+        animal_ids=["A", "B"],
         progress_cb=bad_cb,
     )
     assert len(result.successes) == 2
 
 
 # ---------------------------------------------------------------------------
-# default_pairs
+# default_animals
 # ---------------------------------------------------------------------------
 
 
-def test_default_pairs_returns_only_ok_runs(tmp_path):
+def test_default_animals_returns_only_ok(tmp_path):
     m = Manifest(tmp_path)
-    m._entries["A"] = ManifestEntry(
-        animal_id="A",
-        preprocessed_edf="x.edf",
-        runs={
-            "LFC_RSC": RunEntry(sleep_qc="ok"),
-            "LSC_RSC": RunEntry(sleep_qc="rejected"),
-        },
-    )
-    m._entries["B"] = ManifestEntry(
-        animal_id="B",
-        preprocessed_edf="y.edf",
-        runs={"LFC_RSC": RunEntry(sleep_qc="needs_review")},
-    )
-    m._entries["C"] = ManifestEntry(
-        animal_id="C",
-        preprocessed_edf="z.edf",
-        runs={"LSC_RSC": RunEntry(sleep_qc="ok")},
-    )
-    pairs = me.default_pairs(m)
-    assert sorted(pairs) == [("A", "LFC_RSC"), ("C", "LSC_RSC")]
+    for animal_id, status in (("A", "ok"), ("B", "needs_review"), ("C", "ok"), ("D", None)):
+        m._entries[animal_id] = ManifestEntry(
+            animal_id=animal_id,
+            preprocessed_edf=f"{animal_id}.edf",
+            has_spindle=True,
+            sleep_qc=status,
+        )
+    assert me.default_animals(m) == ["A", "C"]
 
 
 # ---------------------------------------------------------------------------

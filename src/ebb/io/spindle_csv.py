@@ -8,7 +8,10 @@ same clean values `rawstate` used to. Noise probability moved from
 since old-format files already exist on disk alongside new ones.
 """
 
-from collections.abc import Sequence
+import csv
+import shutil
+from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 # Order matters: `rawstate` must win when both are present (old format),
 # since old `state` can hold artifact codes (`1`/`2`/`3`) instead of a
@@ -27,3 +30,102 @@ def resolve_column(header: Sequence[str], candidates: Sequence[str]) -> str:
         if name in header:
             return name
     raise ValueError(f"None of {list(candidates)} found in CSV header {list(header)}")
+
+
+RECLASS_COLUMN = "reclass_state"
+# The resolved per-epoch state downstream steps read: reclass_state, overridden by
+# swd_reclassification where that is non-blank. Not part of STATE_COLUMNS, which is
+# the *input* to reclassification (reading final_state there would break re-runs).
+FINAL_COLUMN = "final_state"
+# Written by the optional SWD review: blank except SWD epochs and epochs the user edited.
+SWD_COLUMN = "swd_reclassification"
+# What analysis (PSDs, masks, sleep metrics, exports) reads. Forced to final_state so
+# every project goes through the same path; the original states stay available via
+# STATE_COLUMNS for the "original" comparison views only.
+ANALYSIS_STATE_COLUMNS = (FINAL_COLUMN,)
+
+
+class NotReclassifiedError(ValueError):
+    """A spindle CSV has no ``final_state`` column: the Reclassify step hasn't run on it."""
+
+    def __init__(self, name: str):
+        super().__init__(
+            f"{name} has no {FINAL_COLUMN!r} column. Run the Reclassify step "
+            "(sidebar: 4. Reclassify) before this step."
+        )
+
+
+def read_analysis_states(csv_path: str | Path) -> list[str]:
+    """Per-epoch states for analysis: the ``final_state`` column.
+
+    Raises:
+        NotReclassifiedError: if the CSV lacks ``final_state``.
+    """
+    try:
+        return read_state_column(csv_path, FINAL_COLUMN)
+    except ValueError as e:
+        raise NotReclassifiedError(Path(csv_path).name) from e
+ORIGINAL_DIRNAME = "_original"
+
+
+def read_state_column(csv_path: str | Path, column: str) -> list[str]:
+    """Read one named per-epoch state column (e.g. ``final_state``) from a CSV.
+
+    Raises:
+        ValueError: if the file is empty or lacks ``column``.
+    """
+    path = Path(csv_path)
+    with open(path, newline="") as f:
+        reader = csv.reader(f)
+        header = next(reader, None)
+        if header is None or column not in header:
+            raise ValueError(f"{column!r} column not found in {path.name}")
+        idx = header.index(column)
+        return [row[idx] for row in reader if row]
+
+
+def has_column(csv_path: str | Path, name: str) -> bool:
+    """True if the CSV header contains ``name``."""
+    with open(csv_path, newline="") as f:
+        header = next(csv.reader(f), [])
+    return name in header
+
+
+def write_columns(csv_path: str | Path, columns: Mapping[str, Sequence[str]]) -> None:
+    """Add (or replace) columns in a CSV, one value per data row.
+
+    The first time a file is rewritten, the untouched original is copied to
+    ``<dir>/_original/`` (never overwritten, so re-runs keep the SleepyRat file).
+    Blank rows are dropped. Written atomically via a ``.tmp`` rename.
+    """
+    path = Path(csv_path)
+    with open(path, newline="") as f:
+        rows = [r for r in csv.reader(f) if r]
+    if not rows:
+        raise ValueError(f"empty CSV: {path.name}")
+    header, data = rows[0], rows[1:]
+    for name, values in columns.items():
+        if len(data) != len(values):
+            raise ValueError(f"{path.name}: {len(data)} rows but {len(values)} values for {name!r}")
+
+    backup = path.parent / ORIGINAL_DIRNAME / path.name
+    if not backup.exists():
+        backup.parent.mkdir(exist_ok=True)
+        shutil.copy2(path, backup)
+
+    for name, values in columns.items():
+        if name in header:
+            idx = header.index(name)
+            for row, v in zip(data, values, strict=True):
+                row[idx] = str(v)
+        else:
+            header.append(name)
+            for row, v in zip(data, values, strict=True):
+                row.append(str(v))
+
+    tmp = path.with_suffix(".csv.tmp")
+    with open(tmp, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(header)
+        w.writerows(data)
+    tmp.replace(path)

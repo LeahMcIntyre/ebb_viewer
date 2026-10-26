@@ -1,8 +1,8 @@
 """Preprocess page — trim, downsample, and standardize raw EDFs.
 
 Inputs: ``.edf`` files in the project root with names matching
-``AnimalID_..._YYYY_MM_DD_HH_MM_SS.edf``. Outputs: trimmed + downsampled
-copies written to ``standard/``.
+``AnimalID_anything.edf`` (the animal ID is the text before the first ``_``).
+Outputs: trimmed + downsampled copies written to ``standard/``.
 
 Trim policy: each EDF is trimmed to the longest target hour count that
 fits its duration. Recordings shorter than the smallest target fail.
@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ebb.core.naming import parse_animal_id
 from ebb.preprocess.edf import batch as batch_preprocess
 from ebb.preprocess.edf import standard
 from ebb_viewer.pipeline.manifest import Manifest
@@ -49,6 +50,18 @@ DEFAULT_DOWNSAMPLE = 20
 DEFAULT_TRIM_TO = [48, 72]  # hours
 
 _SAME_DURATION_THRESHOLD = 1 / 60  # 1 minute — treat as identical
+
+
+def duplicate_animal_edfs(paths: list[Path]) -> dict[str, list[str]]:
+    """``{animal_id: [file names]}`` for animals that have more than one EDF in ``paths``.
+
+    One animal with several EDFs in the project folder means a restarted recording whose chunks
+    have not been combined yet (``ebb-combine edf``), or chunks left behind after combining.
+    """
+    by_animal: dict[str, list[str]] = {}
+    for p in sorted(paths):
+        by_animal.setdefault(parse_animal_id(p), []).append(p.name)
+    return {a: names for a, names in by_animal.items() if len(names) > 1}
 
 
 class PreprocessPage(QWidget):
@@ -116,10 +129,16 @@ class PreprocessPage(QWidget):
 
         top_form.addRow("Project:", self.lbl_root)
         top_form.addRow("", scan_row)
+
+        self._chunk_label = QLabel("")
+        self._chunk_label.setWordWrap(True)
+        self._chunk_label.setStyleSheet("color: #c0392b; font-size: 10px;")
+        self._chunk_label.setVisible(False)
+        top_form.addRow("", self._chunk_label)
         top_form.addRow("Target Directory:", self.target_name_edit)
 
         fmt_lbl = QLabel(
-            "ℹ EDF files must be named: <code>AnimalID_anything_YYYY_MM_DD_HH_MM_SS.edf</code>"
+            "ℹ EDF files must be named: <code>AnimalID_anything.edf</code> (the animal ID is the text before the first <code>_</code>)"
         )
         fmt_lbl.setTextFormat(Qt.TextFormat.RichText)
         fmt_lbl.setStyleSheet("color: #666; font-size: 10px; padding-top: 2px;")
@@ -262,6 +281,7 @@ class PreprocessPage(QWidget):
 
     def _scan_edfs(self) -> None:
         paths = sorted(self.project_root.glob("*.edf"))
+        self._show_chunk_warning(paths)
         if not paths:
             self._scan_label.setText("No EDF files found")
             self._scan_label.setStyleSheet(self._STYLE_ERROR)
@@ -304,6 +324,22 @@ class PreprocessPage(QWidget):
             f"Found {n} file{'s' if n != 1 else ''} · {dur_str}{skip_str}"
         )
         self._update_trim_hint()
+
+    def _show_chunk_warning(self, paths: list[Path]) -> None:
+        """Warn when one animal has several EDFs in the folder (uncombined restart chunks)."""
+        dupes = duplicate_animal_edfs(paths)
+        if not dupes:
+            self._chunk_label.setVisible(False)
+            self._chunk_label.setText("")
+            return
+        shown = ", ".join(sorted(dupes)[:6]) + ("…" if len(dupes) > 6 else "")
+        self._chunk_label.setText(
+            f"⚠ {len(dupes)} animal{'s have' if len(dupes) != 1 else ' has'} more than one EDF "
+            f"in this folder ({shown}). If these are restarted recordings, combine them first "
+            "with ebb-combine (see the user guide) and move the original chunks out of the "
+            "folder, or they will be preprocessed as separate files."
+        )
+        self._chunk_label.setVisible(True)
 
     def _update_trim_hint(self) -> None:
         trim_vals = sorted(self.trim_to.value())

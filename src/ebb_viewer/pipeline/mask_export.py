@@ -22,6 +22,7 @@ from openseize.file_io import edf
 
 from ebb import masking
 from ebb.io.edf_header import assert_fs_matches, parse_edf_start_datetime
+from ebb.io.spindle_csv import FINAL_COLUMN
 from ebb.masking.annotations import keyword_mask
 from ebb.process.mask_export import (
     artifact_masks_to_intervals,
@@ -35,6 +36,7 @@ from ebb_viewer.pipeline.manifest import (
     spindle_output_dir,
 )
 from ebb_viewer.pipeline.naming import drink_mask_rel, parse_animal_id
+from ebb_viewer.pipeline.swd_review import find_swd_file
 
 # ---------------------------------------------------------------------------
 # Result types
@@ -44,7 +46,6 @@ from ebb_viewer.pipeline.naming import drink_mask_rel, parse_animal_id
 @dataclass
 class AnimalExportResult:
     animal_id: str
-    combo: str
     status: str  # "ok" | "error"
     message: str = ""
     paths: dict[str, Path] = field(default_factory=dict)
@@ -82,19 +83,19 @@ def resolve_paths(
     project_root: Path,
     manifest: Manifest,
     animal_id: str,
-    combo: str,
 ) -> ResolvedPaths:
-    """Locate EDF, state CSV, drink mask, and SWD MAT for one (animal, combo).
+    """Locate EDF, state CSV, drink mask, and SWD MAT for one animal.
 
     Drink and SWD are optional — they're discovered by presence:
-    ``project_root/swd/<animal_id>_*.mat`` for SWD, manifest-tracked relative
+    ``find_swd_file`` (``project_root/swd/``) for SWD, manifest-tracked relative
     path for drink. Raises ``ValueError`` only for required files.
     """
     entry = manifest.get(animal_id)
     if entry is None:
         raise ValueError(f"Animal {animal_id!r} not in manifest")
-    if combo not in entry.runs:
-        raise ValueError(f"Animal {animal_id!r} has no run for combo {combo!r}")
+    combo = manifest.combo
+    if not entry.has_spindle:
+        raise ValueError(f"Animal {animal_id!r} has no spindle files for combo {combo!r}")
 
     edf_path = Path(project_root) / entry.preprocessed_edf
     if not edf_path.exists():
@@ -125,9 +126,7 @@ def resolve_paths(
         )
     offset_csv = offset_csvs[0] if offset_csvs else None
 
-    swd_dir = Path(project_root) / "swd"
-    swd_matches = sorted(swd_dir.glob(f"{animal_id}_*.mat")) if swd_dir.is_dir() else []
-    swd = swd_matches[0] if swd_matches else None
+    swd = find_swd_file(project_root, animal_id)
 
     return ResolvedPaths(
         edf=edf_path,
@@ -161,8 +160,7 @@ def clean_mask_for_state(
             uniformly across states (commutator, spindle noise, drink, hour
             window, etc.). True = clean.
         sd_threshold_mask: SD-threshold mask, True = OK.
-        wake_sub_mask: True = wake sample (rawstate or rawstate ∩ sprob,
-            depending on caller). Required when ``codes`` lumps wake with
+        wake_sub_mask: True = wake sample. Required when ``codes`` lumps wake with
             other states; ignored otherwise.
 
     Returns:
@@ -240,7 +238,6 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
     sd_radius_s = float(_coerce_param(params, "radius", 0.5))
     nstd = float(_coerce_param(params, "nstd", 5))
     noise_thresh = float(_coerce_param(params, "noise_thresh", 0.5))
-    s_prob = params.get("s_prob")  # None means "no sprob filtering"
     drink_pad = int(_coerce_param(params, "drink_pad", 2))
     chunksize = int(_coerce_param(params, "chunksize", int(30e5)))
     state_keys = params.get("states") or list(DEFAULT_STATES)
@@ -256,34 +253,15 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
         rec_start = parse_edf_start_datetime(reader.header)
 
         # --- state masks ---
-        # Lumped groups can't be filtered with the single-class sprob; OR the
-        # per-code filtered masks together instead.
-        state_masks_filtered: dict[str, np.ndarray] = {}
-        for label, codes in labels.items():
-            if s_prob is None:
-                state_masks_filtered[label] = masking.state(
-                    paths.state, codes, fs, winsize=epoch_winsize
-                )
-            elif len(codes) == 1:
-                state_masks_filtered[label] = masking.state_prob(
-                    paths.state, codes[0], fs, winsize=epoch_winsize, sprob=s_prob
-                )
-            else:
-                parts = [
-                    masking.state_prob(paths.state, c, fs, winsize=epoch_winsize, sprob=s_prob)
-                    for c in codes
-                ]
-                state_masks_filtered[label] = np.any(parts, axis=0)
+        state_masks_filtered: dict[str, np.ndarray] = {
+            label: masking.state(paths.state, codes, fs, winsize=epoch_winsize)
+            for label, codes in labels.items()
+        }
 
         # --- wake sub-mask for mixed-wake groups ---
         needs_wake_sub = any("w" in codes and len(codes) > 1 for codes in labels.values())
         if needs_wake_sub:
-            if s_prob is not None:
-                wake_sub_mask = masking.state_prob(
-                    paths.state, "w", fs, winsize=epoch_winsize, sprob=s_prob
-                )
-            else:
-                wake_sub_mask = masking.state(paths.state, ["w"], fs, winsize=epoch_winsize)
+            wake_sub_mask = masking.state(paths.state, ["w"], fs, winsize=epoch_winsize)
         else:
             wake_sub_mask = None
 
@@ -416,16 +394,15 @@ def export_animal(
     out_dir: Path,
     manifest: Manifest,
     animal_id: str,
-    combo: str,
     params: dict[str, Any],
 ) -> AnimalExportResult:
-    """Build masks and write the four files for one (animal, combo).
+    """Build masks and write the four files for one animal.
 
     Never raises — failures are returned as ``status='error'`` results so the
     batch loop in :func:`export_run` can keep going.
     """
     try:
-        paths = resolve_paths(project_root, manifest, animal_id, combo)
+        paths = resolve_paths(project_root, manifest, animal_id)
         built = _build_masks(paths, params)
 
         fs = float(_coerce_param(params, "fs", 250))
@@ -467,7 +444,7 @@ def export_animal(
 
         meta = {
             "animal_id": animal_id,
-            "combo": combo,
+            "combo": manifest.combo,
             "fs": fs,
             "epoch_winsize_s": epoch_winsize,
             "n_samples": int(built.n_samples),
@@ -475,6 +452,7 @@ def export_animal(
             "recording_start": built.rec_start.isoformat(),
             "edf_path": str(paths.edf),
             "state_csv_path": str(paths.state),
+            "state_column": FINAL_COLUMN,
             "drink_mask_path": str(paths.drink) if paths.drink else None,
             "offset_csv_path": str(paths.offset_csv) if paths.offset_csv else None,
             "swd_path": str(paths.swd) if paths.swd else None,
@@ -487,7 +465,7 @@ def export_animal(
         written = write_animal_export(
             out_dir=out_dir,
             animal_id=animal_id,
-            combo=combo,
+            combo=manifest.combo,
             state_intervals=state_intervals,
             artifact_intervals=artifact_intervals,
             clean_intervals=clean_intervals,
@@ -495,14 +473,12 @@ def export_animal(
         )
         return AnimalExportResult(
             animal_id=animal_id,
-            combo=combo,
             status="ok",
             paths=written,
         )
     except Exception as exc:  # noqa: BLE001 — we want to capture every failure mode
         return AnimalExportResult(
             animal_id=animal_id,
-            combo=combo,
             status="error",
             message=f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}",
         )
@@ -512,8 +488,8 @@ def export_animal(
 # Top-level batch entry point
 # ---------------------------------------------------------------------------
 
-ProgressCb = Callable[[str, str, int, int], None]
-"""Signature: ``(animal_id, combo, done, total) -> None``."""
+ProgressCb = Callable[[str, int, int], None]
+"""Signature: ``(animal_id, done, total) -> None``."""
 
 
 def export_run(
@@ -521,10 +497,10 @@ def export_run(
     out_dir: Path,
     manifest: Manifest,
     params: dict[str, Any],
-    pairs: list[tuple[str, str]],
+    animal_ids: list[str],
     progress_cb: ProgressCb | None = None,
 ) -> ExportResult:
-    """Export masks for every ``(animal_id, combo)`` pair.
+    """Export masks for every animal in ``animal_ids``.
 
     Continues on per-animal error; collects failures in the result so the UI
     can surface them.
@@ -535,36 +511,31 @@ def export_run(
         manifest: Loaded manifest.
         params: Export params (same shape as ``psd_params.json`` plus optional
             ``epoch_winsize``).
-        pairs: ``(animal_id, combo)`` pairs to export.
-        progress_cb: Called *after* each pair with ``(animal, combo, done, total)``.
+        animal_ids: Animals to export.
+        progress_cb: Called *after* each animal with ``(animal, done, total)``.
 
     Returns:
-        :class:`ExportResult` with one :class:`AnimalExportResult` per input pair.
+        :class:`ExportResult` with one :class:`AnimalExportResult` per input animal.
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     result = ExportResult(out_dir=out_dir)
-    total = len(pairs)
-    for i, (animal_id, combo) in enumerate(pairs, start=1):
-        per = export_animal(project_root, out_dir, manifest, animal_id, combo, params)
+    total = len(animal_ids)
+    for i, animal_id in enumerate(animal_ids, start=1):
+        per = export_animal(project_root, out_dir, manifest, animal_id, params)
         result.results.append(per)
         if progress_cb is not None:
             # Never let a UI callback abort the batch.
             with contextlib.suppress(Exception):
-                progress_cb(animal_id, combo, i, total)
+                progress_cb(animal_id, i, total)
     return result
 
 
-def default_pairs(manifest: Manifest) -> list[tuple[str, str]]:
-    """Return all (animal_id, combo) pairs whose run is sleep_qc='ok'.
+def default_animals(manifest: Manifest) -> list[str]:
+    """Return all animal IDs whose sleep_qc is 'ok'.
 
-    Matches the convention used by the PSD compute page: only OK runs are
-    eligible because they're the canonical run for an animal.
+    Matches the convention used by the PSD compute page: only OK animals are
+    eligible for export.
     """
-    return [
-        (entry.animal_id, combo)
-        for entry in manifest
-        for combo, run in entry.runs.items()
-        if run.sleep_qc == "ok"
-    ]
+    return [entry.animal_id for entry in manifest.ready_for_psd()]

@@ -1,12 +1,9 @@
 """Spindle Upload page — push spindle EDFs to SleepyRat, pull label CSVs back.
 
-User picks a ``spindle_edfs/<COMBO>/`` subfolder and a SleepyRat project +
-remote folder name. Uploads any EDFs not already on SleepyRat, waits for
+Uploads the project combo's ``spindle_edfs/<COMBO>/`` folder to a SleepyRat
+project + remote folder name. Uploads any EDFs not already on SleepyRat, waits for
 scoring to finish, then downloads each label CSV into
 ``spindle_outputs/<COMBO>/``.
-
-Also exposes the ``SleepyRatWorker`` QObject for re-use by the Rerun page,
-which feeds it an explicit list of files rather than a directory glob.
 """
 
 import unicodedata
@@ -32,8 +29,7 @@ from PyQt6.QtWidgets import (
 
 from ebb.io import sleepyrat_auth
 from ebb.io.sleepyrat import SleepyRatAPI
-from ebb_viewer.pipeline import sleepyrat_config
-from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.pipeline.manifest import Manifest, spindle_edf_dir, spindle_output_dir
 from ebb_viewer.pipeline.theme import apply_primary_button
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
@@ -51,11 +47,10 @@ def sanitize_sleepyrat_name(name: str) -> str:
 class SpindleUploadPage(QWidget):
     """
     Upload spindle EDFs from project_root / 'spindle_edfs' / <combo>
-    and download labels into project_root / 'spindle_outputs' / <combo>.
+    and download labels into project_root / 'spindle_outputs' / <combo>,
+    where <combo> is the project's channel combo (``Manifest.combo``).
 
-    - User picks a subfolder under spindle_edfs as the upload source.
-    - Output folder is fixed to spindle_outputs/<same_name>.
-    - Remote folder name defaults to that same combo name (editable).
+    - Remote folder name defaults to <project>_<combo> (editable).
     """
 
     navigate_to = pyqtSignal(str)
@@ -64,13 +59,12 @@ class SpindleUploadPage(QWidget):
         super().__init__(parent)
         self.project_root = Path(project_root)
         self._api: SleepyRatAPI | None = None
-        self._pending_save: tuple[str, str, str] | None = None  # (combo, project, remote_folder)
         self._projects_fetched = False
         self._known_folders: set[str] | None = None
 
         self._build_ui()
         self._wire()
-        self._refresh_spindle_dirs()
+        self._refresh_upload_target()
         self._update_run_enabled()
 
     # ------------- API helper & small helpers -------------
@@ -95,30 +89,16 @@ class SpindleUploadPage(QWidget):
                 "approve access. Waiting for approval..."
             )
 
-    def _spindle_root(self) -> Path:
-        return self.project_root / "spindle_edfs"
+    def _combo(self) -> str:
+        return Manifest.load(self.project_root).combo
 
-    def _outputs_root(self) -> Path:
-        return self.project_root / "spindle_outputs"
+    def _upload_dir(self) -> Path | None:
+        """The combo's spindle EDF folder, or None if it hasn't been created yet."""
+        d = spindle_edf_dir(self._combo(), self.project_root)
+        return d if d.is_dir() else None
 
-    def _current_combo_name(self) -> str:
-        idx = self.upload_combo.currentIndex()
-        if idx < 0:
-            return ""
-        return self.upload_combo.itemText(idx).strip()
-
-    def _current_upload_dir(self) -> Path | None:
-        idx = self.upload_combo.currentIndex()
-        if idx < 0:
-            return None
-        path_str = self.upload_combo.itemData(idx)
-        return Path(path_str) if path_str else None
-
-    def _current_output_dir(self) -> Path | None:
-        combo = self._current_combo_name()
-        if not combo:
-            return None
-        return self._outputs_root() / combo
+    def _output_dir(self) -> Path:
+        return spindle_output_dir(self._combo(), self.project_root)
 
     #  UI -------------
     def _build_ui(self):
@@ -141,24 +121,12 @@ class SpindleUploadPage(QWidget):
         gb = QGroupBox("SleepyRat Upload")
         form_layout = QFormLayout(gb)
 
-        # --- Upload combo (spindle_edfs subfolders) ---
-        upload_row = QHBoxLayout()
-        self.upload_combo = QComboBox()
-        self.upload_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.btn_refresh_upload = QPushButton("Rescan")
-        upload_row.addWidget(self.upload_combo, 1)
-        upload_row.addWidget(self.btn_refresh_upload)
-
-        form_layout.addRow("Spindle EDF set:", upload_row)
-
-        # Dual-purpose hint: when no combo is selected, shows the empty/error
-        # state for spindle_edfs/; once a combo is picked, shows a compact
-        # one-line summary of the source and output relative paths (full
-        # absolute paths land in the tooltip).
-        self.upload_hint = QLabel("Looking for subfolders under project_root / 'spindle_edfs'.")
+        # One-line summary of the source and output folders (full absolute
+        # paths land in the tooltip), or the empty/error state.
+        self.upload_hint = QLabel("")
         self.upload_hint.setStyleSheet("color:#777; font-size:10px;")
         self.upload_hint.setWordWrap(True)
-        form_layout.addRow("", self.upload_hint)
+        form_layout.addRow("Spindle EDF set:", self.upload_hint)
 
         # --- SleepyRat project (combo + Refresh / New inline) ---
         proj_row = QHBoxLayout()
@@ -222,20 +190,16 @@ class SpindleUploadPage(QWidget):
         )
         hint_layout = QHBoxLayout(self._hint_frame)
         hint_layout.setContentsMargins(10, 6, 10, 6)
-        hint_lbl = QLabel("✓ Done. Labels downloaded — ready for Sleep QC.")
+        hint_lbl = QLabel("✓ Done. Labels downloaded — ready to reclassify.")
         hint_layout.addWidget(hint_lbl, 1)
-        btn_go_qc = QPushButton("→ Sleep QC")
-        btn_go_qc.clicked.connect(lambda: self.navigate_to.emit("sleep_qc"))
+        btn_go_qc = QPushButton("→ Reclassify")
+        btn_go_qc.clicked.connect(lambda: self.navigate_to.emit("reclassify"))
         hint_layout.addWidget(btn_go_qc)
         self._hint_frame.setVisible(False)
         root.addWidget(self._hint_frame)
 
     # ------------- Wiring -------------
     def _wire(self):
-        # Spindle EDF selection
-        self.btn_refresh_upload.clicked.connect(self._refresh_spindle_dirs)
-        self.upload_combo.currentIndexChanged.connect(self._on_upload_combo_changed)
-
         # SleepyRat project combo
         self.btn_refresh_projects.clicked.connect(self._refresh_projects_clicked)
         self.btn_new_project.clicked.connect(self._new_project_clicked)
@@ -252,7 +216,7 @@ class SpindleUploadPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._refresh_spindle_dirs()
+        self._refresh_upload_target()
         if not self._projects_fetched:
             self._projects_fetched = True
             self._refresh_projects_clicked()
@@ -263,71 +227,26 @@ class SpindleUploadPage(QWidget):
         self.log_box.appendPlainText(msg)
         QApplication.processEvents()
 
-    def _refresh_spindle_dirs(self):
-        """
-        Look under project_root / 'spindle_edfs' for subfolders.
-        Populate the combo box with those folder names.
-        If none exist, show a hint that spindle EDFs need to be created.
-        """
-        root = self._spindle_root()
-
-        self.upload_combo.blockSignals(True)
-        self.upload_combo.clear()
-        self.upload_combo.blockSignals(False)
-
-        if not root.exists() or not root.is_dir():
+    def _refresh_upload_target(self):
+        """Show the combo's source/output folders and default the remote folder name."""
+        combo = self._combo()
+        upload_dir = self._upload_dir()
+        if upload_dir is None:
             self.upload_hint.setText(
-                f"No 'spindle_edfs' folder found under:\n{root}\n\n"
+                f"No 'spindle_edfs/{combo}' folder found under:\n{self.project_root}\n\n"
                 "Spindle EDFs need to be created before using this page."
             )
-            self.upload_hint.setToolTip("")
-            return
-
-        subdirs = sorted(p for p in root.iterdir() if p.is_dir())
-
-        if not subdirs:
-            self.upload_hint.setText(
-                f"'spindle_edfs' exists but has no subfolders:\n{root}\n\n"
-                "Spindle EDFs need to be created before using this page."
-            )
-            self.upload_hint.setToolTip("")
-            return
-
-        self.upload_combo.blockSignals(True)
-        for sub in subdirs:
-            # display folder name, keep full path as userData
-            self.upload_combo.addItem(sub.name, str(sub))
-        self.upload_combo.blockSignals(False)
-
-        if self.upload_combo.count() > 0:
-            self.upload_combo.setCurrentIndex(0)
-            self._on_upload_combo_changed(self.upload_combo.currentIndex())
-
-    def _on_upload_combo_changed(self, index: int):
-        """
-        When user picks a spindle_edfs subfolder from the combo:
-        - rewrite the compact source/output hint (full paths in tooltip)
-        - if remote folder is empty, default it to combo name
-        """
-        if index < 0:
-            self.upload_hint.setText("Looking for subfolders under project_root / 'spindle_edfs'.")
             self.upload_hint.setToolTip("")
         else:
-            combo = self._current_combo_name()
-            upload_dir = self._current_upload_dir()
-            out_dir = self._current_output_dir()
             self.upload_hint.setText(
                 f"Uploading from spindle_edfs/{combo}/ → labels land in spindle_outputs/{combo}/"
             )
-            self.upload_hint.setToolTip(
-                f"Source:  {upload_dir}\nOutputs:  {out_dir}"
-            )
+            self.upload_hint.setToolTip(f"Source:  {upload_dir}\nOutputs:  {self._output_dir()}")
 
-            if combo:
-                current = self.remote_folder_edit.currentText().strip()
-                auto_prefix = sanitize_sleepyrat_name(self.project_root.stem) + "_"
-                if not current or current.startswith(auto_prefix):
-                    self.remote_folder_edit.setCurrentText(auto_prefix + combo)
+            current = self.remote_folder_edit.currentText().strip()
+            auto_prefix = sanitize_sleepyrat_name(self.project_root.stem) + "_"
+            if not current or current.startswith(auto_prefix):
+                self.remote_folder_edit.setCurrentText(auto_prefix + combo)
 
         self._update_run_enabled()
 
@@ -387,7 +306,7 @@ class SpindleUploadPage(QWidget):
             self.remote_folder_hint.setText("New folder — will be created on upload.")
 
     def _update_run_enabled(self):
-        upload_dir = self._current_upload_dir()
+        upload_dir = self._upload_dir()
         remote_folder = self.remote_folder_edit.currentText().strip()
         project = self.project_combo.currentText().strip()
 
@@ -395,7 +314,7 @@ class SpindleUploadPage(QWidget):
         # which control to fill in next.
         missing: str | None = None
         if upload_dir is None:
-            missing = "Select a Spindle EDF set to enable."
+            missing = "Create spindle EDFs to enable."
         elif not project:
             missing = "Select a SleepyRat project to enable."
         elif not remote_folder:
@@ -504,7 +423,7 @@ class SpindleUploadPage(QWidget):
         self,
     ) -> tuple[str, str, Path | None, Path] | None:
         """Return (project, remote_folder, upload_dir, out_dir) or show errors and return None."""
-        upload_dir = self._current_upload_dir()
+        upload_dir = self._upload_dir()
         remote_folder = sanitize_sleepyrat_name(self.remote_folder_edit.currentText().strip())
 
         # SleepyRat project
@@ -518,14 +437,7 @@ class SpindleUploadPage(QWidget):
             QMessageBox.critical(self, "No Remote Folder", "Please enter a remote folder name.")
             return None
 
-        out_dir = self._current_output_dir()
-        if out_dir is None:
-            QMessageBox.critical(
-                self,
-                "Output Folder Error",
-                "Could not determine output folder (combo name missing).",
-            )
-            return None
+        out_dir = self._output_dir()
 
         return project, remote_folder, upload_dir, out_dir
 
@@ -543,11 +455,8 @@ class SpindleUploadPage(QWidget):
             return btn == QMessageBox.StandardButton.Ok
         return True
 
-    def _launch_worker(
-        self, project, remote_folder, out_dir, *, upload_dir=None, save_combo: str | None = None
-    ):
+    def _launch_worker(self, project, remote_folder, out_dir, *, upload_dir=None):
         self.btn_upload_and_download.setEnabled(False)
-        self._pending_save = (save_combo, project, remote_folder) if save_combo else None
 
         self._sr_thread = QThread(self)
         self._sr_worker = SleepyRatWorker(project, remote_folder, out_dir, upload_dir=upload_dir)
@@ -560,15 +469,6 @@ class SpindleUploadPage(QWidget):
         )
 
     def _on_sr_done(self):
-        if self._pending_save:
-            combo, project, remote_folder = self._pending_save
-            try:
-                sleepyrat_config.save_combo(self.project_root, combo, project, remote_folder)
-            except Exception as e:
-                # Don't fail the whole post-run flow if the side-config write
-                # fails (e.g. disk full, permissions). Log and move on.
-                self._log(f"Warning: could not save sleepyrat combo config: {e}")
-            self._pending_save = None
         Manifest.build_from_standard(self.project_root)
         self._update_run_enabled()
         self._hint_frame.setVisible(True)
@@ -595,34 +495,27 @@ class SpindleUploadPage(QWidget):
             return
         if not self._check_output_dir(out_dir):
             return
-        combo = self._current_combo_name()
         self._warn_if_pairing_needed()
-        self._launch_worker(
-            project, remote_folder, out_dir, upload_dir=upload_dir, save_combo=combo
-        )
+        self._launch_worker(project, remote_folder, out_dir, upload_dir=upload_dir)
+
 
 class SleepyRatWorker(QObject):
     """Worker QObject: uploads spindle EDFs to SleepyRat and downloads label CSVs.
 
-    Two operating modes:
-    - ``files=`` (explicit list) — used by the Rerun page for per-animal reruns.
-    - ``upload_dir=`` (directory glob) — used by the Spindle Upload page for
-      bulk runs.
-    Both modes skip files that are already on SleepyRat and only wait for
-    processing when there's something new to upload.
+    Globs ``upload_dir`` for EDFs, skips files that are already on SleepyRat,
+    and only waits for processing when there's something new to upload.
     """
 
     log = pyqtSignal(str)
     finished = pyqtSignal()
     error = pyqtSignal(str)
 
-    def __init__(self, project, remote_folder, out_dir, upload_dir=None, files=None, parent=None):
+    def __init__(self, project, remote_folder, out_dir, upload_dir=None, parent=None):
         super().__init__(parent)
         self.project = project
         self.remote_folder = remote_folder
         self.out_dir = Path(out_dir)
         self.upload_dir = Path(upload_dir) if upload_dir else None
-        self.files = list(files) if files else None
 
     @staticmethod
     def _existing_stems(api, project: str, remote_folder: str) -> set[str]:
@@ -666,11 +559,7 @@ class SleepyRatWorker(QObject):
             api = SleepyRatAPI()
             self._ensure_remote_folder(api)
 
-            if self.files is not None:
-                # Explicit file list (rerun path).
-                self._upload_pending(api, list(self.files))
-            elif self.upload_dir is not None:
-                # Directory batch — glob EDFs.
+            if self.upload_dir is not None:
                 self._upload_pending(api, sorted(self.upload_dir.glob("*.edf")))
 
             self.log.emit("Checking remote files...")
@@ -682,19 +571,7 @@ class SleepyRatWorker(QObject):
                 )
 
             self.out_dir.mkdir(parents=True, exist_ok=True)
-            all_names = [s["name"] for s in submissions]
-
-            # When given an explicit file list, only download labels for those files.
-            if self.files is not None:
-                target_stems = {_norm_stem(p) for p in self.files}
-                names = [n for n in all_names if _norm_stem(n) in target_stems]
-                skipped_remote = len(all_names) - len(names)
-                if skipped_remote:
-                    self.log.emit(
-                        f"Limiting download to {len(names)} file(s) (skipping {skipped_remote} unrelated submission(s) in folder)."
-                    )
-            else:
-                names = all_names
+            names = [s["name"] for s in submissions]
             to_download = [
                 name
                 for name in names

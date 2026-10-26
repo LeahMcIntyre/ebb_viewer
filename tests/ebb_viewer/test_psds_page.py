@@ -8,7 +8,7 @@ exact kwargs that would have been forwarded.
 After Stage B-2 the page delegates state-group, SD-mask, spindle-noise,
 SWD, annotation, and hour-window params to the shared
 ``MaskParamsWidget`` (``page.mask_widget``); the page itself only owns
-channels + fs. Tests that previously inspected ``page._masking_params``
+channels + fs + the run name. Tests that previously inspected ``page._masking_params``
 now route through ``page.mask_widget.to_params()``. The dialog-specific
 tests (``test_b3_dialog_*``) are dropped — equivalent coverage exists in
 ``test_mask_params_widget.py``.
@@ -268,53 +268,66 @@ def test_full_masking_roundtrip_psd_params_json(qapp, tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_empty_channel_selection_disables_run_button(qapp, tmp_path: Path):
-    """Unchecking every channel must gate the Run button.
+def _ready_project(tmp_path: Path, combo: str = "LFC_RSC"):
+    """A project whose only animal is ready, so the channel gate is the sole possible failure."""
+    from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
 
-    Background: ``estimate_psd``'s ``channels=None`` default only kicks in
-    when channels is ``None``, not ``[]`` — so an empty list would either
-    crash the compute or silently produce nothing.
-    """
-    page = _make_page(qapp, tmp_path)
-    for cb in page._channel_boxes:
-        cb.setChecked(False)
-    page._validate()
-    assert not page.btn_run_pipeline.isEnabled()
-    # Toggling channels also fires the signal-driven validate; confirm
-    # the live wiring still gates the button.
-    page._channel_boxes[0].setChecked(True)
-    assert not page.btn_run_pipeline.isEnabled()  # other gates still fail
-    for cb in page._channel_boxes:
-        cb.setChecked(True)
-
-
-def test_channel_gate_label_when_channels_are_sole_failure(qapp, tmp_path: Path):
-    """When every other gate passes, the empty-channels gate must surface
-    its dedicated label so the user understands why Run is disabled."""
     (tmp_path / "standard").mkdir()
-    spindle = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle = tmp_path / "spindle_outputs" / combo
     spindle.mkdir(parents=True)
-    (spindle / "AM001_LFC_RSC.csv").write_text("rawstate\n")
-    from ebb_viewer.pipeline.manifest import (
-        Manifest,
-        ManifestEntry,
-        RunEntry,
-    )
-
+    (spindle / f"AM001_{combo}.csv").write_text("rawstate\n")
     m = Manifest(tmp_path)
+    m.combo = combo
     m._entries["AM001"] = ManifestEntry(
         animal_id="AM001",
         preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={"LFC_RSC": RunEntry(sleep_qc="ok")},
+        has_spindle=True,
+        sleep_qc="ok",
     )
     m.save()
 
+
+def test_all_channels_selected_by_default(qapp, tmp_path: Path):
+    """LSC is computed too, whatever the project combo is."""
+    _ready_project(tmp_path, "LFC_RSC")
+    assert _make_page(qapp, tmp_path).selected_channels() == [0, 1, 2]
+
+
+def test_empty_channel_selection_disables_run_button(qapp, tmp_path: Path):
+    """Unchecking every channel gates Run with a dedicated label: ``estimate_psd``'s
+    ``channels=None`` default only applies to None, so an empty list would crash or
+    silently produce nothing."""
+    _ready_project(tmp_path)
     page = _make_page(qapp, tmp_path)
+    assert page.btn_run_pipeline.isEnabled()
     for cb in page._channel_boxes:
         cb.setChecked(False)
-    page._validate()
     assert not page.btn_run_pipeline.isEnabled()
-    assert "channel" in page._gate_label.text().lower()
+    assert "channel" in page._checks_lbl.text().lower()
+
+
+def test_select_all_toggles_every_channel(qapp, tmp_path: Path):
+    _ready_project(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    page.chk_all.setChecked(False)
+    assert page.selected_channels() == []
+    page.chk_all.setChecked(True)
+    assert page.selected_channels() == [0, 1, 2]
+
+
+def test_run_enabled_for_a_ready_project(qapp, tmp_path: Path):
+    _ready_project(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    assert page.btn_run_pipeline.isEnabled()
+
+
+def test_status_card_summarises_combo_and_output(qapp, tmp_path: Path):
+    _ready_project(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    assert "LFC_RSC" in page._status_lbl.text()
+    assert "1 of 1 animals ready" in page._status_lbl.text()
+    assert "psds_LFC_RSC.pkl" in page._output_lbl.text()
+    assert "new run" in page._run_msg_lbl.text().lower()
 
 
 def test_radius_two_decimals_no_rounding(qapp, tmp_path: Path):
@@ -407,17 +420,14 @@ def test_page_widget_changed_propagates_to_gate_label(qapp, tmp_path: Path):
     spindle = tmp_path / "spindle_outputs" / "LFC_RSC"
     spindle.mkdir(parents=True)
     (spindle / "AM001_LFC_RSC.csv").write_text("rawstate\n")
-    from ebb_viewer.pipeline.manifest import (
-        Manifest,
-        ManifestEntry,
-        RunEntry,
-    )
+    from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
 
     m = Manifest(tmp_path)
     m._entries["AM001"] = ManifestEntry(
         animal_id="AM001",
         preprocessed_edf="AM001_PREPROCESSED.edf",
-        runs={"LFC_RSC": RunEntry(sleep_qc="ok")},
+        has_spindle=True,
+        sleep_qc="ok",
     )
     m.save()
 
@@ -426,7 +436,7 @@ def test_page_widget_changed_propagates_to_gate_label(qapp, tmp_path: Path):
         cb.setChecked(False)
     # The widget.changed → page._validate wiring should re-render the gate
     # without us calling _validate explicitly.
-    assert "state" in page._gate_label.text().lower()
+    assert "state" in page._checks_lbl.text().lower()
     assert not page.btn_run_pipeline.isEnabled()
 
 
@@ -473,3 +483,106 @@ def test_autodetect_fs_noop_when_detect_returns_none(qapp, tmp_path: Path, monke
     page._maybe_autodetect_fs()
 
     assert page.spin_fs.value() == psds_mod.DEFAULT_FS
+
+
+def _page_with_animals(qapp, tmp_path: Path, statuses: dict[str, str | None]):
+    from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
+
+    (tmp_path / "standard").mkdir()
+    spindle = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle.mkdir(parents=True)
+    m = Manifest(tmp_path)
+    for animal, status in statuses.items():
+        (spindle / f"{animal}_LFC_RSC.csv").write_text("rawstate\n")
+        m._entries[animal] = ManifestEntry(
+            animal_id=animal, preprocessed_edf=f"{animal}_PREPROCESSED.edf",
+            has_spindle=True, sleep_qc=status,
+        )
+    m.save()
+    page = _make_page(qapp, tmp_path)
+    page._validate()
+    return page
+
+
+def test_excluded_animals_count_as_ready_and_are_called_out(qapp, tmp_path: Path):
+    page = _page_with_animals(qapp, tmp_path, {"AM001": "ok", "AM002": "excluded"})
+    assert page.btn_run_pipeline.isEnabled()
+    assert "2 of 2 animals ready (1 excluded)" in page._status_lbl.text()
+
+
+def test_unresolved_animal_blocks_run_and_names_both_ready_statuses(qapp, tmp_path: Path):
+    page = _page_with_animals(qapp, tmp_path, {"AM001": "excluded", "AM002": "needs_review"})
+    assert not page.btn_run_pipeline.isEnabled()
+    assert "ok or excluded" in page._checks_lbl.text()
+
+
+def test_checklist_lists_blockers_and_offers_the_fixing_page(qapp, tmp_path: Path):
+    page = _page_with_animals(qapp, tmp_path, {"AM001": "ok", "AM002": "needs_review"})
+    assert "1 animal not ready" in page._checks_lbl.text()
+    assert not page.btn_fix.isHidden()
+    assert page._fix_page == "sleep_qc"
+    assert "Sleep QC" in page.btn_fix.text()
+
+
+def test_ready_project_checklist_is_all_ok(qapp, tmp_path: Path):
+    _ready_project(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    assert "✗" not in page._checks_lbl.text()
+    assert page.btn_fix.isHidden()
+
+
+def test_swd_mask_blocks_run_naming_animals_without_files(qapp, tmp_path: Path):
+    page = _page_with_animals(qapp, tmp_path, {"AM001": "ok", "AM002": "ok"})
+    (tmp_path / "swd").mkdir()
+    (tmp_path / "swd" / "AM001.mat").write_text("")
+    page._refresh_swd_status()  # enables the SWD option now that a .mat exists
+    page.mask_widget.from_params({"swd_mode": "mask_out"})
+    assert not page.btn_run_pipeline.isEnabled()
+    assert "AM002" in page._checks_lbl.text()
+
+
+def test_settings_summary_lists_states_channels_and_active_masks(qapp, tmp_path: Path):
+    _ready_project(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    text = page._settings_lbl.text()
+    assert "LFC, RSC, LSC" in text
+    assert "250 Hz" in text
+    assert "Commutator mask" in text
+    assert "SWD mask" not in text  # off by default
+
+
+def test_log_hidden_until_first_message(qapp, tmp_path: Path):
+    page = _make_page(qapp, tmp_path)
+    assert page.log_box.isHidden()
+    page._log("hello")
+    assert not page.log_box.isHidden()
+
+
+def test_annotation_mask_warns_about_animals_without_a_file_but_does_not_block(
+    qapp, tmp_path: Path
+):
+    page = _page_with_animals(qapp, tmp_path, {"AM001": "ok", "AM002": "ok"})
+    ann = tmp_path / "annotations"
+    ann.mkdir()
+    (ann / "AM001_P001_notes.txt").write_text("")
+    page.mask_widget.from_params(
+        {"ann_enabled": True, "ann_dir": str(ann), "ann_keywords": "Jerk"}
+    )
+    page._validate()
+    text = page._checks_lbl.text()
+    assert "1 animal with no annotation file" in text
+    assert "AM002" in text and "AM001" not in text
+    assert page.btn_run_pipeline.isEnabled()
+
+
+def test_annotation_mask_with_a_file_for_every_animal_has_no_warning(qapp, tmp_path: Path):
+    page = _page_with_animals(qapp, tmp_path, {"AM001": "ok"})
+    ann = tmp_path / "annotations"
+    ann.mkdir()
+    (ann / "AM001_P001_notes.txt").write_text("")
+    page.mask_widget.from_params(
+        {"ann_enabled": True, "ann_dir": str(ann), "ann_keywords": "Jerk"}
+    )
+    page._validate()
+    assert "Annotation files found for every animal" in page._checks_lbl.text()
+    assert "⚠" not in page._checks_lbl.text()

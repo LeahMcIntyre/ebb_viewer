@@ -15,7 +15,7 @@ Two layers:
   share the same kwarg-prep logic via `_prepare_estimator_kwargs`.
 
 Output is a list of `PSDResult` dataclasses; `batch_estimate` optionally
-pickles a list of dicts for downstream merging by `build_final_pkl`.
+pickles a list of dicts (one per animal × state).
 """
 
 import dataclasses
@@ -37,7 +37,9 @@ from openseize.spectra import estimators
 from ebb import masking
 from ebb.core import concurrency, metastores
 from ebb.core.naming import parse_animal_id
+from ebb.io.exclusions import annotate_records, write_excluded_animals
 from ebb.io.edf_header import assert_fs_matches, parse_edf_start_datetime
+from ebb.io.spindle_csv import ANALYSIS_STATE_COLUMNS
 from ebb.masking.annotations import keyword_mask
 from ebb.process.state_presets import labels_from_presets
 
@@ -152,13 +154,13 @@ def estimate_psd(
     noise_thresh: float = 0.5,
     comm_value: int = _COMMUTATOR_VALUE_UV,
     drink_pad: int = 2,
-    s_prob: float | None = None,
     ann_keywords: list[str] | None = None,
     ann_match_mode: str = "contains",
     ann_pad_before_sec: float = 0.0,
     ann_pad_after_sec: float = 0.0,
     hour_windows: list[tuple[float, float]] | None = None,
     selected_days: list[int] | None = None,
+    state_columns: Sequence[str] = ANALYSIS_STATE_COLUMNS,
     apply_notch: bool = True,
     notch_halfwidth_hz: float = _NOTCH_HALFWIDTH_HZ,
     notch_order: int = _NOTCH_ORDER,
@@ -183,9 +185,9 @@ def estimate_psd(
         path:
             EDF whose PSD will be estimated.
         state_path:
-            SPINDLE-scored CSV file. The `rawstate` column (or `state` in
-            newer outputs) drives state masks; `noise_probs` (or
-            `noise_prob`) drives the SPINDLE noise mask.
+            SPINDLE-scored CSV file. The `state_columns` column drives state
+            masks (by default the reclassified `final_state`); `noise_probs`
+            (or `noise_prob`) drives the SPINDLE noise mask.
         swd_path:
             Optional `.mat` file of SWD timestamps to mask out.
         drink_path:
@@ -225,9 +227,6 @@ def estimate_psd(
             Pad each drink event by this many seconds on each side. (The
             unit is seconds despite the unsuffixed name; preserved for
             backwards compatibility.)
-        s_prob:
-            If set, restricts state masks to epochs whose class probability
-            >= `s_prob` (uses `masking.state_prob` instead of `masking.state`).
         ann_keywords, ann_match_mode, ann_pad_before_sec, ann_pad_after_sec:
             Annotation-mask params (see `ebb.masking.annotations.keyword_mask`).
         hour_windows:
@@ -247,6 +246,12 @@ def estimate_psd(
         notch_order:
             Order of the Butterworth notch filter. Defaults to `_NOTCH_ORDER`
             (8).
+        state_columns:
+            CSV column(s) the state masks are read from. Defaults to the
+            reclassified `final_state` (`NotReclassifiedError` if absent). A
+            script with no Reclassify step can opt out explicitly by passing
+            `ebb.io.spindle_csv.STATE_COLUMNS` to read the original SPINDLE
+            states (`rawstate`, else `state`).
         **kwargs:
             Forwarded to openseize's `estimators.psd`.
 
@@ -271,14 +276,10 @@ def estimate_psd(
         # build state masks
         state_masks = {}
 
-        if s_prob is not None:
-            for label, code in labels.items():
-                state_masks[label] = masking.state_prob(
-                    state_path, code[0], fs, winsize=4, sprob=s_prob
-                )
-        else:
-            for label, code in labels.items():
-                state_masks[label] = masking.state(state_path, code, fs, winsize=4)
+        for label, code in labels.items():
+            state_masks[label] = masking.state(
+                state_path, code, fs, winsize=4, columns=state_columns
+            )
 
         # Wake sub-mask for mixed groups that lump wake with sleep states.
         # SD thresholding should only gate the wake portion of such groups,
@@ -286,10 +287,9 @@ def estimate_psd(
         # NREM/REM samples if applied uniformly.
         needs_wake_sub = any("w" in codes and len(codes) > 1 for codes in labels.values())
         if needs_wake_sub:
-            if s_prob is not None:
-                wake_sub_mask = masking.state_prob(state_path, "w", fs, winsize=4, sprob=s_prob)
-            else:
-                wake_sub_mask = masking.state(state_path, ["w"], fs, winsize=4)
+            wake_sub_mask = masking.state(
+                state_path, ["w"], fs, winsize=4, columns=state_columns
+            )
         else:
             wake_sub_mask = None
 
@@ -466,6 +466,19 @@ def _star_call(fn_args):
     return fn(*args)
 
 
+def annotation_files_by_animal(ann_dir: str | Path) -> dict[str, Path]:
+    """``{animal_id: path}`` of the ``.txt`` / ``.csv`` / ``.tsv`` annotation files in ``ann_dir``.
+
+    Empty when ``ann_dir`` is not a directory. If several files share an animal ID, the last one
+    found wins.
+    """
+    ann_dir = Path(ann_dir)
+    if not ann_dir.is_dir():
+        return {}
+    files = [f for pattern in ("*.txt", "*.csv", "*.tsv") for f in ann_dir.glob(pattern)]
+    return {parse_animal_id(f): f for f in files}
+
+
 def _prepare_estimator_kwargs(
     kwargs: dict,
     ann_params: dict | None = None,
@@ -504,13 +517,8 @@ def _prepare_estimator_kwargs(
     ann_by_animal: dict[str, Path] = {}
     if ann_params:
         ann_dir = ann_params.get("ann_dir")
-        if ann_dir and Path(ann_dir).is_dir():
-            for f in (
-                list(Path(ann_dir).glob("*.txt"))
-                + list(Path(ann_dir).glob("*.csv"))
-                + list(Path(ann_dir).glob("*.tsv"))
-            ):
-                ann_by_animal[parse_animal_id(f)] = f
+        if ann_dir:
+            ann_by_animal = annotation_files_by_animal(ann_dir)
         kwargs.update(
             {
                 "ann_keywords": ann_params.get("keywords") or [],
@@ -614,7 +622,7 @@ def batch_estimate(
             Forwarded to `estimate_psd` and used for the batch-level banner.
         savepath:
             If set, pickles results as a list of dicts here (used by the
-            two-step pipeline; downstream `build_final_pkl` consumes these).
+            two-step pipeline).
         progress_fn:
             Optional callable invoked with a status string per file.
         ann_params:
@@ -701,24 +709,35 @@ def batch_estimate(
     return results
 
 
-def build_run_final_pkl(project_root, run_name: str = "default") -> Path:
-    """Seal a completed PSD run by copying the latest merged PKL to psds_final.pkl.
+def build_run_final_pkl(
+    project_root,
+    combo: str,
+    run_name: str = "default",
+    excluded: dict[str, str] | None = None,
+) -> Path:
+    """Seal a completed PSD run by copying the latest PKL to psds_final.pkl.
 
-    Prefers `psds_channel_merged_drink.pkl` (which contains drink-masked
-    overrides — see `rerun_with_drink_masks`) over `psds_channel_merged.pkl`.
+    Prefers `psds_<combo>_drink.pkl` (which contains drink-masked overrides —
+    see `rerun_with_drink_masks`) over `psds_<combo>.pkl`.
+
+    ``excluded`` maps animal ID to the exclusion reason (Sleep QC or PSD review). Excluded animals stay in
+    the file; every record gets ``excluded`` / ``exclusion_reason`` fields and an
+    ``excluded_animals.csv`` is written beside it (header only when ``excluded`` is empty).
+    With ``excluded=None`` the records are copied unchanged.
+
     Raises `FileNotFoundError` if neither exists. Returns the path written.
-
-    Distinct from `build_final_pkl`, which builds the channel-merged PKL in
-    the first place from per-combo PKLs + manifest sleep_qc decisions.
     """
     psd_dir = Path(project_root) / "psd" / run_name
-    drink = psd_dir / "psds_channel_merged_drink.pkl"
-    base = psd_dir / "psds_channel_merged.pkl"
+    drink = psd_dir / f"psds_{combo}_drink.pkl"
+    base = psd_dir / f"psds_{combo}.pkl"
     source = drink if drink.exists() else base
     if not source.exists():
-        raise FileNotFoundError(f"No merged PKL found in {psd_dir}. Run 'Compute PSDs' first.")
+        raise FileNotFoundError(f"No PSD PKL found in {psd_dir}. Run 'Compute PSDs' first.")
     with open(source, "rb") as f:
         data = pickle.load(f)
+    if excluded is not None:
+        annotate_records(data, excluded)
+        write_excluded_animals(psd_dir, excluded)
     out = psd_dir / "psds_final.pkl"
     tmp = out.with_suffix(".pkl.tmp")
     with open(tmp, "wb") as f:
@@ -727,65 +746,13 @@ def build_run_final_pkl(project_root, run_name: str = "default") -> Path:
     return out
 
 
-def build_final_pkl(project_root, manifest, run_name: str = "default") -> Path:
-    """Build psds_channel_merged.pkl by merging per-combo PKLs.
-
-    For each animal whose manifest entry has `sleep_qc == "ok"` for some
-    combo, load their record from `psds_<ok_combo>.pkl` in
-    `psd/<run_name>/`, annotate with `source_combo`, and write the
-    aggregated list to `psds_channel_merged.pkl` (atomically). Returns the
-    path written.
-
-    Distinct from `build_run_final_pkl`, which seals an existing merged PKL
-    by copying it to `psds_final.pkl`.
-    """
-    project_root = Path(project_root)
-    psd_dir = project_root / "psd" / run_name
-
-    # Group animals by their ok combo
-    combo_to_animals: dict = {}
-    for entry in manifest:
-        ok_combo = next((c for c, r in entry.runs.items() if r.sleep_qc == "ok"), None)
-        if ok_combo is None:
-            continue
-        combo_to_animals.setdefault(ok_combo, []).append(entry.animal_id)
-
-    final_records = []
-    for combo, animal_ids in combo_to_animals.items():
-        pkl = psd_dir / f"psds_{combo}.pkl"
-        if not pkl.exists():
-            warnings.warn(
-                f"build_final_pkl: PKL not found for combo '{combo}': {pkl}", stacklevel=2
-            )
-            continue
-        with open(pkl, "rb") as f:
-            records = pickle.load(f)
-        if isinstance(records, dict):
-            records = [records]
-
-        animal_ids_set = set(animal_ids)
-        for rec in records:
-            rec_animal = parse_animal_id(rec["path"])
-            if rec_animal in animal_ids_set:
-                rec = dict(rec)
-                rec["source_combo"] = combo
-                final_records.append(rec)
-
-    out_path = psd_dir / "psds_channel_merged.pkl"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out_path.with_suffix(".pkl.tmp")
-    with open(tmp, "wb") as f:
-        pickle.dump(final_records, f)
-    tmp.replace(out_path)
-    return out_path
-
-
 def rerun_with_drink_masks(
     psd_dir: str | Path,
     eeg_dir: str | Path,
     spindle_root: str | Path,
     drink_dir: str | Path,
-    animal_combos: dict[str, str],
+    animal_ids: list[str],
+    combo: str,
     offset_path: str | Path | None = None,
     swd_dir: str | Path | None = None,
     ncores: int | None = None,
@@ -795,18 +762,18 @@ def rerun_with_drink_masks(
 ) -> tuple[Path, Path]:
     """Recompute PSDs for specific animals with drink masks.
 
-    Validates that source_combo in psds_channel_merged.pkl matches the provided
-    animal_combos mapping. Results are accumulated in psds_drink.pkl
-    (replacing per animal on each call). psds_channel_merged_drink.pkl is regenerated
-    as psds_channel_merged.pkl with all psds_drink.pkl animals overriding their entries.
-    Neither psds_channel_merged.pkl nor any psds_<COMBO>.pkl is modified.
+    Results are accumulated in psds_drink.pkl
+    (replacing per animal on each call). psds_<combo>_drink.pkl is regenerated
+    as psds_<combo>.pkl with all psds_drink.pkl animals overriding their entries.
+    psds_<combo>.pkl itself is never modified.
 
     Args:
-        psd_dir:       Directory containing psds_channel_merged.pkl and output pkls.
+        psd_dir:       Directory containing psds_<combo>.pkl and output pkls.
         eeg_dir:       Directory of preprocessed EDF files.
         spindle_root:  Root of spindle_outputs/ (combo subdirs live here).
         drink_dir:     Directory of drink mask .npy files (one per animal).
-        animal_combos: {animal_id: ok_combo} mapping for animals to rerun.
+        animal_ids:    Animals to rerun.
+        combo:         Project channel combo (subdir of spindle_root).
         offset_path:   Optional CSV for video-EEG time alignment.
         swd_dir:       Optional directory of SWD .mat files (one per animal).
         ncores:        Number of parallel workers (None = auto).
@@ -814,49 +781,23 @@ def rerun_with_drink_masks(
         **kwargs:      Passed through to estimate_psd (fs, winsize, etc.).
 
     Returns:
-        Tuple of (psds_drink.pkl path, psds_channel_merged_drink.pkl path).
+        Tuple of (psds_drink.pkl path, psds_<combo>_drink.pkl path).
     """
     psd_dir = Path(psd_dir) / run_name
     eeg_dir = Path(eeg_dir)
     spindle_root = Path(spindle_root)
     drink_dir = Path(drink_dir)
-    animal_ids_set = set(animal_combos)
+    animal_ids_set = set(animal_ids)
 
-    # --- Validate source_combo in psds_channel_merged.pkl against manifest combos ---
-    merged_path = psd_dir / "psds_channel_merged.pkl"
+    merged_path = psd_dir / f"psds_{combo}.pkl"
     if not merged_path.exists():
         raise FileNotFoundError(
-            f"psds_channel_merged.pkl not found at {merged_path}. Build the channel merged PKL first."
+            f"psds_{combo}.pkl not found at {merged_path}. Compute PSDs first."
         )
     with open(merged_path, "rb") as f:
         merged_data: list[dict] = pickle.load(f)
     if isinstance(merged_data, dict):
         merged_data = [merged_data]
-
-    merged_combo_by_animal: dict[str, str] = {}
-    for rec in merged_data:
-        animal = parse_animal_id(rec["path"])
-        if animal in animal_ids_set:
-            merged_combo_by_animal.setdefault(animal, rec.get("source_combo"))
-
-    mismatches = []
-    for animal_id, manifest_combo in animal_combos.items():
-        merged_combo = merged_combo_by_animal.get(animal_id)
-        if merged_combo is None:
-            mismatches.append(f"  {animal_id}: not found in psds_channel_merged.pkl")
-        elif merged_combo != manifest_combo:
-            mismatches.append(
-                f"  {animal_id}: psds_channel_merged has '{merged_combo}', manifest says '{manifest_combo}'"
-            )
-    if mismatches:
-        raise ValueError(
-            "Combo mismatch between psds_final.pkl and manifest:\n" + "\n".join(mismatches)
-        )
-
-    # --- Run estimate_psd grouped by combo ---
-    combo_to_animals: dict[str, list[str]] = {}
-    for animal_id, combo in animal_combos.items():
-        combo_to_animals.setdefault(combo, []).append(animal_id)
 
     warnings.filterwarnings("ignore", category=ResourceWarning)
 
@@ -867,45 +808,37 @@ def rerun_with_drink_masks(
     estimator = partial(
         estimate_psd, hour_windows=hour_windows, selected_days=selected_days, **kwargs
     )
-    all_new_dicts: list[dict] = []
 
-    for combo, animals in combo_to_animals.items():
-        animals_set = set(animals)
-        state_dir = spindle_root / combo
-        eeg_paths = [
-            p
-            for p in sorted(Path(eeg_dir).glob("*PROCESSED.edf"))
-            if parse_animal_id(p) in animals_set
-        ]
-        if not eeg_paths:
-            raise ValueError(f"No EDF files found for animals {animals_set} in {eeg_dir}")
-        state_paths = [p for p in sorted(state_dir.glob("*.csv")) if parse_animal_id(p) in animals_set]
-        drink_paths = [p for p in sorted(drink_dir.glob("*.npy")) if parse_animal_id(p) in animals_set]
-        swd_paths = (
-            [p for p in sorted(Path(swd_dir).glob("*.mat")) if parse_animal_id(p) in animals_set]
-            if swd_dir
-            else None
-        )
-        base_paired = match_paths(
-            eeg_paths, state_paths, swd_paths=swd_paths, drink_paths=drink_paths
-        )
-        paired = [(*base, ann_by_animal.get(parse_animal_id(base[0]))) for base in base_paired]
+    state_dir = spindle_root / combo
+    eeg_paths = [
+        p
+        for p in sorted(Path(eeg_dir).glob("*PROCESSED.edf"))
+        if parse_animal_id(p) in animal_ids_set
+    ]
+    if not eeg_paths:
+        raise ValueError(f"No EDF files found for animals {animal_ids_set} in {eeg_dir}")
+    state_paths = [p for p in sorted(state_dir.glob("*.csv")) if parse_animal_id(p) in animal_ids_set]
+    drink_paths = [p for p in sorted(drink_dir.glob("*.npy")) if parse_animal_id(p) in animal_ids_set]
+    swd_paths = (
+        [p for p in sorted(Path(swd_dir).glob("*.mat")) if parse_animal_id(p) in animal_ids_set]
+        if swd_dir
+        else None
+    )
+    base_paired = match_paths(eeg_paths, state_paths, swd_paths=swd_paths, drink_paths=drink_paths)
+    paired = [(*base, ann_by_animal.get(parse_animal_id(base[0]))) for base in base_paired]
 
-        workers = concurrency.set_cores(ncores, len(paired))
-        t0 = time.perf_counter()
-        if workers == 1:
-            results_nested = [estimator(*args) for args in paired]
-        else:
-            ctx = multiprocessing.get_context("spawn")
-            with ctx.Pool(workers) as pool:
-                results_nested = pool.starmap(estimator, paired)
-        elapsed = time.perf_counter() - t0
-        print(f"Drink-mask rerun ({combo}): {len(paired)} files in {elapsed:.1f}s")
+    workers = concurrency.set_cores(ncores, len(paired))
+    t0 = time.perf_counter()
+    if workers == 1:
+        results_nested = [estimator(*args) for args in paired]
+    else:
+        ctx = multiprocessing.get_context("spawn")
+        with ctx.Pool(workers) as pool:
+            results_nested = pool.starmap(estimator, paired)
+    elapsed = time.perf_counter() - t0
+    print(f"Drink-mask rerun ({combo}): {len(paired)} files in {elapsed:.1f}s")
 
-        new_dicts = [dataclasses.asdict(r) for sublist in results_nested for r in sublist]
-        for d in new_dicts:
-            d["source_combo"] = combo
-        all_new_dicts.extend(new_dicts)
+    all_new_dicts = [dataclasses.asdict(r) for sublist in results_nested for r in sublist]
 
     # --- Update psds_drink.pkl (accumulate, replace per animal) ---
     drink_pkl = psd_dir / "psds_drink.pkl"
@@ -925,7 +858,7 @@ def rerun_with_drink_masks(
         pickle.dump(kept_drink + all_new_dicts, f)
     tmp.replace(drink_pkl)
 
-    # --- Regenerate psds_channel_merged_drink.pkl ---
+    # --- Regenerate psds_<combo>_drink.pkl ---
     # Use all accumulated drink records (not just this session's) to override merged
     with open(drink_pkl, "rb") as f:
         all_drink: list[dict] = pickle.load(f)
@@ -933,7 +866,7 @@ def rerun_with_drink_masks(
     merged_base_kept = [
         r for r in merged_data if parse_animal_id(r["path"]) not in drink_animals
     ]
-    merged_drink_path = psd_dir / "psds_channel_merged_drink.pkl"
+    merged_drink_path = psd_dir / f"psds_{combo}_drink.pkl"
     tmp2 = merged_drink_path.with_suffix(".pkl.tmp")
     with open(tmp2, "wb") as f:
         pickle.dump(merged_base_kept + all_drink, f)

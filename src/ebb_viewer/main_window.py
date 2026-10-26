@@ -1,6 +1,6 @@
 """Top-level Qt main window for the ebb_viewer GUI.
 
-Hosts the sidebar navigation (11 pipeline pages + separators), the
+Hosts the sidebar navigation (12 pipeline pages + separators), the
 ``QStackedLayout`` showing the active page, and the periodic poll timer
 that refreshes sidebar badges and the currently-visible page every 10 s.
 
@@ -15,11 +15,13 @@ from pathlib import Path
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QScrollArea,
     QStackedLayout,
     QVBoxLayout,
     QWidget,
@@ -32,10 +34,11 @@ from ebb_viewer.pages.home import HomePage
 from ebb_viewer.pages.preprocess import PreprocessPage
 from ebb_viewer.pages.psd_visualizer import PSDVisualizer
 from ebb_viewer.pages.psds import PSDPage
-from ebb_viewer.pages.rerun import RerunPage
+from ebb_viewer.pages.reclassify import ReclassifyPage
 from ebb_viewer.pages.sleep_qc_visualizer import SleepQCGridPage
 from ebb_viewer.pages.spindle import SpindleWritePage
 from ebb_viewer.pages.spindle_upload import SpindleUploadPage
+from ebb_viewer.pages.swd_review import SwdReviewPage
 from ebb_viewer.pipeline.manifest import Manifest
 
 # ---------------------------------------------------------------------------
@@ -50,29 +53,26 @@ _NAV: list[tuple[str, int] | None] = [
     ("2. Spindle EDFs", 2),
     ("3. Spindle Upload", 3),
     None,
-    ("4. Sleep QC", 4),
-    ("5. Spindle Rerun", 5),
+    ("4. Reclassify", 10),
+    ("4b. SWD Review", 11),
+    ("5. Sleep QC", 4),
     None,
-    ("6. PSD Computation", 6),
-    ("7. PSD Visualizer", 7),
-    ("8. Drink Mask", 8),
-    ("9. Finalize", 9),
+    ("6. PSD Computation", 5),
+    ("7. PSD Visualizer", 6),
+    ("8. Drink Mask", 7),
+    ("9. Finalize", 8),
     None,
-    ("10. Export Masks", 10),
+    ("10. Export Masks", 9),
 ]
 
 # Sidebar rows that carry pending-work badges → manifest method name.
 # Row 0: Home — animals flagged for EDF review.
-# Row 6: Sleep QC — animals with a downloaded rerun awaiting decision.
-# Row 7: Spindle Rerun — animals with rerun queued but EDF not yet written.
-# Row 10: PSD Visualizer — PSDs flagged for review (incl. drink verification).
-# Row 11: Drink Mask — animals flagged needs_drink_mask.
+# Row 11: PSD Visualizer — PSDs flagged for review (incl. drink verification).
+# Row 12: Drink Mask — animals flagged needs_drink_mask.
 _BADGE_ROWS: dict[int, str] = {
     0: "needs_review",
-    6: "pending_rerun_review",
-    7: "needs_rerun_pending",
-    10: "pending_psd_review",
-    11: "needs_drink_mask",
+    11: "pending_psd_review",
+    12: "needs_drink_mask",
 }
 
 # Page-name keys emitted via navigate_to → sidebar row index.
@@ -81,13 +81,27 @@ _PAGE_ROWS: dict[str, int] = {
     "preprocess": 2,
     "spindle_write": 3,
     "spindle_upload": 4,
-    "sleep_qc": 6,
-    "rerun": 7,
-    "psd_compute": 9,
-    "psd_review": 10,
-    "drink_mask": 11,
-    "finalize": 12,
+    "reclassify": 6,
+    "swd_review": 7,
+    "sleep_qc": 8,
+    "psd_compute": 10,
+    "psd_review": 11,
+    "drink_mask": 12,
+    "finalize": 13,
 }
+
+
+def _scrollable(page: QWidget, always_show_vbar: bool = False) -> QScrollArea:
+    """Wrap ``page`` so scroll bars appear when the window is smaller than
+    the page's minimum size. ``widgetResizable`` keeps the page filling the
+    viewport otherwise, so pages that already fit look unchanged."""
+    area = QScrollArea()
+    area.setWidgetResizable(True)
+    area.setFrameShape(QFrame.Shape.NoFrame)
+    if always_show_vbar:
+        area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+    area.setWidget(page)
+    return area
 
 
 class MainWindow(QMainWindow):
@@ -134,8 +148,9 @@ class MainWindow(QMainWindow):
         self.preprocess_page = PreprocessPage(parent=self, project_root=self.project_root)
         self.spindle_write_page = SpindleWritePage(parent=self, project_root=self.project_root)
         self.spindle_upload_page = SpindleUploadPage(parent=self, project_root=self.project_root)
+        self.reclassify_page = ReclassifyPage(parent=self, project_root=self.project_root)
+        self.swd_review_page = SwdReviewPage(parent=self, project_root=self.project_root)
         self.sleep_qc_page = SleepQCGridPage(parent=self, project_root=self.project_root)
-        self.rerun_page = RerunPage(parent=self, project_root=self.project_root)
         self.psd_page = PSDPage(parent=self, project_root=self.project_root)
         self.psd_visualizer_page = PSDVisualizer(parent=self, project_root=self.project_root)
         self.drink_mask_page = DrinkMaskPage(parent=self, project_root=self.project_root)
@@ -149,15 +164,17 @@ class MainWindow(QMainWindow):
             self.spindle_write_page,
             self.spindle_upload_page,
             self.sleep_qc_page,
-            self.rerun_page,
             self.psd_page,
             self.psd_visualizer_page,
             self.drink_mask_page,
             self.finalize_page,
             self.export_masks_page,
+            self.reclassify_page,  # stack index 10 (appended; sidebar order is _NAV's)
+            self.swd_review_page,  # stack index 11
         )
+        self._pages = pages_in_stack_order
         for w in pages_in_stack_order:
-            self.stacklayout.addWidget(w)
+            self.stacklayout.addWidget(_scrollable(w, always_show_vbar=w is self.sleep_qc_page))
 
         # Build the sidebar list (rows + separators) from _NAV.
         self._row_to_stack: dict[int, int] = {}
@@ -177,12 +194,19 @@ class MainWindow(QMainWindow):
         # Pages that emit manifest_changed → refresh sidebar badges.
         for page in (
             self.home_page,
+            self.reclassify_page,
+            self.swd_review_page,
             self.sleep_qc_page,
-            self.rerun_page,
             self.psd_page,
+            self.psd_visualizer_page,
             self.drink_mask_page,
         ):
             page.manifest_changed.connect(self._refresh_badges)
+
+        # The PSD Visualizer and Drink Mask pages are two halves of one loop: keep them on the
+        # same PSD run so jumping between them never lands on an unrelated run.
+        self.psd_visualizer_page.run_changed.connect(self.drink_mask_page.set_run)
+        self.drink_mask_page.run_changed.connect(self.psd_visualizer_page.set_run)
 
         # Pages that emit navigate_to(name) → move sidebar selection.
         for page in (
@@ -190,8 +214,9 @@ class MainWindow(QMainWindow):
             self.preprocess_page,
             self.spindle_write_page,
             self.spindle_upload_page,
+            self.reclassify_page,
+            self.swd_review_page,
             self.sleep_qc_page,
-            self.rerun_page,
             self.psd_page,
             self.psd_visualizer_page,
             self.drink_mask_page,
@@ -230,8 +255,8 @@ class MainWindow(QMainWindow):
     def _poll(self) -> None:
         """Called every 10 s: refresh badges and the currently-visible page."""
         self._refresh_badges()
-        page = self.stacklayout.currentWidget()
-        if page is not None and hasattr(page, "_poll"):
+        page = self._pages[self.stacklayout.currentIndex()]
+        if hasattr(page, "_poll"):
             page._poll()
 
     def _refresh_badges(self) -> None:
@@ -243,8 +268,6 @@ class MainWindow(QMainWindow):
 
         counts = {
             "needs_review": len(manifest.needs_review()),
-            "pending_rerun_review": len(manifest.pending_rerun_review()),
-            "needs_rerun_pending": len(manifest.needs_rerun_pending()),
             "pending_psd_review": len(manifest.all_pending_psd_review())
             + len(manifest.all_pending_drink_verification()),
             "needs_drink_mask": len(manifest.all_needs_drink_mask()),

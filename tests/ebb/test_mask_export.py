@@ -26,14 +26,14 @@ SAMPLES_PER_EPOCH = int(FS * WINSIZE)  # 1000
 
 
 def _write_state_csv(path: Path, rawstates, extra_cols=None) -> None:
-    """Write a minimal Spindle scoring CSV with a ``rawstate`` column."""
+    """Write a minimal Spindle scoring CSV with ``rawstate`` and ``final_state`` columns."""
     extra_cols = extra_cols or {}
-    header = ["rawstate", *extra_cols.keys()]
+    header = ["rawstate", "final_state", *extra_cols.keys()]
     with open(path, "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(header)
         for i, rs in enumerate(rawstates):
-            w.writerow([rs, *(extra_cols[k][i] for k in extra_cols)])
+            w.writerow([rs, rs, *(extra_cols[k][i] for k in extra_cols)])
 
 
 def test_empty_mask_returns_empty_list():
@@ -189,18 +189,18 @@ def test_state_intervals_missing_column_raises(tmp_path):
     csv_path = tmp_path / "bad.csv"
     with open(csv_path, "w", newline="") as f:
         csv.writer(f).writerow(["epoch"])
-    with pytest.raises(ValueError, match="rawstate"):
+    with pytest.raises(ValueError, match="final_state"):
         build_state_intervals(csv_path, fs=FS, winsize=WINSIZE)
 
 
-def test_state_intervals_new_format_state_column(tmp_path):
-    """Newer SPINDLE outputs store the clean state under `state`, not `rawstate`."""
+def test_state_intervals_read_final_state_not_original_state(tmp_path):
+    """Intervals come from `final_state`, even when it differs from `state`."""
     csv_path = tmp_path / "states.csv"
     with open(csv_path, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["state", "noise_prob"])
-        for rs in ["w", "w", "n"]:
-            w.writerow([rs, "0.0"])
+        w.writerow(["state", "noise_prob", "final_state"])
+        for rs, final in [("n", "w"), ("n", "w"), ("w", "n")]:
+            w.writerow([rs, "0.0", final])
     rows = build_state_intervals(csv_path, fs=FS, winsize=WINSIZE)
     assert [(r.start_sample, r.end_sample, r.label) for r in rows] == [
         (0, 2000, "wake"),
@@ -381,7 +381,7 @@ def test_write_intervals_csv_creates_parent_dirs(tmp_path):
 
 def test_write_meta_json_roundtrips(tmp_path):
     path = tmp_path / "meta.json"
-    meta = {"fs": 250, "winsize": 4, "params": {"sd_nstd": 5, "sprob": 0.9}}
+    meta = {"fs": 250, "winsize": 4, "params": {"sd_nstd": 5}}
     write_meta_json(path, meta)
     assert json.loads(path.read_text()) == meta
 

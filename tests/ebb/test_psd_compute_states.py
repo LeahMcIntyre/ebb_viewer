@@ -23,10 +23,9 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def _make_psd_record(animal_id: str, combo: str = "LFC_RSC") -> dict:
+def _make_psd_record(animal_id: str) -> dict:
     return {
         "path": str(Path(f"{animal_id}_foo_PREPROCESSED.edf")),
-        "source_combo": combo,
         "channels": (0, 1),
         "behavior": ("threshold", "wake"),
         "n_estimates": 10,
@@ -246,8 +245,8 @@ def _setup_drink_rerun_dirs(tmp_path):
     (combo_dir / "AM001_states.csv").touch()
     (drink_dir / "AM001_drink.npy").touch()
 
-    # psds_channel_merged.pkl — source_combo matches
-    with open(psd_dir / "psds_channel_merged.pkl", "wb") as f:
+    # psds_LFC_RSC.pkl
+    with open(psd_dir / "psds_LFC_RSC.pkl", "wb") as f:
         pickle.dump([_make_psd_record("AM001")], f)
 
     return dict(
@@ -271,7 +270,8 @@ def test_rerun_with_drink_masks_translates_states_to_labels(tmp_path):
 
         rerun_with_drink_masks(
             **dirs,
-            animal_combos={"AM001": "LFC_RSC"},
+            animal_ids=["AM001"],
+            combo="LFC_RSC",
             run_name="default",
             states=["wake", "nrem"],
         )
@@ -293,7 +293,8 @@ def test_rerun_with_drink_masks_no_states_no_labels(tmp_path):
 
         rerun_with_drink_masks(
             **dirs,
-            animal_combos={"AM001": "LFC_RSC"},
+            animal_ids=["AM001"],
+            combo="LFC_RSC",
             run_name="default",
         )
 
@@ -306,7 +307,7 @@ def test_rerun_with_drink_masks_no_states_no_labels(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def _run_estimate_psd(labels, wake, nrem, rem, sd):
+def _run_estimate_psd(labels, wake, nrem, rem, sd, **estimate_kwargs):
     """Invoke estimate_psd with all heavy deps mocked.
 
     Returns (results, captured) where captured["producer_calls"] is the list
@@ -317,11 +318,12 @@ def _run_estimate_psd(labels, wake, nrem, rem, sd):
     from ebb.process import psd_compute
 
     n = len(sd)
-    captured = {"producer_calls": [], "state_calls": []}
+    captured = {"producer_calls": [], "state_calls": [], "column_calls": []}
     single = {"w": wake, "n": nrem, "r": rem}
 
-    def fake_state(state_path, code, fs, winsize):
+    def fake_state(state_path, code, fs, winsize, columns=None):
         captured["state_calls"].append(tuple(code))
+        captured["column_calls"].append(columns)
         out = np.zeros(n, dtype=bool)
         for c in code:
             out |= single[c]
@@ -367,6 +369,7 @@ def _run_estimate_psd(labels, wake, nrem, rem, sd):
             fs=10,
             chunksize=n,
             verbose=False,
+            **estimate_kwargs,
         )
     return results, captured
 
@@ -594,3 +597,66 @@ def test_apply_notch_false_skips_notch_filter():
 
     notch_cls.assert_not_called()
     notch_instance.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# estimate_psd: state_columns (analysis reads final_state unless a script opts out)
+# ---------------------------------------------------------------------------
+
+
+def _mixed_wake_masks():
+    n = 20
+    wake = np.zeros(n, dtype=bool)
+    wake[0:10] = True
+    nrem = np.zeros(n, dtype=bool)
+    nrem[10:15] = True
+    rem = np.zeros(n, dtype=bool)
+    rem[15:20] = True
+    return n, wake, nrem, rem
+
+
+def test_estimate_psd_reads_final_state_by_default():
+    from ebb.io.spindle_csv import ANALYSIS_STATE_COLUMNS
+
+    n, wake, nrem, rem = _mixed_wake_masks()
+    _, captured = _run_estimate_psd(
+        labels={"all": ["w", "n", "r"]}, wake=wake, nrem=nrem, rem=rem, sd=np.ones(n, dtype=bool)
+    )
+    # one call per group plus the wake sub-mask: every one reads the analysis column
+    assert captured["column_calls"] == [ANALYSIS_STATE_COLUMNS] * 2
+
+
+def test_estimate_psd_state_columns_opt_out_reaches_every_state_lookup():
+    from ebb.io.spindle_csv import STATE_COLUMNS
+
+    n, wake, nrem, rem = _mixed_wake_masks()
+    _, captured = _run_estimate_psd(
+        labels={"all": ["w", "n", "r"]},
+        wake=wake,
+        nrem=nrem,
+        rem=rem,
+        sd=np.ones(n, dtype=bool),
+        state_columns=STATE_COLUMNS,
+    )
+    assert captured["column_calls"] == [STATE_COLUMNS] * 2
+
+
+def test_batch_estimate_forwards_state_columns_to_estimate_psd(tmp_path):
+    from ebb.io.spindle_csv import STATE_COLUMNS
+
+    standard = tmp_path / "standard"
+    standard.mkdir()
+    spindle_out = tmp_path / "spindle_outputs" / "LFC_RSC"
+    spindle_out.mkdir(parents=True)
+    captured, fake_partial = _capture_partial_kwargs()
+
+    with (
+        patch("ebb.process.psd_compute.match_paths", return_value=[]),
+        patch("ebb.process.psd_compute.concurrency.set_cores", return_value=1),
+        patch("ebb.process.psd_compute.partial", side_effect=fake_partial),
+    ):
+        from ebb.process.psd_compute import batch_estimate
+
+        batch_estimate(eeg_dir=standard, state_dir=spindle_out, state_columns=STATE_COLUMNS)
+
+    assert captured["state_columns"] == STATE_COLUMNS

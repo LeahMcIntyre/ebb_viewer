@@ -61,6 +61,7 @@ class SpindleWritePage(QWidget):
         # Worker thread + worker instance — populated by _run_spindle_btn.
         self._spindle_thread: QThread | None = None
         self._spindle_worker: _SpindleWriteWorker | None = None
+        self._pending_combo: str = ""
 
         self._build_ui()
         self._wire()
@@ -274,6 +275,7 @@ class SpindleWritePage(QWidget):
         combo_name = "_".join(eeg_labels)  # e.g. "LFC_RSC"
         spindle_root = self.project_root / "spindle_edfs"
         target_dir = spindle_root / combo_name
+        self._pending_combo = combo_name
 
         existing = list(target_dir.glob("*_SPINDLE.edf")) if target_dir.is_dir() else []
         if existing:
@@ -323,6 +325,11 @@ class SpindleWritePage(QWidget):
         QApplication.processEvents()
 
     def _on_spindle_done(self):
+        # The combo written here becomes the project's combo, which every
+        # downstream page reads from the manifest.
+        manifest = Manifest.load(self.project_root)
+        manifest.combo = self._pending_combo
+        manifest.save()
         Manifest.build_from_standard(self.project_root)
         self._validate()
         self._hint_frame.setVisible(True)

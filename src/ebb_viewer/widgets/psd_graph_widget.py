@@ -5,20 +5,20 @@ Used in two modes:
   ``psd_status[run_name]`` is unset; user flags ``ok`` or ``needs_drink_mask``.
 - **Pass 2 drink review** (`drink_review=True`): pending = animals whose
   ``psd_status[run_name] == "drink_mask_applied"``; user verifies the mask
-  worked and flags ``ok``.
+  worked and flags ``ok``, or sends the animal back for another mask. Only those
+  animals are listed unless "Show all animals" is ticked.
 """
 
 import numpy as np
 import pyqtgraph as pg
-from specparam.utils import interpolate_spectrum
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QKeySequence, QShortcut
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMenu,
     QPushButton,
     QSizePolicy,
     QStyle,
@@ -27,9 +27,17 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from specparam.utils import interpolate_spectrum
 
 from ebb.process.state_presets import gather_states_from_store
 from ebb_viewer.pipeline import psd_params
+from ebb_viewer.pipeline.manifest import (
+    STAGE_PSD_REVIEW,
+    Manifest,
+    exclusion_stage,
+    psd_status_label,
+)
+from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.range_dialog import FreqBoundsDialog
 
@@ -71,7 +79,6 @@ class PSDGridPage(QWidget):
         channel_names: list[str],  # e.g., ["LFC","RSC","LSC"]
         states: list[str] = None,  # e.g., ["wake","nrem","rem"]
         manifest=None,  # optional Manifest for per-animal flagging
-        run_channels: str | None = None,  # channel combo identifying which run this PSD belongs to
         drink_review: bool = False,  # Pass 2 mode: pending = drink_mask_applied animals
         run_name: str = "default",  # PSD run name for manifest flag scoping
         project_root=None,  # Path for drink-mask hint
@@ -84,10 +91,16 @@ class PSDGridPage(QWidget):
         else:
             self.states = list(states)
         self.manifest = manifest
-        self.run_channels = run_channels
         self.drink_review = drink_review
         self._run_name = run_name
         self._project_root = project_root
+        # Pass 2 lists only the animals waiting for verification (a snapshot, so an animal
+        # does not vanish from the list the moment it is flagged).
+        self._verify_ids: set[str] = (
+            {e.animal_id for e in manifest.pending_drink_verification(run_name)}
+            if drink_review and manifest is not None
+            else set()
+        )
 
         # View preferences
         self.xrange: tuple[float, float] = self.DEFAULT_XRANGE
@@ -110,6 +123,7 @@ class PSDGridPage(QWidget):
         # Initial render
         if self.cmb_animal.count():
             self._render()
+        self._mark_excluded_items()
         self._update_flag_status()
         self._install_shortcuts()
 
@@ -127,117 +141,47 @@ class PSDGridPage(QWidget):
     # ---------------- UI BUILDERS ----------------
 
     def _build_tool_bar(self):
+        # View options live in a short QToolBar; everything review-related
+        # lives in a plain widget row (``_build_review_bar``) so the OK /
+        # Drink Mask buttons can never be pushed into a toolbar overflow
+        # chevron on a narrow window.
         tb = QToolBar(self)
         tb.setMovable(False)
         tb.setFloatable(False)
-        tb.setIconSize(QSize(18, 18))
-        tb.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         tb.setStyleSheet("""
             QToolBar { padding: 4px; spacing: 8px; }
             QToolButton { padding: 3px 8px; }
         """)
 
-        # Log-X toggle
-        act_logx = _make_toggle(self, "Log-X", checked=self.xlog, slot=self._on_logx_toggled)
-        tb.addAction(act_logx)
-
-        # Log-Y toggle
-        act_logy = _make_toggle(self, "Log-Y", checked=self.ylog, slot=self._on_logy_toggled)
-        tb.addAction(act_logy)
-
-        # Inverse Filter toggle
-        act_invfil = _make_toggle(
-            self, "Inverse Filter", checked=self.invfil, slot=self._on_inverse_toggled
+        tb.addAction(_make_toggle(self, "Log-X", checked=self.xlog, slot=self._on_logx_toggled))
+        tb.addAction(_make_toggle(self, "Log-Y", checked=self.ylog, slot=self._on_logy_toggled))
+        tb.addAction(
+            _make_toggle(self, "Inverse Filter", checked=self.invfil, slot=self._on_inverse_toggled)
         )
-        tb.addAction(act_invfil)
-
-        act_interp = _make_toggle(
-            self, "Interpolate", checked=self.interpolate, slot=self._on_interpolate
+        tb.addAction(
+            _make_toggle(self, "Interpolate", checked=self.interpolate, slot=self._on_interpolate)
         )
-        tb.addAction(act_interp)
-
         tb.addSeparator()
 
-        act_xrange = QAction("Set X-Range", self)
-        act_xrange.triggered.connect(self._on_set_xrange)
-        tb.addAction(act_xrange)
+        for text, slot in (
+            ("Set X-Range", self._on_set_xrange),
+            ("Set Interp-Range", self._on_set_interp_range),
+            ("Reset zoom", self._on_reset_zoom),
+        ):
+            act = QAction(text, self)
+            act.triggered.connect(slot)
+            tb.addAction(act)
 
-        act_irange = QAction("Set Interp-Range", self)
-        act_irange.triggered.connect(self._on_set_interp_range)
-        tb.addAction(act_irange)
-
-        # Middle spacer
         tb.addWidget(_toolbar_spacer(self))
 
-        # Right: animal selector + nav
-        self.cmb_animal = QComboBox()
-        self.cmb_animal.addItems(self.store.animals())
-        self.cmb_animal.currentTextChanged.connect(self._render)
-        self.cmb_animal.currentTextChanged.connect(lambda _: self._update_flag_status())
-        tb.addWidget(_labeled_combo(self, "Animal:", self.cmb_animal))
-
-        tb.addSeparator()
-        tb.addWidget(
-            _make_nav_button(self, "Prev", QStyle.StandardPixmap.SP_ArrowBack, self._prev_animal)
-        )
-        tb.addWidget(
-            _make_nav_button(self, "Next", QStyle.StandardPixmap.SP_ArrowForward, self._next_animal)
-        )
-
-        # Overflow menu. Also hosts "Edit Notes": the flag buttons/status
-        # label further right already get squeezed into the QToolBar's own
-        # overflow chevron on a normal-width window (this toolbar's
-        # sizeHint routinely exceeds the ~1000px default window), so a
-        # standalone Notes button placed after them would be invisible
-        # without hunting for that chevron. This button sits before the
-        # flag buttons, so it stays visible whenever they do.
-        self._btn_more = QToolButton(self)
-        self._btn_more.setText("More")
-        self._btn_more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        m = QMenu(self._btn_more)
-        act_reset_zoom = m.addAction("Reset zoom")
-        act_reset_zoom.triggered.connect(self._on_reset_zoom)
-        self._act_menu_notes = m.addAction("📝 Edit Notes")
-        self._act_menu_notes.triggered.connect(self._open_notes_dialog)
-        self._btn_more.setMenu(m)
-        tb.addWidget(self._btn_more)
-
-        # Flag buttons (only useful when manifest is provided)
-        self._act_flag_sep = tb.addSeparator()
-        self._btn_flag_ok = QPushButton("✓ OK")
-        self._btn_flag_ok.setFixedHeight(26)
-        self._btn_flag_ok.setCheckable(True)
-        self._btn_flag_ok.setToolTip("Mark current animal's PSD as OK in manifest")
-        self._btn_flag_ok.clicked.connect(lambda checked: self._flag_psd_ok())
-        self._act_flag_ok = tb.addWidget(self._btn_flag_ok)
-
-        self._btn_flag_drink = QPushButton("Drink Mask")
-        self._btn_flag_drink.setFixedHeight(26)
-        self._btn_flag_drink.setCheckable(True)
-        self._btn_flag_drink.setToolTip("Flag current animal as needing a drink mask PSD rerun")
-        self._btn_flag_drink.clicked.connect(lambda checked: self._flag_drink_mask())
-        self._act_flag_drink = tb.addWidget(self._btn_flag_drink)
-
-        self._btn_flag_reset = QPushButton("↺ Reset")
-        self._btn_flag_reset.setFixedHeight(26)
-        self._btn_flag_reset.setToolTip("Clear PSD review status for the current animal")
-        self._btn_flag_reset.setEnabled(False)
-        self._btn_flag_reset.clicked.connect(lambda: self._reset_psd_status())
-        self._act_flag_reset = tb.addWidget(self._btn_flag_reset)
-
-        self._status_label = QLabel("")
-        self._status_label.setMinimumWidth(90)
-        self._act_status = tb.addWidget(self._status_label)
-
-        if self.manifest is None:
-            self._act_flag_sep.setVisible(False)
-            self._act_flag_ok.setVisible(False)
-            self._act_flag_drink.setVisible(False)
-            self._act_flag_reset.setVisible(False)
-            self._act_menu_notes.setVisible(False)
-            self._act_status.setVisible(False)
+        # Notes (manifest only). Text/tooltip reflect whether a note exists.
+        self._act_notes = QAction("📝 Notes", self)
+        self._act_notes.triggered.connect(self._open_notes_dialog)
+        self._act_notes.setVisible(self.manifest is not None)
+        tb.addAction(self._act_notes)
 
         self.root.addWidget(tb)
+        self._build_review_bar()
 
         self._guidance_label = QFrame()
         self._guidance_label.setStyleSheet("QFrame { background: #fff3cd; border-radius: 3px; }")
@@ -274,7 +218,115 @@ class PSDGridPage(QWidget):
         self._mask_hint_frame.setVisible(False)
         self.root.addWidget(self._mask_hint_frame)
 
+        # Pass 2: what to check and what the buttons do
+        self._verify_banner = QFrame()
+        self._verify_banner.setStyleSheet("QFrame { background: #e8f4fd; border-radius: 3px; }")
+        verify_layout = QHBoxLayout(self._verify_banner)
+        verify_layout.setContentsMargins(10, 5, 10, 5)
+        self._verify_lbl = QLabel("")
+        self._verify_lbl.setWordWrap(True)
+        self._verify_lbl.setStyleSheet("color: #1a3a5c; background: transparent;")
+        verify_layout.addWidget(self._verify_lbl, 1)
+        btn_back = QPushButton("→ 8. Drink Mask")
+        btn_back.setFixedHeight(26)
+        btn_back.clicked.connect(lambda: self.navigate_to.emit("drink_mask"))
+        verify_layout.addWidget(btn_back)
+        self._verify_banner.setVisible(self.drink_review and self.manifest is not None)
+        self.root.addWidget(self._verify_banner)
+
+    def _build_review_bar(self):
+        """Animal selector, prev/next and the OK / Drink Mask flag buttons."""
+        bar = QWidget(self)
+        h = QHBoxLayout(bar)
+        h.setContentsMargins(4, 0, 4, 0)
+        h.setSpacing(8)
+
+        self.cmb_animal = QComboBox()
+        self.cmb_animal.addItems(self._listed_animals(show_all=False))
+        self.cmb_animal.currentTextChanged.connect(self._render)
+        self.cmb_animal.currentTextChanged.connect(lambda _: self._update_flag_status())
+        h.addWidget(_labeled_combo(self, "Animal:", self.cmb_animal))
+        h.addWidget(
+            _make_nav_button(self, "Prev", QStyle.StandardPixmap.SP_ArrowBack, self._prev_animal)
+        )
+        h.addWidget(
+            _make_nav_button(self, "Next", QStyle.StandardPixmap.SP_ArrowForward, self._next_animal)
+        )
+        self.chk_show_all = QCheckBox("Show all animals")
+        self.chk_show_all.setToolTip("Also list animals that do not need drink-mask verification")
+        self.chk_show_all.setVisible(self.drink_review and self.manifest is not None)
+        self.chk_show_all.toggled.connect(self._on_show_all_toggled)
+        h.addWidget(self.chk_show_all)
+        h.addStretch(1)
+
+        # Flag controls (only useful when a manifest is provided)
+        self._flag_controls = QWidget(bar)
+        fh = QHBoxLayout(self._flag_controls)
+        fh.setContentsMargins(0, 0, 0, 0)
+        fh.setSpacing(8)
+
+        self._status_label = QLabel("")
+        self._status_label.setMinimumWidth(90)
+        fh.addWidget(self._status_label)
+
+        self._btn_flag_reset = QPushButton("↺ Reset")
+        self._btn_flag_reset.setToolTip("Clear PSD review status for the current animal")
+        self._btn_flag_reset.setEnabled(False)
+        self._btn_flag_reset.clicked.connect(lambda: self._reset_psd_status())
+        fh.addWidget(self._btn_flag_reset)
+
+        self._btn_flag_drink = QPushButton("✗ Redo mask  (D)" if self.drink_review else "Drink Mask  (D)")
+        self._btn_flag_drink.setCheckable(True)
+        self._btn_flag_drink.setToolTip(
+            "The mask did not remove the artifact: send this animal back to the Drink Mask page"
+            if self.drink_review
+            else "Flag current animal as needing a drink mask PSD rerun"
+        )
+        self._btn_flag_drink.clicked.connect(lambda checked: self._flag_drink_mask())
+        fh.addWidget(self._btn_flag_drink)
+
+        self._btn_flag_ok = QPushButton("✓ Mask worked  (O)" if self.drink_review else "✓ OK  (O)")
+        self._btn_flag_ok.setCheckable(True)
+        self._btn_flag_ok.setToolTip(
+            "The drinking artifact is gone: mark this animal's PSD as OK"
+            if self.drink_review
+            else "Mark current animal's PSD as OK in manifest"
+        )
+        self._btn_flag_ok.clicked.connect(lambda checked: self._flag_psd_ok())
+        fh.addWidget(self._btn_flag_ok)
+
+        # No keyboard shortcut: an exclusion should be deliberate.
+        self._btn_flag_exclude = QPushButton("Exclude")
+        self._btn_flag_exclude.setCheckable(True)
+        self._btn_flag_exclude.setToolTip(
+            "Exclude this animal from analysis (a reason is required). "
+            "Click again to send it back to Sleep QC review."
+        )
+        self._btn_flag_exclude.clicked.connect(self._flag_exclude)
+        fh.addWidget(self._btn_flag_exclude)
+
+        for btn in (self._btn_flag_ok, self._btn_flag_drink, self._btn_flag_exclude):
+            btn.setMinimumHeight(28)
+            btn.setStyleSheet(_FLAG_BUTTON_QSS)
+        self._btn_flag_ok.setProperty("flag", "ok")
+        self._btn_flag_drink.setProperty("flag", "drink")
+        self._btn_flag_exclude.setProperty("flag", "exclude")
+
+        h.addWidget(self._flag_controls)
+        self._flag_controls.setVisible(self.manifest is not None)
+        self.root.addWidget(bar)
+
     def _build_grid(self):
+        # Banner for excluded animals (hidden otherwise)
+        self._excluded_banner = QLabel()
+        self._excluded_banner.setWordWrap(True)
+        self._excluded_banner.setStyleSheet(
+            "background: #e3e3e3; color: #444; border: 1px solid #b5b5b5; "
+            "border-radius: 4px; padding: 6px 10px;"
+        )
+        self._excluded_banner.setVisible(False)
+        self.root.addWidget(self._excluded_banner)
+
         # Grid container
         self.glw = pg.GraphicsLayoutWidget()
         self.root.addWidget(self.glw, 1)
@@ -319,7 +371,9 @@ class PSDGridPage(QWidget):
     # ---------------- SHORTCUTS ----------------
 
     def _install_shortcuts(self):
-        ctx = Qt.ShortcutContext.WidgetWithChildrenShortcut
+        # Window-wide (while this page is visible) so the shortcuts work even
+        # when focus is on the sidebar or the Plot PSDs button.
+        ctx = Qt.ShortcutContext.WindowShortcut
         for key, slot in [
             (Qt.Key.Key_Left, self._prev_animal),
             (Qt.Key.Key_Right, self._next_animal),
@@ -390,6 +444,22 @@ class PSDGridPage(QWidget):
         if i < self.cmb_animal.count() - 1:
             self.cmb_animal.setCurrentIndex(i + 1)
 
+    def _listed_animals(self, *, show_all: bool) -> list[str]:
+        """Store keys for the animal dropdown: in pass 2 only those waiting for verification."""
+        keys = list(self.store.animals())
+        if self.drink_review and self.manifest is not None and not show_all:
+            keys = [k for k in keys if self._animal_id_of(k) in self._verify_ids]
+        return keys
+
+    def _on_show_all_toggled(self, show_all: bool) -> None:
+        self.cmb_animal.blockSignals(True)
+        self.cmb_animal.clear()
+        self.cmb_animal.addItems(self._listed_animals(show_all=show_all))
+        self.cmb_animal.blockSignals(False)
+        self._render()
+        self._mark_excluded_items()
+        self._update_flag_status()
+
     # ---------------- RENDERING ----------------
 
     def _render(self, *_):
@@ -455,65 +525,60 @@ class PSDGridPage(QWidget):
         if self.manifest is None:
             return set()
         if self.drink_review:
-            return {
-                entry.animal_id
-                for entry, _ in self.manifest.pending_drink_verification(self._run_name)
-            }
-        if self.run_channels is None:
-            return {
-                entry.animal_id for entry, _ in self.manifest.pending_psd_review(self._run_name)
-            }
-        return {
-            entry.animal_id
-            for entry, combo in self.manifest.pending_psd_review(self._run_name)
-            if combo == self.run_channels
-        }
+            return {e.animal_id for e in self.manifest.pending_drink_verification(self._run_name)}
+        return {e.animal_id for e in self.manifest.pending_psd_review(self._run_name)}
 
     def _manifest_animal_id(self) -> str | None:
         """Strip _artifact/_drink suffixes from store key to get manifest animal_id."""
         key = self.cmb_animal.currentText()
         if not key:
             return None
-        return key.replace("_artifact", "").replace("_drink", "")
-
-    def _resolve_combo(self, animal_id: str | None) -> str | None:
-        """Return the channel combo to use for manifest flagging."""
-        if self.run_channels is not None:
-            return self.run_channels
-        if animal_id is None:
-            return None
-        return self.store.source_combo(animal_id)
+        return self._animal_id_of(key)
 
     def _flag_psd_ok(self) -> None:
-        if self.manifest is None:
+        if self.manifest is None or self._excluded_notes() is not None:
             return
         animal_id = self._manifest_animal_id()
-        combo = self._resolve_combo(animal_id)
-        if animal_id is None or combo is None:
+        if animal_id is None:
             return
-        self.manifest.flag_psd(animal_id, combo, "ok", self._run_name)
+        self.manifest.flag_psd(animal_id, "ok", self._run_name)
         self._update_flag_status()
         self.manifest_changed.emit()
 
     def _flag_drink_mask(self) -> None:
+        if self.manifest is None or self._excluded_notes() is not None:
+            return
+        animal_id = self._manifest_animal_id()
+        if animal_id is None:
+            return
+        self.manifest.flag_psd(animal_id, "needs_drink_mask", self._run_name)
+        self._update_flag_status()
+        self.manifest_changed.emit()
+
+    def _flag_exclude(self, checked: bool) -> None:
+        """Exclude the current animal (asking for a reason) or send it back to Sleep QC review."""
         if self.manifest is None:
             return
         animal_id = self._manifest_animal_id()
-        combo = self._resolve_combo(animal_id)
-        if animal_id is None or combo is None:
+        if animal_id is None or self.manifest.get(animal_id) is None:
             return
-        self.manifest.flag_psd(animal_id, combo, "needs_drink_mask", self._run_name)
+        if checked:
+            if not exclude_with_reason(self, self.manifest, animal_id, STAGE_PSD_REVIEW):
+                self._update_flag_status()  # cancelled: pop the toggle back out
+                return
+        else:
+            self.manifest.flag_sleep_qc(animal_id, "needs_review")
+        self._mark_excluded_items()
         self._update_flag_status()
         self.manifest_changed.emit()
 
     def _reset_psd_status(self) -> None:
-        if self.manifest is None:
+        if self.manifest is None or self._excluded_notes() is not None:
             return
         animal_id = self._manifest_animal_id()
-        combo = self._resolve_combo(animal_id)
-        if animal_id is None or combo is None:
+        if animal_id is None:
             return
-        self.manifest.reset_psd_status(animal_id, combo, self._run_name)
+        self.manifest.reset_psd_status(animal_id, self._run_name)
         self._update_flag_status()
         self.manifest_changed.emit()
 
@@ -533,20 +598,96 @@ class PSDGridPage(QWidget):
         self._update_flag_status()
         self.manifest_changed.emit()
 
+    def _mark_excluded_items(self) -> None:
+        """Grey out excluded animals in the animal dropdown (the item text is the store key)."""
+        manifest = self.manifest
+        if manifest is None and self._project_root is not None:
+            manifest = Manifest.load(self._project_root)
+        if manifest is None:
+            return
+        for i in range(self.cmb_animal.count()):
+            entry = manifest.get(self._animal_id_of(self.cmb_animal.itemText(i)))
+            excluded = entry is not None and entry.sleep_qc == "excluded"
+            self.cmb_animal.setItemData(
+                i, QColor(140, 140, 140) if excluded else None, Qt.ItemDataRole.ForegroundRole
+            )
+            stage = exclusion_stage(entry.notes) if excluded else None
+            tip = (f"Excluded in {stage}" if stage else "Excluded") if excluded else None
+            self.cmb_animal.setItemData(i, tip, Qt.ItemDataRole.ToolTipRole)
+
+    @staticmethod
+    def _animal_id_of(key: str) -> str:
+        """Strip _artifact/_drink suffixes from a store key to get the manifest animal_id."""
+        return key.replace("_artifact", "").replace("_drink", "")
+
+    def _excluded_notes(self) -> str | None:
+        """The current animal's notes if it is excluded, else None.
+
+        Reads the manifest on disk when none was passed, so animals are marked in
+        views that do not flag.
+        """
+        animal_id = self._manifest_animal_id()
+        if animal_id is None:
+            return None
+        manifest = self.manifest
+        if manifest is None and self._project_root is not None:
+            manifest = Manifest.load(self._project_root)
+        entry = manifest.get(animal_id) if manifest is not None else None
+        if entry is None or entry.sleep_qc != "excluded":
+            return None
+        return entry.notes.strip()
+
+    def _update_excluded_marker(self) -> None:
+        """Banner and grey curves while the current animal is excluded (in Sleep QC or here)."""
+        notes = self._excluded_notes()
+        excluded = notes is not None
+        self._excluded_banner.setVisible(excluded)
+        if excluded:
+            stage = exclusion_stage(notes)
+            where = f" in {stage}" if stage else ""
+            self._excluded_banner.setText(
+                f"<b>EXCLUDED{where}</b> — shown for reference; the analysis leaves this "
+                "animal out." + (f"<br>{notes.replace(chr(10), '<br>')}" if notes else "")
+            )
+        pen = pg.mkPen((140, 140, 140) if excluded else (0, 0, 0), width=1.5)
+        for curve in self.curves.values():
+            curve.setPen(pen)
+
+    def _update_verify_banner(self) -> None:
+        if not self._verify_banner.isVisible() and not (
+            self.drink_review and self.manifest is not None
+        ):
+            return
+        n = len(self._verify_ids)
+        if n:
+            text = (
+                f"<b>Verifying drink masks</b> — {n} animal{'s' if n != 1 else ''} to check. "
+                "Look at the 52 and 68 Hz sidebands: <b>✓ Mask worked</b> marks the PSD OK, "
+                "<b>✗ Redo mask</b> sends the animal back to the Drink Mask page."
+            )
+        else:
+            text = "<b>Verifying drink masks</b> — nothing to verify right now."
+        self._verify_lbl.setText(text)
+
     def _update_flag_status(self) -> None:
+        self._update_verify_banner()
+        self._update_excluded_marker()
         if self.manifest is None:
             return
+        excluded = self._excluded_notes() is not None
+        self._btn_flag_exclude.setChecked(excluded)
+        # Excluded animals are not reviewed: no OK / Drink Mask (the shortcuts do nothing either).
+        self._btn_flag_ok.setEnabled(not excluded)
+        self._btn_flag_drink.setEnabled(not excluded)
         animal_id = self._manifest_animal_id()
-        combo = self._resolve_combo(animal_id)
-        run = self.manifest.get_run(animal_id, combo) if (animal_id and combo) else None
-        status = run.psd_status.get(self._run_name) if run else None
-
-        self._btn_flag_reset.setEnabled(status is not None)
-
         entry = self.manifest.get(animal_id) if animal_id else None
+        status = entry.psd_status.get(self._run_name) if entry else None
+
+        self._btn_flag_reset.setEnabled(status is not None and not excluded)
+
         has_notes = bool(entry is not None and entry.notes.strip())
-        self._btn_more.setText("More 📝" if has_notes else "More")
-        self._btn_more.setToolTip(entry.notes if has_notes else "")
+        self._act_notes.setText("📝 Notes •" if has_notes else "📝 Notes")
+        self._act_notes.setToolTip(entry.notes if has_notes else "Edit notes for this animal")
 
         # Drink-mask-on-disk hint: show during Pass 1 when status is not yet set
         show_mask_hint = (
@@ -567,31 +708,45 @@ class PSDGridPage(QWidget):
         if status == "ok":
             self._btn_flag_ok.setChecked(True)
             self._btn_flag_drink.setChecked(False)
-            self._status_label.setText("✓ OK")
+            self._status_label.setText(f"✓ {psd_status_label('ok')}")
             self._status_label.setStyleSheet("color: green; font-weight: bold;")
             self._guidance_label.setVisible(False)
         elif status == "needs_drink_mask":
             self._btn_flag_ok.setChecked(False)
             self._btn_flag_drink.setChecked(True)
-            self._status_label.setText("⚠ Drink Mask")
+            self._status_label.setText(f"⚠ {psd_status_label('needs_drink_mask')}")
             self._status_label.setStyleSheet("color: orange; font-weight: bold;")
             self._guidance_label.setVisible(self.manifest is not None)
+        elif status == "drink_mask_applied":
+            self._btn_flag_ok.setChecked(False)
+            self._btn_flag_drink.setChecked(False)
+            self._status_label.setText(psd_status_label(status))
+            self._status_label.setStyleSheet("color: #1a5c8a; font-weight: bold;")
+            self._guidance_label.setVisible(False)
         elif animal_id in self._pending_animal_ids():
             self._btn_flag_ok.setChecked(False)
             self._btn_flag_drink.setChecked(False)
-            self._status_label.setText("pending")
+            self._status_label.setText(psd_status_label(status))
             self._status_label.setStyleSheet("color: gray;")
             self._guidance_label.setVisible(False)
         else:
             self._btn_flag_ok.setChecked(False)
             self._btn_flag_drink.setChecked(False)
-            self._status_label.setText("")
-            self._status_label.setStyleSheet("")
+            self._status_label.setText("excluded" if excluded else "")
+            self._status_label.setStyleSheet("color: gray;" if excluded else "")
             self._guidance_label.setVisible(False)
 
     def _clear_all(self):
         for curve in self.curves.values():
             curve.setData([], [])
+
+
+_FLAG_BUTTON_QSS = """
+    QPushButton { font-weight: bold; padding: 2px 10px; }
+    QPushButton[flag="ok"]:checked { background: #2e8b57; color: white; }
+    QPushButton[flag="drink"]:checked { background: #e08a00; color: white; }
+    QPushButton[flag="exclude"]:checked { background: #7a7a7a; color: white; }
+"""
 
 
 # ---------------- Toolbar helpers ----------------

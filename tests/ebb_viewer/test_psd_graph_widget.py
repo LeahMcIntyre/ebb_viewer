@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from ebb_viewer.pipeline import psd_params
-from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry, RunEntry
+from ebb_viewer.pipeline.manifest import Manifest, ManifestEntry
 from ebb_viewer.widgets.psd_graph_widget import (
     _DEFAULT_INTERP_RANGE,
     _NOTCH_INTERP_RANGE,
@@ -42,7 +42,6 @@ def _make_page(
     run_name: str = "default",
     store=None,
     manifest=None,
-    run_channels: str | None = None,
 ) -> PSDGridPage:
     return PSDGridPage(
         store=store or _FakeStore(),
@@ -51,7 +50,6 @@ def _make_page(
         run_name=run_name,
         project_root=project_root,
         manifest=manifest,
-        run_channels=run_channels,
     )
 
 
@@ -60,7 +58,8 @@ def _seed_manifest(tmp_path: Path, animal_id: str = "AM001") -> Manifest:
     m._entries[animal_id] = ManifestEntry(
         animal_id=animal_id,
         preprocessed_edf=f"{animal_id}_PREPROCESSED.edf",
-        runs={"LFC_RSC": RunEntry(sleep_qc="ok")},
+        has_spindle=True,
+        sleep_qc="ok",
     )
     m.save()
     return m
@@ -125,20 +124,20 @@ def test_interp_range_stays_narrow_when_apply_notch_key_missing(qapp, tmp_path: 
 
 def test_notes_menu_action_hidden_without_manifest(qapp):
     w = _make_page(qapp, manifest=None)
-    assert w._act_menu_notes.isVisible() is False
+    assert w._act_notes.isVisible() is False
 
 
 def test_notes_menu_action_visible_with_manifest(qapp, tmp_path: Path):
     manifest = _seed_manifest(tmp_path)
-    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
-    assert w._act_menu_notes.isVisible() is True
+    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest)
+    assert w._act_notes.isVisible() is True
 
 
 def test_open_notes_dialog_accept_persists_and_emits(qapp, tmp_path: Path):
     import ebb_viewer.widgets.psd_graph_widget as pgw_mod
 
     manifest = _seed_manifest(tmp_path)
-    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
+    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest)
     emitted: list = []
     w.manifest_changed.connect(lambda: emitted.append(True))
 
@@ -154,7 +153,7 @@ def test_open_notes_dialog_prefills_existing_text(qapp, tmp_path: Path):
 
     manifest = _seed_manifest(tmp_path)
     manifest.set_notes("AM001", "existing note")
-    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
+    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest)
 
     captured: dict = {}
 
@@ -174,7 +173,7 @@ def test_open_notes_dialog_cancel_does_not_change_manifest(qapp, tmp_path: Path)
 
     manifest = _seed_manifest(tmp_path)
     manifest.set_notes("AM001", "original note")
-    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
+    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest)
     emitted: list = []
     w.manifest_changed.connect(lambda: emitted.append(True))
 
@@ -185,16 +184,198 @@ def test_open_notes_dialog_cancel_does_not_change_manifest(qapp, tmp_path: Path)
     assert emitted == []
 
 
-def test_more_button_marked_when_note_present(qapp, tmp_path: Path):
+def test_notes_button_marked_when_note_present(qapp, tmp_path: Path):
     manifest = _seed_manifest(tmp_path)
     manifest.set_notes("AM001", "has a note")
-    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
-    assert w._btn_more.text() == "More 📝"
-    assert w._btn_more.toolTip() == "has a note"
+    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest)
+    assert w._act_notes.text() == "📝 Notes •"
+    assert w._act_notes.toolTip() == "has a note"
 
 
-def test_more_button_plain_when_no_note(qapp, tmp_path: Path):
+def test_notes_button_plain_when_no_note(qapp, tmp_path: Path):
     manifest = _seed_manifest(tmp_path)
-    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest, run_channels="LFC_RSC")
-    assert w._btn_more.text() == "More"
-    assert w._btn_more.toolTip() == ""
+    w = _make_page(qapp, store=_FakeStoreWithAnimal(), manifest=manifest)
+    assert w._act_notes.text() == "📝 Notes"
+    assert w._act_notes.toolTip() == "Edit notes for this animal"
+
+
+# ---------------------------------------------------------------------------
+# Excluded animals are marked
+# ---------------------------------------------------------------------------
+
+
+class _FakeStoreTwoAnimals(_FakeStore):
+    def animals(self):
+        return ["AM001", "AM002_drink"]
+
+
+def _seed_excluded(tmp_path: Path) -> Manifest:
+    m = _seed_manifest(tmp_path, "AM001")
+    m._entries["AM002"] = ManifestEntry(
+        animal_id="AM002", preprocessed_edf="x.edf", has_spindle=True, sleep_qc="excluded",
+        notes="cage change\nExcluded (Sleep QC): electrode fell out",
+    )
+    m.save()
+    return m
+
+
+def _gray(page) -> bool:
+    return next(iter(page.curves.values())).opts["pen"].color().red() == 140
+
+
+def test_banner_and_grey_curves_follow_the_selected_animal(qapp, tmp_path: Path):
+    _seed_excluded(tmp_path)
+    page = _make_page(qapp, project_root=tmp_path, store=_FakeStoreTwoAnimals())
+
+    assert page._excluded_banner.isHidden() and not _gray(page)  # AM001 is ok
+
+    page.cmb_animal.setCurrentText("AM002_drink")  # store keys carry a _drink suffix
+    assert not page._excluded_banner.isHidden()
+    text = page._excluded_banner.text()
+    assert "EXCLUDED in Sleep QC" in text
+    assert "electrode fell out" in text and "cage change" in text
+    assert _gray(page)
+
+    page.cmb_animal.setCurrentText("AM001")
+    assert page._excluded_banner.isHidden() and not _gray(page)
+
+
+def test_banner_works_without_a_manifest_passed_in(qapp, tmp_path: Path):
+    """Views that don't flag (manifest=None) still read exclusions from the project's manifest."""
+    _seed_excluded(tmp_path)
+    page = _make_page(qapp, project_root=tmp_path, store=_FakeStoreTwoAnimals(), manifest=None)
+    page.cmb_animal.setCurrentText("AM002_drink")
+    assert not page._excluded_banner.isHidden()
+
+
+def test_excluded_animals_are_greyed_in_the_dropdown(qapp, tmp_path: Path):
+    from PyQt6.QtCore import Qt
+
+    _seed_excluded(tmp_path)
+    page = _make_page(qapp, project_root=tmp_path, store=_FakeStoreTwoAnimals())
+    assert page.cmb_animal.itemData(1, Qt.ItemDataRole.ForegroundRole) is not None
+    assert page.cmb_animal.itemData(1, Qt.ItemDataRole.ToolTipRole) == "Excluded in Sleep QC"
+    assert page.cmb_animal.itemData(0, Qt.ItemDataRole.ForegroundRole) is None
+    assert page.cmb_animal.itemText(1) == "AM002_drink"  # key unchanged
+
+
+def test_no_project_root_means_no_banner(qapp):
+    page = _make_page(qapp, store=_FakeStoreWithAnimal())
+    assert page._excluded_banner.isHidden()
+
+
+def test_status_label_says_excluded_when_no_psd_status(qapp, tmp_path: Path):
+    _seed_excluded(tmp_path)
+    page = _make_page(
+        qapp, project_root=tmp_path, store=_FakeStoreTwoAnimals(), manifest=Manifest.load(tmp_path)
+    )
+    page.cmb_animal.setCurrentText("AM002_drink")
+    assert page._status_label.text() == "excluded"
+    page.cmb_animal.setCurrentText("AM001")
+    assert page._status_label.text() != "excluded"
+
+
+# ---------------------------------------------------------------------------
+# Excluding from the PSD review bar
+# ---------------------------------------------------------------------------
+
+
+def _accepting(reason: str):
+    from ebb_viewer.widgets.exclude_dialog import ExcludeDialog
+
+    def fake(self):
+        self.edit.setPlainText(reason)
+        return 1
+
+    return patch.object(ExcludeDialog, "exec", fake)
+
+
+def _flagging_page(qapp, tmp_path: Path):
+    m = _seed_manifest(tmp_path, "AM001")
+    return _make_page(qapp, project_root=tmp_path, store=_FakeStoreWithAnimal(), manifest=m), m
+
+
+def test_exclude_button_excludes_with_reason_and_updates_the_view(qapp, tmp_path: Path):
+    page, m = _flagging_page(qapp, tmp_path)
+    emitted = []
+    page.manifest_changed.connect(lambda: emitted.append(True))
+    assert not page._btn_flag_exclude.isChecked() and page._excluded_banner.isHidden()
+
+    with _accepting("saturated signal"):
+        page._btn_flag_exclude.click()
+
+    assert m.get("AM001").sleep_qc == "excluded"
+    assert m.get("AM001").notes == "Excluded (PSD review): saturated signal"
+    assert page._btn_flag_exclude.isChecked()
+    assert not page._excluded_banner.isHidden() and "saturated signal" in page._excluded_banner.text()
+    assert "EXCLUDED in PSD review" in page._excluded_banner.text()  # not "in Sleep QC"
+    assert emitted == [True]
+    assert Manifest.load(tmp_path).get("AM001").sleep_qc == "excluded"
+
+
+def test_cancelled_exclude_changes_nothing_and_pops_the_toggle_back(qapp, tmp_path: Path):
+    from ebb_viewer.widgets.exclude_dialog import ExcludeDialog
+
+    page, m = _flagging_page(qapp, tmp_path)
+    emitted = []
+    page.manifest_changed.connect(lambda: emitted.append(True))
+    with patch.object(ExcludeDialog, "exec", lambda self: 0):
+        page._btn_flag_exclude.click()
+    assert m.get("AM001").sleep_qc == "ok" and m.get("AM001").notes == ""
+    assert not page._btn_flag_exclude.isChecked()
+    assert emitted == []
+
+
+def test_unexcluding_sends_the_animal_back_to_sleep_qc_review(qapp, tmp_path: Path):
+    page, m = _flagging_page(qapp, tmp_path)
+    with _accepting("bad"):
+        page._btn_flag_exclude.click()
+    page._btn_flag_exclude.click()  # un-exclude
+
+    assert m.get("AM001").sleep_qc == "needs_review"
+    assert m.get("AM001").notes == "Excluded (PSD review): bad"  # note kept
+    assert not page._btn_flag_exclude.isChecked() and page._excluded_banner.isHidden()
+
+
+def test_excluding_greys_the_dropdown_entry_and_unexcluding_restores_it(qapp, tmp_path: Path):
+    from PyQt6.QtCore import Qt
+
+    page, _ = _flagging_page(qapp, tmp_path)
+    assert page.cmb_animal.itemData(0, Qt.ItemDataRole.ForegroundRole) is None
+    with _accepting("bad"):
+        page._btn_flag_exclude.click()
+    assert page.cmb_animal.itemData(0, Qt.ItemDataRole.ForegroundRole) is not None
+    page._btn_flag_exclude.click()
+    assert page.cmb_animal.itemData(0, Qt.ItemDataRole.ForegroundRole) is None
+
+
+def test_exclude_button_hidden_without_a_manifest(qapp, tmp_path: Path):
+    page = _make_page(qapp, project_root=tmp_path, store=_FakeStoreWithAnimal(), manifest=None)
+    assert page._flag_controls.isHidden()
+
+
+def test_ok_and_drink_mask_are_disabled_and_inert_for_excluded_animals(qapp, tmp_path: Path):
+    page, m = _flagging_page(qapp, tmp_path)
+    assert page._btn_flag_ok.isEnabled() and page._btn_flag_drink.isEnabled()
+
+    with _accepting("bad"):
+        page._btn_flag_exclude.click()
+    assert not page._btn_flag_ok.isEnabled() and not page._btn_flag_drink.isEnabled()
+    assert not page._btn_flag_reset.isEnabled()
+
+    page._flag_psd_ok()  # the O / D shortcuts call these: nothing happens, nothing raises
+    page._flag_drink_mask()
+    assert m.get("AM001").psd_status == {}
+
+    page._btn_flag_exclude.click()  # un-exclude
+    assert page._btn_flag_ok.isEnabled() and page._btn_flag_drink.isEnabled()
+
+
+def test_excluding_clears_an_existing_psd_status(qapp, tmp_path: Path):
+    page, m = _flagging_page(qapp, tmp_path)
+    page._btn_flag_ok.click()
+    assert m.get("AM001").psd_status == {"default": "ok"}
+    with _accepting("bad"):
+        page._btn_flag_exclude.click()
+    assert m.get("AM001").psd_status == {}
+    assert page._status_label.text() == "excluded"
