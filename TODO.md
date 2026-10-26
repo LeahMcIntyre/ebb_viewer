@@ -174,6 +174,9 @@ a Rescan button sits inline with it inside Folder Selection. `_scan_edfs`
 also clears `_trim_hint_label` on empty/unreadable exit paths so a
 healthy→empty rescan doesn't leave stale trim counts.
 
+### preprocess: Fix the misleading file-name note
+The Preprocess page shows "EDF files must be named: `AnimalID_anything_YYYY_MM_DD_HH_MM_SS.edf`" (`pages/preprocess.py`, `fmt_lbl`). That is not true: files only need to be named `AnimalID_anything.edf`, where the animal ID is the text before the first `_`. Real files use dashes in the date (`..._2020-04-15_08_50_11.edf`) and work. Change the note to `AnimalID_anything.edf`.
+
 ### preprocess / spindle write: Route `batch_preprocess` console output into the log box
 Structural part (`✓ Done` hint frame + Next → button) already in place
 on both pages. Remaining sub-task: capture `verbose=True` stdout from
@@ -274,9 +277,6 @@ The button flow appears broken in some cases — needs reproduction and a specif
 
 ### spindle_upload: Project names should propagate on page shown
 The remote folder name auto-defaults to `project_root.stem + '_' + combo` on combo selection but may not fire on `showEvent`. Ensure it pre-fills correctly whenever the page is navigated to. Use the SleepyRat manifest to note if there has been a project selected already. 
-
-### psd: SWD masks — decide policy on TS (needs scientific discussion)
-Whether to mask out or include the transition state (TS) in PSD computation is a scientific decision that must be made before any implementation. Once policy is settled, add mask support + optional export to `.npy` (consistent with drink mask format).
 
 ### general: Run log / settings provenance
 `psd/psd_params.json` already tracks PSD params. Consider extending to a `run_log.jsonl` that appends one entry per pipeline action (timestamp, what ran, which animals, params used). Low urgency but valuable for reproducibility and debugging.
