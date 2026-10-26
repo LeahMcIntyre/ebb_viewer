@@ -345,10 +345,10 @@ Details: [sleep_reclassification.md](sleep_reclassification.md) §5. Decisions: 
 | Wake % of the file | above 70 |
 | Max REM % in any 2-hour bin | at least 35 |
 
-An animal that passes the threshold on **any** of the six metrics usually has suspicious sleep data, which may mean noise or misclassification. These thresholds came from our own data; **use them as a starting point**, not as rules. To flag an animal: **click its dot, then click "Flag for Review"**. This marks it `needs_review`.
+An animal that passes the threshold on **any** of the six metrics usually has suspicious sleep data, which may mean noise or misclassification. These thresholds came from our own data; **use them as a starting point**, not as rules. **Animals past a threshold are flagged for review automatically** when the page loads its data, if they have no decision yet: a red line under the page description lists them ("Flagged for review automatically"), and they appear on Home under Needs Attention. Animals you have already marked OK, Excluded or Review are never changed. You can also flag any other animal yourself: **click its dot, then click "Flag for Review"**. This marks it `needs_review`. To clear an automatic flag, click **Review** again on that animal (it goes back to not decided; the page flags it again the next time it loads its data if it is still past a threshold).
 
 **Step 2: Review flagged animals.**
-- To look at an animal's EEG directly: go to **Home** and click the animal in the **Needs Attention** section (**Open EDF**). There you can mark it **✓ OK**.
+- To look at an animal's EEG directly: go to **Home** and click the animal in the **Needs Attention** section (**Open EDF**). There you can mark it **✓ OK**. A card shows which metrics flagged the animal, and **[EMG gate]** (in brackets) when the EMG gate was applied to that animal during Reclassify, since the gate changes how its states were corrected.
 - Or open the **Sleep** view and judge from the by-hour plots.
 
 **Step 3: Sleep view.** For each animal, look for anything very out of place or wrong looking: is the sleep too fragmented, are the fractions of time in each state about what you would expect? Under DISPLAY, **Group** shows all animals together (page by page with **◄ Prev** / **Next ►**) and **Animal** shows a single animal at a time.

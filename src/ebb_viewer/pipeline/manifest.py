@@ -517,6 +517,26 @@ class Manifest:
             self._entries[animal_id].flag_reasons = list(reasons or [])
         self.save()
 
+    def auto_flag_for_review(self, flagged: dict[str, list[str]]) -> list[str]:
+        """Flag animals past a threshold for review, leaving every decision alone.
+
+        ``flagged`` maps animal ID to the metric keys past their threshold. Only animals with no
+        Sleep QC status yet are flagged (``needs_review``, with those keys as the reasons);
+        animals already flagged, OK or excluded are untouched, so running this again is harmless.
+        Saves once. Returns the animals that were flagged now.
+        """
+        done = []
+        for animal_id, keys in flagged.items():
+            entry = self._entries.get(animal_id)
+            if entry is None or entry.sleep_qc is not None or not keys:
+                continue
+            self._set_sleep_qc(animal_id, "needs_review")
+            entry.flag_reasons = list(keys)
+            done.append(animal_id)
+        if done:
+            self.save()
+        return done
+
     def exclude_sleep_qc(self, animal_id: str, reason: str, stage: str) -> None:
         """Exclude an animal from analysis, recording ``reason`` in its notes.
 

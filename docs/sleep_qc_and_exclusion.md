@@ -22,7 +22,7 @@ Finalize.
 | Value | Meaning | Set by |
 |---|---|---|
 | `None` | not assessed yet | default; `reset_sleep_qc` |
-| `needs_review` | flagged; waiting for an EDF check | Review button, "Flag for Review" on the Overview, un-excluding |
+| `needs_review` | flagged; waiting for an EDF check | Review button, "Flag for Review" on the Overview, un-excluding, or automatically when an animal with no status is past a threshold when the page loads its data |
 | `ok` | checked, fine | OK button (Sleep QC grid or EDF viewer) |
 | `excluded` | left out of the analysis; **reason required** | Exclude button (Sleep QC grid, EDF viewer, PSD Visualizer) |
 
@@ -65,6 +65,13 @@ animal's legend row has **OK / Review / Exclude** toggles, a notes button, and a
 listing the metrics past a threshold, for example `[short NREM bouts, high REM +2]` (two names
 at most; hover for each metric's value and threshold). **Show original** plots the original
 SPINDLE states instead of `final_state`; the flagging metrics follow it.
+
+**Automatic flags.** When the page loads its metrics from the reclassified states, any animal with
+**no status** that is past a threshold is set to `needs_review` automatically
+(`Manifest.auto_flag_for_review`), with the metrics as `flag_reasons`; a red line under the page
+description names them. Animals that are already `needs_review`, `ok` or `excluded` are never
+changed. Nothing is flagged while Reclassify has not been run. The Needs Attention card on Home
+shows `[EMG gate]` for an animal whose `reclass_gate_applied` is true.
 
 **Reviewing a flagged animal.** Open it in the EDF viewer (the QC toolbar has Mark OK, Needs
 Review and Exclude) and decide: **OK** or **Exclude**.

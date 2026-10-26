@@ -827,3 +827,35 @@ def test_exclusion_stage_is_the_stage_of_the_last_excluded_line():
     assert exclusion_stage("Excluded (Sleep QC): noisy") == "Sleep QC"
     both = "Excluded (Sleep QC): noisy\nback in\nExcluded (PSD review): artifact"
     assert exclusion_stage(both) == "PSD review"
+
+
+def test_auto_flag_for_review_only_touches_animals_without_a_status(tmp_path):
+    m = Manifest(tmp_path)
+    for animal, status in [
+        ("A1", None),
+        ("A2", None),
+        ("A3", "ok"),
+        ("A4", "needs_review"),
+        ("A5", "excluded"),
+    ]:
+        m._entries[animal] = ManifestEntry(
+            animal_id=animal, preprocessed_edf="x.edf", has_spindle=True, sleep_qc=status
+        )
+    m._entries["A4"].flag_reasons = ["pct_rem"]
+    flagged = {
+        "A1": ["nrem_short"],
+        "A3": ["pct_rem"],
+        "A4": ["nrem_short"],
+        "A5": ["pct_wake"],
+        "A2": [],
+        "ZZ": ["pct_rem"],
+    }
+    assert m.auto_flag_for_review(flagged) == ["A1"]
+    saved = Manifest.load(tmp_path)
+    assert saved.get("A1").sleep_qc == "needs_review" and saved.get("A1").flag_reasons == [
+        "nrem_short"
+    ]
+    assert saved.get("A2").sleep_qc is None
+    assert saved.get("A3").sleep_qc == "ok" and saved.get("A5").sleep_qc == "excluded"
+    assert saved.get("A4").flag_reasons == ["pct_rem"]  # an existing flag keeps its reasons
+    assert m.auto_flag_for_review(flagged) == []  # nothing left to do

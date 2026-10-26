@@ -201,6 +201,17 @@ Details of the statuses and what each step does with an excluded animal: [sleep_
 - **Confidence:** settled as a policy. There are no fixed numeric criteria, so a reviewer's judgment is part of the method.
 - **Affects results?** Yes. The methods should report the number of animals excluded, at which stage, and the reasons.
 
+### Animals past a threshold are flagged for review automatically
+- **Chosen:** When Sleep QC loads its metrics (from the reclassified states), every animal that has no status yet and is past any threshold is set to `needs_review`, with the metrics as the reasons. Animals already flagged, OK or excluded are never changed, so repeating it is harmless. A red line on the page names them.
+- **Why:** Any animal past a threshold should be looked at, so the reviewer should not have to find and flag it by hand. The thresholds are still screening aids; the decision to exclude is the reviewer's.
+- **Not done without reclassified states:** the metrics would be SPINDLE's original ones.
+- **Where in code:** `Manifest.auto_flag_for_review`, `_auto_flag_for_review` in `pages/sleep_qc_visualizer.py`.
+- **Confidence:** settled
+
+### The Needs Attention card shows when the EMG gate was applied
+- **Chosen:** A flagged animal's card on Home carries `[EMG gate]` (amber, in brackets) when `reclass_gate_applied` is true, the same tag the Sleep QC legend uses. The gate changes how an animal's states were corrected, which matters when reviewing it.
+- **Where in code:** `_make_review_card` in `pages/home.py`.
+
 ### Reviewer is blind to genotype
 - **Chosen:** The person doing the QC review is blind to genotype.
 - **Why:** So that exclusions cannot be influenced by the expected result.

@@ -969,6 +969,11 @@ class HomePage(QWidget):
             lbl_why.setStyleSheet("color: #b02a2a; font-weight: bold;")
             lbl_why.setToolTip("\n".join(m.label for m in reasons))
             h.addWidget(lbl_why)
+        if entry.reclass_gate_applied:
+            lbl_gate = QLabel("[EMG gate]")
+            lbl_gate.setStyleSheet("color: #d97706; font-style: italic;")
+            lbl_gate.setToolTip("Gap fill fragmented NREM, so flips were EMG-gated")
+            h.addWidget(lbl_gate)
         h.addStretch(1)
 
         btn_open = QPushButton("Open EDF")
