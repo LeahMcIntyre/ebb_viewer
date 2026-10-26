@@ -55,7 +55,7 @@ conda activate ebb-dev
 pip install -e .
 ```
 
-**All systems (Windows too):** for the analysis notebooks (step 10) you also need two extra packages. Run this once, with `(ebb-dev)` active:
+The environment already includes everything the analysis notebooks need (seaborn and JupyterLab). **If you created your environment before that was added**, run this once with `(ebb-dev)` active (or run `conda env update -f envs/ebb-dev.yml --prune` from the `ebb_viewer` folder):
 
 ```bash
 pip install seaborn jupyterlab
@@ -257,7 +257,7 @@ Both notebooks are in the `notebooks/` folder. **Make a copy for each analysis.*
 | An animal is missing from a list | Check that its `.edf` is directly in the project folder and the file name starts with its ID. |
 | You excluded an animal by mistake | In **Sleep QC**, click **Exclude** again on that animal; it goes back to needs-review. |
 | A notebook says it cannot find `psd_utils` | Copy `psd_utils.py` into the same folder as the notebook. |
-| A notebook says `seaborn` or `jupyter` is missing | Run `pip install seaborn jupyterlab` with `(ebb-dev)` active. |
+| A notebook says `seaborn` or `jupyter` is missing | Your environment is older than the notebooks. Run `pip install seaborn jupyterlab` with `(ebb-dev)` active. |
 
 **More detail:** the [user guide](user_guide.md) covers every page, every setting and what can go wrong. [psd_methods.md](psd_methods.md) lists the PSD settings and values, and the [decision log](decision_log.md) explains why they were chosen.
 
