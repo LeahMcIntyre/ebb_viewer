@@ -520,13 +520,41 @@ Decisions: [log §8](decision_log.md).
 
 The pipeline ends at `psds_final.pkl` and the reclassified sleep states. Two sets of notebooks in `notebooks/` turn them into tables and plots. In each case, copy the notebook (and, for PSDs, the helper file) into your analysis folder, edit the Settings cell, and Run All.
 
+### Listing groups in a CSV file
+
+All three notebooks (PSD analysis, sleep by hour, and its step-by-step walkthrough) can read the experimental groups from a CSV file instead of a typed `GROUPS` list. Set `GROUPS_CSV` to the file's path, for example `GROUPS_CSV = Path("groups.csv")`. It replaces `GROUPS`.
+
+**Recommended: one row per animal**, with columns named `animal` and `group`:
+
+```
+animal,group
+Mice-1248,WT
+Mice-1253,WT
+Mice-1251,MUT
+Mice-1279,MUT
+```
+
+This is the easier format to keep correct: each animal appears once, so an animal cannot end up in two groups by accident, you can sort or filter it in a spreadsheet, and the animals can be in any order. Other columns (for example `sex`) are ignored.
+
+**Also accepted: one column per group**, the group name in the first row and the animal IDs below it:
+
+```
+WT,MUT
+Mice-1248,Mice-1251
+Mice-1253,Mice-1279
+```
+
+This is quick to type when you are listing groups side by side (and matches how Prism lays them out), but the columns end up ragged when the groups differ in size. Blank cells are skipped.
+
+The notebook tells the two layouts apart by the header: if the first row has columns named `animal` and `group` it is read as one row per animal, otherwise as one column per group (so do not name a group "animal" or "group" in that layout). Animal IDs are the part of the file name before the first `_`, as everywhere else. Spaces around names are ignored, and upper or lower case in the `animal` / `group` headers does not matter. An animal listed in two groups, or a row with an animal but no group, stops the notebook with a message naming the line.
+
 ### PSD analysis
 
 `notebooks/psd_analysis.ipynb`, with `notebooks/psd_utils.py`. **Copy both files into the same folder.**
 
 **Settings to edit**
 - `RUNS`: the sealed file for each time point, `{label: path to psd/<run>/psds_final.pkl}`. One entry for one time point; add a second (for example `pre` and `post`) to compare time points.
-- `GROUPS`: `{group: [animal IDs]}`. Leave empty for one group with everyone.
+- `GROUPS`: `{group: [animal IDs]}`, or `GROUPS_CSV`: the path to a CSV file that lists the groups (see "Listing groups in a CSV file" below). Leave both empty for one group with everyone.
 - Usually leave alone: `INCLUDE_EXCLUDED` (False: animals excluded in Sleep QC or in PSD review are left out), `APPLY_INVERSE_FILTER` (True), `INTERP_RANGES` (see below), `NORM_BAND` (1–100 Hz), `BANDS`, `FREQ_RANGE`, `COLOR_MAP`, `SEX_MAP` (orders Prism columns males first).
 
 **What it does**
@@ -550,7 +578,7 @@ The pipeline ends at `psds_final.pkl` and the reclassified sleep states. Two set
 ### Sleep analysis
 
 Copy `notebooks/sleep_by_hour.ipynb` for each analysis, edit the Settings cell, Run All. Use `sleep_by_hour_walkthrough.ipynb` to see how the numbers are made.
-**Settings to check:** `PROJECT_ROOT`, `GROUPS`, `INCLUDE_EXCLUDED`, `BIN_HOURS` (2), `BEGIN_HR` (6 = lights on), `TZ` (**default `America/Chicago`: change it**), `STATE_COLUMN` (`final_state`).
+**Settings to check:** `PROJECT_ROOT`, `GROUPS` (or `GROUPS_CSV`, see above), `INCLUDE_EXCLUDED`, `BIN_HOURS` (2), `BEGIN_HR` (6 = lights on), `TZ` (**default `America/Chicago`: change it**), `STATE_COLUMN` (`final_state`).
 **Outputs** in `<project>/sleep_analysis/`: Prism workbooks, tidy CSVs, PNG plots. Metrics: fraction of time, bout count, bout duration. See [log §9](decision_log.md).
 
 ## 8. Common tasks

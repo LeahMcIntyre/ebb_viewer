@@ -227,3 +227,103 @@ def test_prism_export_refuses_a_table_with_several_time_points(tmp_path: Path):
     df2.attrs = dict(df.attrs)
     with pytest.raises(ValueError, match="one time point"):
         u.export_spectra_prism(df2, "interp_spectra", ["WT", "MUT"], tmp_path / "x.xlsx")
+
+
+# ---------------------------------------------------------------------------
+# Reading groups from a CSV
+# ---------------------------------------------------------------------------
+
+LONG_CSV = "animal,group\nA1,WT\nA2,WT\nB1,MUT\n"
+WIDE_CSV = "WT,MUT\nA1,B1\nA2,\n"
+
+
+def _write(tmp_path: Path, text: str, name: str = "groups.csv") -> Path:
+    path = tmp_path / name
+    path.write_text(text)
+    return path
+
+
+def test_read_groups_csv_one_row_per_animal(tmp_path: Path):
+    groups = u.read_groups_csv(_write(tmp_path, LONG_CSV))
+    assert groups == {"WT": ["A1", "A2"], "MUT": ["B1"]}
+    assert list(groups) == ["WT", "MUT"]  # order of first appearance
+
+
+def test_read_groups_csv_one_column_per_group(tmp_path: Path):
+    groups = u.read_groups_csv(_write(tmp_path, WIDE_CSV))
+    assert groups == {"WT": ["A1", "A2"], "MUT": ["B1"]}  # the blank cell is skipped
+    assert list(groups) == ["WT", "MUT"]  # order of the columns
+
+
+def test_read_groups_csv_ignores_case_spaces_extra_columns_and_blank_rows(tmp_path: Path):
+    text = "﻿ Animal , GROUP ,sex\n A1 , WT ,M\n\n,,\nB1,MUT,F\n"
+    assert u.read_groups_csv(_write(tmp_path, text)) == {"WT": ["A1"], "MUT": ["B1"]}
+
+
+def test_read_groups_csv_drops_empty_groups_and_repeated_animals(tmp_path: Path):
+    assert u.read_groups_csv(_write(tmp_path, "WT,MUT,EMPTY\nA1,B1,\nA1,,\n")) == {
+        "WT": ["A1"],
+        "MUT": ["B1"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("animal,group\nA1,WT\nA1,MUT\n", "A1 is in more than one group"),
+        ("WT,MUT\nA1,A1\n", "A1 is in more than one group"),
+        ("animal,group\nA1,\n", "line 2: a row needs both an animal and a group"),
+        ("WT,\nA1,B1\n", "column 2 has animals but no group name"),
+        ("\n\n", "is empty"),
+    ],
+)
+def test_read_groups_csv_explains_what_is_wrong(tmp_path: Path, text: str, message: str):
+    with pytest.raises(ValueError, match=message):
+        u.read_groups_csv(_write(tmp_path, text))
+
+
+def _function_source(text: str, name: str) -> str:
+    """The top-level function ``name`` from a block of source: its ``def`` through its last line."""
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(f"def {name}("))
+    end = start + 1
+    while end < len(lines) and (not lines[end].strip() or lines[end].startswith((" ", "\t"))):
+        end += 1
+    return "\n".join(lines[start:end]).rstrip() + "\n"
+
+
+@pytest.mark.parametrize(
+    "notebook", ["sleep_by_hour.ipynb", "sleep_by_hour_walkthrough.ipynb", "psd_analysis.ipynb"]
+)
+def test_notebooks_that_read_groups_use_the_same_function_as_psd_utils(notebook: str):
+    """The sleep notebooks are self-contained, so they carry a copy; it must not drift."""
+    import inspect
+    import json
+
+    nb = json.loads((Path(__file__).resolve().parents[1] / "notebooks" / notebook).read_text())
+    sources = ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
+    if notebook == "psd_analysis.ipynb":
+        assert any("psd_utils.read_groups_csv(GROUPS_CSV)" in s for s in sources)
+        return
+    cell = next(s for s in sources if "def read_groups_csv(" in s)
+    assert _function_source(cell, "read_groups_csv") == inspect.getsource(u.read_groups_csv)
+    assert "GROUPS_CSV" in "".join(sources)
+
+
+def test_notebook_copy_of_read_groups_csv_works(tmp_path: Path):
+    import csv
+    import json
+
+    nb = json.loads(
+        (Path(__file__).resolve().parents[1] / "notebooks" / "sleep_by_hour.ipynb").read_text()
+    )
+    cell = next(
+        "".join(c["source"]) for c in nb["cells"] if "def read_groups_csv(" in "".join(c["source"])
+    )
+    namespace = {"csv": csv}
+    exec(_function_source(cell, "read_groups_csv"), namespace)  # noqa: S102
+    for text in (LONG_CSV, WIDE_CSV):
+        assert namespace["read_groups_csv"](_write(tmp_path, text)) == {
+            "WT": ["A1", "A2"],
+            "MUT": ["B1"],
+        }
