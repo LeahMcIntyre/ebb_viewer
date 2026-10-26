@@ -38,12 +38,15 @@ are a channel subset of the preprocessed EDF; no further signal processing.
 
 ## 2. Sleep staging
 
-States come from SPINDLE's output CSV, one row per **4 s epoch**
-(`rawstate`/`state` column; `w` = wake, `n` = NREM, `r` = REM). Each epoch
-label is repeated `4 s × 250 Hz = 1000` times to give a per-sample mask.
+States come from the `final_state` column of each animal's SPINDLE CSV (the
+reclassified states, see [sleep_reclassification.md](sleep_reclassification.md)),
+one row per **4 s epoch** (`w` = wake, `n` = NREM, `r` = REM). SPINDLE's original
+states are kept in the CSV but are not used for PSDs. Each epoch label is
+repeated `4 s × 250 Hz = 1000` times to give a per-sample mask.
 
-Which animal / channel combo supplies the staging is decided in Sleep QC;
-only combos flagged `ok` are merged into the final PSD file (§7).
+A project has a single channel combo, so one set of states is used for every
+animal. Sleep QC decides which animals are `ok` or `excluded`; excluded animals
+are still computed and are marked at Finalize (§7).
 
 **State groups** (a separate PSD is produced for each group selected):
 
@@ -56,9 +59,6 @@ only combos flagged `ok` are merged into the final PSD file (§7).
 | all | w + n + r |
 
 Default selection: wake, nrem, rem.
-
-Optional confidence filter (`s_prob`): when set, an epoch counts for a state
-only if that state's class probability is ≥ `s_prob`. **Off by default.**
 
 ## 3. Artifact masks
 
@@ -94,7 +94,14 @@ A **60 Hz line-noise notch** is applied to the signal feeding the PSD:
   detection sees unfiltered amplitudes; only the values that enter the PSD
   are filtered
 
-No other filtering (no high-pass, no detrending) is applied by this pipeline.
+No other filtering (no high-pass, no detrending) is applied to the data that
+enter the PSD. (A hardware high-pass is applied by the recording system.)
+
+In the PSD Visualizer, the **Interpolate** (a straight bridge over the
+line-noise gap) and **Inverse Filter** (correction factors on 0.5–3.5 Hz for
+the hardware low-frequency roll-off) toggles change only the plotted curve.
+They are **display-only**: the stored PSDs, `psds_final.pkl` and the Excel
+export do not include them.
 
 ## 5. PSD estimation
 
@@ -151,9 +158,9 @@ Under `psd/<run_name>/`:
 |---|---|
 | `psd_params.json` | exact parameters of the run |
 | `psds_<COMBO>.pkl` | per-combo PSD records (list of dicts) |
-| `psds_channel_merged.pkl` | per animal, the combo flagged `sleep_qc == "ok"`, annotated with `source_combo`. Immutable once built. |
-| `psds_drink.pkl`, `psds_channel_merged_drink.pkl` | drink-mask reruns, overlaid on the merged file |
-| `psds_final.pkl` | sealed copy of the drink version if present, else the merged one |
+| `psds_drink.pkl` | drink-mask reruns (replaced per animal on each rerun) |
+| `psds_<COMBO>_drink.pkl` | `psds_<COMBO>.pkl` with the animals in `psds_drink.pkl` overriding their entries. `psds_<COMBO>.pkl` itself is never modified. |
+| `psds_final.pkl` | sealed copy of the `_drink` version if present, else `psds_<COMBO>.pkl`. Excluded animals stay in, marked `excluded` / `exclusion_reason` (and listed in `excluded_animals.csv`). |
 
 ## Parameter summary
 
@@ -167,7 +174,6 @@ Under `psd/<run_name>/`:
 | SPINDLE noise threshold | 0.5 |
 | Drink pad | ±2 s |
 | Notch | 60 Hz, 57–63 Hz stopband, 8th-order Butterworth, zero-phase |
-| State probability filter | off |
 | Welch | 0.5 Hz resolution (2 s), Hann, 50 % overlap, constant detrend, density |
 
 ## Open items

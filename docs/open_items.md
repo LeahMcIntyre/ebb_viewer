@@ -47,14 +47,13 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 - [ ] **`ebb-combine edf` needs a lot of memory** on 5 kHz data (about 55 GB for two chunks; it loads each 24 h chunk whole). It completed on a 48 GB Mac only after other programs were closed. Consider changing `combine_edf` to read and write in blocks.
 - [ ] Fix the Preprocess page's file-name note: files only need to be named `AnimalID_anything.edf` (tracked in `TODO.md`). Also no cancel button (see `TODO.md`).
 - [ ] PSD page: an animal with no annotation file runs without the annotation mask and no warning is shown. Add a readiness warning listing animals with no annotation file when the annotation mask is on.
-- [ ] Remove `s_prob` from the UI and `psd_compute.py`. *(log §6)*
-- [ ] Update `psd_methods.md` §4: it says "no other filtering" but the review step has the inverse-filter and interpolation toggles.
-- [ ] Update `psd_methods.md` §7 and `CLAUDE.md`: the merged PSD file no longer exists.
 - [ ] Redraw `pipeline_flow.md` (still shows `needs_rerun`, the Rerun page and multi-combo).
-- [ ] Document the `TZ` setting of the sleep notebooks in the user guide (default `America/Chicago`).
-- [ ] State the positional channel convention (1 = LFC, 2 = RSC, 3 = LSC, 4 = EMG) and the one-folder-per-time-point rule in the user guide.
 
 ## Done
+
+- [x] `s_prob` removed from the code (commit `c24a2dd`); docs updated.
+- [x] `psd_methods.md` corrected: states come from `final_state`, inverse filter/interpolation are display-only, the merged PSD file is gone, `s_prob` removed.
+- [x] `TZ` setting and the positional channel convention are in the user guide.
 
 - [x] EDF physical units checked on a raw file: µV, 5000 Hz, range ±8144 µV.
 - [x] SWD "mask vs. TS policy" open question removed from `TODO.md`.

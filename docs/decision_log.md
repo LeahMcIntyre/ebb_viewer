@@ -279,13 +279,12 @@ Details of the statuses and what each step does with an excluded animal: [sleep_
 - **Where in code:** `src/ebb/process/state_presets.py`
 - **Open questions:** See `TODO.md` on REM appearing in multiple groups, and the SD-threshold rule for lumped groups.
 
-### SPINDLE confidence filter (`s_prob`): never evaluated
+### SPINDLE confidence filter (`s_prob`): never evaluated, removed
 - **Stage:** PSD estimation
-- **Chosen:** Off. Not used in any analysis.
-- **Why:** It was exploratory and was never evaluated. It is not wanted as an option.
-- **Confidence:** needs discussion (this is a code change, not just documentation)
-- **Affects results?** No, since it is off.
-- **Follow-up:** Remove the option from the UI and `psd_compute.py` so that it can't be turned on accidentally. This is not done yet.
+- **Chosen:** No class-probability filter. The `s_prob` option was exploratory and was never evaluated, so it was removed (commit `c24a2dd`, 2026-10-19).
+- **Why:** Not evaluated, and not wanted as an option.
+- **Confidence:** settled
+- **Affects results?** No. It was off in every analysis.
 
 ### Commutator mask: |x| > 2000 µV, 1 s merge, 1 s pad after events longer than 10 samples
 - **Stage:** PSD estimation (artifact masking)

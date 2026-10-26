@@ -204,7 +204,6 @@ the individual decision entries (template above), then **Open questions**.
   resolution, and why
 - State groups and defaults; lumped groups and the SD-threshold rule;
   REM-in-multiple-groups semantics
-- Confidence filter (`s_prob`)
 - Notch filtering
 - Artifact masking: SD thresholds, commutator mask, why these values
 - Hour windows and how they interact with masks
