@@ -100,8 +100,9 @@ enter the PSD. (A hardware high-pass is applied by the recording system.)
 In the PSD Visualizer, the **Interpolate** (a straight bridge over the
 line-noise gap) and **Inverse Filter** (correction factors on 0.5–3.5 Hz for
 the hardware low-frequency roll-off) toggles change only the plotted curve.
-They are **display-only**: the stored PSDs, `psds_final.pkl` and the Excel
-export do not include them.
+They are **display-only** in the visualizer: the stored PSDs, `psds_final.pkl` and the Excel
+export do not include them. The analysis notebook (`notebooks/psd_analysis.ipynb`) applies
+the same inverse filter and interpolates the line noise when it builds its tables and plots.
 
 ## 5. PSD estimation
 
