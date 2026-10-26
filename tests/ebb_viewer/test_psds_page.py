@@ -556,3 +556,33 @@ def test_log_hidden_until_first_message(qapp, tmp_path: Path):
     assert page.log_box.isHidden()
     page._log("hello")
     assert not page.log_box.isHidden()
+
+
+def test_annotation_mask_warns_about_animals_without_a_file_but_does_not_block(
+    qapp, tmp_path: Path
+):
+    page = _page_with_animals(qapp, tmp_path, {"AM001": "ok", "AM002": "ok"})
+    ann = tmp_path / "annotations"
+    ann.mkdir()
+    (ann / "AM001_P001_notes.txt").write_text("")
+    page.mask_widget.from_params(
+        {"ann_enabled": True, "ann_dir": str(ann), "ann_keywords": "Jerk"}
+    )
+    page._validate()
+    text = page._checks_lbl.text()
+    assert "1 animal with no annotation file" in text
+    assert "AM002" in text and "AM001" not in text
+    assert page.btn_run_pipeline.isEnabled()
+
+
+def test_annotation_mask_with_a_file_for_every_animal_has_no_warning(qapp, tmp_path: Path):
+    page = _page_with_animals(qapp, tmp_path, {"AM001": "ok"})
+    ann = tmp_path / "annotations"
+    ann.mkdir()
+    (ann / "AM001_P001_notes.txt").write_text("")
+    page.mask_widget.from_params(
+        {"ann_enabled": True, "ann_dir": str(ann), "ann_keywords": "Jerk"}
+    )
+    page._validate()
+    assert "Annotation files found for every animal" in page._checks_lbl.text()
+    assert "⚠" not in page._checks_lbl.text()

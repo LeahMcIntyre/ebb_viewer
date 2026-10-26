@@ -392,6 +392,33 @@ def _needs_attention(
     return psd_status == "needs_drink_mask" or (psd_file_ok and psd_status is None)
 
 
+def combo_text(root: Path, combo: str) -> str:
+    """Header text naming the project's channel combo, and whether it has been chosen yet.
+
+    The combo is chosen by writing SPINDLE EDFs (page 2); until a ``spindle_edfs/<combo>`` folder
+    holds files, ``combo`` is only the default.
+    """
+    if any(spindle_edf_dir(combo, root).glob("*.edf")):
+        return f"Channel combo: {combo}"
+    return f"Channel combo: {combo} (default; set on 2. Spindle EDFs)"
+
+
+def empty_animals_hint(root: Path, n_animals: int) -> str | None:
+    """Explain an empty animals table: animals come from ``standard/``, written by Preprocess."""
+    if n_animals:
+        return None
+    n_raw = len(list(root.glob("*.edf")))
+    if n_raw:
+        return (
+            f"No animals yet. Found {n_raw} EDF file{'s' if n_raw != 1 else ''} in the project "
+            "folder; animals appear here after 1. Preprocess has run."
+        )
+    return (
+        "No animals yet, and no EDF files in the project folder. Put the raw EDFs there, "
+        "then run 1. Preprocess."
+    )
+
+
 class HomePage(QWidget):
     manifest_changed = pyqtSignal()
     navigate_to = pyqtSignal(str)  # page name — see _STEP_PAGE_NAMES
@@ -423,6 +450,9 @@ class HomePage(QWidget):
         lbl = QLabel("Home")
         lbl.setStyleSheet("font-weight: bold; font-size: 15px;")
         hdr.addWidget(lbl)
+        self._combo_lbl = QLabel("")
+        self._combo_lbl.setStyleSheet("color: #555; font-size: 11px; padding-left: 12px;")
+        hdr.addWidget(self._combo_lbl)
         hdr.addStretch(1)
 
         self.btn_reveal = QPushButton("Reveal in Finder")
@@ -530,6 +560,12 @@ class HomePage(QWidget):
         self.cmb_run_filter.setVisible(False)
 
         root_layout.addLayout(summary_hdr)
+
+        self._empty_lbl = QLabel("")
+        self._empty_lbl.setWordWrap(True)
+        self._empty_lbl.setStyleSheet("color: #8a4400; font-size: 11px; padding: 2px 0;")
+        self._empty_lbl.setVisible(False)
+        root_layout.addWidget(self._empty_lbl)
 
         self.table = QTableWidget(0, len(_COLUMNS))
         self.table.setHorizontalHeaderLabels(_COLUMNS)
@@ -685,6 +721,10 @@ class HomePage(QWidget):
         if n_excluded:
             parts.append(f"{n_excluded} excluded")
         self._animals_lbl.setText("Animals — " + " · ".join(parts))
+        self._combo_lbl.setText(combo_text(self.project_root, manifest.combo))
+        hint = empty_animals_hint(self.project_root, len(facts))
+        self._empty_lbl.setText(hint or "")
+        self._empty_lbl.setVisible(hint is not None)
 
         if self.chk_attention_only.isChecked():
             facts = [f for f in facts if _needs_attention(*f)]

@@ -46,7 +46,7 @@ from PyQt6.QtWidgets import (
 
 from ebb.core.naming import parse_animal_id
 from ebb.io.edf_header import detect_fs_from_standard
-from ebb.process.psd_compute import batch_estimate
+from ebb.process.psd_compute import annotation_files_by_animal, batch_estimate
 from ebb.process.state_presets import PRESET_DISPLAY
 from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest
@@ -698,6 +698,21 @@ class PSDPage(QWidget):
                 checks.append(Check(False, "Annotation mask enabled — enter at least one keyword"))
             else:
                 checks.append(Check(True, "Annotation mask configured"))
+                have = set(annotation_files_by_animal(ann_dir))
+                missing = sorted(ready_ids - have)
+                if missing:
+                    preview = ", ".join(missing[:6]) + ("…" if len(missing) > 6 else "")
+                    checks.append(
+                        Check(
+                            False,
+                            f"{len(missing)} animal{'s' if len(missing) != 1 else ''} "
+                            f"with no annotation file will run without the annotation mask: "
+                            f"{preview}",
+                            blocking=False,
+                        )
+                    )
+                else:
+                    checks.append(Check(True, "Annotation files found for every animal"))
 
         states_ok = bool(widget_params.get("states"))
         checks.append(

@@ -563,3 +563,44 @@ def test_review_card_shows_why_it_was_flagged(qapp, tmp_path: Path):
     page = _make_page(qapp, tmp_path)
     texts = [lbl.text() for lbl in page._attn_container.findChildren(QLabel)]
     assert "Flagged: short NREM bouts, high wake" in texts
+
+
+# ---------------------------------------------------------------------------
+# Combo label and the empty-table hint
+# ---------------------------------------------------------------------------
+
+
+def test_combo_text_says_default_until_spindle_edfs_are_written(tmp_path: Path):
+    from ebb_viewer.pages.home import combo_text
+
+    assert "default" in combo_text(tmp_path, "LFC_RSC")
+    d = tmp_path / "spindle_edfs" / "LFC_RSC"
+    d.mkdir(parents=True)
+    (d / "AM001_SPINDLE.edf").write_text("")
+    assert combo_text(tmp_path, "LFC_RSC") == "Channel combo: LFC_RSC"
+
+
+def test_empty_animals_hint_counts_raw_edfs(tmp_path: Path):
+    from ebb_viewer.pages.home import empty_animals_hint
+
+    assert "no EDF files" in empty_animals_hint(tmp_path, 0)
+    (tmp_path / "AM001_a.edf").write_text("")
+    (tmp_path / "AM002_a.edf").write_text("")
+    assert "Found 2 EDF files" in empty_animals_hint(tmp_path, 0)
+    assert empty_animals_hint(tmp_path, 3) is None
+
+
+def test_home_page_shows_hint_and_combo_for_a_fresh_project(qapp, tmp_path: Path):
+    (tmp_path / "AM001_a.edf").write_text("")
+    page = _make_page(qapp, tmp_path)
+    page._refresh()
+    assert not page._empty_lbl.isHidden()
+    assert "1. Preprocess" in page._empty_lbl.text()
+    assert "Channel combo: LFC_RSC" in page._combo_lbl.text()
+
+
+def test_home_page_hides_hint_once_animals_exist(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {})
+    page = _make_page(qapp, tmp_path)
+    page._refresh()
+    assert page._empty_lbl.isHidden()
