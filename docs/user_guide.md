@@ -449,7 +449,7 @@ Details: [sleep_qc_and_exclusion.md](sleep_qc_and_exclusion.md) §5. Decisions: 
 **Before you start**
 - At least one animal is flagged `needs_drink_mask` in the PSD Visualizer.
 - **A drink-event file for each flagged animal**: `drink_masks/<AnimalID>.npy`, a 1 Hz array with one true/false value per second of the recording. These files are made **outside this pipeline**, with the lab's network that detects drinking events from the recording video. The video has to be exported from the PVFS file. **In our lab, ask Claudia.**
-- **One offsets CSV in `drink_masks/`** with the columns `Animal` and `Offset` and one row per animal. The offset is the time, in seconds, from the start of the EEG recording to the start of the video (a positive number means the video starts after the EEG). Read it from the animal's PVFS file. Keep only one CSV in the folder. **TODO:** paste a small example of the CSV here.
+- **One offsets CSV in `drink_masks/`** (only needed if the video and the EEG did not start at the same moment; with no CSV the page assumes they are aligned) with the columns `Animal` and `Offset` and one row per animal. The offset is the time, in seconds, from the start of the EEG recording to the start of the video (a positive number means the video starts after the EEG). Read it from the animal's PVFS file. Keep only one CSV in the folder. **TODO:** paste a small example of the CSV here.
 
 **Steps**
 1. Open **8. Drink Mask**. The ANIMALS line tells you how many are flagged, how many are ready to apply and how many are missing a mask file (for example "1 flagged · 1 ready to apply"). The **Video offset CSV** section (collapsed) shows whether the offsets file is valid.
