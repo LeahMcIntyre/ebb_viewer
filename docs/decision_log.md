@@ -38,18 +38,17 @@ Sections for the other stages are not written yet.
   - EDFs are ordered by header start time, SWD and annotation files by their `_P###` number. These must agree.
 - **Confidence:** settled
 - **Affects results?** Yes, for every animal that was restarted. Report how many animals were combined.
-- **Memory:** `combine_edf` reads each full 24 h chunk into memory (about 14 GB per chunk at 5 kHz, four channels) and holds the joined data twice. On a 48 GB machine the first attempt was killed (out of memory); after closing other programs it completed. The walkthrough result is exactly 48.0 h. **Decision:** not changing it; the guide tells users to close other programs first.
+- **Memory:** `combine_edf` reads each full 24 h chunk into memory (about 14 GB per chunk at 5 kHz, four channels) and holds the joined data twice. On a 48 GB machine the first attempt was killed (out of memory); after closing other programs it completed. The walkthrough result is exactly 48.0 h. 
 - **Where in code:** `src/ebb/io/combine.py` (`ebb-combine edf | swd | annotations`)
-- **Related:** `TODO.md` has items to extend combine to drink-mask `.npy` files and `.tsv` annotations.
 
 ### Sampling: 5000 Hz acquired, downsampled by 20 to 250 Hz
 - **Stage:** Preprocess
 - **Chosen:** 250 Hz.
 - **Why:** Inherited. It covers the range of interest (nothing much above 100 Hz) and keeps storage manageable. 5000 Hz is the acquisition rate.
-- **Units:** The raw EDF header lists µV for every EEG channel (physical range ±8144 µV, 16-bit), which matches the 2000 µV commutator threshold.
+- **Units:** The raw EDF header lists µV for every EEG channel, which matches the 2000 µV commutator threshold.
 - **Confidence:** inherited
 - **Affects results?** Yes. The maximum analyzable frequency is 125 Hz.
-- **Where in code:** `src/ebb/preprocess/edf.py`; `fs = 250` is hard-coded in several places (see `CLAUDE.md`).
+- **Where in code:** `src/ebb/preprocess/edf.py`; `fs = 250` is hard-coded in several places.
 
 ### Anti-alias filter: openseize defaults
 - **Stage:** Preprocess
@@ -64,7 +63,7 @@ Sections for the other stages are not written yet.
 - **Why:** That is the montage of the recordings. Channels are identified by position only: the raw EDF labels are `EEG_1` to `EEG_4`, and by lab convention channel 1 is LFC, 2 is RSC, 3 is LSC and 4 is EMG. Nothing in the pipeline checks or maps the names. It has not been tested with other montages.
 - **Confidence:** settled for this lab's datasets; untested otherwise.
 - **Risk:** A file with a different channel order would be silently mislabeled. Consider a check at preprocess time, or state the assumption prominently in the user guide.
-- **Where in code:** `ch_names` constant (see `CLAUDE.md`).
+- **Where in code:** `ch_names` constant.
 
 ### Animal ID is the first `_`-delimited token of the filename
 - **Stage:** Preprocess and project setup
@@ -81,7 +80,7 @@ Sections for the other stages are not written yet.
 ### Using SPINDLE for staging
 - **Stage:** SPINDLE upload and download
 - **Chosen:** SPINDLE (via SleepyRat) scores 4 s epochs as w / n / r.
-- **Why:** Inherited. It is validated here against hand scoring: `spindle-validation` repo (`/Users/leahmcintyre/Developer/nri/spindle-validation`), summary in `spindle_validation_project/analysis/SUMMARY.md` (as of 2026-10-13; 40 files, 8 datasets, two raters, 49,025 compared epochs). Overall agreement with the raters: raw SPINDLE 89.4%, after reclassification and the EMG gate 90.8%.
+- **Why:** Inherited. It is validated here against hand scoring: `spindle-validation` repo (server: `/Volumes/labs/PEDI/Xue2a/Members/Leah McIntyre/Pipeline_Research/spindle-validation`), summary in `spindle_validation_project/analysis/SUMMARY.md` (as of 2026-10-13; 40 files, 8 datasets, two raters, 49,025 compared epochs). Overall agreement with the raters: raw SPINDLE 89.4%, after reclassification and the EMG gate 90.8%.
 - **Known limits from the validation:** REM is over-called (precision about 33%, recall about 94%). Wake→NREM transitions are confirmed in about 70% of SPINDLE claims. A few files account for most of the NREM-recall errors. Rater B agrees with SPINDLE about 6 points less than rater A. *Do not cite REM results without this caveat.*
 - **Confidence:** inherited, then validated
 - **Affects results?** Yes.
@@ -109,13 +108,13 @@ Sections for the other stages are not written yet.
 
 ## 3. State reclassification
 
-Evidence lives in `/Users/leahmcintyre/Developer/nri/ebb-research/` (`nrem_reclass_project/`, `nrem_misclassification_archive/`) and in the `spindle-validation` repo (see section 2). Algorithm details: [sleep_reclassification.md](sleep_reclassification.md).
+Evidence lives on the server in `/Volumes/labs/PEDI/Xue2a/Members/Leah McIntyre/Pipeline_Research/ebb-research` (`nrem_reclass_project/`, `nrem_misclassification_archive/`) and in the `spindle-validation` repo, `/Volumes/labs/PEDI/Xue2a/Members/Leah McIntyre/Pipeline_Research/spindle-validation` (see section 2). Algorithm details: [sleep_reclassification.md](sleep_reclassification.md).
 
 ### Why reclassify at all: wake artifacts scored as NREM inflate fragmentation
 - **Stage:** Reclassify
 - **Problem:** SPINDLE often labels wake artifacts as NREM. Sleep fragmentation is a primary outcome, and spurious NREM calls chop wake and NREM bouts and raise bout counts. SPINDLE also sometimes scores SWDs as NREM. That second problem is **not addressed** by the reclassification (see the optional SWD review, section 4).
 - **Scope:** One specific issue is addressed on purpose. The step only turns NREM into Wake, never anything else.
-- **Evidence:** Validation repo notebooks 01 and 03 (reclassification adds 641 correct epochs, +1.3 points of agreement; precision for NREM rises from 90.1% to 94.1% while NREM recall is unchanged). Per-animal NREM bout counts by hour, before vs. after reclassification: `ebb-research/nrem_reclass_project/bout_count_figures/` (made by `make_bout_count_plots.py`; PNGs in `by_animal/<dataset>/`, datasets PHP_pre, RNA_KO, Stxbp1_characterization). Per-file ranking and hourly change: `nrem_reclass_project/goal2_cross_dataset/reclass_change_by_hour.ipynb`. *Not yet opened; confirm these show the fragmentation effect and pick a representative example for the paper.*
+- **Evidence:** Validation repo notebooks 01 and 03 (in the server `spindle-validation` folder under `spindle_validation_project/analysis/`; reclassification adds 641 correct epochs, +1.3 points of agreement; precision for NREM rises from 90.1% to 94.1% while NREM recall is unchanged). Per-animal NREM bout counts by hour, before vs. after reclassification: `/Volumes/labs/PEDI/Xue2a/Members/Leah McIntyre/Pipeline_Research/ebb-research/nrem_reclass_project/bout_count_figures/` (made by `make_bout_count_plots.py`; PNGs in `by_animal/<dataset>/`, datasets PHP_pre, RNA_KO, Stxbp1_characterization). Per-file ranking and hourly change: `nrem_reclass_project/goal2_cross_dataset/reclass_change_by_hour.ipynb` (same `ebb-research` folder). *Not yet opened; confirm these show the fragmentation effect and pick a representative example for the paper.*
 - **Confidence:** settled
 - **Affects results?** Yes (main one for sleep outcomes).
 
@@ -123,7 +122,7 @@ Evidence lives in `/Users/leahmcintyre/Developer/nri/ebb-research/` (`nrem_recla
 - **Chosen:** A NREM epoch becomes wake if it is an artifact epoch, or if it is clean and has an artifact epoch (any state) within 1 epoch on both sides.
 - **Why:** A NREM epoch sandwiched between two artifact epochs is very likely artifactual too.
 - **Alternatives:** Radius 2, tested.
-- **Evidence:** `nrem_reclass_project/emg_noise/emg_gap_radius_vs_annotations.ipynb`, `*_gap2.ipynb`; validation repo notebook 03 (what-if with radius 2).
+- **Evidence:** `nrem_reclass_project/emg_noise/emg_gap_radius_vs_annotations.ipynb`, `*_gap2.ipynb` (server `ebb-research` folder); validation repo notebook 03 (what-if with radius 2).
 - **Confidence:** settled
 - **Where in code:** `GAP_RADIUS = 1` in `src/ebb/process/nrem_reclass.py`.
 
@@ -132,7 +131,7 @@ Evidence lives in `/Users/leahmcintyre/Developer/nri/ebb-research/` (`nrem_recla
 - **Chosen:** A flip is kept only if the epoch's EMG RMS exceeds the animal's median + 5 × MAD (computed over all epochs SPINDLE called NREM, including the artifact ones). The gate only cancels flips and never creates new ones.
 - **When it applies:** Decided per file by a rule. If the number of light-period NREM bouts after gap fill rises by more than 10% compared with before, the flips are chopping bouts, and the gate is applied. The light period is when the animal moves least, so more bouts there signals that real NREM was relabeled.
 - **Why not apply it to every file:** The gate is imperfect for animals with a poor EMG signal.
-- **Threshold choice (k = 5, 10% tolerance):** Chosen during the exploration in `nrem_reclass_project/emg_noise/` (k sweeps `emg_gate_k_sweep_reclass_change_by_hour.ipynb`, `emg_rms_gate_k_sweep_vs_annotations.ipynb`; k = 2.5 variants). The 10% tolerance appears to come from `nrem_reclass_project/PLAN.md`, which treats a bout-count change within ±10% as "unchanged" when bucketing files. *Inconsistency to resolve:* PLAN.md buckets on **dark-hours** bout counts, whereas the code's gate rule uses the **light period**. Check which was intended and whether the doc or code needs updating, because the light-period rationale in this entry is yours. The validation repo shows the gate adds 68 correct epochs.
+- **Threshold choice (k = 5, 10% tolerance):** Chosen during the exploration in `nrem_reclass_project/emg_noise/` (server `ebb-research` folder) (k sweeps `emg_gate_k_sweep_reclass_change_by_hour.ipynb`, `emg_rms_gate_k_sweep_vs_annotations.ipynb`; k = 2.5 variants). The 10% tolerance appears to come from `nrem_reclass_project/PLAN.md`, which treats a bout-count change within ±10% as "unchanged" when bucketing files. *Inconsistency to resolve:* PLAN.md buckets on **dark-hours** bout counts, whereas the code's gate rule uses the **light period**. Check which was intended and whether the doc or code needs updating, because the light-period rationale in this entry is yours. The validation repo shows the gate adds 68 correct epochs.
 - **Confidence:** provisional for the thresholds (chosen in exploration, not by a formal optimization)
 - **Affects results?** Yes. State in the methods how many animals were gated, and the rule.
 - **Where in code:** `EMG_K`, `FRAGMENTATION_TOL`, `EMG_CHANNEL` in `src/ebb/process/nrem_reclass.py`.
@@ -153,7 +152,7 @@ Evidence lives in `/Users/leahmcintyre/Developer/nri/ebb-research/` (`nrem_recla
 - **Chosen:** Step through every epoch that overlaps an SWD in each file (a quick pass) and correct the states of epochs that were misclassified. This makes sure that any fragmentation difference between genotypes is not driven by genotype-dependent misclassification.
 - **Rule for corrections:** A misclassified SWD epoch is changed to the state the animal was in before and after the SWD.
 - **Why optional:** Only needed for models and projects with SWDs (the `swd_review_enabled` project setting).
-- **Evidence:** TODO: a figure or count showing how many NREM epochs overlapped an SWD and were changed. The validation repo has notebooks `swd_in_short_nrem_bouts.ipynb` and `swd_in_spindle_nrem_disagreements.ipynb` that look relevant. *Not opened yet.*
+- **Evidence:** TODO: a figure or count showing how many NREM epochs overlapped an SWD and were changed. The server `spindle-validation` folder has notebooks `swd_in_short_nrem_bouts.ipynb` and `swd_in_spindle_nrem_disagreements.ipynb` that look relevant. *Not opened yet.*
 - **Confidence:** settled
 - **Affects results?** Yes. State in the methods that SWD epochs were manually reviewed, by whom, and the correction rule.
 - **Where in code:** `src/ebb_viewer/edf_viewer/swd_review.py`, `src/ebb_viewer/pages/swd_review.py`. Results are the `swd_reclassification` column and `final_state`. See [sleep_reclassification.md](sleep_reclassification.md) §5.
@@ -189,7 +188,7 @@ Details of the statuses and what each step does with an excluded animal: [sleep_
   | Wake % (whole file) | above 70 | **placeholder** |
   | Max REM % in a 2-hour bin | at least 35 | validation notebook |
 
-- **Why:** Chosen from `spindle-validation/spindle_validation_project/analysis/file_flagging_metrics.ipynb` and related notebooks in that folder (for example `file_metric_correlations.ipynb`, `file_qc_ranking.ipynb`).
+- **Why:** Chosen from `spindle_validation_project/analysis/file_flagging_metrics.ipynb` in the server `spindle-validation` folder (`/Volumes/labs/PEDI/Xue2a/Members/Leah McIntyre/Pipeline_Research/spindle-validation`) and related notebooks in that folder (for example `file_metric_correlations.ipynb`, `file_qc_ranking.ipynb`).
 - **Caveat (in the code's own words):** The cutoffs are "starting points, not validated cutoffs". The wake cutoff is a placeholder and the REM cutoff was read off a plot. If the thresholds are described in the paper, say they are screening aids for the reviewer and that the decision to exclude is made by inspecting the data.
 - **Confidence:** provisional
 - **Affects results?** Indirectly: they only prompt a review. The exclusion decision is the reviewer's.
@@ -244,7 +243,7 @@ Details of the statuses and what each step does with an excluded animal: [sleep_
 - **Chosen:** Bandstop 57–63 Hz, order 8, forward–backward filtering. Optional, on by default.
 - **Alternatives:** A narrower notch at 60 Hz alone. An order-4 filter was also compared.
 - **Why:** A notch at 60 Hz alone did not remove much of the line noise. Some spectra had very large line noise, especially the PHP dataset. The wider stopband lets the PSD be interpolated over 56–64 Hz, and that range is enough to bridge the gap.
-- **Evidence:** The `line_noise` branch (also on `origin/line_noise`). It contains `research/line_noise/psd_raw_vs_order8_vs_order4.ipynb`, `psd_raw_vs_notch_php_pre.ipynb`, `psd_raw_vs_notch_php_pre_order4.ipynb`, `psd_raw_vs_notch_php_pre_order4_redo.ipynb` and `psd_compute_notch.py`. Merged into `dev` via `feature/notch_filter` (commits 46304da, f1bf247, d74dbd0, e4383fa). *To confirm: that the `line_noise` notebooks are the final analysis.*
+- **Evidence:** Server folder `/Volumes/labs/PEDI/Xue2a/Members/Leah McIntyre/Pipeline_Research/line_noise`, copied from the `line_noise` git branch. The branch is local (commit `a815a54` is not on `origin`). Notebooks `psd_raw_vs_order8_vs_order4.ipynb`, `psd_raw_vs_notch_php_pre.ipynb`, `psd_raw_vs_notch_php_pre_order4.ipynb`, `psd_raw_vs_notch_php_pre_order4_redo.ipynb` (PHP_pre, halfwidths 2, 3 and 4 Hz, order 8 vs. 4) and `psd_compute_notch.py`; the cached PSDs are in `notch_trials/`. Stxbp1 characterization comparison (24 animals, WT vs. MUT, raw vs. notch, interpolated): `stxbp1_notch_compare/stxbp1_char_notch_filter_compare.ipynb`. These use the research module, which notches **before** the masks and sweeps the halfwidth. The shipped pipeline notches after the masks (next entry). Merged into `dev` via `feature/notch_filter` (commits 46304da, f1bf247, d74dbd0, e4383fa). *To confirm: that these are the final analysis.*
 - **Confidence:** settled
 - **Affects results?** Yes.
 - **Where in code:** `src/ebb/process/psd_compute.py`. Interpolation range in `psd_graph_widget.py` (`_NOTCH_INTERP_RANGE = [56, 64]`, versus `[58, 62]` when the run was not notch-filtered).
@@ -255,7 +254,7 @@ Details of the statuses and what each step does with an excluded animal: [sleep_
 - **Chosen:** Compute the commutator and SD masks on the unfiltered signal, then filter only the values that go into the PSD.
 - **Alternatives:** Filter first, then compute the masks.
 - **Why:** The artifact masking had already been analyzed and its parameters set. Filtering first could change how the masks behave in ways that hadn't been studied. Running the notch afterward leaves the mask behavior as validated.
-- **Evidence:** Commit 46304da ("applied after artifact masks"); a815a54.
+- **Evidence:** Commit 46304da ("applied after artifact masks"); a815a54. The comparison of the two orders is in `/Volumes/labs/PEDI/Xue2a/Members/Leah McIntyre/Pipeline_Research/line_noise`: `compute_stxbp1_char_notch_late_psds.py` (uses `batch_estimate_late_notch` in `psd_compute_notch.py`; output `psd/jerk_jump_swd_notch_57_63_late/psds_LFC_RSC.pkl`) and the "Late Compute" source in `stxbp1_notch_compare/stxbp1_char_notch_filter_compare.ipynb`. *To confirm: the figure shown in the notebook's difference plots (mean notch-minus-raw difference by genotype) is from the late run; the saved cell compares the early run.*
 - **Confidence:** settled
 - **Affects results?** Yes.
 - **Where in code:** `src/ebb/process/psd_compute.py`
