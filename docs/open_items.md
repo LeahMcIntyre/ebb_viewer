@@ -16,7 +16,9 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 ## B. Evidence to find or link
 
 - [ ] Artifact-masking notebook (commutator, SD, SPINDLE noise cutoff). *(log §6)*
-- [ ] Line-noise notebooks on the `line_noise` branch: confirm they are the final analysis. *(log §6)*
+- [ ] Line-noise notebooks: copied from the `line_noise` branch to the server (`Pipeline_Research/line_noise`); confirm the folder is there and that they are the final analysis. Push the branch (commit `a815a54` is local only). *(log §6)*
+- [ ] **Notch order.** The research notebooks notch before the masks; the shipped pipeline notches after. The late-notch run is `stxbp1_notch_compare/stxbp1_char_notch_filter_compare.ipynb` ("Late Compute" source). Confirm which run made the difference figure. *(log §6)*
+- [ ] Server folder names: `spindle-validation` and `ebb-research` are linked in the log; check `line_noise` once copied. Still no source for the channel-combo slides, the artifact-masking notebook, the SWD detector citation and the drink-padding figure. *(log §2, §4, §6)*
 - [ ] Channel-combo comparison slides (older annotations). *(log §2)*
 - [ ] Bout-count-by-hour figures in `ebb-research/nrem_reclass_project/bout_count_figures/`: open and choose an example. *(log §3)*
 - [ ] **Bout counts before vs. after reclassification** (the central result for the reclassification step). The validation repo's `sleep_by_hour_reclass.ipynb` may already have it. *(log §9)*
