@@ -56,6 +56,12 @@ DEFAULT_BANDS = {
     "70-100": (70, 100),
 }
 
+# Line noise bridged by interpolation. The 60 Hz notch filter the pipeline applies by default has a
+# 57-63 Hz stopband, so runs that used it need the wider range (as the PSD Visualizer uses). The
+# notch does not touch 120 Hz.
+INTERP_RANGES_NOTCH = ((56, 64), (118, 122))
+INTERP_RANGES_PLAIN = ((58, 62), (118, 122))
+
 _ID_COLUMNS = ("animal", "time", "state", "group", "ch", "channel")
 
 
@@ -102,7 +108,8 @@ def records_to_df(
     """Long-format table (one row per animal x state x channel) from PSD records.
 
     Columns: ``animal``, ``state``, ``ch``, ``channel``, ``spectra`` (1-D array, uV^2/Hz),
-    ``excluded``, ``n_estimates`` and the fraction of samples masked by each source. The animal ID
+    ``excluded``, ``notch`` (whether the run applied the 60 Hz notch filter), ``n_estimates`` and
+    the fraction of samples masked by each source. The animal ID
     is the part of the EDF file name before the first ``_``.
 
     Args:
@@ -141,6 +148,7 @@ def records_to_df(
                     "channel": channel_names.get(ch, f"ch{ch}"),
                     "spectra": spectrum,
                     "excluded": bool(rec.get("excluded", False)),
+                    "notch": bool((rec.get("params") or {}).get("apply_notch", False)),
                     "n_estimates": rec.get("n_estimates"),
                     "spindle_out_frac": rec.get("spindle_out_frac"),
                     "comm_out_frac": rec.get("comm_out_frac"),
@@ -216,13 +224,32 @@ def assign_groups(df: pd.DataFrame, groups: Mapping[str, Sequence[str]]) -> pd.D
     return out
 
 
+def default_interp_ranges(df: pd.DataFrame) -> tuple[tuple[float, float], ...]:
+    """Line-noise ranges to interpolate, chosen from whether the runs used the 60 Hz notch.
+
+    56-64 Hz (and 118-122 Hz) if every run applied the notch filter, 58-62 Hz (and 118-122 Hz) if
+    none did. If the runs differ, the wider range is used for all of them.
+    """
+    if "notch" not in df.columns or not df["notch"].any():
+        return INTERP_RANGES_PLAIN
+    if not df["notch"].all():
+        print("Some runs used the 60 Hz notch and some did not; using 56-64 Hz for all of them.")
+    return INTERP_RANGES_NOTCH
+
+
 def interpolate_line_noise(
     df: pd.DataFrame,
-    ranges: Sequence[Sequence[float]] = ((58, 62), (118, 122)),
+    ranges: Sequence[Sequence[float]] | None = None,
     source: str = "spectra",
     out: str = "interp_spectra",
 ) -> pd.DataFrame:
-    """Add ``out``: ``source`` with each frequency range in ``ranges`` bridged by interpolation."""
+    """Add ``out``: ``source`` with each frequency range in ``ranges`` bridged by interpolation.
+
+    ``ranges=None`` picks the ranges from whether the runs used the notch filter
+    (:func:`default_interp_ranges`).
+    """
+    if ranges is None:
+        ranges = default_interp_ranges(df)
     freqs = get_freqs(df)
     result = df.copy()
     result.attrs = dict(df.attrs)

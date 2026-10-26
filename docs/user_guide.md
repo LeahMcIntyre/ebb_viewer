@@ -527,12 +527,12 @@ The pipeline ends at `psds_final.pkl` and the reclassified sleep states. Two set
 **Settings to edit**
 - `RUNS`: the sealed file for each time point, `{label: path to psd/<run>/psds_final.pkl}`. One entry for one time point; add a second (for example `pre` and `post`) to compare time points.
 - `GROUPS`: `{group: [animal IDs]}`. Leave empty for one group with everyone.
-- Usually leave alone: `INCLUDE_EXCLUDED` (False: animals excluded in Sleep QC are left out), `APPLY_INVERSE_FILTER` (True), `INTERP_RANGES` (the line-noise ranges to interpolate), `NORM_BAND` (1–100 Hz), `BANDS`, `FREQ_RANGE`, `COLOR_MAP`, `SEX_MAP` (orders Prism columns males first).
+- Usually leave alone: `INCLUDE_EXCLUDED` (False: animals excluded in Sleep QC are left out), `APPLY_INVERSE_FILTER` (True), `INTERP_RANGES` (the line-noise ranges to interpolate; `None` picks them from whether the run used the 60 Hz notch, see below), `NORM_BAND` (1–100 Hz), `BANDS`, `FREQ_RANGE`, `COLOR_MAP`, `SEX_MAP` (orders Prism columns males first).
 
 **What it does**
 1. Loads each `psds_final.pkl` and prints which excluded animals were left out.
 2. Applies the low-frequency correction (the "inverse filter", 0.5–3.5 Hz). **This is where the correction is applied; the saved PSD files do not include it.**
-3. Bridges the 60 Hz and 120 Hz line noise by interpolation, and builds a *normalized* spectrum (each spectrum divided by its own power from 1 to 100 Hz).
+3. Bridges the 60 Hz and 120 Hz line noise by interpolation (56–64 Hz and 118–122 Hz when the run used the 60 Hz notch filter, which is the default and removes 57–63 Hz; 58–62 Hz and 118–122 Hz otherwise; the notebook reads this from the run), and builds a *normalized* spectrum (each spectrum divided by its own power from 1 to 100 Hz).
 4. Plots group mean spectra with standard-error bands (channel by state), the low-frequency view, the normalized spectra, and (with two time points) every group at every time point overlaid.
 5. Plots one line per animal, to spot an animal that differs from the rest.
 6. Computes power in each band (the area under the spectrum) for the interpolated and the normalized spectra, saves them as CSV, and draws box plots with every animal as a dot. Outliers (beyond 1.5 × the interquartile range, within each state, channel and group) are outlined and labelled with the animal ID.

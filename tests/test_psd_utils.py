@@ -119,6 +119,35 @@ def test_interpolation_bridges_the_line_noise_peak():
     assert out.iloc[0]["interp_spectra"][i60] < 5
 
 
+def test_default_interp_ranges_follow_the_notch_setting(capsys):
+    notched = u.records_to_df(
+        [_record("A1", "wake", params={"apply_notch": True})], apply_inverse_filter=False
+    )
+    plain = u.records_to_df(
+        [_record("A1", "wake", params={"apply_notch": False})], apply_inverse_filter=False
+    )
+    unknown = u.records_to_df([_record("A1", "wake")], apply_inverse_filter=False)
+    assert u.default_interp_ranges(notched) == u.INTERP_RANGES_NOTCH
+    assert u.default_interp_ranges(plain) == u.INTERP_RANGES_PLAIN
+    assert u.default_interp_ranges(unknown) == u.INTERP_RANGES_PLAIN  # older runs had no notch
+    mixed = pd.concat([notched, plain], ignore_index=True)
+    assert u.default_interp_ranges(mixed) == u.INTERP_RANGES_NOTCH
+    assert "notch" in capsys.readouterr().out
+
+
+def test_automatic_interpolation_uses_the_wider_range_for_notched_runs():
+    spike = np.ones(FREQS.size)
+    spike[(FREQS >= 56) & (FREQS <= 64)] = 50
+    rec = _record("A1", "wake", params={"apply_notch": True})
+    rec["psd"] = np.stack([spike] * 3)
+    df = u.records_to_df([rec], apply_inverse_filter=False)
+    auto = u.interpolate_line_noise(df)
+    narrow = u.interpolate_line_noise(df, ranges=[(58, 62)])
+    i57 = int(np.argmin(np.abs(FREQS - 57)))
+    assert auto.iloc[0]["interp_spectra"][i57] < 5
+    assert narrow.iloc[0]["interp_spectra"][i57] == 50
+
+
 def test_normalized_spectra_have_unit_power_in_the_band():
     rec = _record("A1", "wake", scale=7.0)
     df = u.records_to_df([rec], apply_inverse_filter=False)
