@@ -327,3 +327,41 @@ def test_notebook_copy_of_read_groups_csv_works(tmp_path: Path):
             "WT": ["A1", "A2"],
             "MUT": ["B1"],
         }
+
+
+# ---------------------------------------------------------------------------
+# Where results go
+# ---------------------------------------------------------------------------
+
+
+def test_default_output_dir_is_in_the_project_next_to_psd(tmp_path: Path):
+    final = tmp_path / "KCNT1" / "psd" / "default" / "psds_final.pkl"
+    assert u.default_output_dir(final) == (tmp_path / "KCNT1" / "psd_analysis").resolve()
+
+
+def test_default_output_dir_for_a_pickle_anywhere_else_is_beside_the_file(tmp_path: Path):
+    pkl = tmp_path / "example_data" / "KCNT1_pre_psds_final.pkl"
+    assert u.default_output_dir(pkl) == (tmp_path / "example_data" / "psd_analysis").resolve()
+
+
+def test_default_output_dir_ignores_the_working_directory(tmp_path: Path, monkeypatch):
+    elsewhere = tmp_path / "notebooks"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    final = tmp_path / "proj" / "psd" / "run" / "psds_final.pkl"
+    assert u.default_output_dir(final).parent == (tmp_path / "proj").resolve()
+
+
+def test_psd_notebook_has_no_cwd_relative_output_folder():
+    import json
+
+    nb = json.loads(
+        (Path(__file__).resolve().parents[1] / "notebooks" / "psd_analysis.ipynb").read_text()
+    )
+    settings = next(
+        "".join(c["source"])
+        for c in nb["cells"]
+        if c["cell_type"] == "code" and "OUT_DIR" in "".join(c["source"])
+    )
+    assert "OUT_DIR = None" in settings
+    assert 'Path("psd_analysis")' not in "".join("".join(c["source"]) for c in nb["cells"])

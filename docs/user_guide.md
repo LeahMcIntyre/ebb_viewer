@@ -555,6 +555,7 @@ The notebook tells the two layouts apart by the header: if the first row has col
 **Settings to edit**
 - `RUNS`: the sealed file for each time point, `{label: path to psd/<run>/psds_final.pkl}`. One entry for one time point; add a second (for example `pre` and `post`) to compare time points.
 - `GROUPS`: `{group: [animal IDs]}`, or `GROUPS_CSV`: the path to a CSV file that lists the groups (see "Listing groups in a CSV file" below). Leave both empty for one group with everyone.
+- `OUT_DIR`: where the results go (see below); the default is fine for most projects.
 - Usually leave alone: `INCLUDE_EXCLUDED` (False: animals excluded in Sleep QC or in PSD review are left out), `APPLY_INVERSE_FILTER` (True), `INTERP_RANGES` (see below), `NORM_BAND` (1–100 Hz), `BANDS`, `FREQ_RANGE`, `COLOR_MAP`, `SEX_MAP` (orders Prism columns males first).
 
 **What it does**
@@ -568,7 +569,7 @@ The notebook tells the two layouts apart by the header: if the first row has col
 
 **`INTERP_RANGES`: leave it unless you turned the notch off.** The default, 56–64 Hz and 118–122 Hz, is for PSDs computed with the 60 Hz notch filter, which is on by default in ebb-viewer (its stopband is 57–63 Hz, so 56–64 Hz covers it). The 118–122 Hz range is for the 120 Hz peak, which the notch does not touch. **If you computed the PSDs with the notch filter turned off, change it to `[[58, 62], [118, 122]]`.** The notebook prints the ranges it used when it loads the data.
 
-**Outputs** are in `OUT_DIR` (default `psd_analysis/` next to the notebook): `figures/` (PNGs), `band_power.csv`, `band_power_normalized.csv`, and the `prism_*.xlsx` files.
+**Outputs** are in `OUT_DIR`. Unless you set it, that is a folder called `psd_analysis` in the project of your first `RUNS` file, next to its `psd/` folder (for `/data/KCNT1/psd/default/psds_final.pkl`, `/data/KCNT1/psd_analysis/`); it is never the folder the notebook sits in. The notebook prints the folder when it loads. To put results somewhere else, set `OUT_DIR = Path("/path/to/results")`. The folder holds: `figures/` (PNGs), `band_power.csv`, `band_power_normalized.csv`, and the `prism_*.xlsx` files.
 
 **If something goes wrong**
 - "The inverse filter needs 7 frequency bins ... (0.5 Hz resolution)": the PSDs were computed at another resolution. Set `APPLY_INVERSE_FILTER = False`, or ask whether the correction applies to your data.
