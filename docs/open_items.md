@@ -40,7 +40,7 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 
 - [ ] The combo is set implicitly by writing SPINDLE EDFs. Home now shows it ("default; set on 2. Spindle EDFs" until then); consider a deliberate way to see and change it.
 - [ ] Preprocess page: no cancel button (see `TODO.md`).
-
+- [ ] The slide diagrams (`pipeline_flow_slide.md`, `psd_flow_slide.md`, `storage_schematic_slide.md`) still show the old multi-combo pipeline with the Rerun page. Update or delete them.
 
 ## Done
 
