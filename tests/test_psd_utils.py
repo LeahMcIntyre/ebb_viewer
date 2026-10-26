@@ -365,3 +365,21 @@ def test_psd_notebook_has_no_cwd_relative_output_folder():
     )
     assert "OUT_DIR = None" in settings
     assert 'Path("psd_analysis")' not in "".join("".join(c["source"]) for c in nb["cells"])
+
+
+def test_psd_notebook_says_where_results_go_and_how_to_change_it():
+    import json
+
+    nb = json.loads(
+        (Path(__file__).resolve().parents[1] / "notebooks" / "psd_analysis.ipynb").read_text()
+    )
+    code = ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
+    settings, loader, last = (
+        code[0],
+        next(s for s in code if "RESULTS WILL BE SAVED IN" in s),
+        code[-1],
+    )
+    assert "WHERE THE RESULTS GO" in settings and "OUT_DIR = Path(" in settings
+    assert "set OUT_DIR in the Settings cell" in loader
+    assert "ALL RESULTS ARE IN" in last and "set OUT_DIR in the Settings cell" in last
+    assert "OUT_DIR" in "".join(nb["cells"][0]["source"])  # the intro says it too
