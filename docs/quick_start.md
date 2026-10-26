@@ -16,7 +16,7 @@ This page gets you from nothing to finished results. It lists only what you **ne
 | 3 | **3. Spindle Upload** | Pick your name, click **Upload & Download** | **often over an hour** (SleepyRat scores your files) |
 | 4 | **4. Reclassify** | Click **Run reclassification** | a minute or two |
 | 4b | **4b. SWD Review** | *Optional.* Check epochs that overlap spike-wave discharges | depends on the animal |
-| 5 | **5. Sleep QC** | Mark **every** animal **OK** or **Exclude** | your time |
+| 5 | **5. Sleep QC** | In the Sleep tab mark each animal OK, Review or Exclude; then on Home settle each Review as OK or Exclude | your time |
 | 6 | **6. PSD Computation** | Click **Run PSD Pipeline** | a few minutes to an hour |
 | 7 | **7. PSD Visualizer** | Mark each animal **OK** or **Drink Mask** | your time |
 | 8 | **8. Drink Mask** | *Only if you flagged animals in step 7.* Apply the masks and verify | minutes |
@@ -113,7 +113,7 @@ python -c "import numpy as np; from scipy.io import savemat; savemat('swd/CW0DB1
 
 - **Annotation file:** use it exactly as exported (tab-separated, six lines of header, then a row per event with the columns `Time From Start` and `Annotation`). In step 6 you type keywords that appear in the annotation labels, such as `Jerk, Jump`.
 - **Drink-event file:** a list of True/False values, **one value per second of the recording**, with True where the animal was drinking.
-- **Offsets file:** two columns, `Animal` and `Offset`, one row per animal. The offset is in seconds, and **positive means the video started after the EEG**. For example (made-up numbers):
+- **Offsets file:** two columns, `Animal` and `Offset`, one row per animal. The offset is in seconds, and **positive means the video started after the EEG**. Get these values manually from the PVFS file. For example (made-up numbers):
 
 ```
 Animal,Offset
@@ -171,7 +171,7 @@ Each step has the same three parts: **Do this**, **You're done when**, and **Wat
 2. Under **SleepyRat project**, choose **your own name**. If it is not in the list, click **New…** and enter it. If it is already there, do not create it again.
 3. Leave **Remote folder name** as filled in.
 4. Click **Upload & Download**.
-5. The first time, a browser tab asks you to approve access for ebb. Approve it.
+5. The first time, a browser tab asks you to approve access for ebb. Log in with the appropriate credentials and approve it.
 6. **Leave the app open.** It uploads, waits for SleepyRat to score the files, then downloads the results. With many files this often takes **more than an hour**, and that is normal.
 
 **You're done when** the green bar says "Done. Labels downloaded — ready to reclassify."
@@ -204,16 +204,23 @@ Do this step only if your project needs it (for example, if SWDs could make slee
 
 ### Step 5. Sleep QC
 
-**Every animal must end up either OK or Excluded.** PSD computation will not start until they all are.
+**Every animal must end up either OK or Excluded.** PSD computation will not start until they all are. You do this in **two passes: first in the Sleep tab, then on Home.**
+
+**Why animals get flagged.** The Overview marks an animal when a measure of its sleep goes past a threshold. The measures are ones that, in our own past data, made us suspicious of a noisy or misclassified recording: many very short NREM bouts (the sleep looks chopped up), too many NREM bouts per dark hour, too much or too little of one state (REM %, NREM %, wake %), or a big spike of REM in one 2-hour stretch. These are warning signs, **not rules**: a flagged animal may be fine, and an unflagged one may not be, so you still look at every animal.
 
 **Do this**
 1. Click **5. Sleep QC**. You start on the **Overview**: one boxplot per sleep measure, one dot per animal. Animals past a threshold are red.
-2. Animals past a threshold with no decision yet are **flagged for review automatically** (a red line lists them, and they appear on **Home** under **Needs Attention**).
-3. Look at each flagged animal: on **Home**, click **Open EDF** on its card (a card marked **[EMG gate]** means the EMG gate was used on that animal), or open the **Sleep** view and judge from the by-hour plots.
-4. For **every** animal, in the **Sleep** view, press **OK** (the sleep scoring looks fine) or **Exclude** (it looks wrong, or the EEG/EMG is very noisy). **Review** is not a decision: it only flags an animal for a closer look.
+2. Animals past a threshold that have no decision yet are **flagged for review automatically** (a red line lists them). You do not need to flag them yourself.
+3. **First pass, the Sleep tab.** Click **Sleep** (top right) and go through **every** animal (use **Group** to see them together or **Animal** to see one at a time). Judge from the by-hour plots, then mark each animal:
+   - **OK**: the sleep scoring looks fine.
+   - **Review**: something looks off and you want to look at the actual recording.
+   - **Exclude**: it is clearly wrong, or the EEG/EMG is very noisy. A written reason is required.
+4. **Second pass, Home.** Go to **Home**. **Needs Attention** lists every animal you marked **Review** (and the automatically flagged ones), with the measures that flagged it. A card marked **[EMG gate]** means the EMG gate was used on that animal. For each card, click **Open EDF**, look at the recording, then mark the animal **OK** or **Exclude** (in the viewer's toolbar: **✓ Mark OK** or **Exclude**, or click **✓ OK** on the card if the animal is fine).
 5. **Exclude needs a written reason.** Say where the problem is and what you saw, for example "lots of misclassification after hour 20, LSC channel noisy".
 
-**You're done when** every animal is OK or Excluded and the page says "All spindle metrics checked — ready for PSD computation."
+**Review is not a final answer.** Every animal you mark Review (or that was flagged automatically) must end as OK or Exclude after you look at it on Home.
+
+**You're done when** every animal is OK or Excluded, nothing is left under **Needs Attention** for review, and the Sleep QC page says "All spindle metrics checked — ready for PSD computation."
 
 **Watch out:** do this review **blind to genotype**. If the first or last time bin looks odd in the default view, switch **Time axis** to *Rotate to 6AM* or *From Start* and look again before deciding. An excluded animal is kept and marked, not deleted.
 
@@ -304,7 +311,7 @@ Both notebooks are in the `notebooks/` folder. **Make a copy for each analysis.*
 - [ ] 3. Spindle Upload (labels downloaded)
 - [ ] 4. Reclassify
 - [ ] 4b. SWD Review (if your project uses it)
-- [ ] 5. Sleep QC: **every animal OK or Excluded**
+- [ ] 5. Sleep QC: Sleep tab (OK / Review / Exclude), then Home (each Review settled): **every animal OK or Excluded**
 - [ ] 6. PSD Computation
 - [ ] 7. PSD Visualizer: every animal reviewed
 - [ ] 8. Drink Mask: applied and verified (if any animal was flagged)
