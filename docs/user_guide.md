@@ -158,7 +158,7 @@ A checklist of the whole run, in order. **TODO:** add typical times per step and
 
 ### Home
 **Goal:** see where the project stands, and what needs your attention.
-**Before you start:** You have chosen the project folder (section 4). Home is empty until Preprocess has run.
+**Before you start:** You have chosen the project folder (section 4). Home is empty until Preprocess has run; the page says so, and counts the EDF files it finds in the folder.
 
 **How to read it, top to bottom:**
 1. **Progress strip.** One chip per pipeline step, plus a "next step" banner with an **Open →** button. Click a chip to jump to that page. This tells you where you are.
@@ -169,7 +169,8 @@ A checklist of the whole run, in order. **TODO:** add typical times per step and
 **Notes:** Notes are for your own comments during Sleep QC and PSD review. A note (the reason) is required when you exclude an animal.
 **Check your work:** The animals table lists every animal you expect (the count equals the number of EDFs after Preprocess).
 **If something goes wrong:** An animal missing from the table means its preprocessed EDF is not in `standard/`.
-**TODO:** screenshot of Home with annotations (strip, table, Needs Attention). Decide whether to change the empty-before-Preprocess behavior (open item).
+**Top of the page:** the project's **channel combo** is shown next to the title. It says "(default; set on 2. Spindle EDFs)" until you have written the SPINDLE EDFs, after which it shows just the combo.
+**TODO:** screenshot of Home with annotations (strip, table, Needs Attention).
 
 ### 1. Preprocess
 **Goal:** turn the raw EDFs into trimmed, downsampled copies in `standard/`, which every later step uses. The raw files are not changed.
@@ -177,7 +178,7 @@ A checklist of the whole run, in order. **TODO:** add typical times per step and
 **Before you start**
 - The project folder holds one EDF per animal (combine restarted recordings first, section 3). Preprocess processes every `.edf` directly in the project folder.
 - Channel order is LFC, RSC, LSC, EMG (section 2.2).
-- File names look like `AnimalID_anything.edf`: the animal ID is the text before the first `_`. Nothing else about the name matters. (The page shows a longer date format in a note; it is wrong.)
+- File names look like `AnimalID_anything.edf`: the animal ID is the text before the first `_`. Nothing else about the name matters.
 
 **Steps**
 1. Open **1. Preprocess** in the sidebar. The page scans the folder and reports, for example, "Found 3 files · 48h 00m – 73h 47m". **Rescan** repeats the scan.
@@ -202,6 +203,7 @@ A checklist of the whole run, in order. **TODO:** add typical times per step and
 
 **If something goes wrong**
 - "No EDF files found": the EDFs are not directly in the project folder (subfolders are not searched).
+- A red warning under the scan line says an animal has more than one EDF in the folder: these are restart chunks that have not been combined (or were left behind after combining). Combine them (section 3) and move the originals out first.
 - A recording is shorter than the smallest trim target: it fails. Combine its chunks first, or lower the smallest target (only if your analysis allows it; our analyses need whole days).
 - **Run preprocessing** is greyed out: the original rate is not divisible by the downsample factor.
 - There is no cancel button. If you must stop, close the app and rerun; existing outputs are overwritten after confirmation.
@@ -400,7 +402,7 @@ The run can take anywhere from a couple of minutes to an hour or more, depending
 
 **Check your work:** `psd/<run name>/` has `psd_params.json` (the exact settings used) and `psds_<COMBO>.pkl`. **TODO:** exact files after a walkthrough run.
 
-**If something goes wrong:** If **Run PSD Pipeline** is greyed out, read the red ✗ lines in READINESS. An animal with no annotation file is still computed, just **without** the annotation mask (the walkthrough animal `CW3209` has no annotation file and runs this way). There is no warning, so check that every animal that should have an annotation file has one. Record real failures as they happen.
+**If something goes wrong:** If **Run PSD Pipeline** is greyed out, read the red ✗ lines in READINESS. An animal with no annotation file is still computed, just **without** the annotation mask (the walkthrough animal `CW3209` has no annotation file and runs this way). The READINESS list shows an amber warning naming the animals with no annotation file (it does not block the run), so check that every animal that should have one does. Record real failures as they happen.
 **TODO:** screenshot.
 Details: [psd_methods.md](psd_methods.md). Decisions: [log §6](decision_log.md).
 

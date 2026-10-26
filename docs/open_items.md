@@ -39,17 +39,15 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 
 ## D. Code or doc changes (small, ready to do)
 
-- [ ] `manifest.json` already says `combo: LFC_RSC` right after Preprocess, before the user has chosen a combo (it is the default). Make clear whether the user has actually chosen it.
-- [ ] **Combo is set implicitly** by writing SPINDLE EDFs (stored in `manifest.json`). Clarify in the UI where the project combo is set and shown, and how to change it. Show the combo on Home.
-- [ ] **Home is empty until Preprocess** (animals come from `standard/`). Consider listing raw EDFs on Home or showing a "run Preprocess first" message.
+- [ ] The combo is set implicitly by writing SPINDLE EDFs. Home now shows it ("default; set on 2. Spindle EDFs" until then); consider a deliberate way to see and change it.
+- [ ] Preprocess page: no cancel button (see `TODO.md`).
 
-- [ ] Combine is command-line only. Consider a GUI page or a check at Preprocess that warns when short chunks are still in the project folder (Preprocess globs every `*.edf` there).
 - [ ] **`ebb-combine edf` needs a lot of memory** on 5 kHz data (about 55 GB for two chunks; it loads each 24 h chunk whole). It completed on a 48 GB Mac only after other programs were closed. Consider changing `combine_edf` to read and write in blocks.
-- [ ] Fix the Preprocess page's file-name note: files only need to be named `AnimalID_anything.edf` (tracked in `TODO.md`). Also no cancel button (see `TODO.md`).
-- [ ] PSD page: an animal with no annotation file runs without the annotation mask and no warning is shown. Add a readiness warning listing animals with no annotation file when the annotation mask is on.
 - [ ] Redraw `pipeline_flow.md` (still shows `needs_rerun`, the Rerun page and multi-combo).
 
 ## Done
+
+- [x] Branch `fix/small-ui-fixes` (not merged): Preprocess file-name note and leftover-chunk warning; PSD readiness warning for animals without an annotation file; Home shows the combo and explains the empty table.
 
 - [x] `s_prob` removed from the code (commit `c24a2dd`); docs updated.
 - [x] `psd_methods.md` corrected: states come from `final_state`, inverse filter/interpolation are display-only, the merged PSD file is gone, `s_prob` removed.
