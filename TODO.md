@@ -174,9 +174,6 @@ a Rescan button sits inline with it inside Folder Selection. `_scan_edfs`
 also clears `_trim_hint_label` on empty/unreadable exit paths so a
 healthy→empty rescan doesn't leave stale trim counts.
 
-### preprocess: Fix the misleading file-name note
-The Preprocess page shows "EDF files must be named: `AnimalID_anything_YYYY_MM_DD_HH_MM_SS.edf`" (`pages/preprocess.py`, `fmt_lbl`). That is not true: files only need to be named `AnimalID_anything.edf`, where the animal ID is the text before the first `_`. Real files use dashes in the date (`..._2020-04-15_08_50_11.edf`) and work. Change the note to `AnimalID_anything.edf`.
-
 ### preprocess / spindle write: Route `batch_preprocess` console output into the log box
 Structural part (`✓ Done` hint frame + Next → button) already in place
 on both pages. Remaining sub-task: capture `verbose=True` stdout from
