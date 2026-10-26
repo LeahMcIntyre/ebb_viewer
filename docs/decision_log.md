@@ -38,18 +38,17 @@ Sections for the other stages are not written yet.
   - EDFs are ordered by header start time, SWD and annotation files by their `_P###` number. These must agree.
 - **Confidence:** settled
 - **Affects results?** Yes, for every animal that was restarted. Report how many animals were combined.
-- **Memory:** `combine_edf` reads each full 24 h chunk into memory (about 14 GB per chunk at 5 kHz, four channels) and holds the joined data twice. On a 48 GB machine the first attempt was killed (out of memory); after closing other programs it completed. The walkthrough result is exactly 48.0 h. **Decision:** not changing it; the guide tells users to close other programs first.
+- **Memory:** `combine_edf` reads each full 24 h chunk into memory (about 14 GB per chunk at 5 kHz, four channels) and holds the joined data twice. On a 48 GB machine the first attempt was killed (out of memory); after closing other programs it completed. The walkthrough result is exactly 48.0 h. 
 - **Where in code:** `src/ebb/io/combine.py` (`ebb-combine edf | swd | annotations`)
-- **Related:** `TODO.md` has items to extend combine to drink-mask `.npy` files and `.tsv` annotations.
 
 ### Sampling: 5000 Hz acquired, downsampled by 20 to 250 Hz
 - **Stage:** Preprocess
 - **Chosen:** 250 Hz.
 - **Why:** Inherited. It covers the range of interest (nothing much above 100 Hz) and keeps storage manageable. 5000 Hz is the acquisition rate.
-- **Units:** The raw EDF header lists µV for every EEG channel (physical range ±8144 µV, 16-bit), which matches the 2000 µV commutator threshold.
+- **Units:** The raw EDF header lists µV for every EEG channel, which matches the 2000 µV commutator threshold.
 - **Confidence:** inherited
 - **Affects results?** Yes. The maximum analyzable frequency is 125 Hz.
-- **Where in code:** `src/ebb/preprocess/edf.py`; `fs = 250` is hard-coded in several places (see `CLAUDE.md`).
+- **Where in code:** `src/ebb/preprocess/edf.py`; `fs = 250` is hard-coded in several places.
 
 ### Anti-alias filter: openseize defaults
 - **Stage:** Preprocess
@@ -64,7 +63,7 @@ Sections for the other stages are not written yet.
 - **Why:** That is the montage of the recordings. Channels are identified by position only: the raw EDF labels are `EEG_1` to `EEG_4`, and by lab convention channel 1 is LFC, 2 is RSC, 3 is LSC and 4 is EMG. Nothing in the pipeline checks or maps the names. It has not been tested with other montages.
 - **Confidence:** settled for this lab's datasets; untested otherwise.
 - **Risk:** A file with a different channel order would be silently mislabeled. Consider a check at preprocess time, or state the assumption prominently in the user guide.
-- **Where in code:** `ch_names` constant (see `CLAUDE.md`).
+- **Where in code:** `ch_names` constant.
 
 ### Animal ID is the first `_`-delimited token of the filename
 - **Stage:** Preprocess and project setup
