@@ -183,7 +183,7 @@ Under `psd/<run_name>/`:
   openseize defaults (read from the installed `ebb-dev` environment). Confirm
   against `psd/<run_name>/psd_params.json` for each dataset, since they can
   be changed per run (the KCNT1 script in
-  `research/scripts/run_psd_estimation.py` uses `nstd=5` and no SWD/drink
+  `scripts/run_psd_estimation.py` uses `nstd=5` and no SWD/drink
   masks).
 - **Segments across masked gaps.** Masked samples are removed and the
   remaining samples are streamed to Welch, so a 2 s segment can span a
