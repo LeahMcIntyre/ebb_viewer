@@ -38,7 +38,7 @@ Sections for the other stages are not written yet.
   - EDFs are ordered by header start time, SWD and annotation files by their `_P###` number. These must agree.
 - **Confidence:** settled
 - **Affects results?** Yes, for every animal that was restarted. Report how many animals were combined.
-- **Memory:** `combine_edf` reads each full 24 h chunk into memory (about 14 GB per chunk at 5 kHz, four channels) and holds the joined data twice. On a 48 GB machine the first attempt was killed (out of memory); after closing other programs it completed. The walkthrough result is exactly 48.0 h.
+- **Memory:** `combine_edf` reads each full 24 h chunk into memory (about 14 GB per chunk at 5 kHz, four channels) and holds the joined data twice. On a 48 GB machine the first attempt was killed (out of memory); after closing other programs it completed. The walkthrough result is exactly 48.0 h. **Decision:** not changing it; the guide tells users to close other programs first.
 - **Where in code:** `src/ebb/io/combine.py` (`ebb-combine edf | swd | annotations`)
 - **Related:** `TODO.md` has items to extend combine to drink-mask `.npy` files and `.tsv` annotations.
 
@@ -346,8 +346,8 @@ Details of the statuses and what each step does with an excluded animal: [sleep_
 - **Stage:** Finalize
 - **Chosen:** Finalize copies the latest PSD file (the drink-mask version when there is one) to `psds_final.pkl` under `psd/<run_name>/`. It also marks excluded animals in the sealed file (`excluded` / `exclusion_reason`, plus `excluded_animals.csv`).
 - **Why:** The sealing step dates from when a project could have several channel combos. It now has a different value: it tells the user which file to analyze. Drink-mask reruns write to separate files and never overwrite the originals.
-- **Open question (naming):** Should the file name include the project and run (for example `psds_final_<project>_<run>.pkl`)? Things to weigh: the notebooks and `psd_export.py` look for the fixed name `psds_final.pkl`, so renaming means changing every reader. The file already sits in `psd/<run_name>/`. A middle path is to keep the fixed file name and store the project name, run name, date and parameters inside the file (or in a sidecar next to it), so a copy that has been moved around still identifies itself.
-- **Confidence:** settled for the sealing; naming is undecided.
+- **Naming (decided):** The file stays named `psds_final.pkl`. It already sits in `psd/<run_name>/`, and the notebooks and `psd_export.py` look for that name. Project, run and date are not embedded in the file.
+- **Confidence:** settled
 - **Where in code:** `seal` function in `src/ebb/process/psd_compute.py` (around line 710), `src/ebb_viewer/pages/finalize.py`.
 
 ### Finalize waits until every animal is reviewed
