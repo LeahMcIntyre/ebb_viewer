@@ -215,6 +215,7 @@ Do this step only if your project needs it (for example, if SWDs could make slee
    - **OK**: the sleep scoring looks fine.
    - **Review**: something looks off and you want to look at the actual recording.
    - **Exclude**: it is clearly wrong, or the EEG/EMG is very noisy. A written reason is required.
+   - **If the first or last time bin of an animal looks off** (shorter than 2 hours, or odd values), view **that animal** with **Time axis** set to **Rotate to 6AM** or **From Start** and see whether that fixes it before you decide. If it does, the odd bin was only the partial bin at the edge of the recording.
 4. **Second pass, Home.** Go to **Home**. **Needs Attention** lists every animal you marked **Review** (and the automatically flagged ones), with the measures that flagged it. A card marked **[EMG gate]** means the EMG gate was used on that animal. For each card, click **Open EDF**, look at the recording, then mark the animal **OK** or **Exclude** (in the viewer's toolbar: **✓ Mark OK** or **Exclude**, or click **✓ OK** on the card if the animal is fine).
 5. **Exclude needs a written reason.** Say where the problem is and what you saw, for example "lots of misclassification after hour 20, LSC channel noisy".
 
@@ -222,7 +223,7 @@ Do this step only if your project needs it (for example, if SWDs could make slee
 
 **You're done when** every animal is OK or Excluded, nothing is left under **Needs Attention** for review, and the Sleep QC page says "All spindle metrics checked — ready for PSD computation."
 
-**Watch out:** do this review **blind to genotype**. If the first or last time bin looks odd in the default view, switch **Time axis** to *Rotate to 6AM* or *From Start* and look again before deciding. An excluded animal is kept and marked, not deleted.
+**Watch out:** do this review **blind to genotype**. An excluded animal is kept and marked, not deleted.
 
 ### Step 6. PSD Computation
 

@@ -60,6 +60,52 @@ Recordings are trimmed to the largest whole number of days that fits, 72 h or 48
 - **Original vs. reclassified:** SPINDLE's states are kept. Everything downstream reads `final_state`.
 - **Statuses:** Sleep QC is `ok` / `needs_review` / `excluded`. PSD status is `ok` / `needs_drink_mask` / `drink_mask_applied`.
 
+### 2.6 Extra files you may need
+
+Besides the raw EDFs, some steps use extra files that **you prepare**. You only need the ones for the steps you will use:
+
+- **Sleep staging and PSDs only:** nothing beyond the EDFs (plus a groups file if you want one for the notebooks).
+- **Add SWD files** if you want SWD review (step 4b) or the SWD mask in step 6.
+- **Add annotation files** if you want to mask jerks and jumps in step 6.
+- **Add drink-event files and an offsets file** only if the PSD review (step 7) shows the drinking artifact.
+
+Put each file in the project folder (the one you choose when ebb-viewer starts, section 4) unless the table says otherwise. **In every file name, the animal ID is the part before the first `_`, and it must match the EDF's animal ID exactly, including capitals** (`CW0DC4`, not `cw0dc4`).
+
+| File | Needed for | Put it in | Name it | Where it comes from |
+|---|---|---|---|---|
+| **SWD file**, one per animal (`.mat`) | Step 4b (SWD Review) and the SWD mask in step 6 | `swd/` in the project folder | `AnimalID_anything.mat`, for example `CW0DC4_P098_DEL_ts.mat` | The lab's MATLAB SWD detection. An animal with no SWDs still gets a file: an empty one (see below and 4b). |
+| **Annotation file**, one per animal (`.txt`) | The annotation mask in step 6 (jerks and jumps) | Any folder; `annotations/` in the project folder is easiest. You choose the folder on the PSD page. | `AnimalID_anything.txt`, for example `CW0DC4_P098_KO_….txt` | Exported from the Pinnacle recording software, where the events were annotated (labels such as `Jerk - NREM` or `Jump - REM`). |
+| **Drink-event file**, one per flagged animal (`.npy`) | Step 8 (Drink Mask) | `drink_masks/` in the project folder | Exactly `AnimalID.npy`, for example `CW0DC4.npy` | Made outside ebb-viewer with the lab's drinking-detection network, run on the recording video (exported from the PVFS file). In our lab, ask Claudia. |
+| **Offsets file**, one for the whole project (`.csv`) | Step 8, unless the video and the EEG started at exactly the same moment | `drink_masks/`; it must be the **only** `.csv` there | Any name ending in `.csv`, for example `offsets.csv` | You write it. For each animal, the seconds from the start of the EEG recording to the start of the video, read from the PVFS file. |
+| **Groups file** (`.csv`) | The analysis notebooks (section 7), instead of typing the groups | Anywhere; next to the notebook is easiest. You type its path into the notebook. | Any name, for example `groups.csv` | You write it from your experiment records. |
+
+**What goes inside**
+
+- **SWD file:** a variable called `DEL_ts` holding one row per SWD, `[start, stop]`, in seconds from the start of the recording. For an animal with no SWDs, make an empty file; the one-line command is in **4b. SWD Review** (section 6).
+- **Annotation file:** use it exactly as exported (tab-separated, six lines of header, then a row per event with the columns `Time From Start` and `Annotation`). In step 6 you type keywords that appear in the annotation labels, such as `Jerk, Jump`.
+- **Drink-event file:** a list of True/False values, **one value per second of the recording**, with True where the animal was drinking.
+- **Offsets file:** two columns, `Animal` and `Offset`, one row per animal. The offset is in seconds, and **positive means the video started after the EEG**. Get these values manually from the PVFS file. For example (made-up numbers):
+
+```
+Animal,Offset
+CW0DC4,125
+CW0DB1,98
+```
+
+- **Groups file:** the easiest layout is one row per animal, with the columns `animal` and `group`:
+
+```
+animal,group
+Mice-1248,WT
+Mice-1251,MUT
+```
+
+  One column per group (the group name on top, its animals below) also works. Details: "Listing groups in a CSV file" in section 7.
+
+**Restarted recordings:** the SWD and annotation files of an animal whose recording was restarted are combined together with its EDFs (section 3).
+
+**Files ebb-viewer makes for you** (do not create these): `standard/`, `spindle_edfs/`, `spindle_outputs/`, `psd/`, `exports/`, and `manifest.json`.
+
 ## 3. Prepare your recordings: combine restarted recordings
 
 **Skip this section if every recording ran the full duration continuously.**
@@ -142,7 +188,7 @@ To resume a project later, start `ebb-viewer` and choose the same folder.
 
 ## 5. Quick start
 
-A checklist of the whole run, in order. **TODO:** add typical times per step and a demo dataset.
+A checklist of the whole run, in order. 
 
 1. Combine any restarted recordings (section 3). Put the raw EDFs in a new project folder; open it in ebb-viewer (Home).
 2. Preprocess, then write the SPINDLE EDFs (this sets the project's channel combo).
@@ -170,7 +216,7 @@ A checklist of the whole run, in order. **TODO:** add typical times per step and
 **Check your work:** The animals table lists every animal you expect (the count equals the number of EDFs after Preprocess).
 **If something goes wrong:** An animal missing from the table means its preprocessed EDF is not in `standard/`.
 **Top of the page:** the project's **channel combo** is shown next to the title. It says "(default; set on 2. Spindle EDFs)" until you have written the SPINDLE EDFs, after which it shows just the combo.
-**TODO:** screenshot of Home with annotations (strip, table, Needs Attention).
+
 
 ### 1. Preprocess
 **Goal:** turn the raw EDFs into trimmed, downsampled copies in `standard/`, which every later step uses. The raw files are not changed.
@@ -208,7 +254,6 @@ A checklist of the whole run, in order. **TODO:** add typical times per step and
 - **Run preprocessing** is greyed out: the original rate is not divisible by the downsample factor.
 - There is no cancel button. If you must stop, close the app and rerun; existing outputs are overwritten after confirmation.
 
-**TODO:** what a failure looks like in practice (a recording shorter than the smallest target).
 Decisions: [log §1](decision_log.md).
 
 ### 2. Spindle EDFs
@@ -350,7 +395,7 @@ Details: [sleep_reclassification.md](sleep_reclassification.md) §5. Decisions: 
 An animal that passes the threshold on **any** of the six metrics usually has suspicious sleep data, which may mean noise or misclassification. These thresholds came from our own data; **use them as a starting point**, not as rules. **Animals past a threshold are flagged for review automatically** when the page loads its data, if they have no decision yet: a red line under the page description lists them ("Flagged for review automatically"), and they appear on Home under Needs Attention. Animals you have already marked OK, Excluded or Review are never changed. You can also flag any other animal yourself: **click its dot, then click "Flag for Review"**. This marks it `needs_review`. To clear an automatic flag, click **Review** again on that animal (it goes back to not decided; the page flags it again the next time it loads its data if it is still past a threshold).
 
 **Step 2: First pass, the Sleep view.** Click **Sleep** (the **VIEW** buttons, top right) and go through **every** animal. For each, look for anything very out of place or wrong looking: is the sleep too fragmented, are the fractions of time in each state about what you would expect? Under DISPLAY, **Group** shows all animals together (page by page with **◄ Prev** / **Next ►**) and **Animal** shows a single animal at a time.
-- **Time axis:** **Clock-aligned** (default), **Rotate to 6AM**, **From Start**. In clock-aligned mode the first and last bins of an animal may be shorter than 2 hours, so they can look strange. If you are worried about the first or last bin, **switch to Rotate to 6AM or From Start and look again** before deciding.
+- **Time axis:** **Clock-aligned** (default), **Rotate to 6AM**, **From Start**. In clock-aligned mode the first and last bins of an animal may be shorter than 2 hours, so they can look strange. **If the first or last bin of an animal looks off, view that animal with the Time axis set to Rotate to 6AM or From Start and see whether that fixes it** before you decide. If it does, the odd bin was only the partial bin at the edge of the recording, not a problem with the animal.
 - **Median** draws a group-median reference line on the plots, so you can see how an animal compares with the others.
 - For each animal press **OK** (the sleep scoring looks fine), **Review** (something looks off and you want to look at the actual recording) or **Exclude** (it is clearly wrong or noisy; a reason is required, see below).
 
