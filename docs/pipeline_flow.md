@@ -1,8 +1,8 @@
 # Pipeline workflow
 
-Three flowcharts of the ebb pipeline, at increasing levels of detail.
-Each chart is given in Mermaid (renders in GitHub / IDEs) and as an
-ASCII fallback. Step numbers match the sidebar of ebb-viewer; how to run
+Two flowcharts of the ebb pipeline, at increasing levels of detail, and the
+project folder layout. Each chart is given in Mermaid (renders in GitHub /
+IDEs) and as an ASCII fallback. Step numbers match the sidebar of ebb-viewer; how to run
 each step is in [user_guide.md](user_guide.md).
 
 ---
@@ -145,71 +145,9 @@ flowchart TD
 
 ---
 
-## 3. Stages + inputs/outputs (full picture)
+## 3. Project folder layout
 
-The folders and files each step reads and writes, under the project folder.
-Cylinders are folders or files on disk.
-
-### Mermaid
-
-```mermaid
-flowchart TD
-    raw[("Raw EDFs<br/>(project folder)")] --> pre["1 Preprocess"]
-    restarts[("Restart chunks<br/>EDF, SWD, annotations")] -.-> comb["ebb-combine"]
-    comb -.-> raw
-    comb -.-> short[("short_files/<br/>original chunks")]
-
-    pre --> std[("standard/")]
-    std --> spw["2 Spindle EDFs"]
-    spw --> sedf[("spindle_edfs/COMBO/")]
-    spw --> man[("manifest.json<br/>(combo, statuses, notes)")]
-
-    sedf --> up["3 Spindle Upload"]
-    up --> sout[("spindle_outputs/COMBO/<br/>labels CSVs")]
-
-    sout --> rc["4 Reclassify"]
-    std --> rc
-    rc --> sout2[("CSVs + reclass_state<br/>+ final_state<br/>(_original/ keeps SPINDLE's file)")]
-
-    swdmat[("swd/ .mat files")] -.-> swd["4b SWD Review"]
-    sout2 -.-> swd
-    swd -.-> sout2
-
-    sout2 --> qc["5 Sleep QC"]
-    qc --> man
-
-    std --> psd["6 PSD Computation"]
-    sout2 --> psd
-    swdmat -.-> psd
-    ann[("annotations folder<br/>(chosen on the page)")] -.-> psd
-    man --> psd
-    psd --> pkl[("psd/RUN/<br/>psd_params.json<br/>psds_COMBO.pkl")]
-
-    pkl --> viz["7 PSD Visualizer"]
-    viz --> man
-    viz --> drink["8 Drink Mask"]
-    dm[("drink_masks/<br/>ID.npy + offsets CSV")] --> drink
-    drink --> dpkl[("psds_drink.pkl<br/>psds_COMBO_drink.pkl")]
-    dpkl --> viz
-
-    pkl --> fin["9 Finalize"]
-    dpkl --> fin
-    man --> fin
-    fin --> final[("psds_final.pkl<br/>excluded_animals.csv")]
-    final --> xlsx[("Excel export")]
-
-    sout2 --> exm["10 Export Masks"]
-    std --> exm
-    exm --> exp[("exports/NAME/<br/>states, artifacts,<br/>clean_per_state CSVs")]
-
-    sout2 --> nb["Sleep notebooks"]
-    nb --> sa[("sleep_analysis/")]
-
-    classDef artifact fill:#eef,stroke:#557,color:#113;
-    class raw,restarts,short,std,sedf,man,sout,sout2,swdmat,ann,pkl,dm,dpkl,final,xlsx,exp,sa artifact;
-```
-
-### Folder layout (ASCII)
+What each step writes under the project folder. `COMBO` is the project's channel combo, `RUN` a PSD run name.
 
 ```
 project/

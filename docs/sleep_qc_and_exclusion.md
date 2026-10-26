@@ -127,7 +127,6 @@ The computed `psds_<combo>.pkl` files are never modified. The analysis step drop
 
 - Export Masks (`pipeline/mask_export.default_animals`) uses `ready_for_psd()`, so it includes
   excluded animals, and its meta files do not say so. Its docstring still says "only OK".
-- `docs/pipeline_flow.md` is up to date, but the slide diagrams (`pipeline_flow_slide.md`, `psd_flow_slide.md`, `storage_schematic_slide.md`) still show the old multi-combo pipeline.
 - Excluded animals are not marked inside the Drink Mask page, because they are not listed there.
 
 ## 8. Code map

@@ -184,9 +184,6 @@ recomputed (`refresh_swd_after_reclass`).
 
 ## 9. Known gaps
 
-- `docs/pipeline_flow.md` is up to date, but the slide diagrams (`pipeline_flow_slide.md`,
-  `psd_flow_slide.md`, `storage_schematic_slide.md`) still show the multi-combo / rerun pipeline
-  and have no Reclassify or SWD step.
 - Export Masks skips the SWD mask without saying so when an animal has no SWD file (PSD compute
   refuses to run in that case).
 - The review window loads the whole EDF, like the normal viewer; chunked reads would help on
