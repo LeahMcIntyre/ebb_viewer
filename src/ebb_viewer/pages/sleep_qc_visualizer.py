@@ -129,6 +129,8 @@ class SleepQCGridPage(QWidget):
         self._current_page: int = 0
         self._mode: str = "group"
         self._nav_hint_dest: str = ""
+        # Animals flagged for review automatically (past a threshold) when the data loaded.
+        self._auto_flagged: list[str] = []
         self._highlighted_animal: str | None = None
         self._show_ref_median: bool = False
 
@@ -204,7 +206,39 @@ class SleepQCGridPage(QWidget):
         else:
             self._update_all_plots()
 
+    def _update_auto_label(self) -> None:
+        """Name the animals flagged automatically that are still waiting for a decision."""
+        waiting = [
+            a
+            for a in self._auto_flagged
+            if (entry := self._manifest.get(a)) is not None and entry.sleep_qc == "needs_review"
+        ]
+        if waiting:
+            self.lbl_auto.setText(
+                f"<b>Flagged for review automatically</b> (past a threshold): {', '.join(waiting)}. "
+                "Click Review on an animal to clear its flag."
+            )
+        self.lbl_auto.setVisible(bool(waiting))
+
+    def _auto_flag_for_review(self) -> None:
+        """Flag undecided animals past a threshold for review (never touches a decision).
+
+        Uses the reclassified states; without them (Reclassify not run) nothing is flagged,
+        since the metrics would be the original SPINDLE ones.
+        """
+        if self._data_reclass is None:
+            return
+        table = self._data_reclass[3]
+        if table is None or not set(self._manifest.flag_thresholds) <= set(table.columns):
+            return
+        flagged = self._flagged_animals(table)
+        done = self._manifest.auto_flag_for_review(flagged)
+        if done:
+            self._auto_flagged = sorted(set(self._auto_flagged) | set(done))
+            self.manifest_changed.emit()
+
     def _update_nav_hint(self) -> None:
+        self._update_auto_label()
         entries = [e for e in self._manifest if e.has_spindle]
         if not entries:
             self._hint_frame.setVisible(False)
@@ -256,6 +290,13 @@ class SleepQCGridPage(QWidget):
         desc.setStyleSheet("color: #555; font-size: 12px;")
         layout.addWidget(lbl)
         layout.addWidget(desc)
+
+        self.lbl_auto = QLabel()
+        self.lbl_auto.setTextFormat(Qt.TextFormat.RichText)
+        self.lbl_auto.setWordWrap(True)
+        self.lbl_auto.setStyleSheet("color: #b02a2a; font-size: 11px;")
+        self.lbl_auto.setVisible(False)
+        layout.addWidget(self.lbl_auto)
 
         # --- top bar ---
         # Two logical clusters separated by stretches + small section labels:
@@ -552,6 +593,7 @@ class SleepQCGridPage(QWidget):
             return False
         self._load_data(sig)
         self._ensure_reclass()
+        self._auto_flag_for_review()
         self.btn_original.setEnabled(self._data_reclass is not None)
         self._update_reclass_label()
         return True
@@ -874,9 +916,9 @@ class SleepQCGridPage(QWidget):
         for state in self.STATE_ORDER:
             self._plots[(bottom_metric, state)].getAxis("bottom").setTicks(None)
 
-    def _flagged_animals(self) -> dict[str, list[str]]:
-        """``{animal: [metric keys past a threshold]}`` for the active states."""
-        table = self._get_flag_table()
+    def _flagged_animals(self, table: pd.DataFrame | None = None) -> dict[str, list[str]]:
+        """``{animal: [metric keys past a threshold]}`` for the active states (or ``table``)."""
+        table = self._get_flag_table() if table is None else table
         if table is None:
             return {}
         thresholds = self._manifest.flag_thresholds

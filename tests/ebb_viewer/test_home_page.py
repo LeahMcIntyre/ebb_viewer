@@ -619,3 +619,34 @@ def test_excluded_cell_names_the_step_that_excluded_the_animal(qapp, tmp_path: P
     assert page._build_sleep_qc_cell("excluded", True, notes_psd).text() == "Excluded (PSD review)"
     # No reason recorded (manifest edited by hand): just "Excluded".
     assert page._build_sleep_qc_cell("excluded", True, "").text() == "Excluded"
+
+
+# ---------------------------------------------------------------------------
+# Needs Attention card: EMG gate
+# ---------------------------------------------------------------------------
+
+
+def _card_texts(page, entry) -> list[str]:
+    from PyQt6.QtWidgets import QLabel
+
+    card = page._make_review_card(entry)  # keep a reference: the card has no parent
+    return [w.text() for w in card.findChildren(QLabel)]
+
+
+def test_review_card_shows_emg_gate_in_brackets_when_it_was_applied(qapp, tmp_path: Path):
+    page = _make_page(qapp, tmp_path)
+
+    def entry(animal, gate):
+        return ManifestEntry(
+            animal_id=animal,
+            preprocessed_edf="x.edf",
+            has_spindle=True,
+            sleep_qc="needs_review",
+            flag_reasons=["nrem_short"],
+            reclass_gate_applied=gate,
+        )
+
+    assert "[EMG gate]" in _card_texts(page, entry("AM001", True))
+    assert "[EMG gate]" not in _card_texts(page, entry("AM002", False))
+    assert "[EMG gate]" not in _card_texts(page, entry("AM003", None))
+    assert any(t.startswith("Flagged:") for t in _card_texts(page, entry("AM001", True)))

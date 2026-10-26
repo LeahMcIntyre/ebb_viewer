@@ -213,6 +213,62 @@ def test_nav_hint_hidden_while_animals_pending(qapp, tmp_path: Path):
 
 
 # ---------------------------------------------------------------------------
+# Automatic flagging of animals past a threshold
+# ---------------------------------------------------------------------------
+
+
+def test_auto_flag_flags_only_undecided_animals_past_a_threshold(qapp, tmp_path: Path):
+    table = _flag_table()
+    table.loc["AM003"] = table.loc["AM002"]  # also past the threshold, but already OK
+    table.loc["AM004"] = table.loc["AM002"]  # also past, but already flagged
+    table.loc["AM005"] = table.loc["AM002"]  # also past, but excluded
+    _seed_manifest(
+        tmp_path,
+        {"AM001": None, "AM002": None, "AM003": "ok", "AM004": "needs_review", "AM005": "excluded"},
+    )
+    page = _make_page(qapp, tmp_path)
+    page._data_reclass = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), table)
+    emitted = []
+    page.manifest_changed.connect(lambda: emitted.append(True))
+
+    page._auto_flag_for_review()
+
+    m = Manifest.load(tmp_path)
+    assert m.get("AM002").sleep_qc == "needs_review"
+    assert m.get("AM002").flag_reasons == ["nrem_short"]
+    assert m.get("AM001").sleep_qc is None  # not past a threshold
+    assert m.get("AM003").sleep_qc == "ok" and m.get("AM005").sleep_qc == "excluded"
+    assert page._auto_flagged == ["AM002"] and emitted == [True]
+
+    page._update_nav_hint()
+    assert not page.lbl_auto.isHidden() and "AM002" in page.lbl_auto.text()
+
+
+def test_auto_flag_is_idempotent_and_needs_reclassified_data(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": None, "AM002": None})
+    page = _make_page(qapp, tmp_path)
+    page._data = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), _flag_table())
+    page._auto_flag_for_review()  # no reclassified data: nothing is flagged
+    assert Manifest.load(tmp_path).get("AM002").sleep_qc is None
+
+    page._data_reclass = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), _flag_table())
+    page._auto_flag_for_review()
+    emitted = []
+    page.manifest_changed.connect(lambda: emitted.append(True))
+    page._auto_flag_for_review()  # second time: already flagged, nothing to do
+    assert emitted == [] and page._auto_flagged == ["AM002"]
+
+
+def test_auto_flag_note_disappears_once_the_animal_is_decided(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"AM001": None, "AM002": None})
+    page = _make_page(qapp, tmp_path)
+    page._data_reclass = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), _flag_table())
+    page._auto_flag_for_review()
+    page._flag_sleep_qc("AM002", "ok")
+    assert page.lbl_auto.isHidden()
+
+
+# ---------------------------------------------------------------------------
 # _open_notes_dialog
 # ---------------------------------------------------------------------------
 
