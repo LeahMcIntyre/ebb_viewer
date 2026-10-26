@@ -8,7 +8,7 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 - [ ] **Pre-sweep data.** Were any paper datasets processed before the 2026-05-12 cleanup sweep? If so, rerun or note it. *(log §10)*
 - [ ] **Reasons for the architecture** marked **(you)**: library/GUI split, manifest. *(log §10)*
 - [x] SPINDLE receives the selected EEG channels plus the EMG (always included, per the Spindle EDFs page). Update log §2 "Still to confirm".
-- [ ] **Inverse filter.** Source of the coefficients (preamp model and derivation). (It is display-only: stored and exported PSDs are uncorrected. Confirm that is intended for the paper's figures.) *(log §6)*
+- [ ] **Inverse filter.** Source of the coefficients (preamp model and derivation). It is display-only in the visualizer and applied at analysis in `psd_analysis.ipynb`; confirm that is intended.
 - [ ] **Bin edges.** How is a bout that spans a 2-hour bin edge counted? *(log §9)*
 - [ ] **Gate rule.** Light period (code) or dark hours (PLAN.md)? Where did the 10% tolerance come from? *(log §3)*
 
@@ -42,6 +42,8 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 - [ ] Preprocess page: no cancel button (see `TODO.md`).
 
 ## Done
+
+- [x] Added `notebooks/psd_analysis.ipynb` and `notebooks/psd_utils.py` (branch `feature/psd-analysis-notebook`, not merged), modeled on `PSD_Analysis_Example/psd`.
 
 - [x] Deleted the stale slide diagrams (`pipeline_flow_slide.md`, `psd_flow_slide.md`, `storage_schematic_slide.md`). `pipeline_flow.md` now has two flowcharts and the folder layout.
 

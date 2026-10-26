@@ -484,7 +484,7 @@ Decisions: [log §6](decision_log.md).
 
 **What it does with excluded animals:** they are **kept** in `psds_final.pkl`, and every record is marked `excluded` / `exclusion_reason`. A list is also saved as `excluded_animals.csv` next to it. Leave them out when you analyze.
 
-**What you do next:** analyze `psds_final.pkl`. **TODO:** analysis notebooks to be added. For sleep, use the notebooks described in section 7, which read the reclassified states and leave out excluded animals.
+**What you do next:** analyze `psds_final.pkl` with the PSD analysis notebook (section 7). For sleep, use the sleep notebooks, also in section 7; they read the reclassified states and leave out excluded animals.
 
 **Changing something afterwards:** Finalize is a copy of the latest PSD file, written again each time you click it, so clicking **Finalize** again replaces `psds_final.pkl` for that run (from the code; not tested). If you change something that affects the PSDs themselves, such as masks or settings, run a new PSD run under a new name and finalize that one. **TODO:** confirm the safe way to make changes after Finalize.
 
@@ -516,7 +516,36 @@ Decisions: [log §8](decision_log.md).
 ### The EEG viewer
 **Goal:** scroll and zoom traces, see the state bar and masks. Keys: `w`/`n`/`r` jump between state spans in the trace view. **TODO:** full shortcut list, masks dock.
 
-## 7. Sleep analysis (notebooks)
+## 7. Analysis notebooks
+
+The pipeline ends at `psds_final.pkl` and the reclassified sleep states. Two sets of notebooks in `notebooks/` turn them into tables and plots. In each case, copy the notebook (and, for PSDs, the helper file) into your analysis folder, edit the Settings cell, and Run All.
+
+### PSD analysis
+
+`notebooks/psd_analysis.ipynb`, with `notebooks/psd_utils.py`. **Copy both files into the same folder.**
+
+**Settings to edit**
+- `RUNS`: the sealed file for each time point, `{label: path to psd/<run>/psds_final.pkl}`. One entry for one time point; add a second (for example `pre` and `post`) to compare time points.
+- `GROUPS`: `{group: [animal IDs]}`. Leave empty for one group with everyone.
+- Usually leave alone: `INCLUDE_EXCLUDED` (False: animals excluded in Sleep QC are left out), `APPLY_INVERSE_FILTER` (True), `INTERP_RANGES` (the line-noise ranges to interpolate), `NORM_BAND` (1–100 Hz), `BANDS`, `FREQ_RANGE`, `COLOR_MAP`, `SEX_MAP` (orders Prism columns males first).
+
+**What it does**
+1. Loads each `psds_final.pkl` and prints which excluded animals were left out.
+2. Applies the low-frequency correction (the "inverse filter", 0.5–3.5 Hz). **This is where the correction is applied; the saved PSD files do not include it.**
+3. Bridges the 60 Hz and 120 Hz line noise by interpolation, and builds a *normalized* spectrum (each spectrum divided by its own power from 1 to 100 Hz).
+4. Plots group mean spectra with standard-error bands (channel by state), the low-frequency view, the normalized spectra, and (with two time points) every group at every time point overlaid.
+5. Plots one line per animal, to spot an animal that differs from the rest.
+6. Computes power in each band (the area under the spectrum) for the interpolated and the normalized spectra, saves them as CSV, and draws box plots with every animal as a dot. Outliers (beyond 1.5 × the interquartile range, within each state, channel and group) are outlined and labelled with the animal ID.
+7. Writes workbooks for GraphPad Prism: spectra and band power, raw and normalized, one per time point, one sheet per channel and state.
+
+**Outputs** are in `OUT_DIR` (default `psd_analysis/` next to the notebook): `figures/` (PNGs), `band_power.csv`, `band_power_normalized.csv`, and the `prism_*.xlsx` files.
+
+**If something goes wrong**
+- "The inverse filter needs 7 frequency bins ... (0.5 Hz resolution)": the PSDs were computed at another resolution. Set `APPLY_INVERSE_FILTER = False`, or ask whether the correction applies to your data.
+- "Not in any group" lists animals missing from `GROUPS`; "In GROUPS but not in the data" lists animals that were not found (a misspelled ID, or an excluded animal).
+- A file written on Windows opens fine on macOS or Linux.
+
+### Sleep analysis
 
 Copy `notebooks/sleep_by_hour.ipynb` for each analysis, edit the Settings cell, Run All. Use `sleep_by_hour_walkthrough.ipynb` to see how the numbers are made.
 **Settings to check:** `PROJECT_ROOT`, `GROUPS`, `INCLUDE_EXCLUDED`, `BIN_HOURS` (2), `BEGIN_HR` (6 = lights on), `TZ` (**default `America/Chicago`: change it**), `STATE_COLUMN` (`final_state`).

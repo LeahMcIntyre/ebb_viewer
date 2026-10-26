@@ -258,7 +258,7 @@ Details of the statuses and what each step does with an excluded animal: [sleep_
 - **Confidence:** needs discussion until the coefficients are documented
 - **Affects results?** Yes, if reported PSDs include the correction.
 - **Where in code:** `INVERSE_FILTER` and `FILTER_RANGE` in `src/ebb_viewer/widgets/psd_graph_widget.py`.
-- **Scope (confirmed from the code):** The inverse filter and the interpolation are toggles in the PSD review plot, applied to a copy of the data at display time. Nothing else in the code uses them: the stored PSD files, `psds_final.pkl` and the Prism/xlsx export contain the **uncorrected** PSDs. The methods should say that the low-frequency correction was applied only for visual review, unless you apply it elsewhere (for example in the analysis notebooks).
+- **Scope (confirmed from the code):** In the PSD review plot, the inverse filter and the interpolation are toggles applied to a copy of the data at display time. The stored PSD files, `psds_final.pkl` and the Excel export contain the **uncorrected** PSDs. The correction is applied **in the analysis**: `notebooks/psd_analysis.ipynb` (via `psd_utils.records_to_df`) multiplies the 0.5–3.5 Hz bins by the same factors before anything is plotted or summarized, and interpolates the line noise (58–62 and 118–122 Hz by default) before computing band power. The methods should say that the correction and the interpolation were applied at analysis, not in the saved PSDs.
 
 ### Masked samples are removed, not zeroed
 - **Stage:** PSD estimation
