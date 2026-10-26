@@ -31,43 +31,21 @@ Work **top to bottom in the sidebar**. **Home** shows where you are: a strip of 
 
 You need three things: **conda** (Miniconda is fine), **git**, and access to the GitHub repository (ask Leah to add you). You also need a **SleepyRat** account (https://sleepyrat.ai/).
 
-**Windows:** follow the click-by-click [Windows setup guide](windows_setup.md).
+Follow the click-by-click [Windows setup guide](windows_setup.md). It takes you from nothing to a working install. (This quick start is written for Windows; commands below are typed into **Anaconda Prompt**.)
 
-**macOS / Linux:** in a terminal, run these one at a time. (If git asks you to sign in, use your GitHub account; GitHub no longer accepts a password on the command line, so use the browser sign-in or a personal access token.)
+The environment already includes everything the analysis notebooks need (seaborn and JupyterLab). **If you created your environment before that was added**, run this once with `(ebb-dev)` active (or run `conda env update -f envs\ebb-dev.yml --prune` from the `ebb_viewer` folder):
 
-```bash
-git clone https://github.com/LeahMcIntyre/ebb_viewer.git
-```
-
-```bash
-cd ebb_viewer
-```
-
-```bash
-conda env create -f envs/ebb-dev.yml
-```
-
-```bash
-conda activate ebb-dev
-```
-
-```bash
-pip install -e .
-```
-
-The environment already includes everything the analysis notebooks need (seaborn and JupyterLab). **If you created your environment before that was added**, run this once with `(ebb-dev)` active (or run `conda env update -f envs/ebb-dev.yml --prune` from the `ebb_viewer` folder):
-
-```bash
+```bat
 pip install seaborn jupyterlab
 ```
 
-**Start the app** (every time: open a terminal, activate the environment, then run it):
+**Start the app** (every time: open **Anaconda Prompt**, activate the environment, then run it):
 
-```bash
+```bat
 conda activate ebb-dev
 ```
 
-```bash
+```bat
 ebb-viewer
 ```
 
@@ -88,16 +66,16 @@ A window opens and asks you to choose a **project folder** (see Part 2).
 
 Put the SWD `.mat` files in a folder called `swd/` and the annotation `.txt` files in a folder called `annotations/` (both optional), then, with `(ebb-dev)` active:
 
-```bash
-ebb-combine swd --dir /path/to/project/swd --move-short-files
+```bat
+ebb-combine swd --dir C:\path\to\project\swd --move-short-files
 ```
 
-```bash
-ebb-combine annotations --dir /path/to/project/annotations --move-short-files
+```bat
+ebb-combine annotations --dir C:\path\to\project\annotations --move-short-files
 ```
 
-```bash
-ebb-combine edf --dir /path/to/project --fs 5000 --move-short-files
+```bat
+ebb-combine edf --dir C:\path\to\project --fs 5000 --move-short-files
 ```
 
 This keeps the first 24 h of each chunk and joins them into one `…_COMBINED.edf`. The EDF step needs a lot of free memory (about 55 GB for two chunks), so close other programs first. Details: user guide, section 3.
