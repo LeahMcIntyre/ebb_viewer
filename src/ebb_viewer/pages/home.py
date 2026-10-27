@@ -656,13 +656,15 @@ class HomePage(QWidget):
     # Actions
     # ---------------------------------------------------------------
     def _on_cell_double_clicked(self, row: int, col: int) -> None:
-        """Dispatch per-cell double-click actions (edit notes)."""
+        """Dispatch per-cell double-click actions (edit notes, open the animal in the viewer)."""
         # Resolve against the rendered row cache so the index always points
         # to what the user sees, even if the manifest has changed since.
         if row >= len(self._table_rows):
             return
         if col == _COL_NOTES:
             self._edit_notes(self._table_rows[row])
+        elif col == _COL_ANIMAL:
+            self._open_edf_for_animal(self._table_rows[row])
 
     def _edit_notes(self, entry: ManifestEntry) -> None:
         """Open the notes editor for an animal and persist any change."""
@@ -834,7 +836,12 @@ class HomePage(QWidget):
     ) -> None:
         """Populate one row in the animals table (see ``_row_facts`` for the args)."""
         pre = Path(entry.preprocessed_edf).name if entry.preprocessed_edf else None
-        self.table.setItem(row_idx, _COL_ANIMAL, make_cell(entry.animal_id, tooltip=pre))
+        open_hint = "Double-click to open in the EEG viewer"
+        self.table.setItem(
+            row_idx,
+            _COL_ANIMAL,
+            make_cell(entry.animal_id, tooltip=f"{pre}\n{open_hint}" if pre else open_hint),
+        )
         self.table.setItem(
             row_idx,
             _COL_SPINDLE_OUT,

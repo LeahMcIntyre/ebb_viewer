@@ -659,3 +659,21 @@ def test_swd_chip_stays_visible_and_marked_optional_when_review_is_off(qapp, tmp
     chip = page._chips[_SWD_STEP_IDX]
     assert not chip.isHidden()
     assert "(optional)" in chip.text()
+
+
+def test_double_click_animal_column_opens_that_animals_viewer(qapp, tmp_path: Path, monkeypatch):
+    _seed_notes_animal(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    row_idx = next(i for i, e in enumerate(page._table_rows) if e.animal_id == "AM001")
+    opened = []
+    monkeypatch.setattr(page, "_open_edf_for_animal", opened.append)
+
+    page._on_cell_double_clicked(row_idx, home_mod_col("Animal"))
+
+    assert [e.animal_id for e in opened] == ["AM001"]
+
+
+def home_mod_col(name: str) -> int:
+    from ebb_viewer.pages.home import _COLUMNS
+
+    return _COLUMNS.index(name)
