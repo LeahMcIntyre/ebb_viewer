@@ -327,13 +327,13 @@ def _attention_button_texts(page) -> list[str]:
     return [b.text() for b in page._attn_container.findChildren(QPushButton)]
 
 
-def test_review_card_offers_open_and_ok_only(qapp, tmp_path: Path):
-    """A needs_review animal gets a card with Open EDF / OK — no rerun controls."""
+def test_review_card_offers_open_ok_and_exclude_only(qapp, tmp_path: Path):
+    """A needs_review animal gets a card with Open EDF / OK / Exclude — no rerun controls."""
     from PyQt6.QtWidgets import QComboBox
 
     _seed_manifest(tmp_path, psd_status={}, sleep_qc="needs_review")
     page = _make_page(qapp, tmp_path)
-    assert _attention_button_texts(page) == ["Open EDF", "✓ OK"]
+    assert _attention_button_texts(page) == ["Open EDF", "✓ OK", "Exclude"]
     assert page._attn_container.findChildren(QComboBox) == []
 
 
@@ -677,3 +677,47 @@ def home_mod_col(name: str) -> int:
     from ebb_viewer.pages.home import _COLUMNS
 
     return _COLUMNS.index(name)
+
+
+def test_review_card_exclude_records_reason_and_emits(qapp, tmp_path: Path, monkeypatch):
+    import ebb_viewer.pages.home as home_mod
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        has_spindle=True,
+        sleep_qc="needs_review",
+    )
+    m.save()
+    page = _make_page(qapp, tmp_path)
+    emitted = []
+    page.manifest_changed.connect(lambda: emitted.append(1))
+
+    def fake_exclude(parent, manifest, animal_id, stage):
+        manifest.exclude_sleep_qc(animal_id, "bad EMG", stage)
+        return True
+
+    monkeypatch.setattr(home_mod, "exclude_with_reason", fake_exclude)
+    page._queue_exclude("AM001")
+
+    entry = Manifest.load(tmp_path).get("AM001")
+    assert entry.sleep_qc == "excluded" and "bad EMG" in entry.notes
+    assert emitted
+
+
+def test_review_card_exclude_cancelled_changes_nothing(qapp, tmp_path: Path, monkeypatch):
+    import ebb_viewer.pages.home as home_mod
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        has_spindle=True,
+        sleep_qc="needs_review",
+    )
+    m.save()
+    page = _make_page(qapp, tmp_path)
+    monkeypatch.setattr(home_mod, "exclude_with_reason", lambda *a: False)
+    page._queue_exclude("AM001")
+    assert Manifest.load(tmp_path).get("AM001").sleep_qc == "needs_review"

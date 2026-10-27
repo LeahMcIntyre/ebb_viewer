@@ -34,6 +34,7 @@ from ebb.process.sleep_flagging import METRIC_BY_KEY
 from ebb_viewer.edf_viewer.eeg_viewer import launch_edf_window
 from ebb_viewer.pipeline import psd_params as _psd_params
 from ebb_viewer.pipeline.manifest import (
+    STAGE_SLEEP_QC,
     Manifest,
     ManifestEntry,
     exclusion_stage,
@@ -46,6 +47,7 @@ from ebb_viewer.pipeline.manifest import (
 from ebb_viewer.pipeline.naming import drink_mask_rel
 from ebb_viewer.pipeline.swd_review import find_swd_file, swd_review_gaps
 from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
+from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.table_helpers import make_cell
 
@@ -999,6 +1001,12 @@ class HomePage(QWidget):
         btn_ok.clicked.connect(lambda _, mid=entry.animal_id: self._queue_flag_ok(mid))
         h.addWidget(btn_ok)
 
+        btn_exclude = QPushButton("Exclude")
+        btn_exclude.setToolTip("Exclude this animal from analysis (a reason is required)")
+        btn_exclude.setFixedHeight(24)
+        btn_exclude.clicked.connect(lambda _, mid=entry.animal_id: self._queue_exclude(mid))
+        h.addWidget(btn_exclude)
+
         return row_w
 
     def _make_drink_mask_card(self, entry: ManifestEntry) -> QWidget:
@@ -1025,6 +1033,13 @@ class HomePage(QWidget):
         # to a name makes the persistence boundary visible to readers.
         manifest = Manifest.load(self.project_root)
         manifest.flag_sleep_qc(animal_id, "ok")
+        self._refresh()
+        self.manifest_changed.emit()
+
+    def _queue_exclude(self, animal_id: str) -> None:
+        manifest = Manifest.load(self.project_root)
+        if not exclude_with_reason(self, manifest, animal_id, STAGE_SLEEP_QC):
+            return
         self._refresh()
         self.manifest_changed.emit()
 
