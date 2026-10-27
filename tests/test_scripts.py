@@ -18,9 +18,20 @@ def _load(name):
     return module
 
 
+PLACEHOLDERS = {
+    "sleep_by_hour": {"PROJECT_ROOT": Path("/path/to/your/project"), "GROUPS_CSV": None},
+    "psd_analysis": {
+        "RUNS": {"pre": Path("/path/to/your/project/psd/default/psds_final.pkl")},
+        "GROUPS_CSV": None,
+    },
+}
+
+
 @pytest.mark.parametrize("name", ANALYSIS_SCRIPTS)
 def test_script_stops_on_placeholder_settings(name, capsys):
     module = _load(name)
+    for key, value in PLACEHOLDERS[name].items():  # whatever the file's SETTINGS currently say
+        setattr(module, key, value)
     with pytest.raises(SystemExit) as exc:
         module.main()
     assert exc.value.code == 1
