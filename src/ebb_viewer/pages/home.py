@@ -604,9 +604,9 @@ class HomePage(QWidget):
             None,
         )
         for i, (st, chip, short) in enumerate(zip(statuses, self._chips, _STEP_SHORT, strict=True)):
-            chip.setVisible(not (i == _SWD_STEP_IDX and st.kind == "off"))
             color = _GUIDE_ICON_COLOR[st.kind]
-            chip.setText(f"{_GUIDE_ICON[st.kind]} {short}")
+            optional = " (optional)" if i == _SWD_STEP_IDX and st.kind == "off" else ""
+            chip.setText(f"{_GUIDE_ICON[st.kind]} {short}{optional}")
             chip.setToolTip(f"{_STEP_LABELS[i]}: {st.description}")
             weight = "bold" if i == next_idx else "normal"
             bg = _GUIDE_ROW_HIGHLIGHT if i == next_idx else "transparent"

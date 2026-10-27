@@ -10,6 +10,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QMessageBox,
@@ -109,6 +110,19 @@ class ReclassifyPage(QWidget):
         apply_primary_button(self.btn_run)
         self.btn_run.clicked.connect(self._run)
         root.addWidget(self.btn_run)
+
+        swd_row = QHBoxLayout()
+        swd_lbl = QLabel(
+            "Optional: if you have SWD detections, you can review the epochs that overlap "
+            "them before Sleep QC. Skip this to go straight to Sleep QC."
+        )
+        swd_lbl.setWordWrap(True)
+        swd_lbl.setStyleSheet("color: #555; font-size: 12px;")
+        swd_row.addWidget(swd_lbl, 1)
+        btn_go_swd = QPushButton("SWD review (optional) →")
+        btn_go_swd.clicked.connect(lambda: self.navigate_to.emit("swd_review"))
+        swd_row.addWidget(btn_go_swd)
+        root.addLayout(swd_row)
 
         btn_go_qc = QPushButton("→ Sleep QC")
         btn_go_qc.clicked.connect(lambda: self.navigate_to.emit("sleep_qc"))

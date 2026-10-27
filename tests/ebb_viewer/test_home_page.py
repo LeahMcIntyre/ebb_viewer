@@ -650,3 +650,12 @@ def test_review_card_shows_emg_gate_in_brackets_when_it_was_applied(qapp, tmp_pa
     assert "[EMG gate]" not in _card_texts(page, entry("AM002", False))
     assert "[EMG gate]" not in _card_texts(page, entry("AM003", None))
     assert any(t.startswith("Flagged:") for t in _card_texts(page, entry("AM001", True)))
+
+
+def test_swd_chip_stays_visible_and_marked_optional_when_review_is_off(qapp, tmp_path: Path):
+    from ebb_viewer.pages.home import _SWD_STEP_IDX
+
+    page = _make_page(qapp, tmp_path)
+    chip = page._chips[_SWD_STEP_IDX]
+    assert not chip.isHidden()
+    assert "(optional)" in chip.text()
