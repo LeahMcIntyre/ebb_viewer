@@ -265,11 +265,16 @@ class SleepQCGridPage(QWidget):
         if not entries:
             self._hint_frame.setVisible(False)
             return
-        has_review = any(e.sleep_qc == "needs_review" for e in entries)
+        n_review = sum(1 for e in entries if e.sleep_qc == "needs_review")
+        has_review = n_review > 0
         all_decided = all(e.sleep_qc in READY_STATUSES for e in entries)  # ok or excluded
         if has_review:
-            self._hint_lbl.setText("Check animals flagged for EDF review.")
-            self._hint_btn.setText("→ Home (review flagged EDFs)")
+            self._hint_lbl.setText(
+                f"{n_review} animal{'s' if n_review != 1 else ''} flagged for review. EDFs open "
+                "from <b>Home</b>: double-click the animal ID there, inspect the trace, then "
+                "come back and mark it OK or Exclude."
+            )
+            self._hint_btn.setText("→ Home (open EDFs)")
             self._nav_hint_dest = "home"
             self._hint_frame.setStyleSheet(
                 "QFrame { background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; }"
