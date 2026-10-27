@@ -48,7 +48,7 @@ review) and excluded dots are faded. Click a dot, then **Flag for Review**, to s
 
 | Metric | Default threshold |
 |---|---|
-| Short (1-2 epoch) NREM bouts per file | above 400 |
+| Short (1-2 epoch) NREM bouts per hour | above 6 |
 | NREM bouts per dark hour (20:00 to 06:00) | above 15 |
 | REM % of the file | above 10 |
 | NREM % of the file | below 30 |

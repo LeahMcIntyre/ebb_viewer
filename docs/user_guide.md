@@ -385,7 +385,7 @@ Details: [sleep_reclassification.md](sleep_reclassification.md) §5. Decisions: 
 
 | Metric | Default threshold |
 |---|---|
-| Short (1–2 epoch) NREM bouts per file | above 400 |
+| Short (1–2 epoch) NREM bouts per hour | above 6 |
 | NREM bouts per dark hour | above 15 |
 | REM % of the file | above 10 |
 | NREM % of the file | below 30 |
