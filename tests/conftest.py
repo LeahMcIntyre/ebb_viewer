@@ -6,6 +6,8 @@ import sys
 
 import pytest
 
+# The Qt tests run headless (offscreen), where there is no OpenGL: keep the viewer on software rendering.
+os.environ["EBB_VIEWER_USE_OPENGL"] = "0"
 
 @pytest.fixture(scope="session")
 def qapp():

@@ -289,6 +289,7 @@ Both notebooks are in the `analysis/` folder. **Make a copy for each analysis.**
 | Upload & Download fails or stops | Click it again. Finished uploads and downloads are skipped. |
 | An animal is missing from a list | Check that its `.edf` is directly in the project folder and the file name starts with its ID. |
 | You excluded an animal by mistake | In **Sleep QC**, click **Exclude** again on that animal; it goes back to needs-review. |
+| The EEG viewer is blank, glitchy or crashes when it opens a recording | The viewer draws with OpenGL by default. Turn that off with `EBB_VIEWER_USE_OPENGL=0` (for example `EBB_VIEWER_USE_OPENGL=0 ebb-viewer`); it is slower on long recordings but works without OpenGL. |
 | A notebook says it cannot find `psd_utils` | Copy `psd_utils.py` into the same folder as the notebook. |
 | A notebook says `seaborn` or `jupyter` is missing | Your environment is older than the notebooks. Run `pip install seaborn jupyterlab` with `(ebb-dev)` active. |
 

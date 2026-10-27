@@ -26,7 +26,9 @@ from ebb_viewer.edf_viewer.state_legend import ReclassPill, StateLegend
 pg.setConfigOption("background", "w")
 pg.setConfigOption("foreground", "k")
 pg.setConfigOptions(antialias=True)
-if os.environ.get("EBB_VIEWER_USE_OPENGL"):
+# OpenGL rendering makes panning long traces several times faster. Set EBB_VIEWER_USE_OPENGL=0
+# (or off / false / no) to turn it off, e.g. over remote desktop or without working OpenGL.
+if os.environ.get("EBB_VIEWER_USE_OPENGL", "1").strip().lower() not in ("", "0", "off", "false", "no"):
     pg.setConfigOptions(useOpenGL=True)
 
 # Shift+1..9 produces different key codes on most platforms (!, @, # …).
