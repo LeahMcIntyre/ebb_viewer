@@ -534,6 +534,7 @@ class SleepQCGridPage(QWidget):
         hint_layout = QHBoxLayout(self._hint_frame)
         hint_layout.setContentsMargins(10, 6, 10, 6)
         self._hint_lbl = QLabel()
+        self._hint_lbl.setWordWrap(True)
         hint_layout.addWidget(self._hint_lbl, 1)
         self._hint_btn = QPushButton()
         hint_layout.addWidget(self._hint_btn)
