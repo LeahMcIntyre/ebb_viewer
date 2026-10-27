@@ -392,6 +392,8 @@ Details: [sleep_reclassification.md](sleep_reclassification.md) §5. Decisions: 
 | Wake % of the file | above 70 |
 | Max REM % in any 2-hour bin | at least 35 |
 
+Short NREM bouts and NREM bouts per dark hour are **rates** (per hour), so a 48 h and a 72 h recording are judged on the same scale. If you edit thresholds in `manifest.json`, a saved value for a metric that no longer exists (for example the old per-file short-bout count) is ignored.
+
 An animal that passes the threshold on **any** of the six metrics usually has suspicious sleep data, which may mean noise or misclassification. These thresholds came from our own data; **use them as a starting point**, not as rules. **Animals past a threshold are flagged for review automatically** when the page loads its data, if they have no decision yet: a red line under the page description lists them ("Flagged for review automatically"), and they appear on Home under Needs Attention. Animals you have already marked OK, Excluded or Review are never changed. You can also flag any other animal yourself: **click its dot, then click "Flag for Review"**. This marks it `needs_review`. To clear an automatic flag, click **Review** again on that animal (it goes back to not decided; the page flags it again the next time it loads its data if it is still past a threshold).
 
 **Step 2: First pass, the Sleep view.** Click **Sleep** (the **VIEW** buttons, top right) and go through **every** animal. For each, look for anything very out of place or wrong looking: is the sleep too fragmented, are the fractions of time in each state about what you would expect? Under DISPLAY, **Group** shows all animals together (page by page with **◄ Prev** / **Next ►**) and **Animal** shows a single animal at a time.

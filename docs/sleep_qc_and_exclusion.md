@@ -55,6 +55,10 @@ review) and excluded dots are faded. Click a dot, then **Flag for Review**, to s
 | Wake % of the file | above 70 |
 | Max REM % in any 2-hour bin | at least 35 |
 
+The two bout metrics are rates per hour, not counts per file, so recordings of different lengths
+are comparable. A saved threshold for a metric that no longer exists (for example the old per-file
+`nrem_short`) is dropped when the manifest loads.
+
 The cutoffs are starting points. The first, second, fourth and sixth come from the
 spindle-validation notebook; REM (10) was read from that notebook's REM plot and Wake (70) is a
 placeholder. They live in `flag_thresholds` in `manifest.json` (missing keys use the defaults);
