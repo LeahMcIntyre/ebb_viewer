@@ -98,10 +98,6 @@ _UI_ONLY_KWARGS = (
     "ann_match_mode",  # but the widget emits a different key shape — re-keyed by
     "ann_pad_before",  # the page before forwarding via ann_params, so strip here.
     "ann_pad_after",
-    "time_filter_enabled",
-    "tod_start",
-    "tod_end",
-    "time_filter_days",  # legacy
     "hw_enabled",
 )
 
@@ -486,8 +482,7 @@ def _prepare_estimator_kwargs(
 ) -> tuple[dict, list[tuple[float, float]] | None, list[int] | None, dict[str, Path]]:
     """Prepare kwargs to pass to `estimate_psd` via `partial`.
 
-    Mutates `kwargs` in place (stripping UI-only keys, migrating legacy
-    `hour_window` → `hour_windows`, translating `states` preset list →
+    Mutates `kwargs` in place (stripping UI-only keys, translating `states` preset list →
     `labels` dict, spreading `ann_params` into `kwargs`, setting
     `offset_path` if supplied) and returns the surviving values that need
     to be passed positionally rather than via `kwargs`.
@@ -500,9 +495,6 @@ def _prepare_estimator_kwargs(
         kwargs.pop(key, None)
 
     hour_windows = kwargs.pop("hour_windows", None)
-    legacy_hw = kwargs.pop("hour_window", None)  # migrate old single-window saves
-    if hour_windows is None and legacy_hw is not None:
-        hour_windows = [tuple(legacy_hw)]
     selected_days = kwargs.pop("selected_days", None)
 
     # Translate preset-key list (as saved in psd_params.json) → labels dict.

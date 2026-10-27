@@ -42,6 +42,7 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 
 - [ ] The combo is set implicitly by writing SPINDLE EDFs. Home now shows it ("default; set on 2. Spindle EDFs" until then); consider a deliberate way to see and change it.
 - [ ] Preprocess page: no cancel button (see `TODO.md`).
+- [ ] **Document the pipeline's outputs.** Write a reference for what everything in the output means: `manifest.json` fields, `psd/<RUN>/psd_params.json` keys (including how `use_drink_mask` / `drink_pad` change after a drink-mask rerun, and `swd_mode` vs `use_swd_mask`), the PSD pkls (`psds_<combo>.pkl`, `psds_drink.pkl`, `psds_<combo>_drink.pkl`, `psds_final.pkl`), the `spindle_outputs/<COMBO>/*.csv` state columns (`final_state` vs the original states), `excluded_animals.csv`, and the exported masks.
 
 ## Done
 

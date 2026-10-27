@@ -715,6 +715,7 @@ class DrinkMaskPage(QWidget):
             except Exception as e:
                 failed.append(f"{animal_id}: {e}")
         manifest.save()
+        self._record_drink_params(run_name)
         self._pending_animal_ids = []
         if failed:
             msg = "\n".join(failed)
@@ -734,6 +735,15 @@ class DrinkMaskPage(QWidget):
         )
         self._hint_frame.setVisible(True)
         self._refresh()
+
+    def _record_drink_params(self, run_name: str) -> None:
+        """Record in psd_params.json that drink masks were applied, and the pad used."""
+        params = psd_params.load(self.project_root, run_name)
+        if params is None:
+            return
+        params["use_drink_mask"] = True
+        params["drink_pad"] = int(params.get("drink_pad", 2))
+        psd_params.save(self.project_root, run_name, params)
 
     def _on_error(self, msg: str):
         self._computing = False

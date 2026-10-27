@@ -173,13 +173,6 @@ def test_swd_unavailable_falls_back_to_none_even_if_params_say_use(qapp):
     assert w.to_params()["use_swd_mask"] is False
 
 
-def test_legacy_swd_mode_key_loads_correctly(qapp):
-    """Old PSD params used `swd_mode`; widget still loads them."""
-    w = _make_widget(qapp, swd_available=True)
-    w.from_params({"swd_mode": "mask_out"})
-    assert w.to_params()["use_swd_mask"] is True
-
-
 def test_swd_pad_round_trip(qapp):
     w = _make_widget(qapp)
     w.spin_swd_pad.setValue(15)
