@@ -327,6 +327,16 @@ def test_reclassify_done_reports_gate_count(tmp_path):
     assert "2 reclassified" in s.description and "gate on 1" in s.description
 
 
+def test_reclassify_attention_when_gate_record_missing(tmp_path):
+    _setup_filesystem(tmp_path, combos=["LFC_RSC"])
+    _write_csv(tmp_path, "A001_labels.csv", final_state=True)
+    _write_csv(tmp_path, "A002_labels.csv", final_state=True)
+    m = _make_manifest(tmp_path, {"A001": dict(reclass_gate_applied=True), "A002": {}})
+    s = compute_pipeline_status(tmp_path, m)[3]
+    assert s.kind == "attention"
+    assert "1 of 2" in s.description and "Reclassify" in s.description
+
+
 def test_reclassify_ignores_stale_manifest_flag_when_csv_lost_its_column(tmp_path):
     """Re-downloading a CSV from SleepyRat drops final_state; the manifest flag is stale."""
     _setup_filesystem(tmp_path, combos=["LFC_RSC"])

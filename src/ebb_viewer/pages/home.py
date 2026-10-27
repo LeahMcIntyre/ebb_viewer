@@ -227,9 +227,13 @@ def compute_pipeline_status(
     )
     if not step3_done:
         s_reclass = StepStatus("blocked", "Requires step 3")
+    elif n_reclassed == n_csvs and n_gate_unknown:
+        s_reclass = StepStatus(
+            "attention",
+            f"EMG gate record missing for {n_gate_unknown} of {n_csvs} — re-run Reclassify to restore it",
+        )
     elif n_reclassed == n_csvs:
-        note = f"; gate record missing for {n_gate_unknown}" if n_gate_unknown else ""
-        s_reclass = StepStatus("done", f"{n_reclassed} reclassified (EMG gate on {n_gated}{note})")
+        s_reclass = StepStatus("done", f"{n_reclassed} reclassified (EMG gate on {n_gated})")
     elif n_reclassed > 0:
         s_reclass = StepStatus(
             "attention", f"{n_csvs - n_reclassed} of {n_csvs} CSVs not reclassified"
@@ -600,9 +604,9 @@ class HomePage(QWidget):
             None,
         )
         for i, (st, chip, short) in enumerate(zip(statuses, self._chips, _STEP_SHORT, strict=True)):
-            chip.setVisible(not (i == _SWD_STEP_IDX and st.kind == "off"))
             color = _GUIDE_ICON_COLOR[st.kind]
-            chip.setText(f"{_GUIDE_ICON[st.kind]} {short}")
+            optional = " (optional)" if i == _SWD_STEP_IDX and st.kind == "off" else ""
+            chip.setText(f"{_GUIDE_ICON[st.kind]} {short}{optional}")
             chip.setToolTip(f"{_STEP_LABELS[i]}: {st.description}")
             weight = "bold" if i == next_idx else "normal"
             bg = _GUIDE_ROW_HIGHLIGHT if i == next_idx else "transparent"

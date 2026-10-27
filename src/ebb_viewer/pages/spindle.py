@@ -34,9 +34,31 @@ from PyQt6.QtWidgets import (
 
 from ebb.preprocess.edf import batch as batch_preprocess
 from ebb.preprocess.edf import spindle
-from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.pipeline.manifest import Manifest, spindle_edf_dir, spindle_output_dir
 from ebb_viewer.pipeline.theme import apply_primary_button
 from ebb_viewer.widgets.worker_helpers import launch_worker
+
+
+def combo_change_warning(project_root: Path, current: str, new: str) -> str | None:
+    """Text warning that writing ``new`` switches the project combo, or None when it doesn't matter.
+
+    It matters only when the project already holds SPINDLE files for a different ``current`` combo.
+    """
+    if new == current:
+        return None
+    has_work = any(spindle_edf_dir(current, project_root).glob("*.edf")) or any(
+        spindle_output_dir(current, project_root).glob("*.csv")
+    )
+    if not has_work:
+        return None
+    return (
+        f"This project currently uses the {current} combo, and it already has SPINDLE files for it.\n\n"
+        f"Writing {new} EDFs makes {new} the project combo in manifest.json. Home, Reclassify, "
+        f"Sleep QC and the PSD steps will then read the {new} outputs, and will not find any "
+        f"until you upload and download them.\n\n"
+        f"Your {current} files are not deleted. To switch back, edit \"combo\" in manifest.json "
+        f"to \"{current}\" yourself.\n\nWrite {new} EDFs anyway?"
+    )
 
 
 class SpindleWritePage(QWidget):
@@ -276,6 +298,15 @@ class SpindleWritePage(QWidget):
         spindle_root = self.project_root / "spindle_edfs"
         target_dir = spindle_root / combo_name
         self._pending_combo = combo_name
+
+        warning = combo_change_warning(
+            self.project_root, Manifest.load(self.project_root).combo, combo_name
+        )
+        if warning and (
+            QMessageBox.question(self, "Change the project's channel combo?", warning)
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
 
         existing = list(target_dir.glob("*_SPINDLE.edf")) if target_dir.is_dir() else []
         if existing:
