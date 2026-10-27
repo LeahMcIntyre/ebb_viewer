@@ -266,7 +266,7 @@ Details of the statuses and what each step does with an excluded animal: [sleep_
 - **Confidence:** needs discussion until the coefficients are documented
 - **Affects results?** Yes, if reported PSDs include the correction.
 - **Where in code:** `INVERSE_FILTER` and `FILTER_RANGE` in `src/ebb_viewer/widgets/psd_graph_widget.py`.
-- **Scope (confirmed from the code):** In the PSD review plot, the inverse filter and the interpolation are toggles applied to a copy of the data at display time. The stored PSD files, `psds_final.pkl` and the Excel export contain the **uncorrected** PSDs. The correction is applied **in the analysis**: `notebooks/psd_analysis.ipynb` (via `psd_utils.records_to_df`) multiplies the 0.5–3.5 Hz bins by the same factors before anything is plotted or summarized, and interpolates the line noise before computing band power. The `INTERP_RANGES` setting defaults to 56–64 Hz and 118–122 Hz, which is right for runs that used the 60 Hz notch filter (the default); it must be changed to 58–62 Hz and 118–122 Hz for runs computed without the notch. The setting is explicit in the Settings cell, with a comment, and the notebook prints the ranges it used. The notch only covers 60 Hz, so 120 Hz keeps the narrower range.
+- **Scope (confirmed from the code):** In the PSD review plot, the inverse filter and the interpolation are toggles applied to a copy of the data at display time. The stored PSD files, `psds_final.pkl` and the Excel export contain the **uncorrected** PSDs. The correction is applied **in the analysis**: `analysis/psd_analysis.ipynb` (via `psd_utils.records_to_df`) multiplies the 0.5–3.5 Hz bins by the same factors before anything is plotted or summarized, and interpolates the line noise before computing band power. The `INTERP_RANGES` setting defaults to 56–64 Hz and 118–122 Hz, which is right for runs that used the 60 Hz notch filter (the default); it must be changed to 58–62 Hz and 118–122 Hz for runs computed without the notch. The setting is explicit in the Settings cell, with a comment, and the notebook prints the ranges it used. The notch only covers 60 Hz, so 120 Hz keeps the narrower range.
 
 ### Masked samples are removed, not zeroed
 - **Stage:** PSD estimation
@@ -394,7 +394,7 @@ Most of it lives in `manifest.json`, `psd_params.json` and the project folders. 
 
 ### A notebook, not a GUI page
 - **Stage:** Sleep analysis (after Finalize)
-- **Chosen:** Two notebooks in `notebooks/`: `sleep_by_hour.ipynb` (copy it, edit the Settings cell, Run All) and `sleep_by_hour_walkthrough.ipynb` (the same calculation explained step by step).
+- **Chosen:** Two notebooks in `analysis/` (each also as a script): `sleep_by_hour.ipynb` (copy it, edit the Settings cell, Run All) and `sleep_by_hour_walkthrough.ipynb` (the same calculation explained step by step).
 - **Why:** A notebook is more reusable. The user can see how the numbers are computed, and can get and save the plots and tables. The quick-run notebook is for running your own data (copy and go); the walkthrough is for someone who wants to understand how the data are used and aligned.
 - **Output:** `<project>/sleep_analysis/` with Prism-ready workbooks (`prism_sleep_by_hour.xlsx`, `prism_sleep_whole_file.xlsx`), tidy CSVs and PNG plots.
 - **Confidence:** settled
@@ -403,7 +403,7 @@ Most of it lives in `manifest.json`, `psd_params.json` and the project folders. 
 - **Stage:** Analysis notebooks (PSD analysis, sleep by hour, walkthrough)
 - **Chosen:** Besides a typed `GROUPS` dictionary, each notebook accepts `GROUPS_CSV`, the path to a CSV in either of two layouts: one row per animal (`animal`, `group` columns), or one column per group with the animal IDs below the group name. The layout is detected from the header.
 - **Recommended layout:** One row per animal. Each animal appears once, so a duplicate assignment is easy to see (and is an error), and the file can be sorted and filtered. The one-column-per-group layout is accepted because it is quick to type and matches Prism's layout.
-- **Where in code:** `read_groups_csv` in `notebooks/psd_utils.py`. The two sleep notebooks are self-contained, so each carries an identical copy; a test checks that the copies match.
+- **Where in code:** `read_groups_csv` in `analysis/psd_utils.py`. The two sleep notebooks are self-contained, so each carries an identical copy; a test checks that the copies match.
 - **Confidence:** settled
 
 ### Time bins: 2-hour bins aligned to clock time, starting at 6 AM

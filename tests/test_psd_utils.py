@@ -1,4 +1,4 @@
-"""Tests for ``notebooks/psd_utils.py`` (helpers for the PSD analysis notebook)."""
+"""Tests for ``analysis/psd_utils.py`` (helpers for the PSD analysis notebook)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "notebooks"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "analysis"))
 import psd_utils as u  # noqa: E402
 
 FREQS = np.arange(0, 125.5, 0.5)
@@ -300,7 +300,7 @@ def test_notebooks_that_read_groups_use_the_same_function_as_psd_utils(notebook:
     import inspect
     import json
 
-    nb = json.loads((Path(__file__).resolve().parents[1] / "notebooks" / notebook).read_text())
+    nb = json.loads((Path(__file__).resolve().parents[1] / "analysis" / notebook).read_text())
     sources = ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
     if notebook == "psd_analysis.ipynb":
         assert any("psd_utils.read_groups_csv(GROUPS_CSV)" in s for s in sources)
@@ -315,7 +315,7 @@ def test_notebook_copy_of_read_groups_csv_works(tmp_path: Path):
     import json
 
     nb = json.loads(
-        (Path(__file__).resolve().parents[1] / "notebooks" / "sleep_by_hour.ipynb").read_text()
+        (Path(__file__).resolve().parents[1] / "analysis" / "sleep_by_hour.ipynb").read_text()
     )
     cell = next(
         "".join(c["source"]) for c in nb["cells"] if "def read_groups_csv(" in "".join(c["source"])
@@ -371,7 +371,7 @@ def test_psd_notebook_has_no_cwd_relative_output_folder():
     import json
 
     nb = json.loads(
-        (Path(__file__).resolve().parents[1] / "notebooks" / "psd_analysis.ipynb").read_text()
+        (Path(__file__).resolve().parents[1] / "analysis" / "psd_analysis.ipynb").read_text()
     )
     settings = next(
         "".join(c["source"])
@@ -386,7 +386,7 @@ def test_psd_notebook_says_where_results_go_and_how_to_change_it():
     import json
 
     nb = json.loads(
-        (Path(__file__).resolve().parents[1] / "notebooks" / "psd_analysis.ipynb").read_text()
+        (Path(__file__).resolve().parents[1] / "analysis" / "psd_analysis.ipynb").read_text()
     )
     code = ["".join(c["source"]) for c in nb["cells"] if c["cell_type"] == "code"]
     settings, loader, last = (

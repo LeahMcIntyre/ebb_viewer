@@ -24,7 +24,7 @@ the level of detail the paper will need.
 | `docs/psd_methods.md` | Closest thing to methods text today. Seed for document 3. Its values are read from the code, so keep it as the parameter reference. |
 | `PITFALLS.md` | Developer-facing. Mine for decisions whose "why" is already written down. |
 | `TODO.md` | Open scientific questions (SWD masks and TS policy, REM-in-multiple-groups, lumped-state SD threshold). These belong in the log as "Open questions". |
-| `notebooks/sleep_by_hour*.ipynb` | User guide, Sleep analysis section. |
+| `analysis/sleep_by_hour*.ipynb` | User guide, Sleep analysis section. |
 | `README.txt` | Needs the acknowledgements/credit fixed before anything is public. |
 
 ## Steps

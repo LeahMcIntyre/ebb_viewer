@@ -1,7 +1,8 @@
-"""Helpers for ``psd_analysis.ipynb``: turn a sealed ``psds_final.pkl`` into tables and plots.
+"""Helpers for ``psd_analysis.ipynb`` and ``psd_analysis.py``: turn a sealed ``psds_final.pkl`` into
+tables and plots.
 
-Copy this file and ``psd_analysis.ipynb`` into your analysis folder, edit the Settings cell of the
-notebook, and Run All. The functions are small and each does one step, so the notebook reads as a
+Keep this file in the same folder as the notebook or script. Edit the notebook's Settings cell (or
+the script's SETTINGS block) and run it. The functions are small and each does one step, so the notebook reads as a
 recipe: load -> assign groups -> interpolate the line noise -> normalize -> plot -> band power ->
 export for Prism.
 

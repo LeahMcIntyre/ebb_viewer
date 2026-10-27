@@ -12,7 +12,7 @@ dependencies:
   - pyqt6
   - psutil
   - requests
-  - seaborn      # plots in notebooks/psd_utils.py
+  - seaborn      # plots in analysis/psd_utils.py
   - jupyterlab  # to run the analysis notebooks
   - pip
 

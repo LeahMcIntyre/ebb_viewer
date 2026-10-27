@@ -266,7 +266,7 @@ Do this step only if your project needs it (for example, if SWDs could make slee
 
 ### Step 10. Get your tables and plots (notebooks)
 
-Both notebooks are in the `notebooks/` folder. **Make a copy for each analysis.** Open them with JupyterLab (`jupyter lab`), edit the **Settings** cell at the top, then choose **Run → Run All Cells**.
+Both notebooks are in the `analysis/` folder. **Make a copy for each analysis.** Open them with JupyterLab (`jupyter lab`), edit the **Settings** cell at the top, then choose **Run → Run All Cells**.
 
 **PSD results**: copy `psd_analysis.ipynb` **and `psd_utils.py`** into the same folder, then set:
 - `RUNS`: the path to each `psd/<run>/psds_final.pkl` (one entry per time point).
