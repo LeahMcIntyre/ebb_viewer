@@ -266,12 +266,12 @@ Do this step only if your project needs it (for example, if SWDs could make slee
 
 ### Step 10. Get your tables and plots (notebooks)
 
-Both notebooks are in the `notebooks/` folder. **Make a copy for each analysis.** Open them with JupyterLab (`jupyter lab`), edit the **Settings** cell at the top, then choose **Run → Run All Cells**.
+Both notebooks are in the `analysis/` folder. **Make a copy for each analysis.** Open them with JupyterLab (`jupyter lab`), edit the **Settings** cell at the top, then choose **Run → Run All Cells**.
 
 **PSD results**: copy `psd_analysis.ipynb` **and `psd_utils.py`** into the same folder, then set:
 - `RUNS`: the path to each `psd/<run>/psds_final.pkl` (one entry per time point).
 - `GROUPS` (type the animal IDs in each group) **or** `GROUPS_CSV` (the path to a groups file; see Part 3).
-- `OUT_DIR` can stay as it is: results go in a `psd_analysis` folder next to your project's `psd` folder. The notebook prints the exact folder when it starts and finishes.
+- `OUT_DIR` can stay as it is: results go in `psd_analysis/<run name>` next to your project's `psd` folder, one folder per run. The notebook prints the exact folder when it starts and finishes.
 
 **Sleep results**: copy `sleep_by_hour.ipynb` and set `PROJECT_ROOT` (your project folder), `GROUPS` or `GROUPS_CSV`, and **`TZ` (your time zone: the default is `America/Chicago`)**. Results go in `<project>/sleep_analysis/`.
 

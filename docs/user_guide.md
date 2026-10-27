@@ -565,7 +565,7 @@ Decisions: [log §8](decision_log.md).
 
 ## 7. Analysis notebooks
 
-The pipeline ends at `psds_final.pkl` and the reclassified sleep states. Two sets of notebooks in `notebooks/` turn them into tables and plots. In each case, copy the notebook (and, for PSDs, the helper file) into your analysis folder, edit the Settings cell, and Run All.
+The pipeline ends at `psds_final.pkl` and the reclassified sleep states. Two sets of notebooks in `analysis/` turn them into tables and plots. In each case, copy the notebook (and, for PSDs, the helper file) into your analysis folder, edit the Settings cell, and Run All.
 
 ### Listing groups in a CSV file
 
@@ -597,7 +597,9 @@ The notebook tells the two layouts apart by the header: if the first row has col
 
 ### PSD analysis
 
-`notebooks/psd_analysis.ipynb`, with `notebooks/psd_utils.py`. **Copy both files into the same folder.**
+`analysis/psd_analysis.ipynb`, with `analysis/psd_utils.py`. **Copy both files into the same folder.** The script version, `analysis/psd_analysis.py`, needs `psd_utils.py` beside it in the same way.
+
+Prefer a script? `analysis/psd_analysis.py` does the same: edit the `SETTINGS` block at the top (lines marked `<<< CHANGE THIS`), then `python psd_analysis.py`. It stops with a plain message if a setting is still a placeholder or a file is missing, and warns if `INTERP_RANGES` does not match whether the run used the notch filter.
 
 **Settings to edit**
 - `RUNS`: the sealed file for each time point, `{label: path to psd/<run>/psds_final.pkl}`. One entry for one time point; add a second (for example `pre` and `post`) to compare time points.
@@ -616,7 +618,7 @@ The notebook tells the two layouts apart by the header: if the first row has col
 
 **`INTERP_RANGES`: leave it unless you turned the notch off.** The default, 56–64 Hz and 118–122 Hz, is for PSDs computed with the 60 Hz notch filter, which is on by default in ebb-viewer (its stopband is 57–63 Hz, so 56–64 Hz covers it). The 118–122 Hz range is for the 120 Hz peak, which the notch does not touch. **If you computed the PSDs with the notch filter turned off, change it to `[[58, 62], [118, 122]]`.** The notebook prints the ranges it used when it loads the data.
 
-**Outputs** are in `OUT_DIR`. Unless you set it, that is a folder called `psd_analysis` in the project of your first `RUNS` file, next to its `psd/` folder (for `/data/KCNT1/psd/default/psds_final.pkl`, `/data/KCNT1/psd_analysis/`); it is never the folder the notebook sits in. The notebook prints the folder in a banner ("RESULTS WILL BE SAVED IN") when it loads, and again ("ALL RESULTS ARE IN") when it finishes, and the Settings cell has a marked block explaining `OUT_DIR`. To put results somewhere else, set `OUT_DIR = Path("/path/to/results")`. The folder holds: `figures/` (PNGs), `band_power.csv`, `band_power_normalized.csv`, and the `prism_*.xlsx` files.
+**Outputs** are in `OUT_DIR`. Unless you set it, that is `psd_analysis/<run name>` in the project of your first `RUNS` file, next to its `psd/` folder (for `/data/KCNT1/psd/default/psds_final.pkl`, `/data/KCNT1/psd_analysis/default/`), so analyses of different runs from the same project do not overwrite each other. With several `RUNS` the folder is named after all of them (`default+swd_pad`); it is never the folder the notebook sits in. The notebook prints the folder in a banner ("RESULTS WILL BE SAVED IN") when it loads, and again ("ALL RESULTS ARE IN") when it finishes, and the Settings cell has a marked block explaining `OUT_DIR`. To put results somewhere else, set `OUT_DIR = Path("/path/to/results")`. The folder holds: `figures/` (PNGs), `band_power.csv`, `band_power_normalized.csv`, and the `prism_*.xlsx` files.
 
 **If something goes wrong**
 - "The inverse filter needs 7 frequency bins ... (0.5 Hz resolution)": the PSDs were computed at another resolution. Set `APPLY_INVERSE_FILTER = False`, or ask whether the correction applies to your data.
@@ -625,7 +627,9 @@ The notebook tells the two layouts apart by the header: if the first row has col
 
 ### Sleep analysis
 
-Copy `notebooks/sleep_by_hour.ipynb` for each analysis, edit the Settings cell, Run All. Use `sleep_by_hour_walkthrough.ipynb` to see how the numbers are made.
+Copy `analysis/sleep_by_hour.ipynb` for each analysis, edit the Settings cell, Run All. Use `sleep_by_hour_walkthrough.ipynb` to see how the numbers are made.
+
+Prefer a script? `analysis/sleep_by_hour.py` gives the same output: edit its `SETTINGS` block (lines marked `<<< CHANGE THIS`), then `python sleep_by_hour.py`. It checks the settings and the project first and stops with a plain message if something is missing.
 **Settings to check:** `PROJECT_ROOT`, `GROUPS` (or `GROUPS_CSV`, see above), `INCLUDE_EXCLUDED`, `BIN_HOURS` (2), `BEGIN_HR` (6 = lights on), `TZ` (**default `America/Chicago`: change it**), `STATE_COLUMN` (`final_state`).
 **Outputs** in `<project>/sleep_analysis/`: Prism workbooks, tidy CSVs, PNG plots. Metrics: fraction of time, bout count, bout duration. See [log §9](decision_log.md).
 
