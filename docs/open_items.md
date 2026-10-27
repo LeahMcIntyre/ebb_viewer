@@ -10,7 +10,7 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 - [x] SPINDLE receives the selected EEG channels plus the EMG (always included, per the Spindle EDFs page). Update log §2 "Still to confirm".
 - [ ] **Inverse filter.** Source of the coefficients (preamp model and derivation). It is display-only in the visualizer and applied at analysis in `psd_analysis.ipynb`; confirm that is intended.
 - [ ] **Bin edges.** How is a bout that spans a 2-hour bin edge counted? *(log §9)*
-- [ ] **Gate rule.** Light period (code) or dark hours (PLAN.md)? Where did the 10% tolerance come from? *(log §3)*
+- [x] **Gate rule.** Light period is right: rho 0.83 vs. 0.58 for dark hours on the 12 annotated animals; 10% is the bucketing threshold of `run_reclassification.py`. Recorded in log §3. The by-hour figures were at k = 3 while the code uses k = 5; k = 5 versions now exist at the end of both notebooks. *(log §3)*
 
 
 ## B. Evidence to find or link
