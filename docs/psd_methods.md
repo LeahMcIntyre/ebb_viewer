@@ -68,8 +68,8 @@ a sample flagged on **any** channel in the combo is masked for all of them.
 
 | Mask | Rule | Default |
 |---|---|---|
-| **Commutator** | `|x| > 2000 µV` flags a sample. Flagged samples closer than 1 s (250 samples) are merged into one event; events longer than 10 samples are extended by 1 s (250 samples) after their end. | 2000 µV; radius / pad / min length hard-coded |
-| **SD threshold** | Signal is cut into **180 s** windows. In each window, z-score every channel using its mean and SD, with commutator-masked samples **excluded from the mean/SD** so they don't inflate it. Samples with `|z| > 5` are flagged; flagged samples within **0.5 s** of each other are merged (gap filled). | 180 s, 5 SD, 0.5 s |
+| **Commutator** | `abs(x) > 2000 µV` flags a sample. Flagged samples closer than 1 s (250 samples) are merged into one event; events longer than 10 samples are extended by 1 s (250 samples) after their end. | 2000 µV; radius / pad / min length hard-coded |
+| **SD threshold** | Signal is cut into **180 s** windows. In each window, z-score every channel using its mean and SD, with commutator-masked samples **excluded from the mean/SD** so they don't inflate it. Samples with `abs(z) > 5` are flagged; flagged samples within **0.5 s** of each other are merged (gap filled). | 180 s, 5 SD, 0.5 s |
 | **SPINDLE noise** | Epochs with SPINDLE noise probability **≥ 0.5** are dropped. | 0.5 |
 | **SWD** (optional) | `.mat` file of SWD start/stop times (s) → masked. No padding in the PSD pipeline. | off unless SWD files supplied |
 | **Drink** (optional) | 1 Hz `.npy` of drinking events, each dilated **±2 s**, upsampled to 250 Hz, shifted by the per-animal video→EEG offset (CSV `Animal,Offset`). | applied only in the drink-mask rerun (§6) |
@@ -180,16 +180,12 @@ Under `psd/<run_name>/`:
 ## Open items
 
 - **Per-project values.** Defaults above are the UI defaults and the
-  openseize defaults (read from the installed `ebb-dev` environment). Confirm
-  against `psd/<run_name>/psd_params.json` for each dataset, since they can
-  be changed per run (the KCNT1 script in
-  `research/scripts/run_psd_estimation.py` uses `nstd=5` and no SWD/drink
-  masks).
+  openseize defaults (read from the installed `ebb-dev` environment). For current stxbp1 datasets, they are run with SWD and annotation masks.
 - **Segments across masked gaps.** Masked samples are removed and the
   remaining samples are streamed to Welch, so a 2 s segment can span a
   removed gap. Worth stating in methods if reviewers ask.
-- **Units.** `psd` is in (signal units)² / Hz; check the EDF's physical
-  units (µV expected) before reporting.
+- **Units.** `psd` is in (signal units)² / Hz. The raw EDFs are in µV (checked on a raw
+  file), so `psd` is in µV²/Hz, assuming preprocessing keeps µV (still to confirm).
 
 ## Source map
 
