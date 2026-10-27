@@ -385,12 +385,14 @@ Details: [sleep_reclassification.md](sleep_reclassification.md) §5. Decisions: 
 
 | Metric | Default threshold |
 |---|---|
-| Short (1–2 epoch) NREM bouts per file | above 400 |
+| Short (1–2 epoch) NREM bouts per hour | above 6 |
 | NREM bouts per dark hour | above 15 |
 | REM % of the file | above 10 |
 | NREM % of the file | below 30 |
 | Wake % of the file | above 70 |
 | Max REM % in any 2-hour bin | at least 35 |
+
+Short NREM bouts and NREM bouts per dark hour are **rates** (per hour), so a 48 h and a 72 h recording are judged on the same scale. If you edit thresholds in `manifest.json`, a saved value for a metric that no longer exists (for example the old per-file short-bout count) is ignored.
 
 An animal that passes the threshold on **any** of the six metrics usually has suspicious sleep data, which may mean noise or misclassification. These thresholds came from our own data; **use them as a starting point**, not as rules. **Animals past a threshold are flagged for review automatically** when the page loads its data, if they have no decision yet: a red line under the page description lists them ("Flagged for review automatically"), and they appear on Home under Needs Attention. Animals you have already marked OK, Excluded or Review are never changed. You can also flag any other animal yourself: **click its dot, then click "Flag for Review"**. This marks it `needs_review`. To clear an automatic flag, click **Review** again on that animal (it goes back to not decided; the page flags it again the next time it loads its data if it is still past a threshold).
 

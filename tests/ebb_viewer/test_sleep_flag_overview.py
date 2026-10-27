@@ -6,9 +6,9 @@ from unittest.mock import MagicMock
 
 from ebb_viewer.widgets.sleep_flag_overview import FlagOverview
 
-BASE = {"nrem_short": 100, "dark_bouts_h": 5, "pct_rem": 8, "pct_nrem": 50,
+BASE = {"nrem_short_h": 2, "dark_bouts_h": 5, "pct_rem": 8, "pct_nrem": 50,
         "pct_wake": 42, "max_bin_rem": 10}
-THRESHOLDS = {"nrem_short": 400, "dark_bouts_h": 15, "pct_rem": 10, "pct_nrem": 30,
+THRESHOLDS = {"nrem_short_h": 6, "dark_bouts_h": 15, "pct_rem": 10, "pct_nrem": 30,
               "pct_wake": 70, "max_bin_rem": 35}
 
 
@@ -25,8 +25,8 @@ def _click(w: FlagOverview, animal: str) -> None:
 
 def test_flagged_animals_lists_metrics_past_thresholds(qapp):
     w = FlagOverview()
-    w.set_data(_table(nrem_short=500, pct_nrem=20), THRESHOLDS, {})
-    assert w.flagged_animals() == {"A3": ["nrem_short", "pct_nrem"]}
+    w.set_data(_table(nrem_short_h=8, pct_nrem=20), THRESHOLDS, {})
+    assert w.flagged_animals() == {"A3": ["nrem_short_h", "pct_nrem"]}
 
 
 def test_empty_and_single_animal_tables_do_not_raise(qapp):
@@ -44,14 +44,14 @@ def test_nan_metric_is_skipped(qapp):
 
 def test_click_selects_and_flag_button_emits(qapp):
     w = FlagOverview()
-    w.set_data(_table(nrem_short=500), THRESHOLDS, {})
+    w.set_data(_table(nrem_short_h=8), THRESHOLDS, {})
     got, flagged = [], []
     w.animal_clicked.connect(got.append)
     w.flag_requested.connect(flagged.append)
 
     _click(w, "A3")
     assert got == ["A3"] and w.selected == "A3"
-    assert "nrem_short" not in w._strip_lbl.text()  # shows the label, not the key
+    assert "nrem_short_h" not in w._strip_lbl.text()  # shows the label, not the key
     assert "Short" in w._strip_lbl.text()
     w._btn_flag.click()
     assert flagged == ["A3"]

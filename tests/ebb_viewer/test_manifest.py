@@ -749,12 +749,12 @@ def test_flag_sleep_qc_rejects_excluded(tmp_path):
 
 def test_flag_thresholds_default_and_read_from_manifest_file(tmp_path):
     m = _make_manifest(tmp_path, {"A1": {}})
-    assert m.flag_thresholds["nrem_short"] == 400
+    assert m.flag_thresholds["nrem_short_h"] == 6
     raw = json.loads(m.path.read_text())
-    raw["flag_thresholds"] = {"nrem_short": 250}  # edited by hand in manifest.json
+    raw["flag_thresholds"] = {"nrem_short_h": 4}  # edited by hand in manifest.json
     m.path.write_text(json.dumps(raw))
     loaded = Manifest.load(tmp_path)
-    assert loaded.flag_thresholds["nrem_short"] == 250
+    assert loaded.flag_thresholds["nrem_short_h"] == 4
     assert loaded.flag_thresholds["pct_nrem"] == 30  # others keep defaults
 
 
@@ -786,9 +786,9 @@ def test_excluded_reason_carries_the_stage(tmp_path):
 def test_flag_reasons_kept_only_while_needs_review(tmp_path):
     m = Manifest(tmp_path)
     m._entries["AM001"] = ManifestEntry(animal_id="AM001", preprocessed_edf="", has_spindle=True)
-    m.flag_sleep_qc("AM001", "needs_review", ["nrem_short", "pct_rem"])
-    assert Manifest.load(tmp_path).get("AM001").flag_reasons == ["nrem_short", "pct_rem"]
-    m.flag_sleep_qc("AM001", "ok", ["nrem_short"])
+    m.flag_sleep_qc("AM001", "needs_review", ["nrem_short_h", "pct_rem"])
+    assert Manifest.load(tmp_path).get("AM001").flag_reasons == ["nrem_short_h", "pct_rem"]
+    m.flag_sleep_qc("AM001", "ok", ["nrem_short_h"])
     assert Manifest.load(tmp_path).get("AM001").flag_reasons == []
 
 
@@ -843,9 +843,9 @@ def test_auto_flag_for_review_only_touches_animals_without_a_status(tmp_path):
         )
     m._entries["A4"].flag_reasons = ["pct_rem"]
     flagged = {
-        "A1": ["nrem_short"],
+        "A1": ["nrem_short_h"],
         "A3": ["pct_rem"],
-        "A4": ["nrem_short"],
+        "A4": ["nrem_short_h"],
         "A5": ["pct_wake"],
         "A2": [],
         "ZZ": ["pct_rem"],
@@ -853,9 +853,24 @@ def test_auto_flag_for_review_only_touches_animals_without_a_status(tmp_path):
     assert m.auto_flag_for_review(flagged) == ["A1"]
     saved = Manifest.load(tmp_path)
     assert saved.get("A1").sleep_qc == "needs_review" and saved.get("A1").flag_reasons == [
-        "nrem_short"
+        "nrem_short_h"
     ]
     assert saved.get("A2").sleep_qc is None
     assert saved.get("A3").sleep_qc == "ok" and saved.get("A5").sleep_qc == "excluded"
     assert saved.get("A4").flag_reasons == ["pct_rem"]  # an existing flag keeps its reasons
     assert m.auto_flag_for_review(flagged) == []  # nothing left to do
+
+
+def test_saved_thresholds_for_removed_metrics_are_dropped(tmp_path):
+    """An old manifest may hold a threshold for a metric that was renamed (here the old per-file
+    ``nrem_short``): it is ignored and not carried along when the manifest is saved again."""
+    m = _make_manifest(tmp_path, {"A1": {}})
+    raw = json.loads(m.path.read_text())
+    raw["flag_thresholds"] = {"nrem_short": 400, "pct_rem": 12}
+    m.path.write_text(json.dumps(raw))
+    loaded = Manifest.load(tmp_path)
+    assert "nrem_short" not in loaded.flag_thresholds
+    assert loaded.flag_thresholds["pct_rem"] == 12
+    assert loaded.flag_thresholds["nrem_short_h"] == 6
+    loaded.save()
+    assert "nrem_short" not in json.loads(m.path.read_text())["flag_thresholds"]

@@ -266,7 +266,11 @@ class Manifest:
         if "animals" in raw:
             m.combo = raw.get("combo", DEFAULT_COMBO)
             m.swd_review_enabled = bool(raw.get("swd_review_enabled", False))
-            m.flag_thresholds.update(raw.get("flag_thresholds", {}))
+            # Only current metrics: a saved threshold for a renamed or removed metric would
+            # otherwise be carried along and make the Sleep QC table look out of date.
+            m.flag_thresholds.update(
+                {k: v for k, v in raw.get("flag_thresholds", {}).items() if k in m.flag_thresholds}
+            )
             raw = raw["animals"]
         for animal_id, d in raw.items():
             m._entries[animal_id] = _entry_from_dict(animal_id, d, m.combo)

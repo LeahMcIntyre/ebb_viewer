@@ -48,12 +48,16 @@ review) and excluded dots are faded. Click a dot, then **Flag for Review**, to s
 
 | Metric | Default threshold |
 |---|---|
-| Short (1-2 epoch) NREM bouts per file | above 400 |
+| Short (1-2 epoch) NREM bouts per hour | above 6 |
 | NREM bouts per dark hour (20:00 to 06:00) | above 15 |
 | REM % of the file | above 10 |
 | NREM % of the file | below 30 |
 | Wake % of the file | above 70 |
 | Max REM % in any 2-hour bin | at least 35 |
+
+The two bout metrics are rates per hour, not counts per file, so recordings of different lengths
+are comparable. A saved threshold for a metric that no longer exists (for example the old per-file
+`nrem_short`) is dropped when the manifest loads.
 
 The cutoffs are starting points. The first, second, fourth and sixth come from the
 spindle-validation notebook; REM (10) was read from that notebook's REM plot and Wake (70) is a

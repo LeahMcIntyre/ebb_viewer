@@ -559,7 +559,7 @@ def test_review_card_shows_why_it_was_flagged(qapp, tmp_path: Path):
 
     _seed_manifest(tmp_path, psd_status={}, sleep_qc="needs_review")
     m = Manifest.load(tmp_path)
-    m.flag_sleep_qc("AM001", "needs_review", ["nrem_short", "pct_wake"])
+    m.flag_sleep_qc("AM001", "needs_review", ["nrem_short_h", "pct_wake"])
     page = _make_page(qapp, tmp_path)
     texts = [lbl.text() for lbl in page._attn_container.findChildren(QLabel)]
     assert "Flagged: short NREM bouts, high wake" in texts
@@ -642,7 +642,7 @@ def test_review_card_shows_emg_gate_in_brackets_when_it_was_applied(qapp, tmp_pa
             preprocessed_edf="x.edf",
             has_spindle=True,
             sleep_qc="needs_review",
-            flag_reasons=["nrem_short"],
+            flag_reasons=["nrem_short_h"],
             reclass_gate_applied=gate,
         )
 

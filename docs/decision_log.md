@@ -179,7 +179,7 @@ Details of the statuses and what each step does with an excluded animal: [sleep_
 
   | Metric | Threshold | Origin |
   |---|---|---|
-  | Short (1–2 epoch) NREM bouts per file | above 400 | validation notebook |
+  | Short (1–2 epoch) NREM bouts per hour | above 6 | the validation notebook's 400 per file (about 5.6 per hour for a 72 h recording), rounded; per hour so recordings of different lengths compare |
   | NREM bouts per dark hour | above 15 | validation notebook |
   | REM % (whole file) | above 10 | read off the notebook's REM plot |
   | NREM % (whole file) | below 30 | validation notebook |
