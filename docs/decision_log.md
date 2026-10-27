@@ -428,7 +428,7 @@ Most of this section is drafted from the code, `CLAUDE.md`, `PITFALLS.md` and `R
 
 ### Processing library and GUI are separate packages
 - **Chosen:** `ebb` is a pure processing library with no GUI. `ebb_viewer` is the Qt6 application that drives it.
-- **Why:** The processing can be used from scripts and notebooks without the GUI (for example the `research/` scripts and the sleep notebooks). **(you)** to confirm this was the reason.
+- **Why:** The processing can be used from scripts and notebooks without the GUI (for example `scripts/run_psd_estimation.py` and the sleep notebooks). **(you)** to confirm this was the reason.
 - **Where:** `src/ebb/`, `src/ebb_viewer/`
 
 ### The manifest is the single record of pipeline state
