@@ -608,3 +608,18 @@ def test_flag_tag_names_at_most_two_metrics_then_counts_the_rest(qapp, tmp_path:
 
     assert "[short NREM bouts, high REM +2]" in tag  # METRICS order, capped at two names
     assert page._flag_tooltip("AM001").count("\n") == 3  # all four listed in the tooltip
+
+
+def test_overview_hint_counts_animals_without_a_decision(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"A1": "ok", "A2": None, "A3": "needs_review", "A4": "excluded"})
+    page = _make_page(qapp, tmp_path)
+    text = page.lbl_overview_hint.text()
+    assert "2 of 4" in text and "Sleep" in text
+    assert not page._overview_hint.isHidden()
+
+
+def test_overview_hint_hidden_once_every_animal_is_decided(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"A1": "ok", "A2": "excluded"})
+    page = _make_page(qapp, tmp_path)
+    assert page.lbl_overview_hint.text() == ""
+    assert page._overview_hint.isHidden()

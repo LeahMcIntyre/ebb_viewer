@@ -66,6 +66,19 @@ from ebb_viewer.widgets.sleep_flag_overview import FlagOverview
 _RECORDING_TZ = ZoneInfo("America/Chicago")
 
 
+def overview_hint_text(manifest: Manifest) -> str:
+    """Reminder that the Overview is not the review; empty once every animal has a decision."""
+    animals = [e for e in manifest if e.has_spindle]
+    todo = sum(1 for e in animals if e.sleep_qc not in READY_STATUSES)
+    if not todo:
+        return ""
+    return (
+        f"<b>{todo} of {len(animals)} animals still need a decision.</b> The Overview only "
+        "highlights outliers. Open the <b>Sleep</b> view and go through every animal, "
+        "marking each OK, Review or Exclude."
+    )
+
+
 class SleepQCGridPage(QWidget):
     """
     QC page: 3×3 grid (states × metrics) for the project's channel combo.
@@ -158,6 +171,15 @@ class SleepQCGridPage(QWidget):
         """Reload the manifest from disk."""
         self._manifest = Manifest.load(self.project_root)
         self._update_swd_label()
+        self._update_overview_hint()
+
+    def _update_overview_hint(self) -> None:
+        """Show the "go through every animal" reminder while the Overview is open."""
+        frame = getattr(self, "_overview_hint", None)  # first call happens before the UI exists
+        if frame is None:
+            return
+        self.lbl_overview_hint.setText(overview_hint_text(self._manifest))
+        frame.setVisible(self.btn_overview.isChecked() and bool(self.lbl_overview_hint.text()))
 
     def _update_swd_label(self) -> None:
         """Note that SWD review is unfinished (no dialog: Sleep QC stays usable)."""
@@ -458,6 +480,23 @@ class SleepQCGridPage(QWidget):
                 p.setTitle(f"{self.STATE_DEF[state]}: {metric_label}", size="10pt")
                 self._plots[(metric, state)] = p
 
+        # Overview only highlights outliers; every animal still needs a decision in the Sleep view.
+        self._overview_hint = QFrame()
+        self._overview_hint.setStyleSheet(
+            "QFrame { background: #e8f0fb; border: 1px solid #1a5fa8; border-radius: 4px; }"
+        )
+        hint_row = QHBoxLayout(self._overview_hint)
+        hint_row.setContentsMargins(8, 4, 8, 4)
+        self.lbl_overview_hint = QLabel("")
+        self.lbl_overview_hint.setWordWrap(True)
+        self.lbl_overview_hint.setStyleSheet("border: none;")
+        hint_row.addWidget(self.lbl_overview_hint, 1)
+        btn_hint_sleep = QPushButton("Open Sleep view →")
+        btn_hint_sleep.clicked.connect(lambda: self._set_overview_mode(False))
+        hint_row.addWidget(btn_hint_sleep)
+        layout.addWidget(self._overview_hint)
+        self._update_overview_hint()
+
         self._overview = FlagOverview()
         self._overview.setMinimumSize(560, 300)
         layout.addWidget(self._overview, stretch=1)
@@ -547,6 +586,7 @@ class SleepQCGridPage(QWidget):
         self.btn_overview.setChecked(overview)
         self.grid.setVisible(not overview)
         self._overview.setVisible(overview)
+        self._update_overview_hint()
         self._sleep_mode_controls.setVisible(not overview)
         self._legend_scroll.setVisible(not overview)
         if overview:
@@ -559,6 +599,7 @@ class SleepQCGridPage(QWidget):
     def _refresh_overview(self, selected: str | None = None) -> None:
         """Redraw the boxplots from the cached flagging metrics."""
         statuses = {e.animal_id: e.sleep_qc for e in self._manifest}
+        self._update_overview_hint()
         self._overview.set_data(
             self._get_flag_table(),
             self._manifest.flag_thresholds,
