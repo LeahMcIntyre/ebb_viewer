@@ -202,12 +202,8 @@ class MaskParamsWidget(QWidget):
             # Spindle noise
             self.dspin_noise.setValue(float(params.get("noise_thresh", _DEFAULT_NOISE_THRESH)))
 
-            # SWD — also tolerate legacy psd_params.json shape that used swd_mode.
-            if "use_swd_mask" in params:
-                swd_on = bool(params["use_swd_mask"])
-            else:
-                swd_on = params.get("swd_mode") == "mask_out"
-            if swd_on and self._swd_available:
+            # SWD
+            if params.get("use_swd_mask") and self._swd_available:
                 self._radio_swd_mask.setChecked(True)
             else:
                 self._radio_swd_none.setChecked(True)

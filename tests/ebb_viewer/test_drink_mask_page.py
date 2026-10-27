@@ -131,3 +131,16 @@ def test_loop_strip_shows_the_three_steps_with_counts(qapp, tmp_path: Path):
     assert "1 Review PSDs" in text
     assert "2 Add masks: 1 flagged, 1 with a mask file" in text
     assert "3 Verify: 1 to check" in text
+
+
+def test_rerun_done_records_drink_mask_in_psd_params(qapp, tmp_path: Path):
+    """After a rerun the run's psd_params.json says drink masks were applied, with the pad."""
+    _project(tmp_path, {"AM001": "needs_drink_mask"}, masks=("AM001",))
+    psd_params.save(tmp_path, "default", {"fs": 250, "use_drink_mask": False, "drink_pad": 5})
+    page = _make_page(qapp, tmp_path)
+    page._pending_animal_ids = ["AM001"]
+    page._pending_run_name = "default"
+    page._on_done()
+    saved = psd_params.load(tmp_path, "default")
+    assert saved["use_drink_mask"] is True
+    assert saved["drink_pad"] == 5

@@ -802,7 +802,8 @@ class BatchEstimateWorker(QObject):
     Lives on a ``QThread`` started via ``launch_worker``. For each combo,
     calls ``batch_estimate`` with ``drink_dir=None`` (drink masking is
     applied later by the Drink Mask page) and ``savepath=None``, then
-    writes the PKL manually with ``params`` embedded in each record.
+    writes the PKL manually (records carry no params; the run's settings live in
+    ``psd_params.json``).
     After the last combo completes, writes ``psd/<run_name>/psd_params.json``
     so the run is fully reproducible from disk.
     """
@@ -849,7 +850,7 @@ class BatchEstimateWorker(QObject):
                     ann_params=self.ann_params,
                     **self.params,
                 )
-                records = [{**dataclasses.asdict(r), "params": self.params} for r in results]
+                records = [dataclasses.asdict(r) for r in results]
                 with open(savepath, "wb") as f:
                     pickle.dump(records, f)
                 self.progress.emit(f"  → Saved: {savepath.name}")
@@ -859,7 +860,9 @@ class BatchEstimateWorker(QObject):
             # spread below covers them — only swd_mode and ann_* need to
             # be added on top.
             swd_mode = "mask_out" if self.swd_dir is not None else "none"
-            saved = {**self.params, "swd_mode": swd_mode}
+            # drink_dir=None above: no drink mask was applied, whatever the hidden
+            # widget checkbox says. The Drink Mask page flips this on its rerun.
+            saved = {**self.params, "swd_mode": swd_mode, "use_drink_mask": False}
             if self.ann_params is not None:
                 saved.update(
                     {

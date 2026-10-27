@@ -49,7 +49,7 @@ def test_apply_loaded_params_from_psd_run(qapp, tmp_path: Path):
             "radius": 0.75,
             "noise_thresh": 0.3,
             "states": ["wake", "sleep"],
-            "swd_mode": "mask_out",  # legacy PSD shape — widget translates
+            "use_swd_mask": True,
             "hw_enabled": True,
             "hour_windows": [[6.0, 18.0]],
             "selected_days": [0, 1],
@@ -69,18 +69,6 @@ def test_apply_loaded_params_from_psd_run(qapp, tmp_path: Path):
     assert p["hw_enabled"] is True
     assert p["hour_windows"] == [(6.0, 18.0)]
     assert p["selected_days"] == [0, 1]
-
-
-def test_legacy_swd_mode_loads_correctly_in_page(qapp, tmp_path: Path):
-    """An old psd_params.json with swd_mode='mask_out' enables the widget's SWD toggle."""
-    # Drop a swd file so the radio is available in the widget.
-    (tmp_path / "swd").mkdir()
-    (tmp_path / "swd" / "AM001.mat").write_text("")
-    page = _make_page(qapp, tmp_path)
-    page._apply_loaded_params(
-        {"swd_mode": "mask_out"}, source="psd", run_name="run_legacy"
-    )
-    assert page._current_params()["use_swd_mask"] is True
 
 
 def test_modified_label_clears_after_load(qapp, tmp_path: Path):

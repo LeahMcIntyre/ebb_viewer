@@ -753,8 +753,8 @@ def test_batch_worker_offset_path_none_when_not_given(tmp_path):
     assert calls[0]["offset_path"] is None
 
 
-def test_batch_worker_saves_pkl_with_params(tmp_path):
-    """BatchEstimateWorker saves PKL manually with params embedded in each record."""
+def test_batch_worker_saves_pkl_without_params(tmp_path):
+    """BatchEstimateWorker saves the PKL manually; records carry no params (the JSON does)."""
 
     params = {"fs": 250, "channels": [0, 1]}
     spindle_dir = tmp_path / "spindle_outputs" / "LFC_RSC"
@@ -793,7 +793,7 @@ def test_batch_worker_saves_pkl_with_params(tmp_path):
         records = pickle.load(f)
 
     assert len(records) == 1
-    assert records[0]["params"] == params
+    assert "params" not in records[0]
 
 
 def test_batch_worker_saves_psd_params_json(tmp_path):
@@ -829,10 +829,11 @@ def test_batch_worker_saves_psd_params_json(tmp_path):
     assert params_file.exists()
     saved = json.loads(params_file.read_text())
     # saved includes swd_mode, ann_enabled, hw_enabled alongside the compute params
-    extra_keys = {"swd_mode", "ann_enabled", "hw_enabled"}
+    extra_keys = {"swd_mode", "ann_enabled", "hw_enabled", "use_drink_mask"}
     assert {k: v for k, v in saved.items() if k not in extra_keys} == params
     assert saved["swd_mode"] == "none"
     assert saved["ann_enabled"] is False
+    assert saved["use_drink_mask"] is False  # initial compute never applies drink masks
 
 
 # ---------------------------------------------------------------------------
