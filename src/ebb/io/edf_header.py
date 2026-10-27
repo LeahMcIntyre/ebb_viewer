@@ -50,6 +50,15 @@ def detect_fs_from_standard(project_root: Path | str) -> int | None:
         return None
 
 
+def header_fs(header) -> float:
+    """Sampling frequency (Hz) from an already-loaded EDF header.
+
+    ``samples_per_record[0] / record_duration``: unlike ``detect_fs_from_standard`` this also
+    holds for raw recordings whose records are not 1 s long.
+    """
+    return float(header.samples_per_record[0]) / float(header.record_duration)
+
+
 def assert_fs_matches(reader, expected_fs: int | float, *, path: Path | None = None) -> None:
     """Raise ``ValueError`` if the EDF reader's fs disagrees with ``expected_fs``.
 
