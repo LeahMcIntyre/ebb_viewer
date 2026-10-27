@@ -17,7 +17,7 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 
 - [ ] Artifact-masking notebook (commutator, SD, SPINDLE noise cutoff). *(log §6)*
 - [ ] Line-noise notebooks: copied from the `line_noise` branch to the server (`Pipeline_Research/line_noise`); confirm the folder is there and that they are the final analysis. Push the branch (commit `a815a54` is local only). *(log §6)*
-- [ ] **Notch order.** The research notebooks notch before the masks; the shipped pipeline notches after. The late-notch run is `stxbp1_notch_compare/stxbp1_char_notch_filter_compare.ipynb` ("Late Compute" source). Confirm which run made the difference figure. *(log §6)*
+- [x] **Notch order.** Compared late vs. early notch on the Stxbp1 characterization set; the difference figure is from the late run. Result is in log §6 ("The notch runs after the artifact masks").
 - [ ] Server folder names: `spindle-validation` and `ebb-research` are linked in the log; check `line_noise` once copied. Still no source for the channel-combo slides, the artifact-masking notebook, the SWD detector citation and the drink-padding figure. *(log §2, §4, §6)*
 - [ ] Channel-combo comparison slides (older annotations). *(log §2)*
 - [ ] Bout-count-by-hour figures in `ebb-research/nrem_reclass_project/bout_count_figures/`: open and choose an example. *(log §3)*
