@@ -1,5 +1,6 @@
 """Shared pytest fixtures for the whole test tree."""
 
+import gc
 import os
 import sys
 
@@ -18,3 +19,23 @@ def qapp():
     from PyQt6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication(sys.argv)
+
+
+@pytest.fixture(autouse=True)
+def _flush_qt_between_tests():
+    """Collect garbage and process Qt events after every test.
+
+    Without this, a pyqtgraph scene could be left with a queued update for an item whose widget
+    had already been deleted; whichever later test next called processEvents() then crashed in
+    QGraphicsScene::itemsBoundingRect, and which test that was depended on when Python's garbage
+    collector happened to run. Cleaning up here makes the timing deterministic.
+    """
+    yield
+    if "PyQt6.QtWidgets" not in sys.modules:
+        return
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is not None:
+        gc.collect()  # drop unreferenced widgets now, not at some later GC pass
+        app.processEvents()
