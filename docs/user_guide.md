@@ -599,6 +599,8 @@ The notebook tells the two layouts apart by the header: if the first row has col
 
 `notebooks/psd_analysis.ipynb`, with `notebooks/psd_utils.py`. **Copy both files into the same folder.**
 
+Prefer a script? `scripts/psd_analysis.py` does the same: edit the `SETTINGS` block at the top (lines marked `<<< CHANGE THIS`), then `python psd_analysis.py`. It stops with a plain message if a setting is still a placeholder or a file is missing, and warns if `INTERP_RANGES` does not match whether the run used the notch filter.
+
 **Settings to edit**
 - `RUNS`: the sealed file for each time point, `{label: path to psd/<run>/psds_final.pkl}`. One entry for one time point; add a second (for example `pre` and `post`) to compare time points.
 - `GROUPS`: `{group: [animal IDs]}`, or `GROUPS_CSV`: the path to a CSV file that lists the groups (see "Listing groups in a CSV file" below). Leave both empty for one group with everyone.
@@ -626,6 +628,8 @@ The notebook tells the two layouts apart by the header: if the first row has col
 ### Sleep analysis
 
 Copy `notebooks/sleep_by_hour.ipynb` for each analysis, edit the Settings cell, Run All. Use `sleep_by_hour_walkthrough.ipynb` to see how the numbers are made.
+
+Prefer a script? `scripts/sleep_by_hour.py` gives the same output: edit its `SETTINGS` block (lines marked `<<< CHANGE THIS`), then `python sleep_by_hour.py`. It checks the settings and the project first and stops with a plain message if something is missing.
 **Settings to check:** `PROJECT_ROOT`, `GROUPS` (or `GROUPS_CSV`, see above), `INCLUDE_EXCLUDED`, `BIN_HOURS` (2), `BEGIN_HR` (6 = lights on), `TZ` (**default `America/Chicago`: change it**), `STATE_COLUMN` (`final_state`).
 **Outputs** in `<project>/sleep_analysis/`: Prism workbooks, tidy CSVs, PNG plots. Metrics: fraction of time, bout count, bout duration. See [log §9](decision_log.md).
 
