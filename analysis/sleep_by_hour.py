@@ -1,7 +1,7 @@
 """Sleep by hour: turn a finished ebb-viewer project into sleep tables, Prism workbooks and plots.
 
-This is the script version of ``notebooks/sleep_by_hour.ipynb`` (same calculation, same output).
-The step-by-step explanation of the calculation is in ``notebooks/sleep_by_hour_walkthrough.ipynb``.
+This is the script version of ``sleep_by_hour.ipynb`` (same calculation, same output).
+The step-by-step explanation of the calculation is in ``sleep_by_hour_walkthrough.ipynb``.
 
 HOW TO RUN
     1. Make a copy of this file for each analysis.

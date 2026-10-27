@@ -368,7 +368,7 @@ restored sibling (mirroring what un-okaying does to the run itself).
 ## Sleep walkthrough notebook: flexible time handling
 
 ### Allow "from start" and "per day" analysis
-`notebooks/sleep_by_hour_walkthrough.ipynb` currently rotates each recording to a
+`analysis/sleep_by_hour_walkthrough.ipynb` currently rotates each recording to a
 fixed clock hour (default 6 AM) and averages across days (`hour_of_day`
 fold). Add options so users can instead:
 - skip the rotation and bin from the recording's first sample

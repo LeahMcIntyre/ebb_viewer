@@ -1,10 +1,10 @@
 """PSD analysis: sealed PSD files of finished ebb-viewer projects -> group spectra, band power, Prism workbooks.
 
-This is the script version of ``notebooks/psd_analysis.ipynb`` (same calculation, same output).
+This is the script version of ``psd_analysis.ipynb`` (same calculation, same output).
 
 HOW TO RUN
-    1. Make a copy of this file for each analysis. Keep ``psd_utils.py`` (it lives in the
-       repository's ``notebooks/`` folder) next to your copy, or run the script from where it is.
+    1. Make a copy of this file for each analysis, and keep ``psd_utils.py`` (it lives in the same
+       folder as this script) next to your copy.
     2. Edit the block marked "SETTINGS" below. Lines marked  <<< CHANGE THIS  must be edited;
        everything else has a sensible default.
     3. Run it:      python psd_analysis.py
@@ -37,10 +37,7 @@ import matplotlib
 matplotlib.use("Agg")  # write the plots to files; never open a window
 import matplotlib.pyplot as plt
 
-# psd_utils.py sits next to this script when copied, or in ../notebooks in the repository.
-_HERE = Path(__file__).resolve().parent
-sys.path[:0] = [str(_HERE), str(_HERE.parent / "notebooks")]
-import psd_utils  # noqa: E402
+import psd_utils  # psd_utils.py must sit in the same folder as this script
 
 # =====================================================================================
 # SETTINGS  -  EDIT THIS BLOCK. Everything below the next line of "=" is the calculation.

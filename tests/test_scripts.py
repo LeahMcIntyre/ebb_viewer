@@ -7,8 +7,11 @@ from pathlib import Path
 
 import pytest
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+SCRIPTS = Path(__file__).resolve().parents[1] / "analysis"
 ANALYSIS_SCRIPTS = ["sleep_by_hour", "psd_analysis"]
+
+
+sys.path.insert(0, str(SCRIPTS))  # psd_analysis.py imports psd_utils from its own folder
 
 
 def _load(name):

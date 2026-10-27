@@ -46,7 +46,7 @@ Collected from the decision-log interviews. Tick items off here, and update the 
 
 ## Done
 
-- [x] Added `notebooks/psd_analysis.ipynb` and `notebooks/psd_utils.py` (branch `feature/psd-analysis-notebook`, not merged), modeled on `PSD_Analysis_Example/psd`.
+- [x] Added `psd_analysis.ipynb` and `psd_utils.py` (branch `feature/psd-analysis-notebook`, not merged), modeled on `PSD_Analysis_Example/psd`.
 
 - [x] Deleted the stale slide diagrams (`pipeline_flow_slide.md`, `psd_flow_slide.md`, `storage_schematic_slide.md`). `pipeline_flow.md` now has two flowcharts and the folder layout.
 
