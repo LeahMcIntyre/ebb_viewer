@@ -336,12 +336,27 @@ def test_notebook_copy_of_read_groups_csv_works(tmp_path: Path):
 
 def test_default_output_dir_is_in_the_project_next_to_psd(tmp_path: Path):
     final = tmp_path / "KCNT1" / "psd" / "default" / "psds_final.pkl"
-    assert u.default_output_dir(final) == (tmp_path / "KCNT1" / "psd_analysis").resolve()
+    assert u.default_output_dir(final) == (tmp_path / "KCNT1" / "psd_analysis" / "default").resolve()
+
+
+def test_default_output_dir_has_a_folder_per_run_so_runs_do_not_collide(tmp_path: Path):
+    a = tmp_path / "KCNT1" / "psd" / "default" / "psds_final.pkl"
+    b = tmp_path / "KCNT1" / "psd" / "swd_pad" / "psds_final.pkl"
+    assert u.default_output_dir(a) != u.default_output_dir(b)
+    assert u.default_output_dir(a).parent == u.default_output_dir(b).parent
+
+
+def test_default_output_dir_for_several_time_points_is_named_after_all_runs(tmp_path: Path):
+    pre = tmp_path / "KCNT1" / "psd" / "default" / "psds_final.pkl"
+    post = tmp_path / "KCNT1" / "psd" / "swd_pad" / "psds_final.pkl"
+    assert u.default_output_dir(pre, post).name == "default+swd_pad"
+    assert u.default_output_dir(pre, pre).name == "default"
 
 
 def test_default_output_dir_for_a_pickle_anywhere_else_is_beside_the_file(tmp_path: Path):
     pkl = tmp_path / "example_data" / "KCNT1_pre_psds_final.pkl"
-    assert u.default_output_dir(pkl) == (tmp_path / "example_data" / "psd_analysis").resolve()
+    expected = tmp_path / "example_data" / "psd_analysis" / "KCNT1_pre_psds_final"
+    assert u.default_output_dir(pkl) == expected.resolve()
 
 
 def test_default_output_dir_ignores_the_working_directory(tmp_path: Path, monkeypatch):
@@ -349,7 +364,7 @@ def test_default_output_dir_ignores_the_working_directory(tmp_path: Path, monkey
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
     final = tmp_path / "proj" / "psd" / "run" / "psds_final.pkl"
-    assert u.default_output_dir(final).parent == (tmp_path / "proj").resolve()
+    assert u.default_output_dir(final).parent.parent == (tmp_path / "proj").resolve()
 
 
 def test_psd_notebook_has_no_cwd_relative_output_folder():

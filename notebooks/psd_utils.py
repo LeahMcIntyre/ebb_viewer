@@ -87,17 +87,21 @@ def load_psd_records(path: str | Path) -> list[dict]:
     return list(records)
 
 
-def default_output_dir(psds_final: str | Path) -> Path:
-    """Where results go when ``OUT_DIR`` is not set.
+def default_output_dir(*psds_final: str | Path) -> Path:
+    """Where results go when ``OUT_DIR`` is not set: a folder per analysed run.
 
-    For ``<project>/psd/<run>/psds_final.pkl`` that is ``<project>/psd_analysis``, next to the
-    ``psd/`` folder. For a pickle anywhere else it is a ``psd_analysis`` folder beside the file.
-    The notebook's own folder is never used.
+    For ``<project>/psd/<run>/psds_final.pkl`` that is ``<project>/psd_analysis/<run>``, so two
+    runs of the same project do not overwrite each other. For a pickle anywhere else it is
+    ``psd_analysis/<file name without .pkl>`` beside the file. The project (or folder) is the
+    first file's. Given several files (several time points) the folder is named after all of
+    them, joined with ``+``. The notebook's own folder is never used.
     """
-    path = Path(psds_final).expanduser().resolve()
-    if path.parent.parent.name == "psd":
-        return path.parent.parent.parent / "psd_analysis"
-    return path.parent / "psd_analysis"
+    paths = [Path(p).expanduser().resolve() for p in psds_final]
+    first = paths[0]
+    in_project = first.parent.parent.name == "psd"
+    base = (first.parent.parent.parent if in_project else first.parent) / "psd_analysis"
+    names = [p.parent.name if p.parent.parent.name == "psd" else p.stem for p in paths]
+    return base / "+".join(dict.fromkeys(names))
 
 
 def get_freqs(df: pd.DataFrame) -> np.ndarray:

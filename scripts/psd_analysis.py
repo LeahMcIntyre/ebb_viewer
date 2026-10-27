@@ -10,7 +10,7 @@ HOW TO RUN
     3. Run it:      python psd_analysis.py
        The script checks your settings first and stops with a plain message if one is wrong.
 
-WHAT YOU GET, in OUT_DIR (default: a ``psd_analysis/`` folder next to the first run's ``psd/`` folder)
+WHAT YOU GET, in OUT_DIR (default: ``<project>/psd_analysis/<run name>/``, next to the project's ``psd/`` folder)
     figures/   every plot as a PNG
     band_power.csv, band_power_normalized.csv   one row per animal x state x channel (x time), one column per band
     prism_*.xlsx   spectra and band power, one sheet per channel x state, ready to paste into Prism
@@ -79,8 +79,9 @@ GROUPS_CSV = None  # e.g. Path("/path/to/groups.csv")
 INTERP_RANGES = [[56, 64], [118, 122]]
 
 # ----- optional; the defaults are what the lab normally uses -----
-# Where the results go. None -> a "psd_analysis" folder in the project of the first file in RUNS,
-# next to that project's "psd" folder. Or Path("/path/to/results") (created if needed).
+# Where the results go. None -> <project>/psd_analysis/<run name>, in the project of the first file
+# in RUNS, next to its "psd" folder: one folder per run, so analyses of different runs from the same
+# project do not overwrite each other. Or Path("/path/to/results") (created if needed).
 OUT_DIR = None
 INCLUDE_EXCLUDED = False  # True keeps animals excluded in Sleep QC
 APPLY_INVERSE_FILTER = True  # correct 0.5-3.5 Hz for the hardware roll-off
@@ -156,7 +157,7 @@ def check_settings():
 
 def main():
     check_settings()
-    out_dir = Path(OUT_DIR) if OUT_DIR else psd_utils.default_output_dir(next(iter(RUNS.values())))
+    out_dir = Path(OUT_DIR) if OUT_DIR else psd_utils.default_output_dir(*RUNS.values())
     out_dir.mkdir(parents=True, exist_ok=True)
     fig_dir = out_dir / "figures"
     fig_dir.mkdir(exist_ok=True)
