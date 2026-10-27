@@ -225,6 +225,8 @@ Details of the statuses and what each step does with an excluded animal: [sleep_
 
 ## 6. PSD estimation
 
+**Note on the evidence below:** The PSD runs behind the line-noise, drink-mask, SWD-mask, jerk/jump and WT-comparison examples (the Stxbp1 characterization, RNA KO, PHP.eB, SRA and cKO datasets, run June–September 2026) were made **before state reclassification**, so they used the original SPINDLE states, not `final_state`. They illustrate the artifact handling; they are not results from the reclassified pipeline. Rerun them before quoting numbers as reclassified-state results.
+
 ### Welch settings: 0.5 Hz resolution, Hann window, 50% overlap, constant detrend
 - **Stage:** PSD estimation
 - **Chosen:** 0.5 Hz frequency resolution (2 s segments at 250 Hz), Hann window, 50% overlap, constant detrend, density scaling.
