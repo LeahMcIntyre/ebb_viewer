@@ -271,8 +271,8 @@ class SleepQCGridPage(QWidget):
         if has_review:
             self._hint_lbl.setText(
                 f"{n_review} animal{'s' if n_review != 1 else ''} flagged for review. EDFs open "
-                "from <b>Home</b>: double-click the animal ID there, inspect the trace, then "
-                "come back and mark it OK or Exclude."
+                "from <b>Home</b>: use the open button on the animal's Needs Attention card, "
+                "inspect the trace, then come back and mark it OK or Exclude."
             )
             self._hint_btn.setText("→ Home (open EDFs)")
             self._nav_hint_dest = "home"

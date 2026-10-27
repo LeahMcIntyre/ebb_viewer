@@ -514,7 +514,7 @@ class HomePage(QWidget):
         self._build_progress_strip()
 
         # --- needs attention zone (hidden when nothing needs attention) ---
-        self._attn_title = QLabel("Needs Attention — double-click an animal ID to open its EDF")
+        self._attn_title = QLabel("Needs Attention")
         self._attn_title.setStyleSheet("font-weight: bold; font-size: 13px;")
         root_layout.addWidget(self._attn_title)
 
