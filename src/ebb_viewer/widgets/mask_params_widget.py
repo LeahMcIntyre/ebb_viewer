@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ebb.core.naming import files_for_animal
 from ebb.process.state_presets import (
     CANONICAL_ORDER,
     DEFAULT_STATES,
@@ -1083,11 +1084,7 @@ class MaskParamsWidget(QWidget):
         n_found = sum(
             1
             for aid in animal_ids
-            if (
-                any(self._ann_dir.glob(f"{aid}*.txt"))
-                or any(self._ann_dir.glob(f"{aid}*.csv"))
-                or any(self._ann_dir.glob(f"{aid}*.tsv"))
-            )
+            if files_for_animal(self._ann_dir, aid, ".txt", ".csv", ".tsv")
         )
         if n_animals == 0:
             self._lbl_ann_status.setText("No animals in manifest")

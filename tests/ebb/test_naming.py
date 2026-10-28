@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from ebb.core.naming import parse_animal_id
+from ebb.core.naming import files_for_animal, parse_animal_id
 
 
 @pytest.mark.parametrize(
@@ -43,3 +43,21 @@ def test_parse_animal_id_handles_degenerate_leading_underscore():
     # Pathological: stem starts with `_`. Regex match fails, fall back to
     # the full stem rather than returning empty string.
     assert parse_animal_id("_foo.edf") == "_foo"
+
+
+def test_files_for_animal_does_not_match_longer_ids(tmp_path):
+    for name in ("GF1192_a_labels.csv", "GF1192m_a_labels.csv", "GF1192.txt", "GF1192m.txt", "GF11923_b.txt"):
+        (tmp_path / name).write_text("")
+    assert [p.name for p in files_for_animal(tmp_path, "GF1192")] == [
+        "GF1192.txt",
+        "GF1192_a_labels.csv",
+    ]
+    assert [p.name for p in files_for_animal(tmp_path, "GF1192m", ".txt")] == ["GF1192m.txt"]
+
+
+def test_files_for_animal_orders_by_ending_and_handles_missing_dir(tmp_path):
+    for name in ("A1_x.csv", "A1_x.txt", "A1_y.tsv"):
+        (tmp_path / name).write_text("")
+    got = files_for_animal(tmp_path, "A1", ".txt", ".csv", ".tsv")
+    assert [p.name for p in got] == ["A1_x.txt", "A1_x.csv", "A1_y.tsv"]
+    assert files_for_animal(tmp_path / "nope", "A1", ".txt") == []

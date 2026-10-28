@@ -142,15 +142,11 @@ def test_find_annotation_deterministic_when_multiple_txt(tmp_path):
 
 
 def test_find_annotation_does_not_match_partial_prefix(tmp_path):
-    """`Mice-1` should not match a file starting with `Mice-10`."""
-    # Actually it WILL since glob is f"{animal_id}*". This test documents that
-    # behavior — important because animal IDs aren't strict prefixes today.
+    """`Mice-1` must not match a file belonging to `Mice-10`."""
     d = tmp_path / "annot"
     d.mkdir()
     (d / "Mice-10_notes.txt").write_text("...")
-    # Documents current behavior: yes, this matches. If we ever tighten it,
-    # this test will catch the regression.
-    assert me._find_annotation_for_animal(d, "Mice-1") == d / "Mice-10_notes.txt"
+    assert me._find_annotation_for_animal(d, "Mice-1") is None
 
 
 def test_resolve_paths_raises_on_multiple_offset_csvs(tmp_path):

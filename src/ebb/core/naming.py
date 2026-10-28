@@ -30,3 +30,22 @@ def parse_animal_id(path: str | Path) -> str:
     stem = Path(path).stem
     m = _ANIMAL_ID_RE.match(stem)
     return m.group(0) if m else stem
+
+
+def files_for_animal(directory: str | Path, animal_id: str, *endings: str) -> list[Path]:
+    """Files in ``directory`` that belong to exactly ``animal_id``.
+
+    A file belongs to an animal when `parse_animal_id` of its name equals the
+    ID, so ``GF1192`` never picks up ``GF1192m_...`` the way a ``GF1192*``
+    glob would. ``endings`` are filename endings (``".txt"``, ``"labels.csv"``);
+    results are grouped by ending in the order given (so callers can prefer
+    one over another), each group sorted. With no endings, any file matches.
+    Returns ``[]`` when ``directory`` does not exist.
+    """
+    d = Path(directory)
+    if not d.is_dir():
+        return []
+    mine = sorted(p for p in d.iterdir() if p.is_file() and parse_animal_id(p) == animal_id)
+    if not endings:
+        return mine
+    return [p for ending in endings for p in mine if p.name.endswith(ending)]

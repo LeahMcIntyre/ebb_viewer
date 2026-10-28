@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ebb.core.naming import parse_animal_id
+from ebb.core.naming import files_for_animal, parse_animal_id
 from ebb.io.spindle_csv import FINAL_COLUMN, has_column
 from ebb.process.sleep_flagging import METRIC_BY_KEY
 from ebb_viewer.edf_viewer.eeg_viewer import launch_edf_window
@@ -383,9 +383,8 @@ def compute_pipeline_status(
 
 
 def _any_file_for_animal(root: Path, subdir: str, channels: str, animal_id: str) -> bool:
-    """True if any file matching animal_id* exists in root/subdir/channels/."""
-    d = root / subdir / channels
-    return d.is_dir() and any(d.glob(f"{animal_id}*"))
+    """True if any file belonging to ``animal_id`` exists in root/subdir/channels/."""
+    return bool(files_for_animal(root / subdir / channels, animal_id))
 
 
 def _needs_attention(
@@ -1085,7 +1084,7 @@ class HomePage(QWidget):
         """
         try:
             d = spindle_output_dir(channels, self.project_root)
-            hits = sorted(d.glob(f"{animal_id}*labels.csv"))
+            hits = files_for_animal(d, animal_id, "labels.csv")
         except OSError:
             return None
         return hits[0] if hits else None
