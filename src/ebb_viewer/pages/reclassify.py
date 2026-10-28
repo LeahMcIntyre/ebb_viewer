@@ -28,7 +28,13 @@ from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
 from ebb_viewer.pipeline.theme import apply_primary_button
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
-_COLUMNS = ("Animal", "Reclassified", "EMG gate", "NREM bouts (light) before → after")
+_COLUMNS = (
+    "Animal",
+    "Reclassified",
+    "EMG gate",
+    "Gap-fill flips kept / cancelled",
+    "NREM bouts (light) before → after",
+)
 
 
 def gate_label(reclassified: bool, gate: bool | None) -> str:
@@ -37,6 +43,13 @@ def gate_label(reclassified: bool, gate: bool | None) -> str:
     if gate is not None:
         return "applied" if gate else "not needed"
     return "unknown (re-run to restore)" if reclassified else "—"
+
+
+def flips_label(entry) -> str:
+    """ "kept / cancelled" gap-fill flips from the last run, or "" when not recorded."""
+    if entry is None or entry.reclass_flips_kept is None:
+        return ""
+    return f"{entry.reclass_flips_kept} / {entry.reclass_flips_cancelled}"
 
 
 class _ReclassWorker(QObject):
@@ -158,6 +171,7 @@ class ReclassifyPage(QWidget):
                 animal,
                 "✓" if done else "—",
                 gate_label(done, gate),
+                flips_label(entry),
                 f"{bouts[0]} → {bouts[1]}" if bouts else "",
             )
             for col, text in enumerate(cells):
@@ -196,7 +210,9 @@ class ReclassifyPage(QWidget):
     def _on_finished(self, results: dict) -> None:
         self._thread = self._worker = None
         manifest = Manifest.load(self.project_root)
-        manifest.set_reclass_gates({a: r.gate_applied for a, r in results.items()})
+        manifest.set_reclass_results(
+            {a: (r.gate_applied, r.n_flips_kept, r.n_flips_cancelled) for a, r in results.items()}
+        )
         self.manifest_changed.emit()
         self._refresh()
         n_gate = sum(r.gate_applied for r in results.values())

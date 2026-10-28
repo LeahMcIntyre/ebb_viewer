@@ -148,6 +148,7 @@ def test_no_gate_when_bout_count_does_not_rise(tmp_path, start_at_8am):
     assert res.bouts_before == res.bouts_after == 20
     assert (res.final_state == res.gapfill_state).all()
     assert (res.rawstate != res.gapfill_state).sum() == 20
+    assert (res.n_flips_kept, res.n_flips_cancelled) == (20, 0)
 
 
 def test_gate_keeps_only_flips_with_high_emg(tmp_path, start_at_8am):
@@ -165,6 +166,7 @@ def test_gate_keeps_only_flips_with_high_emg(tmp_path, start_at_8am):
     assert res.bouts_before == 1 and res.bouts_after > 1.1
     assert (res.rawstate != res.gapfill_state).sum() == 50  # gap fill flips every flagged epoch
     assert (res.rawstate != res.final_state).nonzero()[0].tolist() == [3]
+    assert (res.n_flips_kept, res.n_flips_cancelled) == (1, 49)
     # the gate only cancels, never adds
     assert set(np.flatnonzero(res.rawstate != res.final_state)) <= set(
         np.flatnonzero(res.rawstate != res.gapfill_state)
