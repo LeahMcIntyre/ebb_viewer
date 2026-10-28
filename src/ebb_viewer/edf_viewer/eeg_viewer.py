@@ -43,6 +43,7 @@ from ebb_viewer.pipeline.naming import parse_animal_id
 from ebb_viewer.widgets.drink_mask_dialog import DrinkMaskDialogue
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.sleep_viewer import SleepPopup
+from ebb_viewer.widgets.worker_helpers import run_keeping_gui_alive
 from ebb_viewer.widgets.stft_viewer import STFTBoundsDialog, STFTPopup
 
 _CH_NAMES = ("LFC", "RSC", "LSC", "EMG")
@@ -657,7 +658,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
             return
 
         try:
-            rec = _load_recording(edf_path, csv_path)
+            rec = run_keeping_gui_alive(_load_recording, edf_path, csv_path)
         except Exception as e:  # noqa: BLE001 — surface any load failure as a dialog
             QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
             return
@@ -705,7 +706,7 @@ def launch_edf_window(
     Raises:
         ValueError: if the EDF's sampling rate is not 250 Hz.
     """
-    rec = _load_recording(edf_path, csv_path)
+    rec = run_keeping_gui_alive(_load_recording, edf_path, csv_path)
     win = EegMainWindow(
         rec,
         initial_dir=initial_dir,

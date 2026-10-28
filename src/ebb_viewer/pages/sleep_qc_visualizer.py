@@ -59,6 +59,7 @@ from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.sleep_flag_overview import FlagOverview
+from ebb_viewer.widgets.worker_helpers import run_keeping_gui_alive
 
 # Project recordings are all acquired in the Central time zone. Used by the
 # offset variant of the sleep-bins computation so the next-`begin_hr`
@@ -652,18 +653,23 @@ class SleepQCGridPage(QWidget):
         cover every CSV: the compute functions default to ``final_state`` and raise
         for animals that lack it, so this page always passes states explicitly."""
         std = self.project_root / "standard"
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", UserWarning)
-            tables = (
-                compute_sleep_bins_df(d, states_by_animal=states_by_animal),
-                compute_sleep_bins_df_offset(
-                    d, std, tz=_RECORDING_TZ, states_by_animal=states_by_animal
-                ),
-                compute_sleep_bins_df_clock_aligned(
-                    d, std, tz=_RECORDING_TZ, states_by_animal=states_by_animal
-                ),
-                metrics_table(d, std, states_by_animal=states_by_animal),
-            )
+
+        def compute():
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", UserWarning)
+                tables = (
+                    compute_sleep_bins_df(d, states_by_animal=states_by_animal),
+                    compute_sleep_bins_df_offset(
+                        d, std, tz=_RECORDING_TZ, states_by_animal=states_by_animal
+                    ),
+                    compute_sleep_bins_df_clock_aligned(
+                        d, std, tz=_RECORDING_TZ, states_by_animal=states_by_animal
+                    ),
+                    metrics_table(d, std, states_by_animal=states_by_animal),
+                )
+            return tables, caught
+
+        tables, caught = run_keeping_gui_alive(compute)
         if record_skips:  # same skips either way; report them once
             self._record_skip_warnings(caught)
         return tables

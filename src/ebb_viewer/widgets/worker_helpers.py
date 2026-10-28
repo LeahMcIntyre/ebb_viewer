@@ -1,6 +1,37 @@
-"""Helper for launching background QThread workers."""
+"""Helpers for running work off the GUI thread."""
 
-from PyQt6.QtCore import QObject, QThread
+import threading
+
+from PyQt6.QtCore import QEventLoop, QObject, QThread, QTimer
+
+
+def run_keeping_gui_alive(fn, *args, **kwargs):
+    """Call ``fn`` on a plain thread and return its result (or re-raise its error).
+
+    The caller still waits, but the Qt event loop keeps running (user input is
+    ignored), so the window manager doesn't flag the app as "not responding".
+    ``fn`` must not touch widgets.
+    """
+    outcome: dict = {}
+
+    def target():
+        try:
+            outcome["value"] = fn(*args, **kwargs)
+        except BaseException as e:  # noqa: BLE001 — re-raised on the GUI thread below
+            outcome["error"] = e
+
+    thread = threading.Thread(target=target, daemon=True)
+    loop = QEventLoop()
+    poll = QTimer()
+    poll.setInterval(50)
+    poll.timeout.connect(lambda: None if thread.is_alive() else loop.quit())
+    thread.start()
+    poll.start()
+    loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+    poll.stop()
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome["value"]
 
 
 def launch_worker(
