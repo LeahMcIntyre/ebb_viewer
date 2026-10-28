@@ -409,7 +409,7 @@ Most of it lives in `manifest.json`, `psd_params.json` and the project folders. 
 - **Confidence:** settled
 
 ### Time bins: 2-hour bins aligned to clock time, starting at 6 AM
-- **Chosen:** Rotate each recording so its first 6 AM (lights on, ZT 0) is position 0 and cut it into 2-hour bins. Lights off is ZT 12. All of these are settings (`BIN_HOURS = 2`, `BEGIN_HR = 6`, `DARK_ONSET_ZT = 12`).
+- **Chosen:** Rotate each recording so its first 6 AM (lights on, ZT 0) is position 0 and cut it into 2-hour bins. Lights off is 8 PM (ZT 14); the grey dark band on the plots uses it. All of these are settings (`BIN_HOURS = 2`, `BEGIN_HR = 6`, `DARK_ONSET_ZT = 14`).
 - **Why:** Clock-aligned bins are how similar analyses are done in the literature. Each recording starts at a different time of day, so the start times (read from the EDF header) are needed to align files to each other. They have not caused problems.
 - **Time zone:** The notebook's default is `America/Chicago`, to handle daylight saving changes inside a recording. This is a lab-specific default, so it is a setting that someone else must change. State it in the user guide.
 - **Confidence:** settled
