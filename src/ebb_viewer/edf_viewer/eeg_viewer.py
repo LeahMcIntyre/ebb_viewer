@@ -39,6 +39,7 @@ from ebb_viewer.edf_viewer.masks_dock import MasksDock
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
 from ebb_viewer.pipeline.manifest import STAGE_SLEEP_QC
+from ebb.core.naming import files_for_animal
 from ebb_viewer.pipeline.naming import parse_animal_id
 from ebb_viewer.widgets.drink_mask_dialog import DrinkMaskDialogue
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
@@ -610,11 +611,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         if not dir_path:
             return
         animal_id = self.animal_id or parse_animal_id(self.rec.edf_path)
-        matches = (
-            sorted(Path(dir_path).glob(f"{animal_id}*.txt"))
-            + sorted(Path(dir_path).glob(f"{animal_id}*.csv"))
-            + sorted(Path(dir_path).glob(f"{animal_id}*.tsv"))
-        )
+        matches = files_for_animal(dir_path, animal_id, ".txt", ".csv", ".tsv")
         if not matches:
             QtWidgets.QMessageBox.warning(
                 self,

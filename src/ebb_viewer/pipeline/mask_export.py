@@ -35,6 +35,7 @@ from ebb_viewer.pipeline.manifest import (
     Manifest,
     spindle_output_dir,
 )
+from ebb.core.naming import files_for_animal
 from ebb_viewer.pipeline.naming import drink_mask_rel, parse_animal_id
 from ebb_viewer.pipeline.swd_review import find_swd_file
 
@@ -185,11 +186,7 @@ def _find_annotation_for_animal(ann_dir: Path | str, animal_id: str) -> Path | N
     d = Path(ann_dir)
     if not d.is_dir():
         return None
-    matches = (
-        sorted(d.glob(f"{animal_id}*.txt"))
-        + sorted(d.glob(f"{animal_id}*.csv"))
-        + sorted(d.glob(f"{animal_id}*.tsv"))
-    )
+    matches = files_for_animal(d, animal_id, ".txt", ".csv", ".tsv")
     return matches[0] if matches else None
 
 
