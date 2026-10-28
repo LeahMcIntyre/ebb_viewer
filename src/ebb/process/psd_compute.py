@@ -21,6 +21,7 @@ pickles a list of dicts (one per animal × state).
 import dataclasses
 import multiprocessing
 import pickle
+import re
 import time
 import warnings
 from collections.abc import Callable, Sequence
@@ -30,7 +31,7 @@ from pathlib import Path
 import numpy as np
 import numpy.typing as npt
 from openseize import producer
-from openseize.file_io import edf, path_utils
+from openseize.file_io import edf
 from openseize.filtering import iir
 from openseize.spectra import estimators
 
@@ -523,6 +524,41 @@ def _prepare_estimator_kwargs(
     return kwargs, hour_windows, selected_days, ann_by_animal
 
 
+def _re_match(paths: Sequence[Path], others: Sequence[Path], pattern: str) -> list[tuple[Path, Path]]:
+    """Pair each path with the one other whose stem yields the same token for ``pattern``.
+
+    Like openseize's ``path_utils.re_match`` but the tokens must be *equal*, not a
+    substring: ``GF1192`` does not pair with ``GF1192m_...``. The token is the pattern's
+    first group when it has one, else the whole match. Raises ValueError on a length
+    mismatch, a stem the pattern misses, or a path without exactly one partner.
+    """
+    paths, others = list(paths), list(others)
+    if len(paths) != len(others):
+        raise ValueError(
+            f"Number of paths in paths and others must match: {len(paths)} != {len(others)}"
+        )
+    rx = re.compile(pattern)
+
+    def token(path: Path) -> str | None:
+        m = rx.search(path.stem)
+        return None if m is None else (m.group(1) if rx.groups else m.group())
+
+    missing = [p.stem for p in (*paths, *others) if token(p) is None]
+    if missing:
+        raise ValueError(f"Pattern {pattern} is missing in path stems: {missing}")
+
+    result = []
+    for path in paths:
+        partners = [o for o in others if token(o) == token(path)]
+        if len(partners) != 1:
+            raise ValueError(
+                f"The matches for path {path} using pattern {pattern} are "
+                f"{[o.stem for o in partners]}. The number of matches must be exactly 1."
+            )
+        result.append((path, partners[0]))
+    return result
+
+
 def match_paths(
     eeg_paths: Sequence[Path],
     state_paths: Sequence[Path],
@@ -544,13 +580,12 @@ def match_paths(
 
     eeg_paths = list(eeg_paths)
 
-    # re_match is fine here because it's required to be complete
-    eeg_state_pairs = path_utils.re_match(eeg_paths, state_paths, eeg_state_pat)
+    eeg_state_pairs = _re_match(eeg_paths, state_paths, eeg_state_pat)
     state_by_eeg: dict[Path, Path] = {ep: sp for ep, sp in eeg_state_pairs}
 
     # ---- OPTIONAL EEG <-> SWD (Applied to all or to none) ----
     if swd_paths is not None:
-        eeg_swd_pairs = path_utils.re_match(eeg_paths, swd_paths, eeg_swd_pat)
+        eeg_swd_pairs = _re_match(eeg_paths, swd_paths, eeg_swd_pat)
         swd_by_eeg: dict[Path, Path] = {ep: sp for ep, sp in eeg_swd_pairs}
     else:
         swd_by_eeg = {ep: None for ep in eeg_paths}
