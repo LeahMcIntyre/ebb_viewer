@@ -669,7 +669,7 @@ class SleepQCGridPage(QWidget):
                 )
             return tables, caught
 
-        tables, caught = run_keeping_gui_alive(compute)
+        tables, caught = run_keeping_gui_alive("Computing sleep metrics…", compute)
         if record_skips:  # same skips either way; report them once
             self._record_skip_warnings(caught)
         return tables

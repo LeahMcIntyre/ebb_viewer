@@ -2,15 +2,17 @@
 
 import threading
 
-from PyQt6.QtCore import QEventLoop, QObject, QThread, QTimer
+from PyQt6.QtCore import QEventLoop, QObject, Qt, QThread, QTimer
+from PyQt6.QtWidgets import QProgressDialog
 
 
-def run_keeping_gui_alive(fn, *args, **kwargs):
+def run_keeping_gui_alive(label: str, fn, *args, **kwargs):
     """Call ``fn`` on a plain thread and return its result (or re-raise its error).
 
-    The caller still waits, but the Qt event loop keeps running (user input is
-    ignored), so the window manager doesn't flag the app as "not responding".
-    ``fn`` must not touch widgets.
+    The caller still waits, but the Qt event loop keeps running, so the window
+    manager doesn't flag the app as "not responding". A modal "Loading" dialog
+    blocks the rest of the UI meanwhile (no repeated clicks). ``fn`` must not
+    touch widgets.
     """
     outcome: dict = {}
 
@@ -21,14 +23,20 @@ def run_keeping_gui_alive(fn, *args, **kwargs):
             outcome["error"] = e
 
     thread = threading.Thread(target=target, daemon=True)
+    dialog = QProgressDialog(label, None, 0, 0)  # range 0..0 = busy indicator, no cancel
+    dialog.setWindowTitle("Loading")
+    dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+    dialog.setMinimumDuration(0)
+    dialog.show()
     loop = QEventLoop()
     poll = QTimer()
     poll.setInterval(50)
     poll.timeout.connect(lambda: None if thread.is_alive() else loop.quit())
     thread.start()
     poll.start()
-    loop.exec(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
+    loop.exec()
     poll.stop()
+    dialog.close()
     if "error" in outcome:
         raise outcome["error"]
     return outcome["value"]

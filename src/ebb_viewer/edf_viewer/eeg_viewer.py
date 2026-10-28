@@ -658,7 +658,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
             return
 
         try:
-            rec = run_keeping_gui_alive(_load_recording, edf_path, csv_path)
+            rec = run_keeping_gui_alive("Loading EDF…", _load_recording, edf_path, csv_path)
         except Exception as e:  # noqa: BLE001 — surface any load failure as a dialog
             QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
             return
@@ -706,7 +706,7 @@ def launch_edf_window(
     Raises:
         ValueError: if the EDF's sampling rate is not 250 Hz.
     """
-    rec = run_keeping_gui_alive(_load_recording, edf_path, csv_path)
+    rec = run_keeping_gui_alive("Loading EDF…", _load_recording, edf_path, csv_path)
     win = EegMainWindow(
         rec,
         initial_dir=initial_dir,
