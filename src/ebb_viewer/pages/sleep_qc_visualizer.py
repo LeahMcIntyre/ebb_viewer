@@ -42,10 +42,11 @@ from PyQt6.QtWidgets import (
 from ebb.core.naming import parse_animal_id
 from ebb.io.spindle_csv import FINAL_COLUMN, read_state_column
 from ebb.process.sleep_compute import (
-    read_rawstate_column,
     compute_sleep_bins_df,
     compute_sleep_bins_df_clock_aligned,
     compute_sleep_bins_df_offset,
+    compute_spindle_fractions,
+    read_rawstate_column,
 )
 from ebb.process.sleep_flagging import METRIC_BY_KEY, flagged_metrics, metrics_table
 from ebb_viewer.pipeline.manifest import (
@@ -59,6 +60,7 @@ from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.notes_dialog import NotesDialog
 from ebb_viewer.widgets.sleep_flag_overview import FlagOverview
+from ebb_viewer.widgets.spindle_fraction_plot import SpindleFractionPlot
 from ebb_viewer.widgets.worker_helpers import run_keeping_gui_alive
 
 # Project recordings are all acquired in the Central time zone. Used by the
@@ -147,6 +149,10 @@ class SleepQCGridPage(QWidget):
         self._auto_flagged: list[str] = []
         self._highlighted_animal: str | None = None
         self._show_ref_median: bool = False
+        # Spindle-mask percentages per state, keyed by whether reclassified states are shown;
+        # dropped whenever _data is reloaded.
+        self._frac_cache: dict[bool, pd.DataFrame] = {}
+        self._mask_selected: str | None = None
 
         # Animals skipped during the offset compute because no preprocessed
         # EDF was found, or whose recording was too short for the begin_hr
@@ -222,7 +228,9 @@ class SleepQCGridPage(QWidget):
         self.lbl_combo.setText(f"Combo: {self._combo}")
         self._update_page_controls()
         if self.btn_overview.isChecked():
-            self._set_overview_mode(True)
+            self._set_view("overview")
+        elif self.btn_spindle.isChecked():
+            self._set_view("mask")
         elif self._mode == "animal":
             self._refresh_animal_combo()
             self._update_all_plots()
@@ -403,11 +411,18 @@ class SleepQCGridPage(QWidget):
         self.btn_view_sleep = QPushButton("Sleep")
         self.btn_view_sleep.setCheckable(True)
         self.btn_view_sleep.setChecked(False)
+        self.btn_spindle = QPushButton("Spindle mask")
+        self.btn_spindle.setCheckable(True)
+        self.btn_spindle.setChecked(False)
+        self.btn_spindle.setToolTip(
+            "Percent of each state (and the total) masked as spindle artifact, per file"
+        )
         view_row = QHBoxLayout()
         view_row.setContentsMargins(0, 0, 0, 0)
         view_row.setSpacing(0)
         view_row.addWidget(self.btn_overview)
         view_row.addWidget(self.btn_view_sleep)
+        view_row.addWidget(self.btn_spindle)
         view_wrap = QWidget()
         view_wrap.setLayout(view_row)
         top.addWidget(view_wrap)
@@ -498,7 +513,7 @@ class SleepQCGridPage(QWidget):
         self.lbl_overview_hint.setStyleSheet("border: none;")
         hint_row.addWidget(self.lbl_overview_hint, 1)
         btn_hint_sleep = QPushButton("Open Sleep view →")
-        btn_hint_sleep.clicked.connect(lambda: self._set_overview_mode(False))
+        btn_hint_sleep.clicked.connect(lambda: self._set_view("sleep"))
         hint_row.addWidget(btn_hint_sleep)
         layout.addWidget(self._overview_hint)
         self._update_overview_hint()
@@ -506,6 +521,11 @@ class SleepQCGridPage(QWidget):
         self._overview = FlagOverview()
         self._overview.setMinimumSize(560, 300)
         layout.addWidget(self._overview, stretch=1)
+
+        self._frac_widget = SpindleFractionPlot()
+        self._frac_widget.setMinimumSize(560, 300)
+        self._frac_widget.setVisible(False)
+        layout.addWidget(self._frac_widget, stretch=1)
 
         self.grid.setVisible(False)
         layout.addWidget(self.grid, stretch=1)
@@ -547,8 +567,10 @@ class SleepQCGridPage(QWidget):
         self.btn_animal.clicked.connect(lambda: self._set_mode("animal"))
         self.cmb_axis_mode.currentIndexChanged.connect(self._on_axis_mode_changed)
         self.btn_median.toggled.connect(self._on_median_toggled)
-        self.btn_view_sleep.clicked.connect(lambda: self._set_overview_mode(False))
-        self.btn_overview.clicked.connect(lambda: self._set_overview_mode(True))
+        self.btn_view_sleep.clicked.connect(lambda: self._set_view("sleep"))
+        self.btn_overview.clicked.connect(lambda: self._set_view("overview"))
+        self.btn_spindle.clicked.connect(lambda: self._set_view("mask"))
+        self._frac_widget.animal_clicked.connect(self._on_mask_animal_selected)
         self.btn_original.toggled.connect(self._on_original_toggled)
         self._overview.animal_clicked.connect(self._on_overview_animal_selected)
         self._overview.flag_requested.connect(self._on_overview_flag_requested)
@@ -572,7 +594,7 @@ class SleepQCGridPage(QWidget):
         self.btn_group.setChecked(is_group)
         self.btn_animal.setChecked(not is_group)
 
-        if not self.btn_overview.isChecked():
+        if self.btn_view_sleep.isChecked():
             self._group_controls.setVisible(is_group)
             self._animal_controls.setVisible(not is_group)
 
@@ -588,20 +610,64 @@ class SleepQCGridPage(QWidget):
             self._maybe_show_rotate_skip_warning()
         self._update_all_plots()
 
-    def _set_overview_mode(self, overview: bool) -> None:
-        self.btn_view_sleep.setChecked(not overview)
-        self.btn_overview.setChecked(overview)
-        self.grid.setVisible(not overview)
-        self._overview.setVisible(overview)
+    def _set_view(self, view: str) -> None:
+        """Show one of the three views: ``"overview"``, ``"sleep"`` or ``"mask"``."""
+        sleep = view == "sleep"
+        self.btn_overview.setChecked(view == "overview")
+        self.btn_view_sleep.setChecked(sleep)
+        self.btn_spindle.setChecked(view == "mask")
+        self.grid.setVisible(sleep)
+        self._overview.setVisible(view == "overview")
+        self._frac_widget.setVisible(view == "mask")
         self._update_overview_hint()
-        self._sleep_mode_controls.setVisible(not overview)
-        self._legend_scroll.setVisible(not overview)
-        if overview:
-            self._group_controls.setVisible(False)
-            self._animal_controls.setVisible(False)
+        self._sleep_mode_controls.setVisible(sleep)
+        self._legend_scroll.setVisible(sleep)
+        if sleep:
+            self._set_mode(self._mode)
+            return
+        self._group_controls.setVisible(False)
+        self._animal_controls.setVisible(False)
+        if view == "overview":
             self._refresh_overview()
         else:
-            self._set_mode(self._mode)
+            self._refresh_mask_view()
+
+    def _get_frac_df(self) -> pd.DataFrame | None:
+        """Spindle-mask fraction per animal and state, for the states currently shown."""
+        d = self._csv_dir()
+        if self._data is None or not d.is_dir():
+            return None
+        reclass = self._reclass_active
+        if reclass not in self._frac_cache:
+            states: dict[str, list[str]] = {}
+            for path in sorted(d.glob("*.csv")):
+                animal = parse_animal_id(path)
+                if reclass and animal in self._reclassed:
+                    states[animal] = read_state_column(path, FINAL_COLUMN)
+                else:
+                    states[animal] = read_rawstate_column(path)
+            try:
+                self._frac_cache[reclass] = compute_spindle_fractions(d, states_by_animal=states)
+            except Exception as e:
+                QMessageBox.critical(
+                    self, "Error computing spindle mask", f"Could not read {self._combo}:\n{e}"
+                )
+                return None
+        return self._frac_cache[reclass]
+
+    def _refresh_mask_view(self) -> None:
+        title = f"{self._combo} ({'reclassified' if self._reclass_active else 'original'})"
+        gated = self._gated_animals()
+        if gated:
+            title += f" - orange ring = EMG gate applied ({len(gated)})"
+        self._frac_widget.set_data(
+            self._get_frac_df(), title=title, selected=self._mask_selected, gated=gated
+        )
+
+    def _on_mask_animal_selected(self, animal: str) -> None:
+        """Dot clicked or dismissed: redraw so the selection is highlighted."""
+        self._mask_selected = animal or None
+        self._refresh_mask_view()
 
     def _refresh_overview(self, selected: str | None = None) -> None:
         """Redraw the boxplots from the cached flagging metrics."""
@@ -678,6 +744,7 @@ class SleepQCGridPage(QWidget):
         """Compute and cache the sleep metrics for the project combo."""
         self._data = None
         self._data_reclass = None
+        self._frac_cache = {}
         self._reclassed = set()
         self._mouse_ids = []
         self._data_sig = sig
@@ -1049,6 +1116,9 @@ class SleepQCGridPage(QWidget):
         if self.btn_overview.isChecked():
             self._refresh_overview(selected=self._overview.selected)
             return
+        if self.btn_spindle.isChecked():
+            self._refresh_mask_view()
+            return
         if self._mode == "group":
             self._render_group()
         else:
@@ -1400,7 +1470,7 @@ class SleepQCGridPage(QWidget):
             self._flag_sleep_qc(animal, "needs_review")
 
     def _refresh_legend(self) -> None:
-        if self._mode == "group" and not self.btn_overview.isChecked():
+        if self._mode == "group" and self.btn_view_sleep.isChecked():
             mice = self._get_page_mice()
             self._update_legend_group(mice, self._build_mouse_color_map(mice), self._show_ref_median)
         else:
