@@ -37,6 +37,7 @@ from ebb.core.naming import parse_animal_id
 from ebb.io.edf_header import read_edf_start_datetime
 from ebb.io.spindle_csv import (
     FINAL_COLUMN,
+    GATE_COLUMN,
     NOISE_COLUMNS,
     RECLASS_COLUMN,
     STATE_COLUMNS,
@@ -78,6 +79,18 @@ class NremReclass:
     def n_flips_cancelled(self) -> int:
         """Gap-fill flips the EMG gate cancelled (always 0 where the gate did not apply)."""
         return int((self.flips & (self.final_state == self.rawstate)).sum())
+
+    def gate_decisions(self) -> npt.NDArray[np.str_]:
+        """Per epoch ``"kept"`` / ``"cancelled"`` for gap-fill flips the gate ruled on, else ``""``.
+
+        All blank when the gate did not apply: no flip needed EMG evidence.
+        """
+        out = np.full(len(self.rawstate), "", dtype="<U9")
+        if self.gate_applied:
+            cancelled = self.flips & (self.final_state == self.rawstate)
+            out[self.flips] = "kept"
+            out[cancelled] = "cancelled"
+        return out
 
     @property
     def n_flips_kept(self) -> int:
@@ -291,7 +304,11 @@ def reclassify_dir_to_csv(
     out: dict[str, NremReclass] = {}
     for animal, csv_path, edf_path in _paired_files(state_dir, edf_dir):
         result = reclassify_file(csv_path, edf_path, **kwargs)
-        columns = {RECLASS_COLUMN: result.final_state, FINAL_COLUMN: result.final_state}
+        columns = {
+            RECLASS_COLUMN: result.final_state,
+            FINAL_COLUMN: result.final_state,
+            GATE_COLUMN: result.gate_decisions(),
+        }
         if has_column(csv_path, SWD_COLUMN) and has_column(csv_path, RECLASS_COLUMN):
             # Keep saved SWD review: real edits stay, unedited copies follow the new states.
             swd_col = refresh_swd_after_reclass(

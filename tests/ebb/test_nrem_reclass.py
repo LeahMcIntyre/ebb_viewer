@@ -149,6 +149,7 @@ def test_no_gate_when_bout_count_does_not_rise(tmp_path, start_at_8am):
     assert (res.final_state == res.gapfill_state).all()
     assert (res.rawstate != res.gapfill_state).sum() == 20
     assert (res.n_flips_kept, res.n_flips_cancelled) == (20, 0)
+    assert (res.gate_decisions() == "").all()  # no gate, no decisions
 
 
 def test_gate_keeps_only_flips_with_high_emg(tmp_path, start_at_8am):
@@ -167,6 +168,10 @@ def test_gate_keeps_only_flips_with_high_emg(tmp_path, start_at_8am):
     assert (res.rawstate != res.gapfill_state).sum() == 50  # gap fill flips every flagged epoch
     assert (res.rawstate != res.final_state).nonzero()[0].tolist() == [3]
     assert (res.n_flips_kept, res.n_flips_cancelled) == (1, 49)
+    decisions = res.gate_decisions()
+    assert decisions[3] == "kept"
+    assert (decisions == "cancelled").sum() == 49
+    assert (decisions[~res.flips] == "").all()
     # the gate only cancels, never adds
     assert set(np.flatnonzero(res.rawstate != res.final_state)) <= set(
         np.flatnonzero(res.rawstate != res.gapfill_state)
@@ -292,6 +297,8 @@ def test_reclassify_dir_to_csv_adds_column_and_backs_up_original(tmp_path, start
     assert [r["reclass_state"] for r in rows] == out["A"].final_state.tolist()
     assert [r["final_state"] for r in rows] == out["A"].final_state.tolist()
     assert list(rows[0])[:5] == ["index", "state", "noise_probs", "rawstate", "threshold"]
+    assert [r["emg_gate"] for r in rows] == out["A"].gate_decisions().tolist()
+    assert {"kept", "cancelled"} & {r["emg_gate"] for r in rows}  # this fixture does gate
     assert (states / "_original" / "A_x.csv").read_text() == original
 
 
