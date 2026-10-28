@@ -36,8 +36,9 @@ import numpy.typing as npt
 from ebb.core.naming import parse_animal_id
 from ebb.io.edf_header import read_edf_start_datetime
 from ebb.io.spindle_csv import (
-    NOISE_COLUMNS,
     FINAL_COLUMN,
+    GATE_COLUMN,
+    NOISE_COLUMNS,
     RECLASS_COLUMN,
     STATE_COLUMNS,
     SWD_COLUMN,
@@ -72,6 +73,29 @@ class NremReclass:
     gate_applied: bool
     bouts_before: int  # light-period NREM bouts in rawstate
     bouts_after: int  # light-period NREM bouts in gapfill_state
+    flips: npt.NDArray[np.bool_]  # NREM epochs that gap fill flipped to Wake
+
+    @property
+    def n_flips_cancelled(self) -> int:
+        """Gap-fill flips the EMG gate cancelled (always 0 where the gate did not apply)."""
+        return int((self.flips & (self.final_state == self.rawstate)).sum())
+
+    def gate_decisions(self) -> npt.NDArray[np.str_]:
+        """Per epoch ``"kept"`` / ``"cancelled"`` for gap-fill flips the gate ruled on, else ``""``.
+
+        All blank when the gate did not apply: no flip needed EMG evidence.
+        """
+        out = np.full(len(self.rawstate), "", dtype="<U9")
+        if self.gate_applied:
+            cancelled = self.flips & (self.final_state == self.rawstate)
+            out[self.flips] = "kept"
+            out[cancelled] = "cancelled"
+        return out
+
+    @property
+    def n_flips_kept(self) -> int:
+        """Gap-fill flips that stand in ``final_state``."""
+        return int(self.flips.sum()) - self.n_flips_cancelled
 
 
 def read_states_and_noise(
@@ -125,9 +149,7 @@ def gap_fill_flips(
     return (states == _NREM) & (is_artifact | (before & after))
 
 
-def count_bouts(
-    mask: npt.NDArray[np.bool_], start_in: npt.NDArray[np.bool_] | None = None
-) -> int:
+def count_bouts(mask: npt.NDArray[np.bool_], start_in: npt.NDArray[np.bool_] | None = None) -> int:
     """Number of runs of consecutive True values.
 
     With ``start_in``, only runs whose first epoch is True in ``start_in`` are
@@ -154,7 +176,9 @@ def light_period_mask(start, n_epochs: int, epoch_sec: int = EPOCH_SEC) -> npt.N
     return ~np.isin(hours, list(DARK_HOURS))
 
 
-def emg_cutoff(rms: npt.NDArray[np.float64], nrem: npt.NDArray[np.bool_], k: float = EMG_K) -> float:
+def emg_cutoff(
+    rms: npt.NDArray[np.float64], nrem: npt.NDArray[np.bool_], k: float = EMG_K
+) -> float:
     """``median + k * MAD`` of the EMG RMS over all NREM epochs."""
     vals = rms[nrem]
     vals = vals[~np.isnan(vals)]
@@ -228,6 +252,7 @@ def reclassify_file(
         gate_applied=gate,
         bouts_before=before,
         bouts_after=after,
+        flips=flips,
     )
 
 
@@ -279,7 +304,11 @@ def reclassify_dir_to_csv(
     out: dict[str, NremReclass] = {}
     for animal, csv_path, edf_path in _paired_files(state_dir, edf_dir):
         result = reclassify_file(csv_path, edf_path, **kwargs)
-        columns = {RECLASS_COLUMN: result.final_state, FINAL_COLUMN: result.final_state}
+        columns = {
+            RECLASS_COLUMN: result.final_state,
+            FINAL_COLUMN: result.final_state,
+            GATE_COLUMN: result.gate_decisions(),
+        }
         if has_column(csv_path, SWD_COLUMN) and has_column(csv_path, RECLASS_COLUMN):
             # Keep saved SWD review: real edits stay, unedited copies follow the new states.
             swd_col = refresh_swd_after_reclass(

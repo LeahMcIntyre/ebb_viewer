@@ -238,9 +238,7 @@ def test_unok_clears_psd_status(tmp_path):
 
 
 def test_reflagging_ok_keeps_psd_status(tmp_path):
-    m = _make_manifest(
-        tmp_path, {"AM001": dict(sleep_qc="ok", psd_status={"default": "ok"})}
-    )
+    m = _make_manifest(tmp_path, {"AM001": dict(sleep_qc="ok", psd_status={"default": "ok"})})
     m.flag_sleep_qc("AM001", "ok")
     assert m.get("AM001").psd_status == {"default": "ok"}
 
@@ -601,10 +599,11 @@ def test_reclass_gate_roundtrip(tmp_path):
     m = _make_manifest(tmp_path, {"AM001": dict(), "AM002": dict()})
     assert m.get("AM001").reclass_gate_applied is None
 
-    m.set_reclass_gates({"AM001": True, "AM002": False, "GHOST": True})
+    m.set_reclass_results({"AM001": (True, 299, 0), "AM002": (False, 10, 0), "GHOST": (True, 1, 1)})
     m2 = _reload(m)
 
     assert m2.get("AM001").reclass_gate_applied is True
+    assert (m2.get("AM001").reclass_flips_kept, m2.get("AM001").reclass_flips_cancelled) == (299, 0)
     assert m2.get("AM002").reclass_gate_applied is False
     assert m2.get("GHOST") is None
 
@@ -670,7 +669,13 @@ def test_exclude_clears_psd_progress_and_drink_mask(tmp_path):
     """Excluded animals are not reviewed, so PSD status only exists while sleep_qc is ok."""
     m = _make_manifest(
         tmp_path,
-        {"A1": {"sleep_qc": "ok", "psd_status": {"default": "drink_mask_applied"}, "drink_mask": "drink_masks/A1.npy"}},
+        {
+            "A1": {
+                "sleep_qc": "ok",
+                "psd_status": {"default": "drink_mask_applied"},
+                "drink_mask": "drink_masks/A1.npy",
+            }
+        },
     )
     m.exclude_sleep_qc("A1", "bad file", "Sleep QC")
     assert m.get("A1").psd_status == {} and m.get("A1").drink_mask is None
@@ -763,7 +768,10 @@ def test_excluded_animals_maps_animal_to_its_reasons(tmp_path):
         tmp_path,
         {
             "A1": {"sleep_qc": "ok", "notes": "Excluded (Sleep QC): stale old line"},
-            "A2": {"sleep_qc": "excluded", "notes": "cage change\nExcluded (Sleep QC): lost signal\nExcluded (PSD review): seizures"},
+            "A2": {
+                "sleep_qc": "excluded",
+                "notes": "cage change\nExcluded (Sleep QC): lost signal\nExcluded (PSD review): seizures",
+            },
             "A3": {"sleep_qc": "excluded", "notes": "edited by hand"},
             "A4": {"sleep_qc": "excluded"},
             "A5": {"sleep_qc": "needs_review"},

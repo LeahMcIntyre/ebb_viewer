@@ -37,6 +37,10 @@ RECLASS_COLUMN = "reclass_state"
 # swd_reclassification where that is non-blank. Not part of STATE_COLUMNS, which is
 # the *input* to reclassification (reading final_state there would break re-runs).
 FINAL_COLUMN = "final_state"
+# What the EMG gate decided for each gap-fill flip: "kept" or "cancelled", blank on every other
+# epoch and on every epoch of a file where the gate was not needed. Documentation only: nothing
+# reads it, and SWD review does not change it.
+GATE_COLUMN = "emg_gate"
 # Written by the optional SWD review: blank except SWD epochs and epochs the user edited.
 SWD_COLUMN = "swd_reclassification"
 # What analysis (PSDs, masks, sleep metrics, exports) reads. Forced to final_state so

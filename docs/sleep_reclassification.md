@@ -30,6 +30,7 @@ raw EDFs → 1 Preprocess → 2 Spindle EDFs → 3 Spindle Upload (SleepyRat lab
 | `reclass_state` | Reclassify page | State after gap fill and the EMG gate. |
 | `swd_reclassification` | SWD Review (optional) | Blank except SWD epochs you reviewed and epochs you edited (see §5). |
 | **`final_state`** | Reclassify, then SWD Review | `swd_reclassification` where non-blank, else `reclass_state`. **The only state column analysis reads.** |
+| `emg_gate` | Reclassify | For each gap-fill flip the EMG gate ruled on: `kept` (EMG agreed) or `cancelled`. Blank on every other epoch, and on every epoch of a file where the gate was not needed. Documentation only: nothing reads it. |
 
 The first time ebb rewrites a CSV it copies the untouched SleepyRat file to
 `spindle_outputs/<combo>/_original/` (never overwritten). Writes are atomic (`.tmp` rename).
@@ -63,7 +64,9 @@ The EMG channel is read only for files where the gate applies, which is the slow
 files never need it.
 
 The manifest records the gate decision per animal in `reclass_gate_applied` (`None` = not run,
-`True` / `False` = gate applied / not needed). The CSV is what says whether an animal *is*
+`True` / `False` = gate applied / not needed), and how many gap-fill flips stood or were cancelled in
+`reclass_flips_kept` / `reclass_flips_cancelled` (shown on the Reclassify page; the cancelled count is
+0 wherever the gate was not needed). The CSV is what says whether an animal *is*
 reclassified (it has a `final_state` column); the manifest only adds how.
 
 Constants (`nrem_reclass.py`): `GAP_RADIUS = 1`, `FRAGMENTATION_TOL = 0.10`, `EMG_K = 5.0`,
@@ -157,6 +160,7 @@ recomputed (`refresh_swd_after_reclass`).
 | Field | Where | Meaning |
 |---|---|---|
 | `reclass_gate_applied` | per animal | `None` not run / `True` EMG gate applied / `False` not needed |
+| `reclass_flips_kept`, `reclass_flips_cancelled` | per animal | gap-fill flips that stand / that the EMG gate cancelled in the last run (`None` = not run) |
 | `swd_review_enabled` | top level | project opt-in for SWD review |
 | `swd_reviewed`, `swd_total` | per animal | reviewed / total SWD epochs (cache; CSV is the source of truth). `swd_total` is `None` until known; `0` means an empty SWD file |
 | `swd_waived` | per animal | user confirmed this animal has no SWD file and needs none |

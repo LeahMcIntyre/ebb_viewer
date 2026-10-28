@@ -22,7 +22,15 @@ def test_run_completes_and_records_gate(qapp, tmp_path: Path, monkeypatch):
     (tmp_path / "standard" / "A1_PREPROCESSED.edf").touch()
 
     states = np.array(["n"])
-    fake = NremReclass(states, states, states, gate_applied=True, bouts_before=1, bouts_after=2)
+    fake = NremReclass(
+        states,
+        states,
+        states,
+        gate_applied=True,
+        bouts_before=1,
+        bouts_after=2,
+        flips=np.array([False]),
+    )
     monkeypatch.setattr(rc, "reclassify_dir_to_csv", lambda *a, on_animal=None, **k: {"A1": fake})
 
     Manifest.build_from_standard(tmp_path)
@@ -35,10 +43,14 @@ def test_run_completes_and_records_gate(qapp, tmp_path: Path, monkeypatch):
         time.sleep(0.02)
 
     assert page._thread is None
-    assert Manifest.load(tmp_path).get("A1").reclass_gate_applied is True
+    entry = Manifest.load(tmp_path).get("A1")
+    assert entry.reclass_gate_applied is True
+    assert (entry.reclass_flips_kept, entry.reclass_flips_cancelled) == (0, 0)
 
 
-def test_rerun_warns_when_sleep_qc_already_flagged_and_can_cancel(qapp, tmp_path: Path, monkeypatch):
+def test_rerun_warns_when_sleep_qc_already_flagged_and_can_cancel(
+    qapp, tmp_path: Path, monkeypatch
+):
     from PyQt6.QtWidgets import QMessageBox
 
     from ebb_viewer.pages import reclassify as rc

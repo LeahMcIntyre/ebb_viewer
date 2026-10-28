@@ -112,6 +112,9 @@ class ManifestEntry:
     # NREM reclassification — whether the EMG gate was applied when
     # ``reclass_state`` was written to the spindle CSV (None = not run yet)
     reclass_gate_applied: bool | None = None
+    # Gap-fill flips that stand / that the EMG gate cancelled (None = not run yet)
+    reclass_flips_kept: int | None = None
+    reclass_flips_cancelled: int | None = None
 
     # SWD review (optional, project-level): SWD epochs reviewed and how many SWD epochs the animal
     # has (a cache for pages that must not read CSVs; the SWD Review page keeps it in sync, and the
@@ -188,6 +191,8 @@ def _entry_to_dict(entry: ManifestEntry) -> dict:
         "sleep_qc": entry.sleep_qc,
         "flag_reasons": entry.flag_reasons,
         "reclass_gate_applied": entry.reclass_gate_applied,
+        "reclass_flips_kept": entry.reclass_flips_kept,
+        "reclass_flips_cancelled": entry.reclass_flips_cancelled,
         "swd_reviewed": entry.swd_reviewed,
         "swd_total": entry.swd_total,
         "swd_waived": entry.swd_waived,
@@ -226,6 +231,8 @@ def _entry_from_dict(animal_id: str, d: dict, combo: str) -> ManifestEntry:
         sleep_qc=d.get("sleep_qc"),
         flag_reasons=list(d.get("flag_reasons") or []),
         reclass_gate_applied=d.get("reclass_gate_applied"),
+        reclass_flips_kept=d.get("reclass_flips_kept"),
+        reclass_flips_cancelled=d.get("reclass_flips_cancelled"),
         swd_reviewed=int(d.get("swd_reviewed", 0)),
         swd_total=d.get("swd_total"),
         swd_waived=bool(d.get("swd_waived", False)),
@@ -375,11 +382,14 @@ class Manifest:
         self._entries[animal_id].notes = notes
         self.save()
 
-    def set_reclass_gates(self, gates: dict[str, bool]) -> None:
-        """Record per-animal EMG-gate results from a reclassification run."""
-        for animal_id, applied in gates.items():
+    def set_reclass_results(self, results: dict[str, tuple[bool, int, int]]) -> None:
+        """Record per-animal ``(gate applied, flips kept, flips cancelled)`` from a reclassification run."""
+        for animal_id, (applied, kept, cancelled) in results.items():
             if animal_id in self._entries:
-                self._entries[animal_id].reclass_gate_applied = applied
+                entry = self._entries[animal_id]
+                entry.reclass_gate_applied = applied
+                entry.reclass_flips_kept = kept
+                entry.reclass_flips_cancelled = cancelled
         self.save()
 
     def set_swd_review_enabled(self, enabled: bool) -> None:
