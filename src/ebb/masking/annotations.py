@@ -155,11 +155,10 @@ def keyword_mask(
         def _matches(label: str) -> bool:
             return any(kw in label.strip().lower() for kw in keywords_lower)
 
-    # Adjust times relative to first annotation, consistent with artifact()
-    t0 = annotes[0].time
-    matched_times = [
-        ann.time - t0 for ann in annotes if ann.label is not None and _matches(ann.label)
-    ]
+    # Pinnacle's "Time From Start" is already relative to the recording start, so it is used
+    # as is. (Re-basing to the first annotation shifted every event early whenever the file's
+    # first annotation was not at time 0.)
+    matched_times = [ann.time for ann in annotes if ann.label is not None and _matches(ann.label)]
 
     arr = np.ones(size, dtype=bool)
     before_samples = int(pad_before_sec * fs)

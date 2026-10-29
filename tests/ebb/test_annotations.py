@@ -299,7 +299,9 @@ def test_pad_before_clipped_at_start(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_times_adjusted_relative_to_first_annotation(tmp_path):
+def test_times_are_from_recording_start_not_first_annotation(tmp_path):
+    """"Time From Start" is already relative to the recording start, so a first
+    annotation that is not at time 0 must not shift the matched events."""
     ann_file = tmp_path / "annots.txt"
     write_pinnacle(
         ann_file,
@@ -308,11 +310,25 @@ def test_times_adjusted_relative_to_first_annotation(tmp_path):
             ("drink", 12.0, 0.0),
         ],
     )
-    size = _n(10)
+    size = _n(20)
     mask = keyword_mask(ann_file, keywords=["drink"], pad_after_sec=1.0, size=size, fs=FS)
-    assert np.all(mask[: _n(2)])
-    assert not np.any(mask[_n(2) : _n(3)])
-    assert np.all(mask[_n(3) :])
+    assert np.all(mask[: _n(12)])
+    assert not np.any(mask[_n(12) : _n(13)])
+    assert np.all(mask[_n(13) :])
+
+
+def test_first_annotation_matching_a_keyword_is_masked_where_it_is(tmp_path):
+    ann_file = tmp_path / "annots.txt"
+    write_pinnacle(ann_file, [("Jerk - NREM", 500.0, 0.0), ("Jump - REM", 700.0, 0.0)])
+    size = _n(1000)
+    mask = keyword_mask(
+        ann_file, keywords=["jerk", "jump"], pad_after_sec=1.0, size=size, fs=FS
+    )
+    assert np.all(mask[: _n(500)])
+    assert not np.any(mask[_n(500) : _n(501)])
+    assert np.all(mask[_n(501) : _n(700)])
+    assert not np.any(mask[_n(700) : _n(701)])
+    assert np.all(mask[_n(701) :])
 
 
 # ---------------------------------------------------------------------------
