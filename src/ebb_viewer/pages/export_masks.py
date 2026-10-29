@@ -142,56 +142,26 @@ class ExportMasksPage(QWidget):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
+        title_row_ = QHBoxLayout()
         title = QLabel("Export Masks")
         title.setStyleSheet("font-size: 18px; font-weight: 600;")
-        root.addWidget(title)
+        title_row_.addWidget(title)
+        title_row_.addStretch(1)
+        title_row_.addWidget(HelpButton("export_masks"))
+        root.addLayout(title_row_)
 
         subtitle = QLabel(
-            "Export state, artifact, and clean-per-state masks as time-stamped "
-            "CSVs (start_s, end_s, sample range, label) for use in other tools."
+            "Write each animal's sleep states, artifact masks and clean windows as time-stamped "
+            "CSVs (start_s, end_s, sample range, label) for use in other tools. No PSDs are "
+            "computed. Work top to bottom: choose what to export, set the masks, then name the "
+            "export and run it."
         )
         subtitle.setStyleSheet("color: #555; font-size: 11px;")
         subtitle.setWordWrap(True)
         root.addWidget(subtitle)
 
-        # ----- Zone 1: SETUP (collapsible) -----
-        # Same pattern as the PSD compute page — "set once" content sits
-        # behind a collapsible header so the rest of the page gets the
-        # vertical space once the user has picked an output name + loaded
-        # any prior params.
-        zone1_row = QHBoxLayout()
-        zone1_row.setContentsMargins(0, 0, 0, 0)
-        zone1_label = QLabel("1. SETUP")
-        zone1_label.setStyleSheet(zone_header_qss())
-        zone1_row.addWidget(zone1_label)
-        zone1_row.addStretch(1)
-        self._setup_summary_lbl = QLabel("")
-        self._setup_summary_lbl.setStyleSheet(
-            "color: #888; font-size: 11px; font-style: italic; padding-right: 8px;"
-        )
-        self._setup_summary_lbl.setVisible(False)
-        zone1_row.addWidget(self._setup_summary_lbl)
-        zone1_row.addWidget(HelpButton("export_masks"))
-        self._btn_setup_toggle = QPushButton("▼")
-        self._btn_setup_toggle.setCheckable(True)
-        self._btn_setup_toggle.setChecked(True)
-        self._btn_setup_toggle.setFixedSize(28, 22)
-        self._btn_setup_toggle.setToolTip("Collapse the Setup section")
-        self._btn_setup_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._btn_setup_toggle.clicked.connect(self._on_setup_toggled)
-        zone1_row.addWidget(self._btn_setup_toggle)
-        root.addLayout(zone1_row)
-
-        self._setup_container = QWidget()
-        setup_v = QVBoxLayout(self._setup_container)
-        setup_v.setContentsMargins(0, 0, 0, 0)
-        setup_v.setSpacing(4)
-        setup_v.addWidget(self._build_output_section())
-        setup_v.addWidget(self._build_load_section())
-        root.addWidget(self._setup_container)
-
         # ----- Zone 2: WHAT TO EXPORT -----
-        zone2 = QLabel("2. WHAT TO EXPORT")
+        zone2 = QLabel("1. WHAT TO EXPORT")
         zone2.setStyleSheet(zone_header_qss())
         root.addWidget(zone2)
 
@@ -207,6 +177,10 @@ class ExportMasksPage(QWidget):
             swd_available=swd_available,
             expose_states_externally=True,
             show_subzone_headers=True,
+            states_hint=(
+                "Select one or more state groups. Each checked group gets its own state and "
+                "clean-window intervals; lumped groups combine their underlying epochs."
+            ),
         )
         self.mask_widget.changed.connect(self._check_modified)
 
@@ -215,15 +189,17 @@ class ExportMasksPage(QWidget):
         self.states_gb = QGroupBox("States to Export")
         states_v = QVBoxLayout(self.states_gb)
         states_v.addWidget(self.mask_widget.states_inner_widget())
-        root.addWidget(self.states_gb)
-
-        root.addWidget(self._build_channels_section())
         root.addWidget(self._build_animals_section())
+        root.addWidget(self.states_gb)
+        root.addWidget(self._build_channels_section())
 
         # ----- Zone 3: FILTERS & MASKS -----
-        zone3 = QLabel("3. FILTERS & MASKS")
+        zone3 = QLabel("2. MASKS")
         zone3.setStyleSheet(zone_header_qss())
         root.addWidget(zone3)
+
+        # Start-from buttons sit with the masks they fill in.
+        root.addWidget(self._build_load_section())
 
         # ``lbl_modified`` shows "loaded from X but you've edited the params"
         # — sits right above the mask widget so the warning stays visible
@@ -232,33 +208,36 @@ class ExportMasksPage(QWidget):
         root.addWidget(self.mask_widget)
 
         # ----- Zone 4: RUN -----
-        zone4 = QLabel("4. RUN")
+        zone4 = QLabel("3. NAME & RUN")
         zone4.setStyleSheet(zone_header_qss())
         root.addWidget(zone4)
 
+        root.addWidget(self._build_output_section())
         root.addWidget(self._build_action_section())
         root.addWidget(self._build_status_section())
         root.addStretch(1)
 
-        self._refresh_setup_summary()
-
     # ----- Output ------------------------------------------------------
 
     def _build_output_section(self) -> QGroupBox:
-        gb = QGroupBox("Output")
+        gb = QGroupBox("Export name")
         v = QVBoxLayout(gb)
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel(f"{self.project_root}/exports/"))
         self.le_dirname = QLineEdit()
-        self.le_dirname.setPlaceholderText("e.g. dark_phase  (alphanumeric, _ -)")
+        self.le_dirname.setPlaceholderText("e.g. dark_phase  (letters, numbers, _ and -)")
         self.le_dirname.textChanged.connect(self._on_dirname_changed)
-        row.addWidget(self.le_dirname, 1)
-        v.addLayout(row)
+        v.addWidget(self.le_dirname)
+
+        self.lbl_out_path = QLabel("")
+        self.lbl_out_path.setStyleSheet("color: #666; font-size: 11px;")
+        self.lbl_out_path.setWordWrap(True)
+        self.lbl_out_path.setToolTip(str(self.project_root / "exports"))
+        v.addWidget(self.lbl_out_path)
 
         self.lbl_dir_status = QLabel("")
         self.lbl_dir_status.setStyleSheet("color: #b00; font-size: 11px;")
         v.addWidget(self.lbl_dir_status)
+        self._refresh_out_path()
         return gb
 
     # ----- Params ------------------------------------------------------
@@ -270,7 +249,7 @@ class ExportMasksPage(QWidget):
         the params") lives directly above the mask widget in zone 3 so
         it stays visible when Setup is collapsed.
         """
-        gb = QGroupBox("Load params")
+        gb = QGroupBox("Start from (optional)")
         v = QVBoxLayout(gb)
 
         row = QHBoxLayout()
@@ -519,19 +498,11 @@ class ExportMasksPage(QWidget):
     # Setup zone collapse
     # ------------------------------------------------------------------
 
-    def _refresh_setup_summary(self) -> None:
-        """One-line summary shown next to the SETUP header when collapsed."""
-        name = self.le_dirname.text().strip() or "(unset)"
-        self._setup_summary_lbl.setText(f"{self.project_root.name} • out: {name}")
-
-    def _on_setup_toggled(self, checked: bool) -> None:
-        """Collapse / expand the Setup zone. The summary label only shows
-        when the body is hidden."""
-        self._setup_container.setVisible(checked)
-        self._setup_summary_lbl.setVisible(not checked)
-        self._btn_setup_toggle.setText("▼" if checked else "▶")
-        self._btn_setup_toggle.setToolTip(
-            "Collapse the Setup section" if checked else "Expand the Setup section"
+    def _refresh_out_path(self) -> None:
+        """Show where the export will be written."""
+        name = self.le_dirname.text().strip() or "<name>"
+        self.lbl_out_path.setText(
+            f"Files will be saved in  exports/{name}/  inside the project folder."
         )
 
     # ------------------------------------------------------------------
@@ -678,7 +649,7 @@ class ExportMasksPage(QWidget):
 
     def _on_dirname_changed(self, _text: str) -> None:
         self._update_export_button()
-        self._refresh_setup_summary()
+        self._refresh_out_path()
 
     def _validate_dirname(self) -> tuple[bool, str]:
         name = self.le_dirname.text().strip()

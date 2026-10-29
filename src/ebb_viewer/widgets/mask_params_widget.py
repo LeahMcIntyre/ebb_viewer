@@ -121,6 +121,7 @@ class MaskParamsWidget(QWidget):
         show_drink_mask: bool = True,
         expose_states_externally: bool = False,
         show_subzone_headers: bool = False,
+        states_hint: str | None = None,
         event_masks_first: bool = False,
     ):
         super().__init__(parent)
@@ -129,6 +130,10 @@ class MaskParamsWidget(QWidget):
         self._show_drink_mask = show_drink_mask
         self._expose_states_externally = expose_states_externally
         self._show_subzone_headers = show_subzone_headers
+        self._states_hint = states_hint or (
+            "Select one or more state groups. A separate PSD is computed for each "
+            "checked group; lumped groups combine their underlying epochs."
+        )
         self._event_masks_first = event_masks_first
         self._ann_dir: Path | None = None
         # Cached EDF (rec_start, n_samples) tuples for the hour-window
@@ -407,10 +412,7 @@ class MaskParamsWidget(QWidget):
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(8, 4, 8, 8)
-        hint = QLabel(
-            "Select one or more state groups. A separate PSD is computed for each "
-            "checked group; lumped groups combine their underlying epochs."
-        )
+        hint = QLabel(self._states_hint)
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #555; font-size: 11px;")
         v.addWidget(hint)

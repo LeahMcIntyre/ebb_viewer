@@ -543,10 +543,10 @@ Decisions: [log §8](decision_log.md).
 **Goal:** export the artifact masks (and the sleep states) as time-stamped CSV files, **without computing PSDs**. Use it when you want the masks for something else, or want to use the artifact masking outside this pipeline.
 
 **Steps**
-1. Open **10. Export Masks**. Choose the run or settings you want: **Load from PSD run…** copies the settings of a PSD run you already made, and **Load from saved export…** reuses an earlier export. **Restore defaults** resets them.
-2. Set **what to export** (states, channels, sampling frequency) and the **filters and masks** (the same kinds as on the PSD page: commutator, SD, SPINDLE noise, SWD, annotation, and so on). Pick the animals under **Animals** (**Select all** / **Select none**).
-3. Name the export in **Output**; files go in `<project>/exports/<name>/`.
-4. Click **Export**. Use **Open exports folder** to see the results.
+The page runs top to bottom in three parts.
+1. **1. What to export:** pick the animals under **Animals** (**Select all** / **Select none**), then the states, the channels and the sampling frequency.
+2. **2. Masks:** set the filters and masks (the same kinds as on the PSD page: commutator, SD, SPINDLE noise, SWD, annotation, and so on). Under **Start from (optional)**, **Load from PSD run…** copies the settings of a PSD run you already made, **Load from saved export…** reuses an earlier export, and **Restore defaults** resets them.
+3. **3. Name & run:** type the export name; files go in `<project>/exports/<name>/` (the page shows the path). Click **Export**, which stays disabled until an animal is selected and the name is valid. Use **Open exports folder** to see the results.
 
 **Output:** for each animal, in the export folder:
 - `<animal>_<combo>_states.csv`: the sleep states as intervals.

@@ -402,10 +402,13 @@ in <code>excluded_animals.csv</code>. Leave them out when you analyze.</p>
 <p>Exports artifact masks and sleep states as time-stamped CSV files, without computing PSDs.
 Files go in <code>exports/&lt;name&gt;/</code>.</p>
 <h4>Steps</h4>
+<p>Work down the page:</p>
 <ol>
-<li>Optionally load settings from a PSD run or an earlier export, or <b>Restore defaults</b>.</li>
-<li>Set what to export: states, channels, sampling frequency and the masks.</li>
-<li>Pick the animals, name the export, and click <b>Export</b>.</li>
+<li><b>What to export</b>: pick the animals, the states, the channels and the sampling frequency.</li>
+<li><b>Masks</b>: set the artifact and event masks. Optionally start from a PSD run's settings
+(<b>Load from PSD run</b>) or an earlier export, or <b>Restore defaults</b>.</li>
+<li><b>Name &amp; run</b>: type an export name (it becomes the folder name) and click
+<b>Export</b>. The button stays disabled until an animal is selected and the name is valid.</li>
 </ol>
 <h4>Output, per animal</h4>
 <ul>
