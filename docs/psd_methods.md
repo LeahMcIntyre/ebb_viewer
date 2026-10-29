@@ -68,7 +68,7 @@ a sample flagged on **any** channel in the combo is masked for all of them.
 
 | Mask | Rule | Default |
 |---|---|---|
-| **Commutator** | `abs(x) > 2000 µV` flags a sample. Flagged samples closer than 1 s (250 samples) are merged into one event; events longer than 10 samples are extended by 1 s (250 samples) after their end. | 2000 µV; radius / pad / min length hard-coded |
+| **Commutator** | `abs(x) > 2000 µV` flags a sample. Flagged samples closer than 1 s (250 samples at 250 Hz) are merged into one event; events longer than 0.04 s (10 samples) are extended by 1 s (250 samples) after their end. The durations are fixed in seconds and converted to samples at the run's sampling rate. | 2000 µV; radius / pad / min length fixed (1 s / 1 s / 0.04 s) |
 | **SD threshold** | Signal is cut into **180 s** windows. In each window, z-score every channel using its mean and SD, with commutator-masked samples **excluded from the mean/SD** so they don't inflate it. Samples with `abs(z) > 5` are flagged; flagged samples within **0.5 s** of each other are merged (gap filled). | 180 s, 5 SD, 0.5 s |
 | **SPINDLE noise** | Epochs with SPINDLE noise probability **≥ 0.5** are dropped. | 0.5 |
 | **SWD** (optional) | `.mat` file of SWD start/stop times (s) → masked. No padding in the PSD pipeline. | off unless SWD files supplied |

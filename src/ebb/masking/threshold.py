@@ -16,6 +16,20 @@ from openseize.core.producer import Producer
 
 from ebb.core import arraytools
 
+# Commutator event handling, in seconds. At 250 Hz these are the lab's 250 / 250 / 10 samples.
+COMMUTATOR_RADIUS_SEC = 1.0  # flagged samples closer than this are merged into one event
+COMMUTATOR_PAD_SEC = 1.0  # events longer than the minimum are extended by this after their end
+COMMUTATOR_MIN_TO_PAD_SEC = 0.04  # shorter events (spikes) are not padded
+
+
+def commutator_samples(fs: float) -> dict[str, int]:
+    """``radius``, ``pad`` and ``min_to_pad`` for `commutator_threshold`, in samples at ``fs`` Hz."""
+    return {
+        "radius": max(1, round(COMMUTATOR_RADIUS_SEC * fs)),
+        "pad": max(1, round(COMMUTATOR_PAD_SEC * fs)),
+        "min_to_pad": max(1, round(COMMUTATOR_MIN_TO_PAD_SEC * fs)),
+    }
+
 
 def sd_threshold(
     pro: Producer,

@@ -48,7 +48,7 @@ Sections for the other stages are not written yet.
 - **Units:** The raw EDF header lists µV for every EEG channel, which matches the 2000 µV commutator threshold.
 - **Confidence:** inherited
 - **Affects results?** Yes. The maximum analyzable frequency is 125 Hz.
-- **Where in code:** `src/ebb/preprocess/edf.py`; `fs = 250` is hard-coded in several places.
+- **Where in code:** `src/ebb/preprocess/edf.py`; The commutator mask, the EMG gate and the viewer's STFT window now follow the recording's rate; the EEG viewer still refuses files that are not 250 Hz.
 
 ### Anti-alias filter: openseize defaults
 - **Stage:** Preprocess
@@ -303,8 +303,8 @@ Details of the statuses and what each step does with an excluded animal: [sleep_
 - **Evidence:** TODO: link the artifact-masking notebook.
 - **Confidence:** inherited (the threshold also checked in the notebook; *to confirm*)
 - **Affects results?** Yes.
-- **Where in code:** `src/ebb/masking/threshold.py`. The merge radius, pad and minimum length are hard-coded.
-- **Revisit if:** A recording system has a different amplitude range. The hard-coded values don't scale with a different sampling rate (see `TODO.md`).
+- **Where in code:** `src/ebb/masking/threshold.py`. The merge radius, pad and minimum length are fixed durations (1 s, 1 s, 0.04 s), converted to samples at the recording's sampling rate.
+- **Revisit if:** A recording system has a different amplitude range.
 
 ### SD threshold: 5 SD, 180 s windows, 0.5 s merge, wake only
 - **Stage:** PSD estimation (artifact masking)

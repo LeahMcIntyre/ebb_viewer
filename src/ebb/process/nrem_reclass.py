@@ -34,7 +34,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ebb.core.naming import parse_animal_id
-from ebb.io.edf_header import read_edf_start_datetime
+from ebb.io.edf_header import header_fs, read_edf_start_datetime
 from ebb.io.spindle_csv import (
     FINAL_COLUMN,
     GATE_COLUMN,
@@ -54,7 +54,6 @@ GAP_RADIUS = 1
 FRAGMENTATION_TOL = 0.10
 EMG_K = 5.0
 EPOCH_SEC = 4
-FS = 250
 EMG_CHANNEL = 3
 # Clock hours that are NOT the light period (20:00 through 05:59).
 DARK_HOURS = frozenset({20, 21, 22, 23, 0, 1, 2, 3, 4, 5})
@@ -192,14 +191,16 @@ def emg_cutoff(
 def epoch_emg_rms(
     edf_path: str | Path,
     channel: int = EMG_CHANNEL,
-    fs: int = FS,
     epoch_sec: int = EPOCH_SEC,
 ) -> npt.NDArray[np.float64]:
-    """RMS of the raw EMG channel within each epoch, for the whole recording."""
+    """RMS of the raw EMG channel within each epoch, for the whole recording.
+
+    The epoch length in samples comes from the EDF's own sampling rate.
+    """
     from openseize.file_io import edf
 
-    per_epoch = fs * epoch_sec
     with edf.Reader(str(edf_path)) as reader:
+        per_epoch = round(header_fs(reader.header) * epoch_sec)
         reader.channels = [channel]
         emg = reader.read(0, None)[0]
     n_epochs = len(emg) // per_epoch
