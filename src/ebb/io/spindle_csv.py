@@ -115,7 +115,10 @@ def write_columns(csv_path: str | Path, columns: Mapping[str, Sequence[str]]) ->
     backup = path.parent / ORIGINAL_DIRNAME / path.name
     if not backup.exists():
         backup.parent.mkdir(exist_ok=True)
-        shutil.copy2(path, backup)
+        # copyfile, not copy2: SMB/gvfs mounts refuse utime/chmod (EACCES / ENOTSUP).
+        backup_tmp = backup.with_suffix(".csv.tmp")
+        shutil.copyfile(path, backup_tmp)
+        backup_tmp.replace(backup)
 
     for name, values in columns.items():
         if name in header:
