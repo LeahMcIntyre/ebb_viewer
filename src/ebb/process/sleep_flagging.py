@@ -4,7 +4,7 @@ Computed from the ``final_state`` column (see ``nrem_reclass``) over the whole
 recording. Each metric has an optional threshold; a file past it is flagged for
 the user to review. Defaults come from the spindle-validation analysis
 (``file_flagging_metrics.ipynb``) and are starting points, not validated cutoffs;
-the REM and Wake cutoffs (10, 70) were added here (REM chosen from that notebook's REM plot; Wake is a placeholder).
+the REM and Wake cutoffs (10, 70) were added here (REM chosen from that notebook's REM plot; Wake judged reasonable for these recordings).
 """
 
 from __future__ import annotations
