@@ -73,7 +73,7 @@ OUT_DIR = None  # None -> <PROJECT_ROOT>/sleep_analysis. Or Path("/path/to/resul
 INCLUDE_EXCLUDED = False  # True keeps animals excluded in Sleep QC (marked in an "excluded" column)
 BIN_HOURS = 2  # width of each bin; must divide 24
 BEGIN_HR = 6  # clock hour of ZT 0 (6 = lights on at 6 AM)
-DARK_ONSET_ZT = 12  # lights-off, for the grey band on the plots
+DARK_ONSET_ZT = 14  # lights-off (8 PM with lights on at 6 AM), for the grey band on the plots
 STATE_COLUMN = "final_state"  # reclassified; "rawstate" would give the original SPINDLE scoring
 EPOCH_SEC = 4  # SPINDLE epoch length in seconds
 
