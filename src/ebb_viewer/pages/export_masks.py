@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ebb.io.edf_header import detect_fs_from_standard
 from ebb_viewer.pipeline import export_params, psd_params
 from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.pipeline.mask_export import (
@@ -41,10 +42,10 @@ from ebb_viewer.pipeline.mask_export import (
     default_animals,
     export_run,
 )
-from ebb.io.edf_header import detect_fs_from_standard
 from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
 from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget
 from ebb_viewer.widgets.no_scroll_spinbox import NoScrollSpinBox
+from ebb_viewer.widgets.page_help import HelpButton
 from ebb_viewer.widgets.swd_warning import confirm_unfinished_swd_review
 
 # EEG channel labels in canonical order — same indices as the PSD page,
@@ -170,6 +171,7 @@ class ExportMasksPage(QWidget):
         )
         self._setup_summary_lbl.setVisible(False)
         zone1_row.addWidget(self._setup_summary_lbl)
+        zone1_row.addWidget(HelpButton("export_masks"))
         self._btn_setup_toggle = QPushButton("▼")
         self._btn_setup_toggle.setCheckable(True)
         self._btn_setup_toggle.setChecked(True)

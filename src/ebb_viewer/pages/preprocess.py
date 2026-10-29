@@ -36,6 +36,7 @@ from ebb.preprocess.edf import batch as batch_preprocess
 from ebb.preprocess.edf import standard
 from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.pipeline.theme import apply_primary_button
+from ebb_viewer.widgets.page_help import title_row
 from ebb_viewer.widgets.trim_to_widget import TrimToWidget
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
@@ -93,8 +94,7 @@ class PreprocessPage(QWidget):
     def _build_ui(self):
         root = QVBoxLayout(self)
 
-        lbl = QLabel("Preprocess EDFs")
-        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        lbl = title_row("Preprocess EDFs", "preprocess")
         desc = QLabel(
             "Trim, downsample, and standardize raw EDF files. "
             "Processed files are written to the standard/ folder."

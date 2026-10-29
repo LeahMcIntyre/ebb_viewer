@@ -49,6 +49,7 @@ from ebb_viewer.pipeline.swd_review import find_swd_file, swd_review_gaps
 from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.notes_dialog import NotesDialog
+from ebb_viewer.widgets.page_help import HelpButton
 from ebb_viewer.widgets.table_helpers import make_cell
 
 # Pipeline stage columns
@@ -460,6 +461,7 @@ class HomePage(QWidget):
         self._combo_lbl.setStyleSheet("color: #555; font-size: 11px; padding-left: 12px;")
         hdr.addWidget(self._combo_lbl)
         hdr.addStretch(1)
+        hdr.addWidget(HelpButton("home"))
 
         self.btn_reveal = QPushButton("Reveal in Finder")
         self.btn_reveal.setToolTip("Open the project folder in the file manager")
