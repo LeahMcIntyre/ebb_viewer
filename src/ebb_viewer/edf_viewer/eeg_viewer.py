@@ -242,7 +242,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self._sleep_popup = SleepPopup(parent=self)
         self._sleep_popup.resize(1000, 800)
 
-        self.setWindowTitle("EEG Viewer")
+        self.setWindowTitle(self._window_title())
         self.resize(1200, 800)
 
         # central trace view
@@ -289,6 +289,11 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         self.trace_view.timeDoubleClicked.connect(self.on_time_double_clicked)
 
+    def _window_title(self) -> str:
+        """"EEG Viewer: <animal> (<file>)", so several open windows can be told apart."""
+        animal = self.animal_id or parse_animal_id(self.rec.edf_path)
+        return f"EEG Viewer: {animal} ({Path(self.rec.edf_path).name})"
+
     # ---------- actions ----------
 
     def _build_actions(self):
@@ -318,6 +323,14 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         self.act_plot_sleep = QtGui.QAction("Plot Sleep Data", self)
         self.act_plot_sleep.triggered.connect(self.on_plot_sleep)
+        has_csv = bool(self.rec.csv_path)
+        self.act_plot_sleep.setEnabled(has_csv)
+        self.act_plot_sleep.setToolTip(
+            "Sleep metrics across the recording"
+            if has_csv
+            else "Needs a SPINDLE state CSV for this recording (none was found)"
+        )
+        self.act_plot_sleep.setStatusTip(self.act_plot_sleep.toolTip())
 
         self.act_load_annotations = QtGui.QAction("Load Annotations…", self)
         self.act_load_annotations.triggered.connect(self.on_load_annotations)
@@ -368,8 +381,6 @@ class EegMainWindow(QtWidgets.QMainWindow):
         act_help.setShortcut("F1")
         act_help.triggered.connect(self.on_show_help)
         m_help.addAction(act_help)
-        # Always-visible "?" at the right end of the menu bar (F1 does the same).
-        mb.setCornerWidget(HelpButton("eeg_viewer"), Qt.Corner.TopRightCorner)
 
     def _build_toolbars(self):
         nav_tb = self.addToolBar("Navigation")
@@ -390,6 +401,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
         )
         hint.setStyleSheet("color: #666; font-size: 11px; padding: 0 6px;")
         self.statusBar().addWidget(hint)
+        # Always-visible "?" (F1 does the same). It lives here, not in the menu bar, because on
+        # macOS the menu bar is the system one and ignores corner widgets.
+        self.statusBar().addPermanentWidget(HelpButton("eeg_viewer"))
 
     def on_show_help(self):
         title, html = PAGE_HELP["eeg_viewer"]
@@ -487,6 +501,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         qc_tb.addSeparator()
 
         self._act_ok = QtGui.QAction("✓ Mark OK", self)
+        self._act_ok.setToolTip("Set this animal's Sleep QC status to OK (saved to the project)")
         self._act_ok.setCheckable(True)
         self._act_ok.triggered.connect(self._flag_qc_ok)
         qc_tb.addAction(self._act_ok)
@@ -494,6 +509,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
         qc_tb.addSeparator()
 
         self._act_review = QtGui.QAction("Needs Review", self)
+        self._act_review.setToolTip(
+            "Flag this animal for review (saved to the project). It then shows on Home under Needs Attention"
+        )
         self._act_review.setCheckable(True)
         self._act_review.triggered.connect(self._flag_qc_review)
         qc_tb.addAction(self._act_review)
@@ -502,7 +520,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         self._act_exclude = QtGui.QAction("Exclude", self)
         self._act_exclude.setCheckable(True)
-        self._act_exclude.setToolTip("Exclude this animal from analysis (a reason is required)")
+        self._act_exclude.setToolTip(
+            "Exclude this animal from analysis (a reason is required, saved to the project)"
+        )
         self._act_exclude.triggered.connect(self._flag_qc_exclude)
         qc_tb.addAction(self._act_exclude)
 
@@ -511,10 +531,12 @@ class EegMainWindow(QtWidgets.QMainWindow):
     def _flag_qc_ok(self) -> None:
         self.manifest.flag_sleep_qc(self.animal_id, "ok")
         self._update_qc_status()
+        self._announce_qc()
 
     def _flag_qc_review(self) -> None:
         self.manifest.flag_sleep_qc(self.animal_id, "needs_review")
         self._update_qc_status()
+        self._announce_qc()
 
     def _flag_qc_exclude(self, checked: bool) -> None:
         """Exclude (asking for a reason); un-excluding sends the animal back to review."""
@@ -523,6 +545,15 @@ class EegMainWindow(QtWidgets.QMainWindow):
         else:
             self.manifest.flag_sleep_qc(self.animal_id, "needs_review")
         self._update_qc_status()
+        self._announce_qc()
+
+    def _announce_qc(self) -> None:
+        """Confirm in the status bar what was just saved to the manifest."""
+        entry = self.manifest.get(self.animal_id)
+        status = ((entry.sleep_qc if entry else None) or "unflagged").replace("_", " ")
+        self.statusBar().showMessage(
+            f"{self.animal_id}: Sleep QC is now '{status}' (saved to the project)", 6000
+        )
 
     def _update_qc_status(self) -> None:
         entry = self.manifest.get(self.animal_id)
