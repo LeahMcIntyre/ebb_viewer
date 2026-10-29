@@ -59,6 +59,7 @@ from ebb_viewer.pipeline.swd_review import swd_review_gaps
 from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.notes_dialog import NotesDialog
+from ebb_viewer.widgets.page_help import title_row
 from ebb_viewer.widgets.sleep_flag_overview import FlagOverview
 from ebb_viewer.widgets.spindle_fraction_plot import SpindleFractionPlot
 from ebb_viewer.widgets.worker_helpers import run_keeping_gui_alive
@@ -316,8 +317,7 @@ class SleepQCGridPage(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
 
-        lbl = QLabel("Sleep Quality Check Visualizer")
-        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        lbl = title_row("Sleep Quality Check Visualizer", "sleep_qc")
         desc = QLabel(
             "Review sleep staging results for each animal. "
             "Flag animals as ok or needs review based on sleep metrics and the fraction of each state masked by artifact."

@@ -30,6 +30,7 @@ from ebb.process.swd_review import reviewed_epochs, swd_flags_for_file
 from ebb_viewer.edf_viewer.swd_review import launch_swd_review
 from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
 from ebb_viewer.pipeline.swd_review import find_swd_file
+from ebb_viewer.widgets.page_help import title_row
 
 _COLUMNS = ("Animal", "SWD file", "SWD epochs", "Review", "")
 
@@ -61,8 +62,7 @@ class SwdReviewPage(QWidget):
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
 
-        title = QLabel("SWD Review (optional)")
-        title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        title = title_row("SWD Review (optional)", "swd_review")
         desc = QLabel(
             "Step through the 4 s epochs that overlap a spike-wave discharge and fix their "
             "sleep state where the reclassification is wrong. Any other epoch can be edited "

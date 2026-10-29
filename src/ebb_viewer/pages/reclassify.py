@@ -26,6 +26,7 @@ from ebb.io.spindle_csv import FINAL_COLUMN, RECLASS_COLUMN, has_column
 from ebb.process.nrem_reclass import GAP_RADIUS, NremReclass, reclassify_dir_to_csv
 from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
 from ebb_viewer.pipeline.theme import apply_primary_button
+from ebb_viewer.widgets.page_help import title_row
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
 _COLUMNS = (
@@ -96,8 +97,7 @@ class ReclassifyPage(QWidget):
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
 
-        title = QLabel("Reclassify NREM")
-        title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        title = title_row("Reclassify NREM", "reclassify")
         desc = QLabel(
             f"Gap-fills NREM epochs next to artifacts (radius {GAP_RADIUS}) and applies the EMG "
             f"gate where gap fill fragments light-period NREM. The result is added to each "
