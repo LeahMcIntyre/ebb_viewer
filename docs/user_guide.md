@@ -235,7 +235,7 @@ A checklist of the whole run, in order.
    | Setting | Default | Change it when |
    |---|---|---|
    | Original Sampling Frequency (Hz) | 5000 | Your recordings were not acquired at 5000 Hz. |
-   | Downsample Factor | 20 | Leave at 20 (5000 → 250 Hz). The page shows the resulting rate; the original rate must divide evenly by the factor or **Run preprocessing** stays disabled. The rest of the pipeline assumes 250 Hz. |
+   | Downsample Factor | 20 | Leave at 20 (5000 → 250 Hz). The page shows the resulting rate; the original rate must divide evenly by the factor or **Run preprocessing** stays disabled. Our data is 250 Hz and every analysis has been run at that rate. The commutator masks, the EMG gate and the EEG viewer read the rate from the file, so they follow it, but other rates have not been tested end to end. |
    | Trim To (hrs) | 48, 72 | Our project uses whole days (48 or 72 h) and leaves this alone. Other projects can change it: each recording is trimmed to the longest target that fits, and targets can be as short as 1 hour. Use **+** / **−** to add or remove targets. Recordings shorter than the smallest target fail. |
 
    Under the settings, a line tells you how many recordings will go to each length (in the walkthrough: "2 recordings → 72h, 1 recording → 48h") and warns in red about any recording that will fail.
@@ -562,6 +562,7 @@ Decisions: [log §8](decision_log.md).
 
 ### The EEG viewer
 **Goal:** scroll and zoom traces, see the state bar and masks. Keys: `w`/`n`/`r` jump between state spans in the trace view. **TODO:** full shortcut list, masks dock.
+**Files it opens:** any sampling rate (read from the EDF). The viewer loads the whole recording into memory, so a file that would need more than about 8 GB (for example a raw 5000 Hz recording) is refused with a message to preprocess it first. Press **F1** in the viewer (or click the **?** at the bottom right) for its shortcuts.
 
 ## 7. Analysis notebooks
 

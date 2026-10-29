@@ -168,8 +168,10 @@ line under the settings shows how many recordings will go to each length, and wa
 any that will fail.</li>
 </ul>
 <h4>Why 250 Hz</h4>
-<p>The pipeline after this step assumes 250 Hz data (the default 5000 Hz divided by 20). Keep the
-downsample factor at 20 unless your recordings were acquired at another rate.</p>
+<p>The lab's data is 250 Hz (the default 5000 Hz divided by 20), and every analysis here has been
+run at that rate. Keep the downsample factor at 20 unless you have a reason to change it. The
+commutator masks, the EMG gate and the EEG viewer read the rate from the file, so they follow it.
+Other rates have not been tested end to end, so check your results if you use one.</p>
 <h4>Next</h4>
 <p>Spindle Write.</p>
 """,
@@ -426,6 +428,10 @@ you use the files.</p>
     "eeg_viewer": (
         "EEG viewer",
         """
+<h4>Files it opens</h4>
+<p>Any sampling rate: the rate is read from the EDF. The viewer loads the whole recording into
+memory, so a file that would need more than about 8 GB (for example a raw 5000 Hz recording) is
+refused with a message to preprocess it first.</p>
 <h4>Moving around</h4>
 <table cellpadding="3">
 <tr><td><b>Left / Right</b></td><td>scroll half a window</td></tr>

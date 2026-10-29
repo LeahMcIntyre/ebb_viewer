@@ -48,7 +48,7 @@ Sections for the other stages are not written yet.
 - **Units:** The raw EDF header lists µV for every EEG channel, which matches the 2000 µV commutator threshold.
 - **Confidence:** inherited
 - **Affects results?** Yes. The maximum analyzable frequency is 125 Hz.
-- **Where in code:** `src/ebb/preprocess/edf.py`; The commutator mask, the EMG gate and the viewer's STFT window now follow the recording's rate; the EEG viewer still refuses files that are not 250 Hz.
+- **Where in code:** `src/ebb/preprocess/edf.py`; The commutator mask, the EMG gate and the EEG viewer (including its STFT window) follow the recording's rate; the viewer refuses only files too large to hold in memory.
 
 ### Anti-alias filter: openseize defaults
 - **Stage:** Preprocess

@@ -13,7 +13,7 @@ from PyQt6 import QtGui, QtWidgets
 from PyQt6.QtCore import Qt
 
 from ebb.core.naming import files_for_animal
-from ebb.io.edf_header import parse_edf_start_datetime
+from ebb.io.edf_header import header_fs, parse_edf_start_datetime
 from ebb.io.spindle_csv import FINAL_COLUMN, has_column
 from ebb.masking import get_offset
 from ebb.process.sleep_compute import DEFAULT_SPINDLE_EPOCH_SEC
@@ -50,20 +50,31 @@ from ebb_viewer.widgets.worker_helpers import run_keeping_gui_alive
 
 _CH_NAMES = ("LFC", "RSC", "LSC", "EMG")
 
+# The viewer holds the whole recording in memory as float64. Refuse files that would need more
+# than this (a 48 h, 4-channel recording is 5.5 GB at 1000 Hz and 28 GB at 5000 Hz).
+_BYTES_PER_SAMPLE = 8
+_MAX_RECORDING_BYTES = 8e9
+
 
 def _load_recording(edf_path: Path, csv_path: Path | None = None) -> Recording:
     """Read an EDF + optional state CSV and return a Recording.
 
+    The sampling rate is read from the EDF header, so any rate is accepted.
+
     Raises:
-        ValueError: if the EDF's sampling rate is not 250 Hz.
+        ValueError: if the recording is too large to hold in memory (the viewer loads all of it).
     """
     with edf.Reader(str(edf_path)) as reader:
-        data = reader.read(start=0)
-        fs = int(reader.header.samples_per_record[0])
-        if fs != 250:
+        fs = round(header_fs(reader.header))
+        n_channels, n_samples = reader.shape
+        need = n_channels * n_samples * _BYTES_PER_SAMPLE
+        if need > _MAX_RECORDING_BYTES:
             raise ValueError(
-                f"Expected fs=250 Hz, got {fs} Hz. Please select a compatible file."
+                f"{Path(edf_path).name} is {fs} Hz and would need about {need / 1e9:.0f} GB of "
+                f"memory to open (the viewer loads the whole recording; the limit is "
+                f"{_MAX_RECORDING_BYTES / 1e9:.0f} GB). Preprocess (downsample) it first."
             )
+        data = reader.read(start=0)
         start_time = parse_edf_start_datetime(reader.header)
     return Recording(
         data=data,
@@ -232,7 +243,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         # STFT state
         self.stft_fmin = 0
-        self.stft_fmax = 120
+        self.stft_fmax = min(120, recording.fs // 2)  # up to Nyquist for low-rate files
         self.nperseg = round(0.5 * recording.fs)  # 0.5 s window (125 samples at 250 Hz)
 
         # Popups created once and reused so repeated menu clicks don't accumulate
@@ -758,7 +769,7 @@ def launch_edf_window(
     """Load an EDF file and return a configured (not yet shown) EegMainWindow.
 
     Raises:
-        ValueError: if the EDF's sampling rate is not 250 Hz.
+        ValueError: if the recording is too large to open (see `_load_recording`).
     """
     rec = run_keeping_gui_alive("Loading EDF…", _load_recording, edf_path, csv_path)
     win = EegMainWindow(
