@@ -449,8 +449,10 @@ SPINDLE's original states instead.</p>
 <p>Opens a window that summarizes this animal's whole recording in a 3 by 3 grid. The columns are
 Wake, NREM and REM; the rows are the fraction of time spent in the state, the number of bouts,
 and the mean bout duration in seconds. Each point is a 2 hour bin and the x-axis is hours from
-the start of the recording. It uses the reclassified states when the CSV has them and the
-original states otherwise. It needs a state CSV.</p>
+the start of the recording. The calculation is done on one state per second (each 4 s epoch
+counts as four 1 s samples), the same way as the by-hour sleep analysis notebooks. It uses the
+reclassified states when the CSV has them and the original states otherwise. It needs a state
+CSV.</p>
 <h4>Mouse</h4>
 <ul>
 <li><b>Double-click a trace</b> to see that epoch's row from the SPINDLE CSV (state, noise

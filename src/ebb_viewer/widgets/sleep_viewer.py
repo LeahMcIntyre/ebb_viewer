@@ -4,6 +4,7 @@ Reads a SPINDLE scoring CSV and renders a 3x3 grid of plots: rows are metrics
 (frac time / # bouts / mean bout duration) and columns are states (Wake/NREM/REM).
 """
 
+import numpy as np
 from matplotlib.backends.backend_qtagg import (
     FigureCanvasQTAgg as FigureCanvas,
 )
@@ -14,7 +15,21 @@ from matplotlib.figure import Figure
 from PyQt6 import QtWidgets
 
 from ebb.io.spindle_csv import NotReclassifiedError, read_analysis_states
-from ebb.process.sleep_compute import compute_sleep_metrics_per_mouse, read_rawstate_column
+from ebb.process.sleep_compute import (
+    DEFAULT_SPINDLE_EPOCH_SEC,
+    compute_sleep_metrics_per_mouse,
+    read_rawstate_column,
+)
+
+
+def metrics_per_second(states, bin_hours: int = 2):
+    """Sleep metrics per bin, computed on one state per second (each epoch repeated).
+
+    Same calculation as the by-hour sleep analysis. Bins are whole seconds, so the numbers equal
+    those computed on the 4 s epochs directly.
+    """
+    per_second = np.repeat(np.asarray(states), DEFAULT_SPINDLE_EPOCH_SEC)
+    return compute_sleep_metrics_per_mouse(per_second, bin_hours=bin_hours, sample_rate_hz=1.0)
 
 
 class SleepPopup(QtWidgets.QDialog):
@@ -50,7 +65,7 @@ class SleepPopup(QtWidgets.QDialog):
             states = read_analysis_states(state_path)
         except NotReclassifiedError:
             states = read_rawstate_column(state_path)
-        adf = compute_sleep_metrics_per_mouse(states, bin_hours=bin_hours, sample_rate_hz=0.25)
+        adf = metrics_per_second(states, bin_hours=bin_hours)
 
         for j, (metric, metric_label) in enumerate(self.METRIC_ORDER):
             for i, state in enumerate(self.STATE_ORDER):
