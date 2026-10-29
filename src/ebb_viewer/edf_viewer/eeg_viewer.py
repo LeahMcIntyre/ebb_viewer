@@ -233,7 +233,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         # STFT state
         self.stft_fmin = 0
         self.stft_fmax = 120
-        self.nperseg = 125  # 0.5 s at 250 Hz
+        self.nperseg = round(0.5 * recording.fs)  # 0.5 s window (125 samples at 250 Hz)
 
         # Popups created once and reused so repeated menu clicks don't accumulate
         # hidden dialogs parented to self.

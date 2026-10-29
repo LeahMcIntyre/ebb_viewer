@@ -24,6 +24,7 @@ from ebb import masking
 from ebb.io.edf_header import assert_fs_matches, parse_edf_start_datetime
 from ebb.io.spindle_csv import FINAL_COLUMN
 from ebb.masking.annotations import keyword_mask
+from ebb.masking.threshold import commutator_samples
 from ebb.process.mask_export import (
     artifact_masks_to_intervals,
     build_state_intervals,
@@ -266,9 +267,7 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
         comm_mask = masking.commutator_threshold(
             pro,
             value=2000,
-            radius=250,
-            pad=250,
-            min_to_pad=10,
+            **commutator_samples(fs),
         )[0]
         spindle_mask = masking.spindle_noise(
             paths.state,

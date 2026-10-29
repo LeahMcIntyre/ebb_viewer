@@ -13,6 +13,7 @@ from openseize import producer as make_producer
 
 from ebb import masking
 from ebb.masking.annotations import keyword_mask
+from ebb.masking.threshold import commutator_samples
 from ebb.io.spindle_csv import FINAL_COLUMN, STATE_COLUMNS, read_state_column
 from ebb_viewer.edf_viewer.masks import Mask, MaskSet, ParamSpec
 from ebb_viewer.edf_viewer.recording import Recording
@@ -85,7 +86,13 @@ _STATE_LABELS = {
 }
 
 
-_DEFAULT_COMM_META = {"value": 2000, "radius": 250, "pad": 250, "min_to_pad": 10}
+
+
+def _default_comm_meta(fs: float) -> dict:
+    """Default commutator parameters (radius / pad / min_to_pad in samples at ``fs``)."""
+    return {"value": 2000, **commutator_samples(fs)}
+
+
 _DEFAULT_SD_META = {"nstd": 5, "winsize": 180, "radius": 0.5, "comm_mask": True}
 
 
@@ -145,7 +152,7 @@ def build_default_masks(rec: Recording) -> MaskSet:
     parameters as estimate_psd. Always computes commutator and SD masks.
     Adds spindle_noise mask if rec.csv_path is available.
     """
-    comm_meta = dict(_DEFAULT_COMM_META)
+    comm_meta = _default_comm_meta(rec.fs)
     sd_meta = dict(_DEFAULT_SD_META)
     comm_mask, sd_mask = _compute_artifact_masks(rec, comm_meta, sd_meta)
     c, sd = _wrap_artifact_masks(comm_mask, sd_mask, comm_meta, sd_meta)

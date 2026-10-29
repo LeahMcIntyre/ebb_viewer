@@ -42,15 +42,13 @@ from ebb.io.exclusions import annotate_records, write_excluded_animals
 from ebb.io.edf_header import assert_fs_matches, parse_edf_start_datetime
 from ebb.io.spindle_csv import ANALYSIS_STATE_COLUMNS
 from ebb.masking.annotations import keyword_mask
+from ebb.masking.threshold import commutator_samples
 from ebb.process.state_presets import labels_from_presets
 
 # Commutator-artifact threshold tunings used by `estimate_psd`. Values were
 # calibrated for the project's EDF acquisition; centralizing them here makes
 # them easier to find and adjust than burying inside the function call.
 _COMMUTATOR_VALUE_UV = 2000  # absolute amplitude limit (μV) for commutator
-_COMMUTATOR_RADIUS_SAMPLES = 250  # 1 s @ 250 Hz: merge events closer than this
-_COMMUTATOR_PAD_SAMPLES = 250  # 1 s @ 250 Hz: extend each event by this much
-_COMMUTATOR_MIN_TO_PAD = 10  # only events longer than this get the pad
 _COMMUTATOR_MASK_CHUNKSIZE = 45_000  # chunksize for streaming the comm mask
 
 # 60 Hz power-line notch: 8th-order Butterworth bandstop, 60 Hz +/- 3 Hz
@@ -291,16 +289,12 @@ def estimate_psd(
             wake_sub_mask = None
 
         # Compute commutator artifact threshold mask. ``value`` (µV) is
-        # surfaced as a user-editable param; radius / pad / min_to_pad
-        # remain hardcoded — see TODO "psd_compute: Commutator mask
-        # params should scale with user-set fs" for the fs-coupling
-        # cleanup needed before exposing them.
+        # surfaced as a user-editable param; radius / pad / min_to_pad are
+        # fixed durations (1 s / 1 s / 0.04 s) converted to samples at ``fs``.
         comm_mask = masking.commutator_threshold(
             pro,
             value=comm_value,
-            radius=_COMMUTATOR_RADIUS_SAMPLES,
-            pad=_COMMUTATOR_PAD_SAMPLES,
-            min_to_pad=_COMMUTATOR_MIN_TO_PAD,
+            **commutator_samples(fs),
         )[0]
 
         spindle_mask = masking.spindle_noise(

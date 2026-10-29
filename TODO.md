@@ -60,7 +60,9 @@ consistency issues (bare excepts narrowed, `sum(1 for _ in m)` →
 documented). A wholesale re-pass would likely surface low-value items.
 Skip unless a specific inconsistency becomes painful in real use.
 
-### psd_compute: Commutator mask params should scale with user-set fs
+### ~~psd_compute: Commutator mask params should scale with user-set fs~~
+**DONE** — radius, pad and minimum event length are now stored in seconds (1 s, 1 s, 0.04 s) in `ebb.masking.threshold` and converted to samples at the run's `fs` by `commutator_samples(fs)`; `psd_compute`, the mask export and the viewer's default masks all use it. At 250 Hz the values are the old 250 / 250 / 10. The EMG gate (`epoch_emg_rms`) now reads the rate from the EDF header too, and the viewer's STFT window is `0.5 s * fs`. Still 250 Hz only: the EEG viewer refuses other rates when it loads a file. The original note follows.
+
 `src/ebb/process/psd_compute.py` hardcodes `_COMMUTATOR_RADIUS_SAMPLES
 = 250` (and `_COMMUTATOR_PAD_SAMPLES = 250`) — explicitly tagged "1 s
 @ 250 Hz" in the source comments. But the PSD page exposes a Sampling
