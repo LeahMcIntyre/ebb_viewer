@@ -17,6 +17,18 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+# How to make an SWD file for an animal with no SWDs (used by the SWD Review and PSD help).
+_EMPTY_MAT_HTML = """
+<h4>Making an empty SWD file</h4>
+<p>The file holds one array named <code>DEL_ts</code> with two columns (start and stop, in
+seconds) and no rows. Open a terminal <b>in the project folder</b>, activate the
+<code>ebb-dev</code> environment, and run the command below, replacing <code>AM0001</code> with the
+animal's ID:</p>
+<pre>python -c "import numpy as np; from scipy.io import savemat; savemat('swd/AM0001_DEL_ts.mat', {'DEL_ts': np.empty((0, 2))})"</pre>
+<p>This creates <code>swd/AM0001_DEL_ts.mat</code>. Create the <code>swd/</code> folder first if it
+doesn't exist, and repeat the command for each animal that needs one.</p>
+"""
+
 # page key -> (dialog title, HTML body). Keep each body to: what it does, what it needs, what next.
 PAGE_HELP: dict[str, tuple[str, str]] = {
     "reclassify": (
@@ -67,6 +79,7 @@ The ID is the text before the first <code>_</code>, after an optional prefix end
 <p>Give it an <b>empty <code>.mat</code> file</b> (best practice, because the SWD mask in the PSD
 step also looks for a file for every animal). If you really do not want a file, click
 <b>Confirm no SWD</b> on that animal's row to override the requirement.</p>
+@@EMPTY_MAT@@
 <h4>Next</h4>
 <p>Sleep QC.</p>
 """,
@@ -209,6 +222,10 @@ skipped, so a re-run only fetches the downloads that are missing.</li>
 <p>Files are matched by name, so SleepyRat will skip the new one. <b>Delete the old entry for that
 animal in your folder on the SleepyRat website</b> first. An existing label CSV is also never
 overwritten, so delete that animal's CSV in <code>spindle_outputs/</code> and run again.</p>
+<p><b>Or give the new EDF a different animal ID.</b> SleepyRat then treats it as a separate animal
+and nothing needs deleting. Every other file for that animal must use the <b>new ID</b> too (SWD
+<code>.mat</code>, annotation, drink mask and so on), because files are paired with an EDF by
+exact animal ID.</p>
 <h4>Next</h4>
 <p>Reclassify.</p>
 """,
@@ -232,6 +249,7 @@ is the text before the first <code>_</code> in the file name. If two files share
 one found is used. An animal with no annotation file is still computed, without the mask (the
 checklist warns you).</li>
 </ul>
+@@EMPTY_MAT@@
 <h4>Settings</h4>
 <p>The defaults are the ones the lab uses; leave them unless you have a reason. <b>Restore
 defaults</b> resets them.</p>
@@ -424,6 +442,12 @@ reason is required to exclude).</li>
 </ul>
 """,
     ),
+}
+
+
+PAGE_HELP = {
+    key: (title, html.replace("@@EMPTY_MAT@@", _EMPTY_MAT_HTML))
+    for key, (title, html) in PAGE_HELP.items()
 }
 
 
