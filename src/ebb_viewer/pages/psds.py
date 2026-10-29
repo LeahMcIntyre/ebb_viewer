@@ -55,6 +55,7 @@ from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
 from ebb_viewer.widgets.collapsible_section import CollapsibleSection
 from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget, mask_summary_lines
 from ebb_viewer.widgets.no_scroll_spinbox import NoScrollSpinBox
+from ebb_viewer.widgets.page_help import title_row
 from ebb_viewer.widgets.readiness import Check, blockers, checks_html, first_fix, fix_button_text
 from ebb_viewer.widgets.swd_warning import confirm_unfinished_swd_review
 from ebb_viewer.widgets.worker_helpers import launch_worker
@@ -133,8 +134,7 @@ class PSDPage(QWidget):
         root = QVBoxLayout(content)
         root.setContentsMargins(8, 8, 8, 8)
 
-        lbl = QLabel("PSD Computation")
-        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        lbl = title_row("PSD Computation", "psds")
         desc = QLabel(
             "Compute power spectral densities for the project's channel combination from the "
             "sleep-scored EDF files. Every animal needs a Sleep QC decision (ok or excluded); "

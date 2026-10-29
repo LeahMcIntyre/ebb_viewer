@@ -31,3 +31,27 @@ def test_pages_carry_a_help_button(qapp, tmp_path):
     for cls, key in ((ReclassifyPage, "reclassify"), (SwdReviewPage, "swd_review")):
         page = cls(project_root=tmp_path)
         assert [b.page_key for b in page.findChildren(HelpButton)] == [key]
+
+
+def test_every_help_entry_is_used_by_a_page():
+    from pathlib import Path
+
+    import ebb_viewer
+
+    sources = "\n".join(p.read_text() for p in Path(ebb_viewer.__file__).parent.rglob("*.py"))
+    for key in PAGE_HELP:
+        shown = (
+            f', "{key}")' in sources
+            or f'HelpButton("{key}")' in sources
+            or f'PAGE_HELP["{key}"]' in sources
+        )
+        assert shown, f"help entry {key!r} is not shown by any page"
+
+
+def test_simple_pages_carry_their_help_button(qapp, tmp_path):
+    from ebb_viewer.pages.preprocess import PreprocessPage
+    from ebb_viewer.pages.spindle import SpindleWritePage
+
+    for cls, key in ((PreprocessPage, "preprocess"), (SpindleWritePage, "spindle")):
+        page = cls(project_root=tmp_path)
+        assert [b.page_key for b in page.findChildren(HelpButton)] == [key]

@@ -49,6 +49,7 @@ from ebb_viewer.pipeline.naming import drink_mask_rel
 from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
 from ebb_viewer.widgets.collapsible_section import CollapsibleSection
 from ebb_viewer.widgets.drink_loop import MASK_STEP, loop_summary_html
+from ebb_viewer.widgets.page_help import HelpButton
 from ebb_viewer.widgets.readiness import Check, blockers, checks_html, first_fix, fix_button_text
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
@@ -127,6 +128,7 @@ class DrinkMaskPage(QWidget):
         lbl.setStyleSheet("font-weight: bold; font-size: 15px;")
         hdr.addWidget(lbl)
         hdr.addStretch(1)
+        hdr.addWidget(HelpButton("drink_mask"))
         self.btn_refresh = QPushButton("Refresh")
         hdr.addWidget(self.btn_refresh)
         root.addLayout(hdr)

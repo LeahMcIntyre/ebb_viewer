@@ -12,6 +12,7 @@ from openseize.file_io import edf
 from PyQt6 import QtGui, QtWidgets
 from PyQt6.QtCore import Qt
 
+from ebb.core.naming import files_for_animal
 from ebb.io.edf_header import parse_edf_start_datetime
 from ebb.io.spindle_csv import FINAL_COLUMN, has_column
 from ebb.masking import get_offset
@@ -39,13 +40,13 @@ from ebb_viewer.edf_viewer.masks_dock import MasksDock
 from ebb_viewer.edf_viewer.recording import Recording
 from ebb_viewer.edf_viewer.trace_view import TraceView
 from ebb_viewer.pipeline.manifest import STAGE_SLEEP_QC
-from ebb.core.naming import files_for_animal
 from ebb_viewer.pipeline.naming import parse_animal_id
 from ebb_viewer.widgets.drink_mask_dialog import DrinkMaskDialogue
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
+from ebb_viewer.widgets.page_help import PAGE_HELP, HelpDialog
 from ebb_viewer.widgets.sleep_viewer import SleepPopup
-from ebb_viewer.widgets.worker_helpers import run_keeping_gui_alive
 from ebb_viewer.widgets.stft_viewer import STFTBoundsDialog, STFTPopup
+from ebb_viewer.widgets.worker_helpers import run_keeping_gui_alive
 
 _CH_NAMES = ("LFC", "RSC", "LSC", "EMG")
 
@@ -361,6 +362,11 @@ class EegMainWindow(QtWidgets.QMainWindow):
         m_tools.addAction(self.act_stft)
         m_tools.addAction(self.act_stft_bounds)
 
+        m_help = mb.addMenu("&Help")
+        act_help = QtGui.QAction("Keyboard shortcuts and controls…", self)
+        act_help.triggered.connect(self.on_show_help)
+        m_help.addAction(act_help)
+
     def _build_toolbars(self):
         nav_tb = self.addToolBar("Navigation")
         nav_tb.setObjectName("NavigationToolbar")
@@ -371,6 +377,10 @@ class EegMainWindow(QtWidgets.QMainWindow):
         tools_tb = self.addToolBar("Tools")
         tools_tb.setObjectName("ToolsToolbar")
         tools_tb.addAction(self.act_stft)
+
+    def on_show_help(self):
+        title, html = PAGE_HELP["eeg_viewer"]
+        HelpDialog(title, html, self).exec()
 
     def on_show_stft(self):
         self._stft_popup.plot_window(
