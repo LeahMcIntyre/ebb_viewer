@@ -588,6 +588,21 @@ def test_show_drink_mask_false_hides_section(qapp, tmp_path: Path):
     assert not w._sections["drink"].isVisibleTo(w)
 
 
+def test_show_swd_pad_false_hides_pad_but_keeps_param(qapp, tmp_path: Path):
+    w = MaskParamsWidget(project_root=tmp_path, show_swd_pad=False)
+    assert w.spin_swd_pad.parentWidget().isHidden()
+    assert w.to_params()["swd_pad"] == 0
+
+
+def test_show_swd_pad_shown_by_default(qapp, tmp_path: Path):
+    w = MaskParamsWidget(project_root=tmp_path)
+    assert not w.spin_swd_pad.parentWidget().isHidden()
+
+
+def test_swd_subtitle_omits_zero_pad():
+    assert _swd_subtitle({"use_swd_mask": True, "swd_pad": 0}) == "mask out"
+
+
 def test_show_drink_mask_true_shows_section_by_default(qapp, tmp_path: Path):
     w = MaskParamsWidget(project_root=tmp_path)
     # CollapsibleSection is laid-out visible-by-default (parent isn't shown

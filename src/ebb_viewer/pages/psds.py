@@ -154,6 +154,7 @@ class PSDPage(QWidget):
             project_root=self.project_root,
             swd_available=self._swd_available,
             show_drink_mask=False,
+            show_swd_pad=False,
             expose_states_externally=True,
             show_subzone_headers=True,
             event_masks_first=True,
