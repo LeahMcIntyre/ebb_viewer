@@ -55,7 +55,18 @@ state. Edits go into <code>swd_reclassification</code> and update <code>final_st
 <tr><td><b>Left / Right</b></td><td>scroll the trace</td></tr>
 </table>
 <h4>Needs</h4>
-<p>Reclassify must have been run first. Re-running Reclassify keeps your edits.</p>
+<ul>
+<li>Reclassify must have been run first. Re-running it keeps your edits.</li>
+<li><b>SWD time-stamp files</b>: one <code>.mat</code> file per animal in the project's
+<code>swd/</code> folder, holding the SWD start and stop times in seconds. The file name must start
+with the animal ID, for example <code>JK1011_P063_DEL_ts.mat</code> or <code>Mice-1256.mat</code>.
+The ID is the text before the first <code>_</code>, after an optional prefix ending in
+<code>ts_</code>.</li>
+</ul>
+<h4>An animal with no SWDs</h4>
+<p>Give it an <b>empty <code>.mat</code> file</b> (best practice, because the SWD mask in the PSD
+step also looks for a file for every animal). If you really do not want a file, click
+<b>Confirm no SWD</b> on that animal's row to override the requirement.</p>
 <h4>Next</h4>
 <p>Sleep QC.</p>
 """,
@@ -88,6 +99,9 @@ recording, then mark them OK or Exclude there.</p>
         """
 <h4>What it does</h4>
 <p>Shows where the project stands and what needs your attention.</p>
+<p><b>Animals only appear in the table after Preprocess (step 1) has written their downsampled
+EDFs to <code>standard/</code>.</b> Until then Home is empty, apart from a count of the EDFs
+it finds in the project folder.</p>
 <h4>Reading it, top to bottom</h4>
 <ul>
 <li><b>Progress strip</b>: one chip per step plus a next-step banner with an <b>Open</b> button.
@@ -110,9 +124,13 @@ animals</b>: use <b>Open EDF</b>, then <b>OK</b> or <b>Exclude</b>.</li>
 <h4>What it does</h4>
 <p>Trims, downsamples and standardizes the raw EDFs into <code>standard/</code>. The raw files
 are not changed.</p>
+<h4>Where the raw EDFs go</h4>
+<p>Put them <b>directly in the project folder</b> (the folder you chose when you opened the
+project). Subfolders are not searched.</p>
 <h4>Needs</h4>
 <ul>
-<li>One EDF per animal directly in the project folder (combine restarted recordings first).</li>
+<li>One EDF per animal (combine restarted recordings first). A red warning appears if an animal
+has more than one.</li>
 <li>File names like <code>AnimalID_anything.edf</code>: the ID is the text before the first
 <code>_</code>.</li>
 <li>Channel order LFC, RSC, LSC, EMG.</li>
@@ -124,8 +142,21 @@ Every file's header is checked against it; Run stays disabled if any differ.</td
 <tr><td><b>Downsample factor</b></td><td>default 20 (5000 to 250 Hz). The original rate must divide
 evenly by it. The rest of the pipeline assumes 250 Hz.</td></tr>
 <tr><td><b>Trim To (hrs)</b></td><td>each recording is trimmed to the longest target that fits
-(default 48, 72). A recording shorter than the smallest target fails.</td></tr>
+(default 48, 72). A recording shorter than the smallest target fails. See below.</td></tr>
 </table>
+<h4>Using Trim To</h4>
+<ul>
+<li>Each box is one target length in hours. <b>Edit the number</b> in a box to change it.</li>
+<li>Click <b>+</b> to add another target (up to four).</li>
+<li>Click <b>&minus;</b> to remove the last one. With a single box left, every recording is
+trimmed to that one length.</li>
+<li>Example with 48 and 72: a 60 h recording trims to 48 h and an 80 h recording to 72 h. The
+line under the settings shows how many recordings will go to each length, and warns in red about
+any that will fail.</li>
+</ul>
+<h4>Why 250 Hz</h4>
+<p>The pipeline after this step assumes 250 Hz data (the default 5000 Hz divided by 20). Keep the
+downsample factor at 20 unless your recordings were acquired at another rate.</p>
 <h4>Next</h4>
 <p>Spindle Write.</p>
 """,
@@ -154,19 +185,30 @@ step finishes, that combo is saved in <code>manifest.json</code> and every later
 <h4>What it does</h4>
 <p>Uploads the SPINDLE EDFs to SleepyRat for scoring and downloads one label CSV per animal into
 <code>spindle_outputs/&lt;COMBO&gt;/</code>. The <b>Upload &amp; Download</b> button does both.</p>
+<h4>Needs</h4>
+<p>A <b>SleepyRat subscription</b> (SleepyRat was previously called SPINDLE). You sign in to
+https://sleepyrat.ai/ with your own account.</p>
 <h4>Steps</h4>
 <ol>
 <li>Pick <b>your own name</b> as the SleepyRat project. Use <b>New</b> only if your name is not in
 the list.</li>
 <li>Check the remote folder name (filled in for you).</li>
-<li>Click <b>Upload &amp; Download</b>. The first time, a browser tab asks you to approve access.</li>
+<li>Click <b>Upload &amp; Download</b>.</li>
 </ol>
+<h4>First time on a new computer</h4>
+<p>A browser window opens asking you to log in to SleepyRat. Log in and <b>approve the device</b>;
+the app waits. The approval is remembered on that computer.</p>
 <h4>Good to know</h4>
 <ul>
 <li>Scoring can take over an hour for many files. Leave the app open.</li>
-<li>Safe to run again: files already uploaded or downloaded are skipped.</li>
+<li><b>If anything goes wrong, just run it again.</b> Files already uploaded or downloaded are
+skipped, so a re-run only fetches the downloads that are missing.</li>
 <li>Epochs are 4 s and scored Wake, NREM or REM.</li>
 </ul>
+<h4>If you make a new EDF for an animal that was already uploaded</h4>
+<p>Files are matched by name, so SleepyRat will skip the new one. <b>Delete the old entry for that
+animal in your folder on the SleepyRat website</b> first. An existing label CSV is also never
+overwritten, so delete that animal's CSV in <code>spindle_outputs/</code> and run again.</p>
 <h4>Next</h4>
 <p>Reclassify.</p>
 """,
@@ -180,22 +222,52 @@ masked out. Excluded animals are computed too and stay marked excluded.</p>
 <h4>Needs</h4>
 <ul>
 <li>A Sleep QC decision (OK or Excluded) for every animal.</li>
-<li>For the SWD mask: a <code>.mat</code> file per animal in <code>swd/</code> (an empty one is
-fine).</li>
-<li>For the annotation mask: the annotation files in one folder.</li>
+<li><b>For the SWD mask</b>: one <code>.mat</code> file per animal in the project's
+<code>swd/</code> folder (an empty one is fine). The name must start with the animal ID, for
+example <code>JK1011_P063_DEL_ts.mat</code>: the ID is the text before the first <code>_</code>,
+after an optional prefix ending in <code>ts_</code>. Every animal needs one when the mask is on.</li>
+<li><b>For the annotation mask</b>: one annotation file per animal (<code>.txt</code>,
+<code>.csv</code> or <code>.tsv</code>) in a single folder that you pick on this page. The animal ID
+is the text before the first <code>_</code> in the file name. If two files share an ID, the last
+one found is used. An animal with no annotation file is still computed, without the mask (the
+checklist warns you).</li>
 </ul>
 <h4>Settings</h4>
 <p>The defaults are the ones the lab uses; leave them unless you have a reason. <b>Restore
-defaults</b> resets them. States default to Wake, NREM and REM, and channels to all three EEG
-channels. Sampling frequency is 250 Hz (the refresh button reads it from the first EDF in
-<code>standard/</code>).</p>
+defaults</b> resets them.</p>
+<table cellpadding="3">
+<tr><td><b>States</b></td><td>Wake, NREM and REM by default. Sleep (NREM + REM) and All are also
+available.</td></tr>
+<tr><td><b>Channels</b></td><td>all three EEG channels by default. A sample flagged on any
+selected channel is masked on all of them.</td></tr>
+<tr><td><b>Commutator</b></td><td>masks samples beyond &plusmn;2000 &micro;V (cable/commutator
+artifact), merging events closer than 1 s.</td></tr>
+<tr><td><b>SD threshold</b></td><td>masks samples more than 5 standard deviations from the mean in
+180 s windows. Applied to Wake only.</td></tr>
+<tr><td><b>SPINDLE noise</b></td><td>drops epochs where SPINDLE's noise probability is 0.5 or
+higher.</td></tr>
+<tr><td><b>60 Hz notch</b></td><td>filters 57&ndash;63 Hz out of the signal after the masks are
+computed.</td></tr>
+<tr><td><b>SWD mask</b></td><td>choose <b>Mask out SWDs</b>. <b>Pad each event</b> adds seconds on
+each side (default 0).</td></tr>
+<tr><td><b>Annotation mask</b></td><td>tick it, pick the folder and enter comma-separated keywords.
+<b>Contains</b> matches any label containing a keyword (not case-sensitive); <b>Exact</b> needs the
+whole label. <b>Pad before / after</b> extend each event.</td></tr>
+<tr><td><b>Hour window</b></td><td>rarely used: keeps only certain clock hours, for example to
+compute light and dark periods separately.</td></tr>
+<tr><td><b>Sampling frequency</b></td><td>250 Hz. Don't change it for this data.</td></tr>
+</table>
+<p>Drink masks are not applied here; that happens on the Drink Mask page.</p>
+<h4>Run name and outputs</h4>
+<p><b>Run name</b> names the results folder. Use a name that says what the run is for; several runs
+can sit side by side. Results are saved in <code>psd/&lt;run name&gt;/</code>:</p>
 <ul>
-<li><b>SWD mask</b>: choose <b>Mask out SWDs</b>; <b>Pad each event</b> adds seconds either side.</li>
-<li><b>Annotation mask</b>: tick it, pick the directory and enter comma-separated keywords.
-<b>Contains</b> matches any label containing a keyword; <b>Exact</b> needs the whole label.</li>
-<li><b>Run name</b>: the folder under <code>psd/</code> for the results. Use a name that says what
-the run is for; several runs can sit side by side.</li>
+<li><code>psds_&lt;COMBO&gt;.pkl</code>: the PSDs for every animal (for example
+<code>psds_LFC_RSC.pkl</code>).</li>
+<li><code>psd_params.json</code>: the exact settings used.</li>
 </ul>
+<p>Drink Mask and Finalize add <code>psds_&lt;COMBO&gt;_drink.pkl</code> and
+<code>psds_final.pkl</code> to the same folder.</p>
 <h4>Readiness</h4>
 <p>Read the checklist before running. A red mark blocks the run; amber is a warning. The
 <b>Open</b> button on a failed check takes you to the page that fixes it.</p>
@@ -227,7 +299,18 @@ sidebands are gone.</li>
 </ul>
 <h4>Toolbar</h4>
 <p><b>Interpolate</b> and <b>Inverse Filter</b> are display-only: they change what you see, not
-the saved PSDs. Turn both on for the review.</p>
+the saved PSDs, the sealed file or the Excel export. Turn both on for the review.</p>
+<ul>
+<li><b>Interpolate</b> draws a straight bridge over the gap the 60 Hz line noise leaves, so it
+doesn't dominate the plot. If the run used the notch filter (the default) the range is
+<b>56&ndash;64 Hz</b>; for a run without it, <b>58&ndash;62 Hz</b>. <b>Set Interp-Range</b> changes
+it.</li>
+<li><b>Inverse Filter</b> multiplies the lowest frequencies (0.5&ndash;3.5 Hz) by correction
+factors, to make up for the recording hardware's roll-off at low frequencies. The largest factor
+(about 2.5x) is at 0.5 Hz and it falls to about 1x by 3.5 Hz.</li>
+<li><b>Log-X</b> and <b>Log-Y</b> switch the axes (Log-Y is on by default).
+<b>Set X-Range</b> and <b>Reset zoom</b> change the frequency range shown.</li>
+</ul>
 <h4>Excluding</h4>
 <p>Don't exclude an animal from its PSD alone. Look into it separately first (for example in the
 EEG viewer). A reason is required.</p>
@@ -243,13 +326,24 @@ EEG viewer). A reason is required.</p>
 the 52 and 68 Hz sidebands go away. Each event is padded by 2 s each side.</p>
 <h4>Needs</h4>
 <ul>
-<li>A drink-event file per flagged animal: <code>drink_masks/&lt;AnimalID&gt;.npy</code>, one
-true/false value per second of recording. These are made outside this pipeline. Animals without
-one are skipped.</li>
-<li>If the video and EEG did not start together: one CSV in <code>drink_masks/</code> with columns
-<code>Animal</code> and <code>Offset</code> (seconds from the EEG start to the video start). Keep
-only one CSV there.</li>
+<li><b>A drink-event file per flagged animal</b>: <code>drink_masks/&lt;AnimalID&gt;.npy</code>,
+one true/false value per second of recording. <b>This is not computed in ebb.</b> It comes from
+a neural network that detects drinking from the recording video, so you need the video (exported
+from the PVFS file). Animals without a file are skipped.</li>
+<li><b>An offsets CSV</b>, if the video and EEG did not start at the same moment. It goes in
+<code>drink_masks/</code> with the columns <code>Animal</code> and <code>Offset</code>, one row per
+animal. <code>Offset</code> is the time in seconds from the start of the EEG to the start of the
+video (positive means the video starts later).</li>
 </ul>
+<h4>How the offsets CSV is used</h4>
+<table cellpadding="3">
+<tr><td><b>One CSV</b></td><td>its offsets are applied to each animal's mask.</td></tr>
+<tr><td><b>No CSV</b></td><td>no offset is used; the video is assumed to start with the EEG.</td></tr>
+<tr><td><b>Two or more CSVs</b></td><td>an error: the page doesn't know which to use, and the run is
+blocked until only one is left.</td></tr>
+</table>
+<p>If the CSV is missing the <code>Animal</code> or <code>Offset</code> column, the page also
+reports an error.</p>
 <h4>Steps</h4>
 <ol>
 <li>Choose the <b>PSD run</b> you reviewed. Its settings are rebuilt exactly, plus the drink mask.</li>
