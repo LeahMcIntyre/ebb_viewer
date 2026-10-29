@@ -357,24 +357,26 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         m_file = mb.addMenu("&File")
         m_file.addAction(self.act_open)
-        m_file.addAction(self.act_load_swd)
-        m_file.addAction(self.act_load_drink)
-        m_file.addAction(self.act_load_annotations)
-        m_file.addAction(self.act_load_annotation_dir)
-        m_file.addAction(self.act_mask_annotations)
+        m_file.addAction(self.act_info)
         m_file.addSeparator()
         m_file.addAction(self.act_quit)
-        m_file.addAction(self.act_info)
 
-        m_view = mb.addMenu("&View")
-        m_view.addAction(self.act_plot_sleep)
-        m_view.addSeparator()
-        m_view.addAction(self.act_prev_annotation)
-        m_view.addAction(self.act_next_annotation)
+        m_masks = mb.addMenu("&Masks")
+        m_masks.addAction(self.act_load_swd)
+        m_masks.addAction(self.act_load_drink)
+        m_masks.addSeparator()
+        m_masks.addAction(self.act_load_annotations)
+        m_masks.addAction(self.act_load_annotation_dir)
+        m_masks.addAction(self.act_mask_annotations)
 
-        m_tools = mb.addMenu("&Tools")
-        m_tools.addAction(self.act_stft)
-        m_tools.addAction(self.act_stft_bounds)
+        m_plots = mb.addMenu("&Plots")
+        m_plots.addAction(self.act_plot_sleep)
+        m_plots.addAction(self.act_stft)
+        m_plots.addAction(self.act_stft_bounds)
+
+        m_go = mb.addMenu("&Go")
+        m_go.addAction(self.act_prev_annotation)
+        m_go.addAction(self.act_next_annotation)
 
         m_help = mb.addMenu("&Help")
         act_help = QtGui.QAction("Keyboard shortcuts and controls…", self)
@@ -383,15 +385,16 @@ class EegMainWindow(QtWidgets.QMainWindow):
         m_help.addAction(act_help)
 
     def _build_toolbars(self):
-        nav_tb = self.addToolBar("Navigation")
-        nav_tb.setObjectName("NavigationToolbar")
-        nav_tb.addAction(self.act_open)
-        nav_tb.addAction(self.act_load_swd)
-        nav_tb.addAction(self.act_load_drink)
-
-        tools_tb = self.addToolBar("Tools")
-        tools_tb.setObjectName("ToolsToolbar")
-        tools_tb.addAction(self.act_stft)
+        """One toolbar: open a file | load masks | plots. (The QC toolbar is separate.)"""
+        tb = self.addToolBar("Main")
+        tb.setObjectName("MainToolbar")
+        tb.addAction(self.act_open)
+        tb.addSeparator()
+        tb.addAction(self.act_load_swd)
+        tb.addAction(self.act_load_drink)
+        tb.addSeparator()
+        tb.addAction(self.act_plot_sleep)
+        tb.addAction(self.act_stft)
 
     def _build_shortcut_hint(self) -> None:
         """One-line reminder of the main keys in the status bar (full list: Help, F1)."""
