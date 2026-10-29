@@ -285,6 +285,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         if self.manifest is not None and self.animal_id is not None:
             self._build_qc_toolbar()
         self._build_docks()
+        self._build_shortcut_hint()
 
         self.trace_view.timeDoubleClicked.connect(self.on_time_double_clicked)
 
@@ -364,6 +365,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         m_help = mb.addMenu("&Help")
         act_help = QtGui.QAction("Keyboard shortcuts and controls…", self)
+        act_help.setShortcut("F1")
         act_help.triggered.connect(self.on_show_help)
         m_help.addAction(act_help)
 
@@ -377,6 +379,15 @@ class EegMainWindow(QtWidgets.QMainWindow):
         tools_tb = self.addToolBar("Tools")
         tools_tb.setObjectName("ToolsToolbar")
         tools_tb.addAction(self.act_stft)
+
+    def _build_shortcut_hint(self) -> None:
+        """One-line reminder of the main keys in the status bar (full list: Help, F1)."""
+        hint = QtWidgets.QLabel(
+            "Left / Right: scroll  ·  W / N / R: next state  ·  1-9: next mask span  ·  "
+            "Double-click: epoch details  ·  F1: all shortcuts"
+        )
+        hint.setStyleSheet("color: #666; font-size: 11px; padding: 0 6px;")
+        self.statusBar().addWidget(hint)
 
     def on_show_help(self):
         title, html = PAGE_HELP["eeg_viewer"]

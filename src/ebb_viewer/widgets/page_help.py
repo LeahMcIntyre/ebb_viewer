@@ -435,8 +435,18 @@ you use the files.</p>
 <tr><td><b>Shift+1 to 9</b></td><td>jump to the previous span</td></tr>
 <tr><td><b>]</b> and <b>[</b></td><td>next / previous annotation</td></tr>
 </table>
+<h4>Mouse</h4>
+<ul>
+<li><b>Double-click a trace</b> to see that epoch's row from the SPINDLE CSV (state, noise
+probability and the other columns), when a CSV is loaded.</li>
+<li><b>Right-click a mask</b> in the Masks panel to edit its parameters and rebuild it. The
+arrows next to a mask jump to its previous / next span.</li>
+<li>The <b>R</b> badge above the state bar toggles between the reclassified states (lit) and the
+original SPINDLE states. It only changes the display.</li>
+</ul>
 <h4>Other controls</h4>
 <ul>
+<li>The time readouts show the position as seconds from the start and as clock time.</li>
 <li>The seconds-per-view box sets how much time is shown. Each channel has its own zoom slider;
 the reset button returns them to 1x.</li>
 <li><b>File</b> menu: load an SWD mask, a drink mask or annotations. <b>Ctrl+S</b> plots the STFT.</li>
