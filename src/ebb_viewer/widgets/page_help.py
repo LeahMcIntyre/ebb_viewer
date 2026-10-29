@@ -434,7 +434,23 @@ you use the files.</p>
 <tr><td><b>1 to 9</b></td><td>jump to the next span of the 1st to 9th mask</td></tr>
 <tr><td><b>Shift+1 to 9</b></td><td>jump to the previous span</td></tr>
 <tr><td><b>]</b> and <b>[</b></td><td>next / previous annotation</td></tr>
+<tr><td><b>Ctrl+S</b></td><td>plot the STFT (spectrogram) of the current view</td></tr>
+<tr><td><b>Ctrl+O</b></td><td>open an EDF</td></tr>
+<tr><td><b>Ctrl+Q</b></td><td>close the viewer</td></tr>
+<tr><td><b>F1</b></td><td>open this help (or click the <b>?</b> at the top right)</td></tr>
 </table>
+<h4>The sleep-state bar</h4>
+<p>The colored bar above the traces shows the sleep state of every 4 s epoch in the time currently
+on screen, lined up with the traces below it. The legend on its left gives the colors: Wake,
+NREM and REM. It needs the animal's SPINDLE CSV. When the CSV has been reclassified the bar shows
+the reclassified states (<code>final_state</code>) and the <b>R</b> badge is lit; click it to see
+SPINDLE's original states instead.</p>
+<h4>View &gt; Plot Sleep Data</h4>
+<p>Opens a window that summarizes this animal's whole recording in a 3 by 3 grid. The columns are
+Wake, NREM and REM; the rows are the fraction of time spent in the state, the number of bouts,
+and the mean bout duration in seconds. Each point is a 2 hour bin and the x-axis is hours from
+the start of the recording. It uses the reclassified states when the CSV has them and the
+original states otherwise. It needs a state CSV.</p>
 <h4>Mouse</h4>
 <ul>
 <li><b>Double-click a trace</b> to see that epoch's row from the SPINDLE CSV (state, noise
@@ -449,7 +465,7 @@ original SPINDLE states. It only changes the display.</li>
 <li>The time readouts show the position as seconds from the start and as clock time.</li>
 <li>The seconds-per-view box sets how much time is shown. Each channel has its own zoom slider;
 the reset button returns them to 1x.</li>
-<li><b>File</b> menu: load an SWD mask, a drink mask or annotations. <b>Ctrl+S</b> plots the STFT.</li>
+<li><b>File</b> menu: load an SWD mask, a drink mask or annotations.</li>
 <li>The toolbar on the right marks the animal <b>OK</b>, <b>Needs Review</b> or <b>Exclude</b> (a
 reason is required to exclude).</li>
 </ul>

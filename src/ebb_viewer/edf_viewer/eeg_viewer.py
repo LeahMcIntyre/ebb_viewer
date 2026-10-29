@@ -43,7 +43,7 @@ from ebb_viewer.pipeline.manifest import STAGE_SLEEP_QC
 from ebb_viewer.pipeline.naming import parse_animal_id
 from ebb_viewer.widgets.drink_mask_dialog import DrinkMaskDialogue
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
-from ebb_viewer.widgets.page_help import PAGE_HELP, HelpDialog
+from ebb_viewer.widgets.page_help import PAGE_HELP, HelpButton, HelpDialog
 from ebb_viewer.widgets.sleep_viewer import SleepPopup
 from ebb_viewer.widgets.stft_viewer import STFTBoundsDialog, STFTPopup
 from ebb_viewer.widgets.worker_helpers import run_keeping_gui_alive
@@ -368,6 +368,8 @@ class EegMainWindow(QtWidgets.QMainWindow):
         act_help.setShortcut("F1")
         act_help.triggered.connect(self.on_show_help)
         m_help.addAction(act_help)
+        # Always-visible "?" at the right end of the menu bar (F1 does the same).
+        mb.setCornerWidget(HelpButton("eeg_viewer"), Qt.Corner.TopRightCorner)
 
     def _build_toolbars(self):
         nav_tb = self.addToolBar("Navigation")
