@@ -472,7 +472,7 @@ Most of this section is drafted from the code, `CLAUDE.md`, `PITFALLS.md` and `R
 ### Relationship to upstream EBB
 - **Chosen:** The project began as a refactor of EBB by Matt Caudill (https://github.com/mscaudill/ebb) with additions.
 - **What was added here:** Thresholding and masking additions, SPINDLE integration, reclassification, SWD review, QC and exclusion, the GUI. **(you)** to describe precisely what was kept and what was rewritten.
-- **Action:** `README.txt` still says "NEED TO CREDIT/COMMUNICATE WITH ORIGINAL AUTHOR" and "NEED TO FIX". Settle that before the paper and before sharing the code, and cite EBB in the methods.
+- **Action:** The README used to carry "NEED TO CREDIT/COMMUNICATE WITH ORIGINAL AUTHOR" (now an acknowledgement only). Communicate with the original author before the paper and before sharing the code, and cite EBB in the methods.
 
 ### Working conventions
 - **No legacy compatibility code:** Delete migration shims and old-format readers instead of tidying them, because there is one user and one deployment and old files can be regenerated. (The one remaining exception is marked TEMPORARY in `manifest.py`.)
