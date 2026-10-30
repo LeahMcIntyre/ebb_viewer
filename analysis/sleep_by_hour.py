@@ -20,7 +20,8 @@ HOW THE NUMBERS ARE MADE
     The reclassified state (``final_state``) of each 4 s epoch is repeated to one state per second,
     the recording is rotated so its first 6 AM is position 0, and it is cut into 2-hour bins. Per
     bin and state: ``frac_time`` (fraction of the bin), ``n_bouts`` (unbroken runs) and
-    ``mean_bout_sec``. Bins are folded onto a 24 h day and averaged across days;
+    ``mean_bout_sec``. Bouts are found over the whole recording, so none is cut at a bin edge: each is
+    counted once, in the bin that holds most of it, with its full length. Bins are folded onto a 24 h day and averaged across days;
     ZT = (clock hour - 6) mod 24. Animals excluded in Sleep QC are left out.
 """
 
@@ -245,15 +246,34 @@ def load_states(path):
     return states
 
 
+def bout_runs(mask):
+    """Start (inclusive) and end (exclusive) of every bout: an unbroken run of True in `mask`."""
+    change = np.diff(np.r_[False, mask, False].astype(int))
+    return np.where(change == 1)[0], np.where(change == -1)[0]
+
+
 def bouts(mask):
     """(number of bouts, mean bout length in samples) for a boolean mask; a bout is an unbroken run."""
-    change = np.diff(mask.astype(int))
-    starts_, ends_ = np.where(change == 1)[0] + 1, np.where(change == -1)[0] + 1
-    if mask[0]:
-        starts_ = np.r_[0, starts_]
-    if mask[-1]:
-        ends_ = np.r_[ends_, len(mask)]
+    starts_, ends_ = bout_runs(mask)
     return (len(starts_), (ends_ - starts_).mean()) if len(starts_) else (0, np.nan)
+
+
+def bouts_by_bin(mask, bin_of_second, n_bins):
+    """Whole bouts per bin: each bout is counted once, in the bin that holds most of it.
+
+    Bouts are found over the whole recording, so none is cut at a bin edge. A bout that touches
+    two or more bins goes to the bin with the most of its seconds (a tie goes to the earlier bin)
+    and keeps its full length. Returns (number of bouts per bin, mean length in seconds per bin).
+    """
+    starts_, ends_ = bout_runs(mask)
+    if len(starts_) == 0:
+        return np.zeros(n_bins, dtype=int), np.full(n_bins, np.nan)
+    bin_of_bout = bin_of_second[starts_].copy()
+    for k in np.where(bin_of_second[ends_ - 1] != bin_of_bout)[0]:       # bouts across a bin edge
+        bin_of_bout[k] = np.bincount(bin_of_second[starts_[k]:ends_[k]]).argmax()
+    counts = np.bincount(bin_of_bout, minlength=n_bins)
+    totals = np.bincount(bin_of_bout, weights=ends_ - starts_, minlength=n_bins)
+    return counts, np.where(counts > 0, totals / np.maximum(counts, 1), np.nan)
 
 
 def seconds_until_next(start, hour, tz):
@@ -276,22 +296,27 @@ def sleep_bins(path, starts, tz):
     if offset >= len(secs):
         print(f"skipping {animal}: recording ends before it reaches {BEGIN_HR}:00")
         return None
-    rotated = np.concatenate([secs[offset:], secs[:offset]])  # first BEGIN_HR is position 0
+    bin_len = BIN_HOURS * 3600
+    n_bins = -(-len(secs) // bin_len)
+    rotated = np.roll(secs, -offset)  # first BEGIN_HR is position 0 (the part before it moves to the end)
+    # the bin each second of the ORIGINAL recording falls in after rotating; bouts are found on the
+    # original order, so a run that crosses the rotation point is still one bout
+    bin_of_second = ((np.arange(len(secs)) - offset) % len(secs)) // bin_len
+    bouts_in = {state: bouts_by_bin(secs == state, bin_of_second, n_bins) for state in STATES}
     rows = []
-    for i, s in enumerate(range(0, len(rotated), BIN_HOURS * 3600)):
-        chunk = rotated[s : s + BIN_HOURS * 3600]
+    for i, s in enumerate(range(0, len(rotated), bin_len)):
+        chunk = rotated[s : s + bin_len]
         for state in STATES:
-            m = chunk == state
-            n, mean_len = bouts(m)
+            counts, mean_sec = bouts_in[state]
             rows.append(
                 {
                     "mouse_id": animal,
                     "bin_idx": i,
                     "bin_start_hr": BEGIN_HR + i * BIN_HOURS,
                     "state": state,
-                    "frac_time": m.sum() / len(chunk),
-                    "n_bouts": n,
-                    "mean_bout_sec": mean_len,
+                    "frac_time": (chunk == state).sum() / len(chunk),
+                    "n_bouts": int(counts[i]),
+                    "mean_bout_sec": mean_sec[i],
                 }
             )
     return pd.DataFrame(rows)
