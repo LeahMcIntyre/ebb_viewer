@@ -714,3 +714,112 @@ def test_analysis_functions_require_final_state(tmp_path: Path):
         csv.writer(f).writerows([["rawstate", "noise_probs"], ["w", "0.1"]])
     with pytest.raises(NotReclassifiedError, match="Reclassify"):
         compute_spindle_fractions(tmp_path)
+
+
+# ---------------------------------------------------------------------------
+# Bouts at bin edges: whole bouts, counted once in the bin that holds most of them
+# ---------------------------------------------------------------------------
+
+
+def _per_second(length: int, runs: dict[str, list[tuple[int, int]]], fill: str = "n"):
+    """A per-second state array of ``length`` seconds with the given [start, stop) runs set."""
+    import numpy as np
+
+    arr = np.array([fill] * length, dtype="<U1")
+    for state, spans in runs.items():
+        for a, b in spans:
+            arr[a:b] = state
+    return arr
+
+
+def _row(df, bin_idx, state):
+    return df[(df["bin_idx"] == bin_idx) & (df["state"] == state)].iloc[0]
+
+
+def test_a_bout_across_a_bin_edge_is_counted_once_in_the_bin_with_most_of_it():
+    from ebb.process.sleep_compute import compute_sleep_metrics_per_mouse
+
+    # wake runs 3000-4000 s: 600 s in the first hour, 400 s in the second
+    states = _per_second(7200, {"w": [(3000, 4000)]})
+    df = compute_sleep_metrics_per_mouse(states, bin_hours=1, sample_rate_hz=1)
+    assert _row(df, 0, "w")["n_bouts"] == 1
+    assert _row(df, 1, "w")["n_bouts"] == 0
+    assert math.isclose(_row(df, 0, "w")["mean_bout_sec"], 1000)  # not cut at the edge
+    assert math.isnan(_row(df, 1, "w")["mean_bout_sec"])
+    # time in state is still measured inside each bin
+    assert math.isclose(_row(df, 0, "w")["frac_time"], 600 / 3600)
+    assert math.isclose(_row(df, 1, "w")["frac_time"], 400 / 3600)
+
+
+def test_a_bout_with_most_of_it_in_the_later_bin_is_counted_there():
+    from ebb.process.sleep_compute import compute_sleep_metrics_per_mouse
+
+    states = _per_second(7200, {"w": [(3400, 4600)]})  # 200 s then 1000 s
+    df = compute_sleep_metrics_per_mouse(states, bin_hours=1, sample_rate_hz=1)
+    assert _row(df, 0, "w")["n_bouts"] == 0
+    assert _row(df, 1, "w")["n_bouts"] == 1
+    assert math.isclose(_row(df, 1, "w")["mean_bout_sec"], 1200)
+
+
+def test_an_even_split_goes_to_the_earlier_bin():
+    from ebb.process.sleep_compute import compute_sleep_metrics_per_mouse
+
+    states = _per_second(7200, {"w": [(3100, 4100)]})  # 500 s each side
+    df = compute_sleep_metrics_per_mouse(states, bin_hours=1, sample_rate_hz=1)
+    assert _row(df, 0, "w")["n_bouts"] == 1
+    assert _row(df, 1, "w")["n_bouts"] == 0
+
+
+def test_a_bout_spanning_three_bins_goes_to_the_bin_with_most_of_it():
+    from ebb.process.sleep_compute import compute_sleep_metrics_per_mouse
+
+    states = _per_second(10800, {"w": [(3000, 8000)]})  # 600 s, 3600 s, 800 s
+    df = compute_sleep_metrics_per_mouse(states, bin_hours=1, sample_rate_hz=1)
+    assert [_row(df, b, "w")["n_bouts"] for b in range(3)] == [0, 1, 0]
+    assert math.isclose(_row(df, 1, "w")["mean_bout_sec"], 5000)
+
+
+def test_bout_counts_over_the_bins_add_up_to_the_whole_recording():
+    import numpy as np
+
+    from ebb.process.sleep_compute import _bouts_for_state, compute_sleep_metrics_per_mouse
+
+    rng = np.random.default_rng(3)
+    # long runs of random states, so many bouts cross an edge
+    states = np.repeat(rng.choice(["w", "n", "r"], 240), 150)  # 36 000 s = 10 bins of 1 h
+    df = compute_sleep_metrics_per_mouse(states, bin_hours=1, sample_rate_hz=1)
+    for state in ("w", "n", "r"):
+        whole_n, _ = _bouts_for_state(states == state, 1)
+        assert df[df["state"] == state]["n_bouts"].sum() == whole_n
+
+
+def test_a_run_across_the_rotation_point_is_still_one_bout():
+    from ebb.process.sleep_compute import compute_sleep_metrics_per_mouse
+
+    # rotated by 1800 s: seconds 1700-1900 straddle the new start, 100 s at each end of the recording
+    states = _per_second(7200, {"w": [(1700, 1900)]})
+    df = compute_sleep_metrics_per_mouse(states, bin_hours=1, sample_rate_hz=1, rotate_by=1800)
+    assert df[df["state"] == "w"]["n_bouts"].sum() == 1
+    assert math.isclose(df[df["state"] == "w"]["mean_bout_sec"].dropna().iloc[0], 200)
+
+
+def test_the_two_ends_of_a_rotated_recording_are_not_joined_into_one_bout():
+    from ebb.process.sleep_compute import compute_sleep_metrics_per_mouse
+
+    # states[0:100] and states[7100:7200] are NREM and become neighbours after rotating by 1800
+    states = _per_second(7200, {"w": [(100, 7100)]}, fill="n")
+    df = compute_sleep_metrics_per_mouse(states, bin_hours=1, sample_rate_hz=1, rotate_by=1800)
+    assert df[df["state"] == "n"]["n_bouts"].sum() == 2
+
+
+def test_clock_aligned_bins_count_a_straddling_bout_in_the_bin_with_most_of_it():
+    from ebb.process.sleep_compute import _bin_states_clock_aligned
+
+    # the recording starts 30 min into an hour bin, so the first bin holds only 1800 s
+    states = _per_second(7200, {"w": [(1500, 2500)]})  # 300 s in the first bin, 700 s in the second
+    df = _bin_states_clock_aligned(
+        states, "A", bin_hours=1, rec_start_offset_secs=1800, begin_hr=0, sample_rate_hz=1.0
+    )
+    assert _row(df, 0, "w")["n_bouts"] == 0
+    assert _row(df, 1, "w")["n_bouts"] == 1
+    assert math.isclose(_row(df, 1, "w")["mean_bout_sec"], 1000)
