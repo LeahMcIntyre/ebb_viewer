@@ -83,13 +83,13 @@ OUT_DIR = None
 INCLUDE_EXCLUDED = False  # True keeps animals excluded in Sleep QC
 APPLY_INVERSE_FILTER = True  # correct 0.5-3.5 Hz for the hardware roll-off
 NORM_BAND = (1, 100)  # Hz; spectra are normalized to the power in this band
-BANDS = {  # Hz; band power is computed for each of these
-    "1-4": (1, 4),
-    "4-8": (4, 8),
-    "8-12": (8, 12),
-    "12-30": (12, 30),
-    "30-70": (30, 70),
-    "70-100": (70, 100),
+BANDS = {  # Hz; band power is computed for each of these. 
+    "1-4 Hz": (1, 4), #For excel to format correctly, include at least 1 char in the band name (ex: 'Hz')
+    "4-8 Hz": (4, 8),
+    "8-12 Hz": (8, 12),
+    "12-30 Hz": (12, 30),
+    "30-70 Hz": (30, 70),
+    "70-100 Hz": (70, 100),
 }
 FREQ_RANGE = (0.5, 110)  # Hz shown on the spectrum plots
 COLOR_MAP = None  # e.g. {"WT": "tab:green", "MUT": "tab:blue"}; None = automatic
@@ -235,8 +235,8 @@ def main():
     for name, table, ylabel in [("raw", band_raw, r"Power [$\mu V^2$]"), ("normalized", band_norm, "Power [a.u.]")]:
         for band in BANDS:
             psd_utils.boxplot_band_power(
-                table, band, ylabel, f"Band {band} Hz ({name})",
-                save_path=fig_dir / f"band_{band}_{name}.png", **box_args,
+                table, band, ylabel, f"Band {band} ({name})",
+                save_path=fig_dir / f"band_{band.replace(' ', '')}_{name}.png", **box_args,
             )
             plt.close("all")
 
