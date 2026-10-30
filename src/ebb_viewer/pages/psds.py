@@ -55,6 +55,7 @@ from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
 from ebb_viewer.widgets.collapsible_section import CollapsibleSection
 from ebb_viewer.widgets.mask_params_widget import MaskParamsWidget, mask_summary_lines
 from ebb_viewer.widgets.no_scroll_spinbox import NoScrollSpinBox
+from ebb_viewer.widgets.page_help import title_row
 from ebb_viewer.widgets.readiness import Check, blockers, checks_html, first_fix, fix_button_text
 from ebb_viewer.widgets.swd_warning import confirm_unfinished_swd_review
 from ebb_viewer.widgets.worker_helpers import launch_worker
@@ -133,8 +134,7 @@ class PSDPage(QWidget):
         root = QVBoxLayout(content)
         root.setContentsMargins(8, 8, 8, 8)
 
-        lbl = QLabel("PSD Computation")
-        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        lbl = title_row("PSD Computation", "psds")
         desc = QLabel(
             "Compute power spectral densities for the project's channel combination from the "
             "sleep-scored EDF files. Every animal needs a Sleep QC decision (ok or excluded); "
@@ -154,6 +154,7 @@ class PSDPage(QWidget):
             project_root=self.project_root,
             swd_available=self._swd_available,
             show_drink_mask=False,
+            show_swd_pad=False,
             expose_states_externally=True,
             show_subzone_headers=True,
             event_masks_first=True,
@@ -802,7 +803,8 @@ class BatchEstimateWorker(QObject):
     Lives on a ``QThread`` started via ``launch_worker``. For each combo,
     calls ``batch_estimate`` with ``drink_dir=None`` (drink masking is
     applied later by the Drink Mask page) and ``savepath=None``, then
-    writes the PKL manually with ``params`` embedded in each record.
+    writes the PKL manually (records carry no params; the run's settings live in
+    ``psd_params.json``).
     After the last combo completes, writes ``psd/<run_name>/psd_params.json``
     so the run is fully reproducible from disk.
     """
@@ -849,7 +851,7 @@ class BatchEstimateWorker(QObject):
                     ann_params=self.ann_params,
                     **self.params,
                 )
-                records = [{**dataclasses.asdict(r), "params": self.params} for r in results]
+                records = [dataclasses.asdict(r) for r in results]
                 with open(savepath, "wb") as f:
                     pickle.dump(records, f)
                 self.progress.emit(f"  → Saved: {savepath.name}")
@@ -859,7 +861,9 @@ class BatchEstimateWorker(QObject):
             # spread below covers them — only swd_mode and ann_* need to
             # be added on top.
             swd_mode = "mask_out" if self.swd_dir is not None else "none"
-            saved = {**self.params, "swd_mode": swd_mode}
+            # drink_dir=None above: no drink mask was applied, whatever the hidden
+            # widget checkbox says. The Drink Mask page flips this on its rerun.
+            saved = {**self.params, "swd_mode": swd_mode, "use_drink_mask": False}
             if self.ann_params is not None:
                 saved.update(
                     {

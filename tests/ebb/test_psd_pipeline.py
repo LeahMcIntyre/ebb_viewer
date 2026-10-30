@@ -77,6 +77,18 @@ def test_match_paths_extra_eeg_raises():
         assert "Number of paths" in str(e)
 
 
+def test_match_paths_does_not_pair_an_id_with_a_longer_id():
+    """GF1192 and GF1192m are different animals; neither may claim the other's files."""
+    eeg = [Path("GF1192_x_PROCESSED.edf"), Path("GF1192m_x_PROCESSED.edf")]
+    st = [Path("GF1192m_x_labels.csv"), Path("GF1192_x_labels.csv")]
+    swd = [Path("GF1192m_ts.mat"), Path("GF1192_ts.mat")]
+
+    paired = match_paths(eeg, st, swd_paths=swd, drink_paths=None)
+
+    assert paired[0][1] == st[1] and paired[0][2] == swd[1]
+    assert paired[1][1] == st[0] and paired[1][2] == swd[0]
+
+
 def test_batch_estimate_filters_eeg_by_state_csv(tmp_path):
     """batch_estimate only processes EDFs that have a matching spindle CSV.
 

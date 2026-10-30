@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ebb.core.naming import files_for_animal
 from ebb.process.state_presets import (
     CANONICAL_ORDER,
     DEFAULT_STATES,
@@ -93,6 +94,10 @@ class MaskParamsWidget(QWidget):
             the Drink Mask page. Widget state still tracks the drink
             params (returned by ``to_params``) so saved configs round-trip
             unchanged.
+        show_swd_pad: If False, hides the SWD "Pad each event" box. Used by
+            consumers (the PSD compute page) whose SWD mask is built without
+            padding; the pad only applies in the mask export. ``swd_pad``
+            stays in ``to_params`` at its default so saved configs round-trip.
         expose_states_externally: If True, the States section is built but
             NOT added to this widget's own layout — instead the host page
             retrieves it via ``states_section()`` and places it in its
@@ -118,16 +123,23 @@ class MaskParamsWidget(QWidget):
         *,
         swd_available: bool = False,
         show_drink_mask: bool = True,
+        show_swd_pad: bool = True,
         expose_states_externally: bool = False,
         show_subzone_headers: bool = False,
+        states_hint: str | None = None,
         event_masks_first: bool = False,
     ):
         super().__init__(parent)
         self._project_root = Path(project_root) if project_root else None
         self._swd_available = swd_available
         self._show_drink_mask = show_drink_mask
+        self._show_swd_pad = show_swd_pad
         self._expose_states_externally = expose_states_externally
         self._show_subzone_headers = show_subzone_headers
+        self._states_hint = states_hint or (
+            "Select one or more state groups. A separate PSD is computed for each "
+            "checked group; lumped groups combine their underlying epochs."
+        )
         self._event_masks_first = event_masks_first
         self._ann_dir: Path | None = None
         # Cached EDF (rec_start, n_samples) tuples for the hour-window
@@ -202,12 +214,8 @@ class MaskParamsWidget(QWidget):
             # Spindle noise
             self.dspin_noise.setValue(float(params.get("noise_thresh", _DEFAULT_NOISE_THRESH)))
 
-            # SWD — also tolerate legacy psd_params.json shape that used swd_mode.
-            if "use_swd_mask" in params:
-                swd_on = bool(params["use_swd_mask"])
-            else:
-                swd_on = params.get("swd_mode") == "mask_out"
-            if swd_on and self._swd_available:
+            # SWD
+            if params.get("use_swd_mask") and self._swd_available:
                 self._radio_swd_mask.setChecked(True)
             else:
                 self._radio_swd_none.setChecked(True)
@@ -410,10 +418,7 @@ class MaskParamsWidget(QWidget):
         w = QWidget()
         v = QVBoxLayout(w)
         v.setContentsMargins(8, 4, 8, 8)
-        hint = QLabel(
-            "Select one or more state groups. A separate PSD is computed for each "
-            "checked group; lumped groups combine their underlying epochs."
-        )
+        hint = QLabel(self._states_hint)
         hint.setWordWrap(True)
         hint.setStyleSheet("color: #555; font-size: 11px;")
         v.addWidget(hint)
@@ -603,7 +608,9 @@ class MaskParamsWidget(QWidget):
         v.addWidget(self._radio_swd_none)
         v.addWidget(self._radio_swd_mask)
 
-        pad_form = QFormLayout()
+        pad_box = QWidget()
+        pad_form = QFormLayout(pad_box)
+        pad_form.setContentsMargins(0, 0, 0, 0)
         pad_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         self.spin_swd_pad = NoScrollSpinBox()
         self.spin_swd_pad.setRange(0, 600)
@@ -613,7 +620,8 @@ class MaskParamsWidget(QWidget):
             "Seconds added on each side of every SWD event to also exclude."
         )
         pad_form.addRow("Pad each event:", self.spin_swd_pad)
-        v.addLayout(pad_form)
+        pad_box.setVisible(self._show_swd_pad)
+        v.addWidget(pad_box)
 
         hint = QLabel(
             "Place one .mat file of SWD timestamps per animal in a swd/ folder "
@@ -1087,11 +1095,7 @@ class MaskParamsWidget(QWidget):
         n_found = sum(
             1
             for aid in animal_ids
-            if (
-                any(self._ann_dir.glob(f"{aid}*.txt"))
-                or any(self._ann_dir.glob(f"{aid}*.csv"))
-                or any(self._ann_dir.glob(f"{aid}*.tsv"))
-            )
+            if files_for_animal(self._ann_dir, aid, ".txt", ".csv", ".tsv")
         )
         if n_animals == 0:
             self._lbl_ann_status.setText("No animals in manifest")
@@ -1348,7 +1352,8 @@ def _notch_subtitle(p: dict) -> str:
 def _swd_subtitle(p: dict) -> str:
     if not p.get("use_swd_mask"):
         return "off"
-    return f"mask out · {p['swd_pad']}s pad"
+    pad = p["swd_pad"]
+    return f"mask out · {pad}s pad" if pad else "mask out"
 
 
 def _annotation_subtitle(p: dict) -> str:

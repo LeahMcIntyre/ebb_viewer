@@ -29,7 +29,8 @@ def test_bout_lengths_runs_touching_both_ends():
 def test_file_metrics_percentages_and_short_bouts():
     states = _states("wwnnnwnrrwnw")
     m = sf.file_metrics(states, np.zeros(len(states), dtype=bool))
-    assert m["nrem_short"] == 2  # the two single-epoch bouts
+    hours = 12 * sf.EPOCH_SEC / 3600
+    assert m["nrem_short_h"] == pytest.approx(2 / hours)  # the two single-epoch bouts, per hour
     assert m["pct_nrem"] == pytest.approx(100 * 5 / 12)
     assert m["pct_rem"] == pytest.approx(100 * 2 / 12)
     assert m["pct_wake"] == pytest.approx(100 * 5 / 12)
@@ -85,18 +86,18 @@ def test_past_threshold(direction, value, cutoff, expected):
 
 
 def test_flagged_metrics_defaults_and_overrides():
-    m = {"nrem_short": 500, "dark_bouts_h": 10, "pct_rem": 8, "pct_nrem": 25,
+    m = {"nrem_short_h": 8, "dark_bouts_h": 10, "pct_rem": 8, "pct_nrem": 25,
          "pct_wake": 60, "max_bin_rem": 20}
-    assert sf.flagged_metrics(m) == ["nrem_short", "pct_nrem"]
+    assert sf.flagged_metrics(m) == ["nrem_short_h", "pct_nrem"]
     assert sf.flagged_metrics({**m, "pct_rem": 16, "pct_wake": 71}) == [
-        "nrem_short", "pct_rem", "pct_nrem", "pct_wake"
+        "nrem_short_h", "pct_rem", "pct_nrem", "pct_wake"
     ]
-    assert sf.flagged_metrics(m, {"nrem_short": 600}) == []  # missing keys never flag
+    assert sf.flagged_metrics(m, {"nrem_short_h": 10}) == []  # missing keys never flag
 
 
 def test_default_thresholds():
     assert sf.default_thresholds() == {
-        "nrem_short": 400, "dark_bouts_h": 15, "pct_rem": 10, "pct_nrem": 30,
+        "nrem_short_h": 6, "dark_bouts_h": 15, "pct_rem": 10, "pct_nrem": 30,
         "pct_wake": 70, "max_bin_rem": 35,
     }
 
@@ -151,3 +152,11 @@ def test_metrics_table_uses_supplied_states(tmp_path, monkeypatch):
     (edfs / "A1_PROCESSED.edf").touch()
     table = sf.metrics_table(states, edfs, {"A1": list("nnnn")})
     assert table.loc["A1", "pct_nrem"] == 100
+
+
+def test_short_nrem_is_a_rate_so_recording_length_does_not_matter():
+    """The same sleep scored over twice the time gives the same short-bout rate."""
+    one_day = np.array(list("nwnwnwnw") * 10 + ["w"] * 100)
+    two_days = np.tile(one_day, 2)
+    flag = lambda s: sf.file_metrics(s, np.zeros(len(s), dtype=bool))["nrem_short_h"]  # noqa: E731
+    assert flag(two_days) == pytest.approx(flag(one_day))

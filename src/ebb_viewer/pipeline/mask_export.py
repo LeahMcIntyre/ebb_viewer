@@ -24,6 +24,7 @@ from ebb import masking
 from ebb.io.edf_header import assert_fs_matches, parse_edf_start_datetime
 from ebb.io.spindle_csv import FINAL_COLUMN
 from ebb.masking.annotations import keyword_mask
+from ebb.masking.threshold import commutator_samples
 from ebb.process.mask_export import (
     artifact_masks_to_intervals,
     build_state_intervals,
@@ -35,6 +36,7 @@ from ebb_viewer.pipeline.manifest import (
     Manifest,
     spindle_output_dir,
 )
+from ebb.core.naming import files_for_animal
 from ebb_viewer.pipeline.naming import drink_mask_rel, parse_animal_id
 from ebb_viewer.pipeline.swd_review import find_swd_file
 
@@ -185,11 +187,7 @@ def _find_annotation_for_animal(ann_dir: Path | str, animal_id: str) -> Path | N
     d = Path(ann_dir)
     if not d.is_dir():
         return None
-    matches = (
-        sorted(d.glob(f"{animal_id}*.txt"))
-        + sorted(d.glob(f"{animal_id}*.csv"))
-        + sorted(d.glob(f"{animal_id}*.tsv"))
-    )
+    matches = files_for_animal(d, animal_id, ".txt", ".csv", ".tsv")
     return matches[0] if matches else None
 
 
@@ -238,6 +236,7 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
     sd_radius_s = float(_coerce_param(params, "radius", 0.5))
     nstd = float(_coerce_param(params, "nstd", 5))
     noise_thresh = float(_coerce_param(params, "noise_thresh", 0.5))
+    comm_value = int(_coerce_param(params, "comm_value", 2000))
     drink_pad = int(_coerce_param(params, "drink_pad", 2))
     chunksize = int(_coerce_param(params, "chunksize", int(30e5)))
     state_keys = params.get("states") or list(DEFAULT_STATES)
@@ -268,10 +267,8 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
         # --- artifact masks (True = OK convention) ---
         comm_mask = masking.commutator_threshold(
             pro,
-            value=2000,
-            radius=250,
-            pad=250,
-            min_to_pad=10,
+            value=comm_value,
+            **commutator_samples(fs),
         )[0]
         spindle_mask = masking.spindle_noise(
             paths.state,

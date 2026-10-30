@@ -145,22 +145,6 @@ def test_hour_windows_extracted_from_kwargs():
     assert "selected_days" not in kwargs
 
 
-def test_legacy_hour_window_singular_migrates_to_plural():
-    """Old saves used a single (start, end) under 'hour_window'; new code expects list."""
-    kwargs, hw, _, _ = _prepare_estimator_kwargs({"hour_window": [6, 18], "fs": 250})
-    assert hw == [(6, 18)]
-    assert "hour_window" not in kwargs
-
-
-def test_explicit_hour_windows_wins_over_legacy_hour_window():
-    """If both keys are present, the new key wins and legacy is silently dropped."""
-    kwargs, hw, _, _ = _prepare_estimator_kwargs(
-        {"hour_windows": [(20, 6)], "hour_window": [0, 12], "fs": 250}
-    )
-    assert hw == [(20, 6)]
-    assert "hour_window" not in kwargs
-
-
 # ---------------------------------------------------------------------------
 # States preset → labels translation
 # ---------------------------------------------------------------------------

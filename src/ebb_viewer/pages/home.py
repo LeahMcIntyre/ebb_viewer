@@ -28,12 +28,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ebb.core.naming import parse_animal_id
+from ebb.core.naming import files_for_animal, parse_animal_id
 from ebb.io.spindle_csv import FINAL_COLUMN, has_column
 from ebb.process.sleep_flagging import METRIC_BY_KEY
 from ebb_viewer.edf_viewer.eeg_viewer import launch_edf_window
 from ebb_viewer.pipeline import psd_params as _psd_params
 from ebb_viewer.pipeline.manifest import (
+    STAGE_SLEEP_QC,
     Manifest,
     ManifestEntry,
     exclusion_stage,
@@ -46,7 +47,9 @@ from ebb_viewer.pipeline.manifest import (
 from ebb_viewer.pipeline.naming import drink_mask_rel
 from ebb_viewer.pipeline.swd_review import find_swd_file, swd_review_gaps
 from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
+from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.notes_dialog import NotesDialog
+from ebb_viewer.widgets.page_help import HelpButton
 from ebb_viewer.widgets.table_helpers import make_cell
 
 # Pipeline stage columns
@@ -227,9 +230,13 @@ def compute_pipeline_status(
     )
     if not step3_done:
         s_reclass = StepStatus("blocked", "Requires step 3")
+    elif n_reclassed == n_csvs and n_gate_unknown:
+        s_reclass = StepStatus(
+            "attention",
+            f"EMG gate record missing for {n_gate_unknown} of {n_csvs} — re-run Reclassify to restore it",
+        )
     elif n_reclassed == n_csvs:
-        note = f"; gate record missing for {n_gate_unknown}" if n_gate_unknown else ""
-        s_reclass = StepStatus("done", f"{n_reclassed} reclassified (EMG gate on {n_gated}{note})")
+        s_reclass = StepStatus("done", f"{n_reclassed} reclassified (EMG gate on {n_gated})")
     elif n_reclassed > 0:
         s_reclass = StepStatus(
             "attention", f"{n_csvs - n_reclassed} of {n_csvs} CSVs not reclassified"
@@ -377,9 +384,8 @@ def compute_pipeline_status(
 
 
 def _any_file_for_animal(root: Path, subdir: str, channels: str, animal_id: str) -> bool:
-    """True if any file matching animal_id* exists in root/subdir/channels/."""
-    d = root / subdir / channels
-    return d.is_dir() and any(d.glob(f"{animal_id}*"))
+    """True if any file belonging to ``animal_id`` exists in root/subdir/channels/."""
+    return bool(files_for_animal(root / subdir / channels, animal_id))
 
 
 def _needs_attention(
@@ -455,6 +461,7 @@ class HomePage(QWidget):
         self._combo_lbl.setStyleSheet("color: #555; font-size: 11px; padding-left: 12px;")
         hdr.addWidget(self._combo_lbl)
         hdr.addStretch(1)
+        hdr.addWidget(HelpButton("home"))
 
         self.btn_reveal = QPushButton("Reveal in Finder")
         self.btn_reveal.setToolTip("Open the project folder in the file manager")
@@ -600,9 +607,9 @@ class HomePage(QWidget):
             None,
         )
         for i, (st, chip, short) in enumerate(zip(statuses, self._chips, _STEP_SHORT, strict=True)):
-            chip.setVisible(not (i == _SWD_STEP_IDX and st.kind == "off"))
             color = _GUIDE_ICON_COLOR[st.kind]
-            chip.setText(f"{_GUIDE_ICON[st.kind]} {short}")
+            optional = " (optional)" if i == _SWD_STEP_IDX and st.kind == "off" else ""
+            chip.setText(f"{_GUIDE_ICON[st.kind]} {short}{optional}")
             chip.setToolTip(f"{_STEP_LABELS[i]}: {st.description}")
             weight = "bold" if i == next_idx else "normal"
             bg = _GUIDE_ROW_HIGHLIGHT if i == next_idx else "transparent"
@@ -652,13 +659,15 @@ class HomePage(QWidget):
     # Actions
     # ---------------------------------------------------------------
     def _on_cell_double_clicked(self, row: int, col: int) -> None:
-        """Dispatch per-cell double-click actions (edit notes)."""
+        """Dispatch per-cell double-click actions (edit notes, open the animal in the viewer)."""
         # Resolve against the rendered row cache so the index always points
         # to what the user sees, even if the manifest has changed since.
         if row >= len(self._table_rows):
             return
         if col == _COL_NOTES:
             self._edit_notes(self._table_rows[row])
+        elif col == _COL_ANIMAL:
+            self._open_edf_for_animal(self._table_rows[row])
 
     def _edit_notes(self, entry: ManifestEntry) -> None:
         """Open the notes editor for an animal and persist any change."""
@@ -830,7 +839,12 @@ class HomePage(QWidget):
     ) -> None:
         """Populate one row in the animals table (see ``_row_facts`` for the args)."""
         pre = Path(entry.preprocessed_edf).name if entry.preprocessed_edf else None
-        self.table.setItem(row_idx, _COL_ANIMAL, make_cell(entry.animal_id, tooltip=pre))
+        open_hint = "Double-click to open in the EEG viewer"
+        self.table.setItem(
+            row_idx,
+            _COL_ANIMAL,
+            make_cell(entry.animal_id, tooltip=f"{pre}\n{open_hint}" if pre else open_hint),
+        )
         self.table.setItem(
             row_idx,
             _COL_SPINDLE_OUT,
@@ -988,6 +1002,12 @@ class HomePage(QWidget):
         btn_ok.clicked.connect(lambda _, mid=entry.animal_id: self._queue_flag_ok(mid))
         h.addWidget(btn_ok)
 
+        btn_exclude = QPushButton("Exclude")
+        btn_exclude.setToolTip("Exclude this animal from analysis (a reason is required)")
+        btn_exclude.setFixedHeight(24)
+        btn_exclude.clicked.connect(lambda _, mid=entry.animal_id: self._queue_exclude(mid))
+        h.addWidget(btn_exclude)
+
         return row_w
 
     def _make_drink_mask_card(self, entry: ManifestEntry) -> QWidget:
@@ -1014,6 +1034,13 @@ class HomePage(QWidget):
         # to a name makes the persistence boundary visible to readers.
         manifest = Manifest.load(self.project_root)
         manifest.flag_sleep_qc(animal_id, "ok")
+        self._refresh()
+        self.manifest_changed.emit()
+
+    def _queue_exclude(self, animal_id: str) -> None:
+        manifest = Manifest.load(self.project_root)
+        if not exclude_with_reason(self, manifest, animal_id, STAGE_SLEEP_QC):
+            return
         self._refresh()
         self.manifest_changed.emit()
 
@@ -1059,7 +1086,7 @@ class HomePage(QWidget):
         """
         try:
             d = spindle_output_dir(channels, self.project_root)
-            hits = sorted(d.glob(f"{animal_id}*labels.csv"))
+            hits = files_for_animal(d, animal_id, "labels.csv")
         except OSError:
             return None
         return hits[0] if hits else None

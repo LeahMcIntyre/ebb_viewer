@@ -26,7 +26,9 @@ from ebb_viewer.edf_viewer.state_legend import ReclassPill, StateLegend
 pg.setConfigOption("background", "w")
 pg.setConfigOption("foreground", "k")
 pg.setConfigOptions(antialias=True)
-if os.environ.get("EBB_VIEWER_USE_OPENGL"):
+# OpenGL rendering makes panning long traces several times faster. Set EBB_VIEWER_USE_OPENGL=0
+# (or off / false / no) to turn it off, e.g. over remote desktop or without working OpenGL.
+if os.environ.get("EBB_VIEWER_USE_OPENGL", "1").strip().lower() not in ("", "0", "off", "false", "no"):
     pg.setConfigOptions(useOpenGL=True)
 
 # Shift+1..9 produces different key codes on most platforms (!, @, # …).
@@ -161,6 +163,7 @@ class TraceView(QtWidgets.QWidget):
             lv.setContentsMargins(0, 0, 4, 0)
 
             lbl = QtWidgets.QLabel(f"{self.ch_names[i]}")
+            lbl.setToolTip(f"{self.ch_names[i]}: use the slider below to zoom this channel")
             lv.addWidget(lbl)
             self.vlabels.append(lbl)
 
@@ -168,6 +171,10 @@ class TraceView(QtWidgets.QWidget):
             sl.setRange(0, 200)
             sl.setValue(100)
             sl.valueChanged.connect(lambda v, idx=i: self._on_zoom_slider(idx, v))
+            sl.setToolTip(
+                f"Vertical zoom for {self.ch_names[i]} (up zooms in). "
+                "Reset Y Zooms puts every channel back to 1x."
+            )
             lv.addWidget(sl, 1)
             self.vsliders.append(sl)
 
@@ -212,8 +219,8 @@ class TraceView(QtWidgets.QWidget):
         layout = QtWidgets.QGridLayout()
 
         # position + datetime labels
-        self.pos_lbl = QtWidgets.QLabel("t = 0.00 s")
-        self.dt_lbl = QtWidgets.QLabel(f"dt = {self.start_time}")
+        self.pos_lbl = QtWidgets.QLabel("Time from start: 0.00 s")
+        self.dt_lbl = QtWidgets.QLabel(f"Clock time: {self.start_time}")
 
         info_box = QtWidgets.QWidget()
         vb = QtWidgets.QVBoxLayout(info_box)
@@ -227,6 +234,7 @@ class TraceView(QtWidgets.QWidget):
         self.slider.setRange(0, max(0, self.n - self.win))
         self.slider.setSingleStep(max(1, self.win // 2))
         self.slider.valueChanged.connect(self._on_slide)
+        self.slider.setToolTip("Drag to scroll through the recording (or use the Left / Right keys)")
 
         pair = QtWidgets.QWidget()
         hb = QtWidgets.QHBoxLayout(pair)
@@ -242,6 +250,7 @@ class TraceView(QtWidgets.QWidget):
         self.xscale.setRange(0.5, 1200.0)
         self.xscale.setValue(self.win_sec)
         self.xscale.valueChanged.connect(self._on_seconds_per_view)
+        self.xscale.setToolTip("How many seconds of recording are shown at once")
 
         spair = QtWidgets.QWidget()
         shb = QtWidgets.QHBoxLayout(spair)
@@ -257,6 +266,7 @@ class TraceView(QtWidgets.QWidget):
         self.jump.setRange(0, self.n / self.fs)
         self.jump.setDecimals(3)
         self.jump.valueChanged.connect(self._on_jump)
+        self.jump.setToolTip("Go to this time, in seconds from the start of the recording")
 
         jpair = QtWidgets.QWidget()
         jhb = QtWidgets.QHBoxLayout(jpair)
@@ -270,6 +280,7 @@ class TraceView(QtWidgets.QWidget):
         # reset zooms
         self.reset_btn = QtWidgets.QPushButton("Reset Y Zooms")
         self.reset_btn.clicked.connect(self.reset_zooms)
+        self.reset_btn.setToolTip("Put every channel's vertical zoom back to 1x")
         layout.addWidget(self.reset_btn, 1, 3, alignment=Qt.AlignmentFlag.AlignRight)
 
         return layout
@@ -403,9 +414,9 @@ class TraceView(QtWidgets.QWidget):
             self.plots[0].setXRange(t[0], t[-1], padding=0)
 
         seconds = self.start / self.fs
-        self.pos_lbl.setText(f"t = {seconds:.2f} s")
+        self.pos_lbl.setText(f"Time from start: {seconds:.2f} s")
         dt = self.start_time + timedelta(seconds=np.round(seconds, 0))
-        self.dt_lbl.setText(f"dt = {dt}")
+        self.dt_lbl.setText(f"Clock time: {dt}")
         # Blocks signal and will not trigger on_slide
         self.jump.blockSignals(True)
         self.jump.setMaximum(self.n / self.fs)

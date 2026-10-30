@@ -13,6 +13,7 @@ from openseize import producer as make_producer
 
 from ebb import masking
 from ebb.masking.annotations import keyword_mask
+from ebb.masking.threshold import commutator_samples
 from ebb.io.spindle_csv import FINAL_COLUMN, STATE_COLUMNS, read_state_column
 from ebb_viewer.edf_viewer.masks import Mask, MaskSet, ParamSpec
 from ebb_viewer.edf_viewer.recording import Recording
@@ -85,7 +86,13 @@ _STATE_LABELS = {
 }
 
 
-_DEFAULT_COMM_META = {"value": 2000, "radius": 250, "pad": 250, "min_to_pad": 10}
+
+
+def _default_comm_meta(fs: float) -> dict:
+    """Default commutator parameters (radius / pad / min_to_pad in samples at ``fs``)."""
+    return {"value": 2000, **commutator_samples(fs)}
+
+
 _DEFAULT_SD_META = {"nstd": 5, "winsize": 180, "radius": 0.5, "comm_mask": True}
 
 
@@ -94,14 +101,12 @@ def _compute_artifact_masks(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Run commutator + SD-threshold on `rec`, returning both raw boolean arrays.
 
-    Centers each channel on its median before producer construction so the
-    SD-threshold's per-window stats aren't biased by DC offsets. SD's
+    Works on the raw signal of the three EEG channels, exactly as ``estimate_psd`` does with
+    its default channels, so the viewer flags the same samples as PSD Computation. SD's
     commutator-mask gating is controlled by `sd_meta["comm_mask"]` (default True).
     """
     chunksize = int(30e5)
-    eeg_data = rec.data[:3]
-    baseline = np.median(eeg_data, axis=1, keepdims=True)  # shape (3, 1)
-    pro = make_producer(eeg_data - baseline, chunksize=chunksize, axis=-1)
+    pro = make_producer(rec.data[:3], chunksize=chunksize, axis=-1)
 
     comm_mask, _ = masking.commutator_threshold(
         pro,
@@ -145,7 +150,7 @@ def build_default_masks(rec: Recording) -> MaskSet:
     parameters as estimate_psd. Always computes commutator and SD masks.
     Adds spindle_noise mask if rec.csv_path is available.
     """
-    comm_meta = dict(_DEFAULT_COMM_META)
+    comm_meta = _default_comm_meta(rec.fs)
     sd_meta = dict(_DEFAULT_SD_META)
     comm_mask, sd_mask = _compute_artifact_masks(rec, comm_meta, sd_meta)
     c, sd = _wrap_artifact_masks(comm_mask, sd_mask, comm_meta, sd_meta)

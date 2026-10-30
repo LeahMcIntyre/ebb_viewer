@@ -327,13 +327,13 @@ def _attention_button_texts(page) -> list[str]:
     return [b.text() for b in page._attn_container.findChildren(QPushButton)]
 
 
-def test_review_card_offers_open_and_ok_only(qapp, tmp_path: Path):
-    """A needs_review animal gets a card with Open EDF / OK — no rerun controls."""
+def test_review_card_offers_open_ok_and_exclude_only(qapp, tmp_path: Path):
+    """A needs_review animal gets a card with Open EDF / OK / Exclude — no rerun controls."""
     from PyQt6.QtWidgets import QComboBox
 
     _seed_manifest(tmp_path, psd_status={}, sleep_qc="needs_review")
     page = _make_page(qapp, tmp_path)
-    assert _attention_button_texts(page) == ["Open EDF", "✓ OK"]
+    assert _attention_button_texts(page) == ["Open EDF", "✓ OK", "Exclude"]
     assert page._attn_container.findChildren(QComboBox) == []
 
 
@@ -559,7 +559,7 @@ def test_review_card_shows_why_it_was_flagged(qapp, tmp_path: Path):
 
     _seed_manifest(tmp_path, psd_status={}, sleep_qc="needs_review")
     m = Manifest.load(tmp_path)
-    m.flag_sleep_qc("AM001", "needs_review", ["nrem_short", "pct_wake"])
+    m.flag_sleep_qc("AM001", "needs_review", ["nrem_short_h", "pct_wake"])
     page = _make_page(qapp, tmp_path)
     texts = [lbl.text() for lbl in page._attn_container.findChildren(QLabel)]
     assert "Flagged: short NREM bouts, high wake" in texts
@@ -642,7 +642,7 @@ def test_review_card_shows_emg_gate_in_brackets_when_it_was_applied(qapp, tmp_pa
             preprocessed_edf="x.edf",
             has_spindle=True,
             sleep_qc="needs_review",
-            flag_reasons=["nrem_short"],
+            flag_reasons=["nrem_short_h"],
             reclass_gate_applied=gate,
         )
 
@@ -650,3 +650,74 @@ def test_review_card_shows_emg_gate_in_brackets_when_it_was_applied(qapp, tmp_pa
     assert "[EMG gate]" not in _card_texts(page, entry("AM002", False))
     assert "[EMG gate]" not in _card_texts(page, entry("AM003", None))
     assert any(t.startswith("Flagged:") for t in _card_texts(page, entry("AM001", True)))
+
+
+def test_swd_chip_stays_visible_and_marked_optional_when_review_is_off(qapp, tmp_path: Path):
+    from ebb_viewer.pages.home import _SWD_STEP_IDX
+
+    page = _make_page(qapp, tmp_path)
+    chip = page._chips[_SWD_STEP_IDX]
+    assert not chip.isHidden()
+    assert "(optional)" in chip.text()
+
+
+def test_double_click_animal_column_opens_that_animals_viewer(qapp, tmp_path: Path, monkeypatch):
+    _seed_notes_animal(tmp_path)
+    page = _make_page(qapp, tmp_path)
+    row_idx = next(i for i, e in enumerate(page._table_rows) if e.animal_id == "AM001")
+    opened = []
+    monkeypatch.setattr(page, "_open_edf_for_animal", opened.append)
+
+    page._on_cell_double_clicked(row_idx, home_mod_col("Animal"))
+
+    assert [e.animal_id for e in opened] == ["AM001"]
+
+
+def home_mod_col(name: str) -> int:
+    from ebb_viewer.pages.home import _COLUMNS
+
+    return _COLUMNS.index(name)
+
+
+def test_review_card_exclude_records_reason_and_emits(qapp, tmp_path: Path, monkeypatch):
+    import ebb_viewer.pages.home as home_mod
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        has_spindle=True,
+        sleep_qc="needs_review",
+    )
+    m.save()
+    page = _make_page(qapp, tmp_path)
+    emitted = []
+    page.manifest_changed.connect(lambda: emitted.append(1))
+
+    def fake_exclude(parent, manifest, animal_id, stage):
+        manifest.exclude_sleep_qc(animal_id, "bad EMG", stage)
+        return True
+
+    monkeypatch.setattr(home_mod, "exclude_with_reason", fake_exclude)
+    page._queue_exclude("AM001")
+
+    entry = Manifest.load(tmp_path).get("AM001")
+    assert entry.sleep_qc == "excluded" and "bad EMG" in entry.notes
+    assert emitted
+
+
+def test_review_card_exclude_cancelled_changes_nothing(qapp, tmp_path: Path, monkeypatch):
+    import ebb_viewer.pages.home as home_mod
+
+    m = Manifest(tmp_path)
+    m._entries["AM001"] = ManifestEntry(
+        animal_id="AM001",
+        preprocessed_edf="AM001_PREPROCESSED.edf",
+        has_spindle=True,
+        sleep_qc="needs_review",
+    )
+    m.save()
+    page = _make_page(qapp, tmp_path)
+    monkeypatch.setattr(home_mod, "exclude_with_reason", lambda *a: False)
+    page._queue_exclude("AM001")
+    assert Manifest.load(tmp_path).get("AM001").sleep_qc == "needs_review"

@@ -31,12 +31,19 @@ from PyQt6.QtWidgets import (
 )
 
 from ebb.core.naming import parse_animal_id
+from ebb.io.edf_header import header_fs
 from ebb.preprocess.edf import batch as batch_preprocess
 from ebb.preprocess.edf import standard
 from ebb_viewer.pipeline.manifest import Manifest
 from ebb_viewer.pipeline.theme import apply_primary_button
+from ebb_viewer.widgets.page_help import title_row
 from ebb_viewer.widgets.trim_to_widget import TrimToWidget
 from ebb_viewer.widgets.worker_helpers import launch_worker
+
+
+def fs_mismatches(file_fs: dict[str, float], expected_fs: float) -> dict[str, float]:
+    """``{file name: rate}`` for each scanned file whose header rate is not ``expected_fs``."""
+    return {name: fs for name, fs in file_fs.items() if abs(fs - expected_fs) > 1e-6}
 
 
 def _fmt_hrs(hours: float) -> str:
@@ -78,6 +85,7 @@ class PreprocessPage(QWidget):
         self.project_root = project_root
         self.default_target_dir = project_root / "standard"
         self._durations_hrs: list[float] | None = None  # None = not yet scanned
+        self._file_fs: dict[str, float] = {}  # header rate per scanned file
         self._is_running = False
         self._build_ui()
         self._wire()
@@ -86,8 +94,7 @@ class PreprocessPage(QWidget):
     def _build_ui(self):
         root = QVBoxLayout(self)
 
-        lbl = QLabel("Preprocess EDFs")
-        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        lbl = title_row("Preprocess EDFs", "preprocess")
         desc = QLabel(
             "Trim, downsample, and standardize raw EDF files. "
             "Processed files are written to the standard/ folder."
@@ -135,6 +142,12 @@ class PreprocessPage(QWidget):
         self._chunk_label.setStyleSheet("color: #c0392b; font-size: 10px;")
         self._chunk_label.setVisible(False)
         top_form.addRow("", self._chunk_label)
+
+        self._fs_label = QLabel("")
+        self._fs_label.setWordWrap(True)
+        self._fs_label.setStyleSheet("color: #c0392b; font-size: 10px;")
+        self._fs_label.setVisible(False)
+        top_form.addRow("", self._fs_label)
         top_form.addRow("Target Directory:", self.target_name_edit)
 
         fmt_lbl = QLabel(
@@ -266,13 +279,31 @@ class PreprocessPage(QWidget):
         else:
             self._hz_label.setText(f"→ {hz:g} Hz output  ⚠ must be a whole number")
             self._hz_label.setStyleSheet("color: #c0392b; font-size: 11px;")
+        self._update_fs_warning()
         self._sync_run_button()
+
+    def _update_fs_warning(self) -> None:
+        """Flag scanned files whose header rate differs from the entered original frequency."""
+        bad = fs_mismatches(self._file_fs, self.fs_original.value())
+        if not bad:
+            self._fs_label.setVisible(False)
+            self._fs_label.setText("")
+            return
+        shown = ", ".join(f"{n} ({fs:g} Hz)" for n, fs in list(bad.items())[:4])
+        more = f" and {len(bad) - 4} more" if len(bad) > 4 else ""
+        self._fs_label.setText(
+            f"⚠ {len(bad)} of {len(self._file_fs)} file(s) are not at "
+            f"{self.fs_original.value()} Hz: {shown}{more}. Fix the Original Sampling "
+            "Frequency, or move the odd files out of this folder, before running."
+        )
+        self._fs_label.setVisible(True)
 
     def _sync_run_button(self) -> None:
         fs = self.fs_original.value()
         ds = self.downsample.value()
         valid = ds > 0 and (fs / ds).is_integer()
-        self.btn_run.setEnabled(valid and not self._is_running)
+        rates_ok = not fs_mismatches(self._file_fs, fs)
+        self.btn_run.setEnabled(valid and rates_ok and not self._is_running)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -283,6 +314,8 @@ class PreprocessPage(QWidget):
         paths = sorted(self.project_root.glob("*.edf"))
         self._show_chunk_warning(paths)
         if not paths:
+            self._file_fs = {}
+            self._update_fs_warning()
             self._scan_label.setText("No EDF files found")
             self._scan_label.setStyleSheet(self._STYLE_ERROR)
             self._durations_hrs = []
@@ -290,11 +323,13 @@ class PreprocessPage(QWidget):
             return
 
         durations: list[float] = []
+        self._file_fs = {}
         n_skipped = 0
         for p in paths:
             try:
                 with edf_io.Reader(p) as reader:
                     secs = reader.header["num_records"] * reader.header["record_duration"]
+                    self._file_fs[p.name] = header_fs(reader.header)
                 durations.append(secs / 3600.0)
             except (OSError, KeyError, ValueError):
                 # Unreadable header / wrong format / corrupt file — count and
@@ -302,6 +337,8 @@ class PreprocessPage(QWidget):
                 n_skipped += 1
 
         self._durations_hrs = durations
+        self._update_fs_warning()
+        self._sync_run_button()
 
         n = len(paths)
         if not durations:

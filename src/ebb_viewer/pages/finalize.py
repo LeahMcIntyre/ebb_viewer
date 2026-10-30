@@ -32,6 +32,7 @@ from ebb.core.naming import parse_animal_id
 from ebb.process.state_presets import PRESET_DISPLAY
 from ebb_viewer.pipeline import psd_params
 from ebb_viewer.pipeline.manifest import Manifest
+from ebb_viewer.widgets.page_help import HelpButton
 from ebb_viewer.widgets.swd_warning import confirm_unfinished_swd_review
 
 CH_LABELS = ["LFC", "RSC", "LSC"]
@@ -169,6 +170,7 @@ class FinalizePage(QWidget):
         lbl.setStyleSheet("font-weight: bold; font-size: 15px;")
         hdr.addWidget(lbl)
         hdr.addStretch(1)
+        hdr.addWidget(HelpButton("finalize"))
         self._btn_refresh = QPushButton("Refresh")
         self._btn_refresh.clicked.connect(self._refresh)
         hdr.addWidget(self._btn_refresh)
@@ -206,7 +208,7 @@ class FinalizePage(QWidget):
 
         # Sleep analysis is done in a notebook, not here.
         sleep_note = QLabel(
-            "To analyse sleep, copy <b>notebooks/sleep_by_hour.ipynb</b>, set the project folder "
+            "To analyse sleep, copy <b>analysis/sleep_by_hour.ipynb</b>, set the project folder "
             "and groups, and Run All. It reads the reclassified states and leaves out excluded "
             "animals. <b>sleep_by_hour_walkthrough.ipynb</b> explains every calculation step by step."
         )

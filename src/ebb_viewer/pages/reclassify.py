@@ -10,6 +10,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QMessageBox,
@@ -25,9 +26,16 @@ from ebb.io.spindle_csv import FINAL_COLUMN, RECLASS_COLUMN, has_column
 from ebb.process.nrem_reclass import GAP_RADIUS, NremReclass, reclassify_dir_to_csv
 from ebb_viewer.pipeline.manifest import Manifest, spindle_output_dir
 from ebb_viewer.pipeline.theme import apply_primary_button
+from ebb_viewer.widgets.page_help import title_row
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
-_COLUMNS = ("Animal", "Reclassified", "EMG gate", "NREM bouts (light) before → after")
+_COLUMNS = (
+    "Animal",
+    "Reclassified",
+    "EMG gate",
+    "Gap-fill flips kept / cancelled",
+    "NREM bouts (light) before → after",
+)
 
 
 def gate_label(reclassified: bool, gate: bool | None) -> str:
@@ -36,6 +44,13 @@ def gate_label(reclassified: bool, gate: bool | None) -> str:
     if gate is not None:
         return "applied" if gate else "not needed"
     return "unknown (re-run to restore)" if reclassified else "—"
+
+
+def flips_label(entry) -> str:
+    """ "kept / cancelled" gap-fill flips from the last run, or "" when not recorded."""
+    if entry is None or entry.reclass_flips_kept is None:
+        return ""
+    return f"{entry.reclass_flips_kept} / {entry.reclass_flips_cancelled}"
 
 
 class _ReclassWorker(QObject):
@@ -82,8 +97,7 @@ class ReclassifyPage(QWidget):
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
 
-        title = QLabel("Reclassify NREM")
-        title.setStyleSheet("font-weight: bold; font-size: 14px;")
+        title = title_row("Reclassify NREM", "reclassify")
         desc = QLabel(
             f"Gap-fills NREM epochs next to artifacts (radius {GAP_RADIUS}) and applies the EMG "
             f"gate where gap fill fragments light-period NREM. The result is added to each "
@@ -109,6 +123,19 @@ class ReclassifyPage(QWidget):
         apply_primary_button(self.btn_run)
         self.btn_run.clicked.connect(self._run)
         root.addWidget(self.btn_run)
+
+        swd_row = QHBoxLayout()
+        swd_lbl = QLabel(
+            "Optional: if you have SWD detections, you can review the epochs that overlap "
+            "them before Sleep QC. Skip this to go straight to Sleep QC."
+        )
+        swd_lbl.setWordWrap(True)
+        swd_lbl.setStyleSheet("color: #555; font-size: 12px;")
+        swd_row.addWidget(swd_lbl, 1)
+        btn_go_swd = QPushButton("SWD review (optional) →")
+        btn_go_swd.clicked.connect(lambda: self.navigate_to.emit("swd_review"))
+        swd_row.addWidget(btn_go_swd)
+        root.addLayout(swd_row)
 
         btn_go_qc = QPushButton("→ Sleep QC")
         btn_go_qc.clicked.connect(lambda: self.navigate_to.emit("sleep_qc"))
@@ -144,6 +171,7 @@ class ReclassifyPage(QWidget):
                 animal,
                 "✓" if done else "—",
                 gate_label(done, gate),
+                flips_label(entry),
                 f"{bouts[0]} → {bouts[1]}" if bouts else "",
             )
             for col, text in enumerate(cells):
@@ -182,7 +210,9 @@ class ReclassifyPage(QWidget):
     def _on_finished(self, results: dict) -> None:
         self._thread = self._worker = None
         manifest = Manifest.load(self.project_root)
-        manifest.set_reclass_gates({a: r.gate_applied for a, r in results.items()})
+        manifest.set_reclass_results(
+            {a: (r.gate_applied, r.n_flips_kept, r.n_flips_cancelled) for a, r in results.items()}
+        )
         self.manifest_changed.emit()
         self._refresh()
         n_gate = sum(r.gate_applied for r in results.values())

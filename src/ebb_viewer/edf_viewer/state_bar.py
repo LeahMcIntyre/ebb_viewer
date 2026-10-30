@@ -34,6 +34,10 @@ class StateBar(QtWidgets.QWidget):
         self._highlight: tuple[float, float] | None = None
 
         self.setFixedHeight(self.HEIGHT)
+        self.setToolTip(
+            "Sleep state of each 4 s epoch in the time shown below, aligned with the traces. "
+            "See the legend on the left for the colors."
+        )
         self.setVisible(False)
 
     def link_x(self, *_) -> None:

@@ -37,6 +37,7 @@ from ebb_viewer.pipeline.manifest import (
 )
 from ebb_viewer.widgets.collapsible_section import CollapsibleSection
 from ebb_viewer.widgets.drink_loop import REVIEW_STEP, VERIFY_STEP, loop_summary_html
+from ebb_viewer.widgets.page_help import title_row
 from ebb_viewer.widgets.psd_graph_widget import PSDGridPage
 
 _CHANNEL_NAMES = ["LFC", "RSC", "LSC"]
@@ -74,8 +75,7 @@ class PSDVisualizer(QWidget):
     def _build_ui(self):
         self.root = QVBoxLayout(self)
 
-        lbl = QLabel("PSD Visualizer")
-        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        lbl = title_row("PSD Visualizer", "psd_visualizer")
         desc = QLabel(
             "Review each animal's PSD. Mark 'needs mask' if sidebands are visible around "
             "52 and 68 Hz (water bottle artifact), 'ok' otherwise. Animals that need a mask "

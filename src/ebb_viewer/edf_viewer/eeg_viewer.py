@@ -12,7 +12,8 @@ from openseize.file_io import edf
 from PyQt6 import QtGui, QtWidgets
 from PyQt6.QtCore import Qt
 
-from ebb.io.edf_header import parse_edf_start_datetime
+from ebb.core.naming import files_for_animal
+from ebb.io.edf_header import header_fs, parse_edf_start_datetime
 from ebb.io.spindle_csv import FINAL_COLUMN, has_column
 from ebb.masking import get_offset
 from ebb.process.sleep_compute import DEFAULT_SPINDLE_EPOCH_SEC
@@ -42,25 +43,38 @@ from ebb_viewer.pipeline.manifest import STAGE_SLEEP_QC
 from ebb_viewer.pipeline.naming import parse_animal_id
 from ebb_viewer.widgets.drink_mask_dialog import DrinkMaskDialogue
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
+from ebb_viewer.widgets.page_help import PAGE_HELP, HelpButton, HelpDialog
 from ebb_viewer.widgets.sleep_viewer import SleepPopup
 from ebb_viewer.widgets.stft_viewer import STFTBoundsDialog, STFTPopup
+from ebb_viewer.widgets.worker_helpers import run_keeping_gui_alive
 
 _CH_NAMES = ("LFC", "RSC", "LSC", "EMG")
+
+# The viewer holds the whole recording in memory as float64. Refuse files that would need more
+# than this (a 48 h, 4-channel recording is 5.5 GB at 1000 Hz and 28 GB at 5000 Hz).
+_BYTES_PER_SAMPLE = 8
+_MAX_RECORDING_BYTES = 8e9
 
 
 def _load_recording(edf_path: Path, csv_path: Path | None = None) -> Recording:
     """Read an EDF + optional state CSV and return a Recording.
 
+    The sampling rate is read from the EDF header, so any rate is accepted.
+
     Raises:
-        ValueError: if the EDF's sampling rate is not 250 Hz.
+        ValueError: if the recording is too large to hold in memory (the viewer loads all of it).
     """
     with edf.Reader(str(edf_path)) as reader:
-        data = reader.read(start=0)
-        fs = int(reader.header.samples_per_record[0])
-        if fs != 250:
+        fs = round(header_fs(reader.header))
+        n_channels, n_samples = reader.shape
+        need = n_channels * n_samples * _BYTES_PER_SAMPLE
+        if need > _MAX_RECORDING_BYTES:
             raise ValueError(
-                f"Expected fs=250 Hz, got {fs} Hz. Please select a compatible file."
+                f"{Path(edf_path).name} is {fs} Hz and would need about {need / 1e9:.0f} GB of "
+                f"memory to open (the viewer loads the whole recording; the limit is "
+                f"{_MAX_RECORDING_BYTES / 1e9:.0f} GB). Preprocess (downsample) it first."
             )
+        data = reader.read(start=0)
         start_time = parse_edf_start_datetime(reader.header)
     return Recording(
         data=data,
@@ -229,8 +243,8 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         # STFT state
         self.stft_fmin = 0
-        self.stft_fmax = 120
-        self.nperseg = 125  # 0.5 s at 250 Hz
+        self.stft_fmax = min(120, recording.fs // 2)  # up to Nyquist for low-rate files
+        self.nperseg = round(0.5 * recording.fs)  # 0.5 s window (125 samples at 250 Hz)
 
         # Popups created once and reused so repeated menu clicks don't accumulate
         # hidden dialogs parented to self.
@@ -239,7 +253,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         self._sleep_popup = SleepPopup(parent=self)
         self._sleep_popup.resize(1000, 800)
 
-        self.setWindowTitle("EEG Viewer")
+        self.setWindowTitle(self._window_title())
         self.resize(1200, 800)
 
         # central trace view
@@ -282,8 +296,14 @@ class EegMainWindow(QtWidgets.QMainWindow):
         if self.manifest is not None and self.animal_id is not None:
             self._build_qc_toolbar()
         self._build_docks()
+        self._build_shortcut_hint()
 
         self.trace_view.timeDoubleClicked.connect(self.on_time_double_clicked)
+
+    def _window_title(self) -> str:
+        """"EEG Viewer: <animal> (<file>)", so several open windows can be told apart."""
+        animal = self.animal_id or parse_animal_id(self.rec.edf_path)
+        return f"EEG Viewer: {animal} ({Path(self.rec.edf_path).name})"
 
     # ---------- actions ----------
 
@@ -314,6 +334,14 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         self.act_plot_sleep = QtGui.QAction("Plot Sleep Data", self)
         self.act_plot_sleep.triggered.connect(self.on_plot_sleep)
+        has_csv = bool(self.rec.csv_path)
+        self.act_plot_sleep.setEnabled(has_csv)
+        self.act_plot_sleep.setToolTip(
+            "Sleep metrics across the recording"
+            if has_csv
+            else "Needs a SPINDLE state CSV for this recording (none was found)"
+        )
+        self.act_plot_sleep.setStatusTip(self.act_plot_sleep.toolTip())
 
         self.act_load_annotations = QtGui.QAction("Load Annotations…", self)
         self.act_load_annotations.triggered.connect(self.on_load_annotations)
@@ -340,35 +368,60 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         m_file = mb.addMenu("&File")
         m_file.addAction(self.act_open)
-        m_file.addAction(self.act_load_swd)
-        m_file.addAction(self.act_load_drink)
-        m_file.addAction(self.act_load_annotations)
-        m_file.addAction(self.act_load_annotation_dir)
-        m_file.addAction(self.act_mask_annotations)
+        m_file.addAction(self.act_info)
         m_file.addSeparator()
         m_file.addAction(self.act_quit)
-        m_file.addAction(self.act_info)
 
-        m_view = mb.addMenu("&View")
-        m_view.addAction(self.act_plot_sleep)
-        m_view.addSeparator()
-        m_view.addAction(self.act_prev_annotation)
-        m_view.addAction(self.act_next_annotation)
+        m_masks = mb.addMenu("&Masks")
+        m_masks.addAction(self.act_load_swd)
+        m_masks.addAction(self.act_load_drink)
+        m_masks.addSeparator()
+        m_masks.addAction(self.act_load_annotations)
+        m_masks.addAction(self.act_load_annotation_dir)
+        m_masks.addAction(self.act_mask_annotations)
 
-        m_tools = mb.addMenu("&Tools")
-        m_tools.addAction(self.act_stft)
-        m_tools.addAction(self.act_stft_bounds)
+        m_plots = mb.addMenu("&Plots")
+        m_plots.addAction(self.act_plot_sleep)
+        m_plots.addAction(self.act_stft)
+        m_plots.addAction(self.act_stft_bounds)
+
+        m_go = mb.addMenu("&Go")
+        m_go.addAction(self.act_prev_annotation)
+        m_go.addAction(self.act_next_annotation)
+
+        m_help = mb.addMenu("&Help")
+        act_help = QtGui.QAction("Keyboard shortcuts and controls…", self)
+        act_help.setShortcut("F1")
+        act_help.triggered.connect(self.on_show_help)
+        m_help.addAction(act_help)
 
     def _build_toolbars(self):
-        nav_tb = self.addToolBar("Navigation")
-        nav_tb.setObjectName("NavigationToolbar")
-        nav_tb.addAction(self.act_open)
-        nav_tb.addAction(self.act_load_swd)
-        nav_tb.addAction(self.act_load_drink)
+        """One toolbar: open a file | load masks | plots. (The QC toolbar is separate.)"""
+        tb = self.addToolBar("Main")
+        tb.setObjectName("MainToolbar")
+        tb.addAction(self.act_open)
+        tb.addSeparator()
+        tb.addAction(self.act_load_swd)
+        tb.addAction(self.act_load_drink)
+        tb.addSeparator()
+        tb.addAction(self.act_plot_sleep)
+        tb.addAction(self.act_stft)
 
-        tools_tb = self.addToolBar("Tools")
-        tools_tb.setObjectName("ToolsToolbar")
-        tools_tb.addAction(self.act_stft)
+    def _build_shortcut_hint(self) -> None:
+        """One-line reminder of the main keys in the status bar (full list: Help, F1)."""
+        hint = QtWidgets.QLabel(
+            "Left / Right: scroll  ·  W / N / R: next state  ·  1-9: next mask span  ·  "
+            "Double-click: epoch details  ·  F1: all shortcuts"
+        )
+        hint.setStyleSheet("color: #666; font-size: 11px; padding: 0 6px;")
+        self.statusBar().addWidget(hint)
+        # Always-visible "?" (F1 does the same). It lives here, not in the menu bar, because on
+        # macOS the menu bar is the system one and ignores corner widgets.
+        self.statusBar().addPermanentWidget(HelpButton("eeg_viewer"))
+
+    def on_show_help(self):
+        title, html = PAGE_HELP["eeg_viewer"]
+        HelpDialog(title, html, self).exec()
 
     def on_show_stft(self):
         self._stft_popup.plot_window(
@@ -462,6 +515,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         qc_tb.addSeparator()
 
         self._act_ok = QtGui.QAction("✓ Mark OK", self)
+        self._act_ok.setToolTip("Set this animal's Sleep QC status to OK (saved to the project)")
         self._act_ok.setCheckable(True)
         self._act_ok.triggered.connect(self._flag_qc_ok)
         qc_tb.addAction(self._act_ok)
@@ -469,6 +523,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
         qc_tb.addSeparator()
 
         self._act_review = QtGui.QAction("Needs Review", self)
+        self._act_review.setToolTip(
+            "Flag this animal for review (saved to the project). It then shows on Home under Needs Attention"
+        )
         self._act_review.setCheckable(True)
         self._act_review.triggered.connect(self._flag_qc_review)
         qc_tb.addAction(self._act_review)
@@ -477,7 +534,9 @@ class EegMainWindow(QtWidgets.QMainWindow):
 
         self._act_exclude = QtGui.QAction("Exclude", self)
         self._act_exclude.setCheckable(True)
-        self._act_exclude.setToolTip("Exclude this animal from analysis (a reason is required)")
+        self._act_exclude.setToolTip(
+            "Exclude this animal from analysis (a reason is required, saved to the project)"
+        )
         self._act_exclude.triggered.connect(self._flag_qc_exclude)
         qc_tb.addAction(self._act_exclude)
 
@@ -486,10 +545,12 @@ class EegMainWindow(QtWidgets.QMainWindow):
     def _flag_qc_ok(self) -> None:
         self.manifest.flag_sleep_qc(self.animal_id, "ok")
         self._update_qc_status()
+        self._announce_qc()
 
     def _flag_qc_review(self) -> None:
         self.manifest.flag_sleep_qc(self.animal_id, "needs_review")
         self._update_qc_status()
+        self._announce_qc()
 
     def _flag_qc_exclude(self, checked: bool) -> None:
         """Exclude (asking for a reason); un-excluding sends the animal back to review."""
@@ -498,6 +559,15 @@ class EegMainWindow(QtWidgets.QMainWindow):
         else:
             self.manifest.flag_sleep_qc(self.animal_id, "needs_review")
         self._update_qc_status()
+        self._announce_qc()
+
+    def _announce_qc(self) -> None:
+        """Confirm in the status bar what was just saved to the manifest."""
+        entry = self.manifest.get(self.animal_id)
+        status = ((entry.sleep_qc if entry else None) or "unflagged").replace("_", " ")
+        self.statusBar().showMessage(
+            f"{self.animal_id}: Sleep QC is now '{status}' (saved to the project)", 6000
+        )
 
     def _update_qc_status(self) -> None:
         entry = self.manifest.get(self.animal_id)
@@ -609,11 +679,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
         if not dir_path:
             return
         animal_id = self.animal_id or parse_animal_id(self.rec.edf_path)
-        matches = (
-            sorted(Path(dir_path).glob(f"{animal_id}*.txt"))
-            + sorted(Path(dir_path).glob(f"{animal_id}*.csv"))
-            + sorted(Path(dir_path).glob(f"{animal_id}*.tsv"))
-        )
+        matches = files_for_animal(dir_path, animal_id, ".txt", ".csv", ".tsv")
         if not matches:
             QtWidgets.QMessageBox.warning(
                 self,
@@ -657,7 +723,7 @@ class EegMainWindow(QtWidgets.QMainWindow):
             return
 
         try:
-            rec = _load_recording(edf_path, csv_path)
+            rec = run_keeping_gui_alive("Loading EDF…", _load_recording, edf_path, csv_path)
         except Exception as e:  # noqa: BLE001 — surface any load failure as a dialog
             QtWidgets.QMessageBox.critical(self, "Load Error", f"{type(e).__name__}: {e}")
             return
@@ -703,9 +769,9 @@ def launch_edf_window(
     """Load an EDF file and return a configured (not yet shown) EegMainWindow.
 
     Raises:
-        ValueError: if the EDF's sampling rate is not 250 Hz.
+        ValueError: if the recording is too large to open (see `_load_recording`).
     """
-    rec = _load_recording(edf_path, csv_path)
+    rec = run_keeping_gui_alive("Loading EDF…", _load_recording, edf_path, csv_path)
     win = EegMainWindow(
         rec,
         initial_dir=initial_dir,

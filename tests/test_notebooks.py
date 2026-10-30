@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-NOTEBOOKS = sorted((Path(__file__).resolve().parents[1] / "notebooks").glob("*.ipynb"))
+NOTEBOOKS = sorted((Path(__file__).resolve().parents[1] / "analysis").glob("*.ipynb"))
 
 
 @pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.name)

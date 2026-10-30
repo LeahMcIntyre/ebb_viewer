@@ -4,7 +4,7 @@ Computed from the ``final_state`` column (see ``nrem_reclass``) over the whole
 recording. Each metric has an optional threshold; a file past it is flagged for
 the user to review. Defaults come from the spindle-validation analysis
 (``file_flagging_metrics.ipynb``) and are starting points, not validated cutoffs;
-the REM and Wake cutoffs (10, 70) were added here (REM chosen from that notebook's REM plot; Wake is a placeholder).
+the REM and Wake cutoffs (10, 70) were added here (REM chosen from that notebook's REM plot; Wake judged reasonable for these recordings).
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ class Metric:
 
 
 METRICS: tuple[Metric, ...] = (
-    Metric("nrem_short", "Short (1-2 epoch) NREM bouts per file", ABOVE, 400, "short NREM bouts"),
+    Metric("nrem_short_h", "Short (1-2 epoch) NREM bouts per hour", ABOVE, 6, "short NREM bouts"),
     Metric("dark_bouts_h", "NREM bouts per dark hour", ABOVE, 15, "dark NREM bouts"),
     Metric("pct_rem", "REM % (whole file)", ABOVE, 10, "high REM"),
     Metric("pct_nrem", "NREM % (whole file)", BELOW, 30, "low NREM"),
@@ -77,7 +77,8 @@ def file_metrics(states: npt.NDArray, dark: npt.NDArray[np.bool_]) -> dict[str, 
         states: Per-epoch ``"w"``/``"n"``/``"r"`` states.
         dark: Per-epoch dark-period mask, same length as ``states``.
 
-    ``dark_bouts_h`` and ``max_bin_rem`` are NaN when the file has no dark
+    ``nrem_short_h`` and ``dark_bouts_h`` are rates (per hour of the whole file / of dark time),
+    so recordings of different lengths are comparable. ``dark_bouts_h`` and ``max_bin_rem`` are NaN when the file has no dark
     hours or is shorter than one full bin.
     """
     states = np.asarray(states)
@@ -85,13 +86,14 @@ def file_metrics(states: npt.NDArray, dark: npt.NDArray[np.bool_]) -> dict[str, 
     if n == 0:
         raise ValueError("No epochs")
     nrem_bouts = bout_lengths(states, "n")
+    hours = n * EPOCH_SEC / 3600
     dark_hours = dark.sum() * EPOCH_SEC / 3600
     n_bins = n // BIN_EPOCHS
     rem_bins = [
         100 * np.mean(states[i * BIN_EPOCHS : (i + 1) * BIN_EPOCHS] == "r") for i in range(n_bins)
     ]
     return {
-        "nrem_short": int((nrem_bouts <= SHORT_BOUT_EPOCHS).sum()),
+        "nrem_short_h": int((nrem_bouts <= SHORT_BOUT_EPOCHS).sum()) / hours,
         "dark_bouts_h": (
             dark[bout_starts(states, "n")].sum() / dark_hours if dark_hours else float("nan")
         ),

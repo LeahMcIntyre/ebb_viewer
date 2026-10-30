@@ -131,6 +131,45 @@ def _bouts_for_state(mask, sample_rate_hz):
     return len(durations_sec), durations_sec.mean()
 
 
+def _true_runs(mask):
+    """Start (inclusive) and end (exclusive) index of every run of True in ``mask``."""
+    padded = np.concatenate([[False], np.asarray(mask, dtype=bool), [False]])
+    change = np.diff(padded.astype(np.int8))
+    return np.flatnonzero(change == 1), np.flatnonzero(change == -1)
+
+
+def bout_stats_by_bin(mask, bin_of_sample, n_bins, sample_rate_hz):
+    """Whole bouts of one state, each counted in the bin that holds most of it.
+
+    A bout is an unbroken run of True in ``mask``, found over the whole recording, so it is never
+    cut at a bin edge. Each bout belongs to the bin that contains the most of its samples (a tie
+    goes to the lower-numbered bin), and keeps its full length.
+
+    Args:
+        mask: 1-D boolean array over the whole recording, True where the state is present.
+        bin_of_sample: integer array, the same length as ``mask``: the bin each sample falls in.
+        n_bins: number of bins.
+        sample_rate_hz: sampling rate of ``mask``, to turn bout lengths into seconds.
+
+    Returns:
+        ``(counts, mean_sec)``: the number of bouts per bin, and their mean length in seconds
+        (NaN for a bin with no bouts).
+    """
+    starts, ends = _true_runs(mask)
+    counts = np.zeros(n_bins, dtype=int)
+    mean_sec = np.full(n_bins, np.nan)
+    if starts.size == 0:
+        return counts, mean_sec
+    assigned = bin_of_sample[starts].copy()
+    for i in np.flatnonzero(assigned != bin_of_sample[ends - 1]):  # bouts that touch two or more bins
+        assigned[i] = np.bincount(bin_of_sample[starts[i] : ends[i]]).argmax()
+    counts = np.bincount(assigned, minlength=n_bins)
+    totals = np.bincount(assigned, weights=(ends - starts) / sample_rate_hz, minlength=n_bins)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mean_sec = np.where(counts > 0, totals / np.maximum(counts, 1), np.nan)
+    return counts, mean_sec
+
+
 def compute_sleep_metrics_per_mouse(
     states,
     mouse_id=None,
@@ -138,8 +177,13 @@ def compute_sleep_metrics_per_mouse(
     dataset=None,
     bin_hours=2,
     sample_rate_hz=0.25,
+    rotate_by=0,
 ):
     """Per-bin fraction-of-time + bout statistics for one mouse's state array.
+
+    ``frac_time`` is the fraction of the bin spent in the state. Bouts are found over the whole
+    recording, so none is cut at a bin edge; each is counted once, in the bin that contains most
+    of it, and ``mean_bout_sec`` is the mean full length of the bouts counted in the bin.
 
     Args:
         states: 1-D array of state labels for one mouse. Sample rate is
@@ -149,6 +193,9 @@ def compute_sleep_metrics_per_mouse(
         bin_hours: Bin width in hours.
         sample_rate_hz: Sampling rate of `states`. SPINDLE epoch-rate is
             0.25 Hz; pass 1.0 if you've already upsampled to per-second.
+        rotate_by: Number of samples to rotate the recording by before binning, so that
+            ``states[rotate_by]`` is position 0 and the part before it moves to the end. Bouts
+            are found on the original order, so a run that crosses ``rotate_by`` stays one bout.
 
     Returns:
         Long-form DataFrame with one row per (bin × state).
@@ -162,21 +209,27 @@ def compute_sleep_metrics_per_mouse(
 
     n_bins = int(np.ceil(n_samples / bin_size_samples))
     unique_states = np.unique(states)
+    rotated = np.roll(states, -rotate_by) if rotate_by else states
+    # the bin each sample of the ORIGINAL order lands in once the recording is rotated
+    bin_of_sample = ((np.arange(n_samples) - rotate_by) % max(n_samples, 1)) // bin_size_samples
+
+    bouts = {
+        state: bout_stats_by_bin(states == state, bin_of_sample, n_bins, sample_rate_hz)
+        for state in unique_states
+    }
 
     rows = []
     for bin_idx in range(n_bins):
         start = bin_idx * bin_size_samples
         end = min((bin_idx + 1) * bin_size_samples, n_samples)
-        bin_states = states[start:end]
+        bin_states = rotated[start:end]
         bin_len = len(bin_states)
         if bin_len == 0:
             continue
 
         for state in unique_states:
-            mask = bin_states == state
-            time_in_state = mask.sum()
-            frac_time = time_in_state / bin_len
-            n_bouts, mean_bout_sec = _bouts_for_state(mask, sample_rate_hz)
+            frac_time = (bin_states == state).sum() / bin_len
+            counts, mean_sec = bouts[state]
 
             rows.append(
                 {
@@ -188,8 +241,8 @@ def compute_sleep_metrics_per_mouse(
                     "bin_start_hr": start / (3600 * sample_rate_hz),
                     "state": state,
                     "frac_time": frac_time,
-                    "n_bouts": n_bouts,
-                    "mean_bout_sec": mean_bout_sec,
+                    "n_bouts": int(counts[bin_idx]),
+                    "mean_bout_sec": float(mean_sec[bin_idx]),
                 }
             )
 
@@ -281,7 +334,7 @@ def compute_sleep_bins_df_offset(
         states = _states_for(animal, state_path, states_by_animal)
         # SPINDLE epoch-rate (0.25 Hz) → per-second by repeating each epoch
         # spindle_epoch_sec times.
-        expanded_states = [s for s in states for _ in range(spindle_epoch_sec)]
+        expanded_states = np.repeat(np.asarray(states), spindle_epoch_sec)
 
         offset = seconds_until_target(rec_start, h=begin_hr)
         if offset >= len(expanded_states):
@@ -293,10 +346,13 @@ def compute_sleep_bins_df_offset(
                 stacklevel=2,
             )
             continue
-        offset_states = expanded_states[offset:] + expanded_states[:offset]
 
         df_mouse = compute_sleep_metrics_per_mouse(
-            offset_states, mouse_id=animal, bin_hours=bin_hours, sample_rate_hz=1
+            expanded_states,
+            mouse_id=animal,
+            bin_hours=bin_hours,
+            sample_rate_hz=1,
+            rotate_by=offset,
         )
         df_mouse["bin_start_sec"] = df_mouse["bin_start_sec"] + (3600 * begin_hr)
         df_mouse["bin_start_hr"] = df_mouse["bin_start_hr"] + begin_hr
@@ -326,6 +382,8 @@ def _bin_states_clock_aligned(
     # rec_start is not on a bin edge. Subsequent bins are full; the final
     # bin may also be partial. bin_start_hr increases monotonically — no
     # mod-24 wrap — so multi-day recordings get distinct positions per day.
+    # Bouts are found over the whole recording and each is counted once, in the bin that holds
+    # most of it (see ``bout_stats_by_bin``).
     states = np.asarray(states)
     n_samples = len(states)
     if n_samples == 0:
@@ -343,6 +401,16 @@ def _bin_states_clock_aligned(
     samples_in_first_bin = bin_size_samples - first_sample_offset_in_bin
 
     unique_states = np.unique(states)
+    # the bin each sample falls in: a (possibly partial) first bin, then full bins
+    pos = np.arange(n_samples)
+    bin_of_sample = np.where(
+        pos < samples_in_first_bin, 0, 1 + (pos - samples_in_first_bin) // bin_size_samples
+    )
+    n_bins = int(bin_of_sample[-1]) + 1
+    bouts = {
+        state: bout_stats_by_bin(states == state, bin_of_sample, n_bins, sample_rate_hz)
+        for state in unique_states
+    }
     rows = []
     bin_idx = 0
     sample_pos = 0
@@ -358,7 +426,7 @@ def _bin_states_clock_aligned(
                 mask = bin_states == state
                 time_in_state = mask.sum()
                 frac_time = time_in_state / bin_len
-                n_bouts, mean_bout_sec = _bouts_for_state(mask, sample_rate_hz)
+                counts, mean_sec = bouts[state]
                 rows.append(
                     {
                         "mouse_id": mouse_id,
@@ -369,8 +437,8 @@ def _bin_states_clock_aligned(
                         "bin_start_hr": current_circadian_start / 3600 + begin_hr,
                         "state": state,
                         "frac_time": frac_time,
-                        "n_bouts": n_bouts,
-                        "mean_bout_sec": mean_bout_sec,
+                        "n_bouts": int(counts[bin_idx]),
+                        "mean_bout_sec": float(mean_sec[bin_idx]),
                     }
                 )
 

@@ -31,6 +31,7 @@ from ebb.io import sleepyrat_auth
 from ebb.io.sleepyrat import SleepyRatAPI
 from ebb_viewer.pipeline.manifest import Manifest, spindle_edf_dir, spindle_output_dir
 from ebb_viewer.pipeline.theme import apply_primary_button
+from ebb_viewer.widgets.page_help import title_row
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
 
@@ -104,8 +105,7 @@ class SpindleUploadPage(QWidget):
     def _build_ui(self):
         root = QVBoxLayout(self)
 
-        lbl = QLabel("Sleep Staging — Upload & Download")
-        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        lbl = title_row("Sleep Staging — Upload & Download", "spindle_upload")
         desc = QLabel(
             "Select a Spindle project and folder to upload EDF files for sleep scoring. Epochs are classified as "
             "Wake, NREM, or REM in 4-second windows. If the remote folder already exists, only new files will be "

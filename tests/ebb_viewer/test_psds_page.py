@@ -227,7 +227,7 @@ def test_full_masking_roundtrip_psd_params_json(qapp, tmp_path: Path):
         "nstd": 4.0,
         "noise_thresh": 0.3,
         "states": ["wake", "nrem"],
-        "swd_mode": "mask_out",
+        "use_swd_mask": True,
         "ann_enabled": True,
         "ann_dir": str(tmp_path / "annotations"),
         "ann_keywords": "drink, artifact",
@@ -247,7 +247,6 @@ def test_full_masking_roundtrip_psd_params_json(qapp, tmp_path: Path):
 
     page = _make_page(qapp, tmp_path)
     wp = page.mask_widget.to_params()
-    # swd_mode is the legacy key; widget exposes the boolean shadow.
     assert wp["use_swd_mask"] is True
     assert wp["ann_enabled"] is True
     assert wp["ann_dir"] == str(tmp_path / "annotations")
@@ -536,7 +535,7 @@ def test_swd_mask_blocks_run_naming_animals_without_files(qapp, tmp_path: Path):
     (tmp_path / "swd").mkdir()
     (tmp_path / "swd" / "AM001.mat").write_text("")
     page._refresh_swd_status()  # enables the SWD option now that a .mat exists
-    page.mask_widget.from_params({"swd_mode": "mask_out"})
+    page.mask_widget.from_params({"use_swd_mask": True})
     assert not page.btn_run_pipeline.isEnabled()
     assert "AM002" in page._checks_lbl.text()
 

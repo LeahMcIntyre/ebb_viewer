@@ -49,6 +49,7 @@ from ebb_viewer.pipeline.naming import drink_mask_rel
 from ebb_viewer.pipeline.theme import apply_primary_button, zone_header_qss
 from ebb_viewer.widgets.collapsible_section import CollapsibleSection
 from ebb_viewer.widgets.drink_loop import MASK_STEP, loop_summary_html
+from ebb_viewer.widgets.page_help import HelpButton
 from ebb_viewer.widgets.readiness import Check, blockers, checks_html, first_fix, fix_button_text
 from ebb_viewer.widgets.worker_helpers import launch_worker
 
@@ -127,6 +128,7 @@ class DrinkMaskPage(QWidget):
         lbl.setStyleSheet("font-weight: bold; font-size: 15px;")
         hdr.addWidget(lbl)
         hdr.addStretch(1)
+        hdr.addWidget(HelpButton("drink_mask"))
         self.btn_refresh = QPushButton("Refresh")
         hdr.addWidget(self.btn_refresh)
         root.addLayout(hdr)
@@ -715,6 +717,7 @@ class DrinkMaskPage(QWidget):
             except Exception as e:
                 failed.append(f"{animal_id}: {e}")
         manifest.save()
+        self._record_drink_params(run_name)
         self._pending_animal_ids = []
         if failed:
             msg = "\n".join(failed)
@@ -734,6 +737,15 @@ class DrinkMaskPage(QWidget):
         )
         self._hint_frame.setVisible(True)
         self._refresh()
+
+    def _record_drink_params(self, run_name: str) -> None:
+        """Record in psd_params.json that drink masks were applied, and the pad used."""
+        params = psd_params.load(self.project_root, run_name)
+        if params is None:
+            return
+        params["use_drink_mask"] = True
+        params["drink_pad"] = int(params.get("drink_pad", 2))
+        psd_params.save(self.project_root, run_name, params)
 
     def _on_error(self, msg: str):
         self._computing = False

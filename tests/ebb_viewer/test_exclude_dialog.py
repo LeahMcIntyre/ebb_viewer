@@ -113,7 +113,8 @@ def test_legend_row_has_exclude_button_checked_and_greyed_when_excluded(qapp, tm
 def _viewer_stub(manifest: Manifest):
     """A bare widget carrying the attributes ``_flag_qc_exclude`` uses (it is the dialog's parent)."""
     stub = QWidget()
-    stub.manifest, stub.animal_id, stub._update_qc_status = manifest, "AM001", MagicMock()
+    stub.manifest, stub.animal_id = manifest, "AM001"
+    stub._update_qc_status, stub._announce_qc = MagicMock(), MagicMock()
     return stub
 
 
@@ -127,6 +128,7 @@ def test_viewer_exclude_action_excludes_with_reason(qapp, tmp_path):
     assert m.get("AM001").sleep_qc == "excluded"
     assert "electrode fell out" in m.get("AM001").notes
     stub._update_qc_status.assert_called_once()
+    stub._announce_qc.assert_called_once()
 
 
 def test_viewer_unchecking_exclude_returns_to_needs_review(qapp, tmp_path):
@@ -148,3 +150,24 @@ def test_viewer_cancelled_exclude_keeps_status(qapp, tmp_path):
 
 def test_module_exports_helper():
     assert ed.exclude_with_reason is exclude_with_reason
+
+
+def test_viewer_title_names_the_animal_and_sleep_plot_needs_a_csv(qapp):
+    from datetime import datetime
+    from pathlib import Path
+
+    import numpy as np
+
+    from ebb_viewer.edf_viewer.eeg_viewer import EegMainWindow
+    from ebb_viewer.edf_viewer.recording import Recording
+
+    rec = Recording(
+        data=np.zeros((4, 2500)),
+        fs=250,
+        start_time=datetime(2025, 1, 1),
+        ch_names=("LFC", "RSC", "LSC", "EMG"),
+        edf_path=Path("/x/AM0196_a_PREPROCESSED.edf"),
+    )
+    win = EegMainWindow(rec)
+    assert win.windowTitle() == "EEG Viewer: AM0196 (AM0196_a_PREPROCESSED.edf)"
+    assert not win.act_plot_sleep.isEnabled()

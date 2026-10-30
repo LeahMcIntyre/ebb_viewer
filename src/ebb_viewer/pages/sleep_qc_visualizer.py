@@ -42,10 +42,11 @@ from PyQt6.QtWidgets import (
 from ebb.core.naming import parse_animal_id
 from ebb.io.spindle_csv import FINAL_COLUMN, read_state_column
 from ebb.process.sleep_compute import (
-    read_rawstate_column,
     compute_sleep_bins_df,
     compute_sleep_bins_df_clock_aligned,
     compute_sleep_bins_df_offset,
+    compute_spindle_fractions,
+    read_rawstate_column,
 )
 from ebb.process.sleep_flagging import METRIC_BY_KEY, flagged_metrics, metrics_table
 from ebb_viewer.pipeline.manifest import (
@@ -58,12 +59,28 @@ from ebb_viewer.pipeline.swd_review import swd_review_gaps
 from ebb_viewer.pipeline.theme import STATUS_COLOR_HEX
 from ebb_viewer.widgets.exclude_dialog import exclude_with_reason
 from ebb_viewer.widgets.notes_dialog import NotesDialog
+from ebb_viewer.widgets.page_help import title_row
 from ebb_viewer.widgets.sleep_flag_overview import FlagOverview
+from ebb_viewer.widgets.spindle_fraction_plot import SpindleFractionPlot
+from ebb_viewer.widgets.worker_helpers import run_keeping_gui_alive
 
 # Project recordings are all acquired in the Central time zone. Used by the
 # offset variant of the sleep-bins computation so the next-`begin_hr`
 # rotation honors DST transitions rather than drifting an hour across them.
 _RECORDING_TZ = ZoneInfo("America/Chicago")
+
+
+def overview_hint_text(manifest: Manifest) -> str:
+    """Reminder that the Overview is not the review; empty once every animal has a decision."""
+    animals = [e for e in manifest if e.has_spindle]
+    todo = sum(1 for e in animals if e.sleep_qc not in READY_STATUSES)
+    if not todo:
+        return ""
+    return (
+        f"<b>{todo} of {len(animals)} animals still need a decision.</b> The Overview only "
+        "highlights outliers. Open the <b>Sleep</b> view and go through every animal, "
+        "marking each OK, Review or Exclude."
+    )
 
 
 class SleepQCGridPage(QWidget):
@@ -133,6 +150,10 @@ class SleepQCGridPage(QWidget):
         self._auto_flagged: list[str] = []
         self._highlighted_animal: str | None = None
         self._show_ref_median: bool = False
+        # Spindle-mask percentages per state, keyed by whether reclassified states are shown;
+        # dropped whenever _data is reloaded.
+        self._frac_cache: dict[bool, pd.DataFrame] = {}
+        self._mask_selected: str | None = None
 
         # Animals skipped during the offset compute because no preprocessed
         # EDF was found, or whose recording was too short for the begin_hr
@@ -158,6 +179,15 @@ class SleepQCGridPage(QWidget):
         """Reload the manifest from disk."""
         self._manifest = Manifest.load(self.project_root)
         self._update_swd_label()
+        self._update_overview_hint()
+
+    def _update_overview_hint(self) -> None:
+        """Show the "go through every animal" reminder while the Overview is open."""
+        frame = getattr(self, "_overview_hint", None)  # first call happens before the UI exists
+        if frame is None:
+            return
+        self.lbl_overview_hint.setText(overview_hint_text(self._manifest))
+        frame.setVisible(self.btn_overview.isChecked() and bool(self.lbl_overview_hint.text()))
 
     def _update_swd_label(self) -> None:
         """Note that SWD review is unfinished (no dialog: Sleep QC stays usable)."""
@@ -199,7 +229,9 @@ class SleepQCGridPage(QWidget):
         self.lbl_combo.setText(f"Combo: {self._combo}")
         self._update_page_controls()
         if self.btn_overview.isChecked():
-            self._set_overview_mode(True)
+            self._set_view("overview")
+        elif self.btn_spindle.isChecked():
+            self._set_view("mask")
         elif self._mode == "animal":
             self._refresh_animal_combo()
             self._update_all_plots()
@@ -243,11 +275,16 @@ class SleepQCGridPage(QWidget):
         if not entries:
             self._hint_frame.setVisible(False)
             return
-        has_review = any(e.sleep_qc == "needs_review" for e in entries)
+        n_review = sum(1 for e in entries if e.sleep_qc == "needs_review")
+        has_review = n_review > 0
         all_decided = all(e.sleep_qc in READY_STATUSES for e in entries)  # ok or excluded
         if has_review:
-            self._hint_lbl.setText("Check animals flagged for EDF review.")
-            self._hint_btn.setText("→ Home (review flagged EDFs)")
+            self._hint_lbl.setText(
+                f"{n_review} animal{'s' if n_review != 1 else ''} flagged for review. EDFs open "
+                "from <b>Home</b>: use the open button on the animal's Needs Attention card, "
+                "inspect the trace, then come back and mark it OK or Exclude."
+            )
+            self._hint_btn.setText("→ Home (open EDFs)")
             self._nav_hint_dest = "home"
             self._hint_frame.setStyleSheet(
                 "QFrame { background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; }"
@@ -280,8 +317,7 @@ class SleepQCGridPage(QWidget):
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
 
-        lbl = QLabel("Sleep Quality Check Visualizer")
-        lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+        lbl = title_row("Sleep Quality Check Visualizer", "sleep_qc")
         desc = QLabel(
             "Review sleep staging results for each animal. "
             "Flag animals as ok or needs review based on sleep metrics and the fraction of each state masked by artifact."
@@ -375,11 +411,18 @@ class SleepQCGridPage(QWidget):
         self.btn_view_sleep = QPushButton("Sleep")
         self.btn_view_sleep.setCheckable(True)
         self.btn_view_sleep.setChecked(False)
+        self.btn_spindle = QPushButton("Spindle mask")
+        self.btn_spindle.setCheckable(True)
+        self.btn_spindle.setChecked(False)
+        self.btn_spindle.setToolTip(
+            "Percent of each state (and the total) masked as spindle artifact, per file"
+        )
         view_row = QHBoxLayout()
         view_row.setContentsMargins(0, 0, 0, 0)
         view_row.setSpacing(0)
         view_row.addWidget(self.btn_overview)
         view_row.addWidget(self.btn_view_sleep)
+        view_row.addWidget(self.btn_spindle)
         view_wrap = QWidget()
         view_wrap.setLayout(view_row)
         top.addWidget(view_wrap)
@@ -458,9 +501,31 @@ class SleepQCGridPage(QWidget):
                 p.setTitle(f"{self.STATE_DEF[state]}: {metric_label}", size="10pt")
                 self._plots[(metric, state)] = p
 
+        # Overview only highlights outliers; every animal still needs a decision in the Sleep view.
+        self._overview_hint = QFrame()
+        self._overview_hint.setStyleSheet(
+            "QFrame { background: #e8f0fb; border: 1px solid #1a5fa8; border-radius: 4px; }"
+        )
+        hint_row = QHBoxLayout(self._overview_hint)
+        hint_row.setContentsMargins(8, 4, 8, 4)
+        self.lbl_overview_hint = QLabel("")
+        self.lbl_overview_hint.setWordWrap(True)
+        self.lbl_overview_hint.setStyleSheet("border: none;")
+        hint_row.addWidget(self.lbl_overview_hint, 1)
+        btn_hint_sleep = QPushButton("Open Sleep view →")
+        btn_hint_sleep.clicked.connect(lambda: self._set_view("sleep"))
+        hint_row.addWidget(btn_hint_sleep)
+        layout.addWidget(self._overview_hint)
+        self._update_overview_hint()
+
         self._overview = FlagOverview()
         self._overview.setMinimumSize(560, 300)
         layout.addWidget(self._overview, stretch=1)
+
+        self._frac_widget = SpindleFractionPlot()
+        self._frac_widget.setMinimumSize(560, 300)
+        self._frac_widget.setVisible(False)
+        layout.addWidget(self._frac_widget, stretch=1)
 
         self.grid.setVisible(False)
         layout.addWidget(self.grid, stretch=1)
@@ -490,6 +555,7 @@ class SleepQCGridPage(QWidget):
         hint_layout = QHBoxLayout(self._hint_frame)
         hint_layout.setContentsMargins(10, 6, 10, 6)
         self._hint_lbl = QLabel()
+        self._hint_lbl.setWordWrap(True)
         hint_layout.addWidget(self._hint_lbl, 1)
         self._hint_btn = QPushButton()
         hint_layout.addWidget(self._hint_btn)
@@ -501,8 +567,10 @@ class SleepQCGridPage(QWidget):
         self.btn_animal.clicked.connect(lambda: self._set_mode("animal"))
         self.cmb_axis_mode.currentIndexChanged.connect(self._on_axis_mode_changed)
         self.btn_median.toggled.connect(self._on_median_toggled)
-        self.btn_view_sleep.clicked.connect(lambda: self._set_overview_mode(False))
-        self.btn_overview.clicked.connect(lambda: self._set_overview_mode(True))
+        self.btn_view_sleep.clicked.connect(lambda: self._set_view("sleep"))
+        self.btn_overview.clicked.connect(lambda: self._set_view("overview"))
+        self.btn_spindle.clicked.connect(lambda: self._set_view("mask"))
+        self._frac_widget.animal_clicked.connect(self._on_mask_animal_selected)
         self.btn_original.toggled.connect(self._on_original_toggled)
         self._overview.animal_clicked.connect(self._on_overview_animal_selected)
         self._overview.flag_requested.connect(self._on_overview_flag_requested)
@@ -526,7 +594,7 @@ class SleepQCGridPage(QWidget):
         self.btn_group.setChecked(is_group)
         self.btn_animal.setChecked(not is_group)
 
-        if not self.btn_overview.isChecked():
+        if self.btn_view_sleep.isChecked():
             self._group_controls.setVisible(is_group)
             self._animal_controls.setVisible(not is_group)
 
@@ -542,23 +610,69 @@ class SleepQCGridPage(QWidget):
             self._maybe_show_rotate_skip_warning()
         self._update_all_plots()
 
-    def _set_overview_mode(self, overview: bool) -> None:
-        self.btn_view_sleep.setChecked(not overview)
-        self.btn_overview.setChecked(overview)
-        self.grid.setVisible(not overview)
-        self._overview.setVisible(overview)
-        self._sleep_mode_controls.setVisible(not overview)
-        self._legend_scroll.setVisible(not overview)
-        if overview:
-            self._group_controls.setVisible(False)
-            self._animal_controls.setVisible(False)
+    def _set_view(self, view: str) -> None:
+        """Show one of the three views: ``"overview"``, ``"sleep"`` or ``"mask"``."""
+        sleep = view == "sleep"
+        self.btn_overview.setChecked(view == "overview")
+        self.btn_view_sleep.setChecked(sleep)
+        self.btn_spindle.setChecked(view == "mask")
+        self.grid.setVisible(sleep)
+        self._overview.setVisible(view == "overview")
+        self._frac_widget.setVisible(view == "mask")
+        self._update_overview_hint()
+        self._sleep_mode_controls.setVisible(sleep)
+        self._legend_scroll.setVisible(sleep)
+        if sleep:
+            self._set_mode(self._mode)
+            return
+        self._group_controls.setVisible(False)
+        self._animal_controls.setVisible(False)
+        if view == "overview":
             self._refresh_overview()
         else:
-            self._set_mode(self._mode)
+            self._refresh_mask_view()
+
+    def _get_frac_df(self) -> pd.DataFrame | None:
+        """Spindle-mask fraction per animal and state, for the states currently shown."""
+        d = self._csv_dir()
+        if self._data is None or not d.is_dir():
+            return None
+        reclass = self._reclass_active
+        if reclass not in self._frac_cache:
+            states: dict[str, list[str]] = {}
+            for path in sorted(d.glob("*.csv")):
+                animal = parse_animal_id(path)
+                if reclass and animal in self._reclassed:
+                    states[animal] = read_state_column(path, FINAL_COLUMN)
+                else:
+                    states[animal] = read_rawstate_column(path)
+            try:
+                self._frac_cache[reclass] = compute_spindle_fractions(d, states_by_animal=states)
+            except Exception as e:
+                QMessageBox.critical(
+                    self, "Error computing spindle mask", f"Could not read {self._combo}:\n{e}"
+                )
+                return None
+        return self._frac_cache[reclass]
+
+    def _refresh_mask_view(self) -> None:
+        title = f"{self._combo} ({'reclassified' if self._reclass_active else 'original'})"
+        gated = self._gated_animals()
+        if gated:
+            title += f" - orange ring = EMG gate applied ({len(gated)})"
+        self._frac_widget.set_data(
+            self._get_frac_df(), title=title, selected=self._mask_selected, gated=gated
+        )
+
+    def _on_mask_animal_selected(self, animal: str) -> None:
+        """Dot clicked or dismissed: redraw so the selection is highlighted."""
+        self._mask_selected = animal or None
+        self._refresh_mask_view()
 
     def _refresh_overview(self, selected: str | None = None) -> None:
         """Redraw the boxplots from the cached flagging metrics."""
         statuses = {e.animal_id: e.sleep_qc for e in self._manifest}
+        self._update_overview_hint()
         self._overview.set_data(
             self._get_flag_table(),
             self._manifest.flag_thresholds,
@@ -605,18 +719,23 @@ class SleepQCGridPage(QWidget):
         cover every CSV: the compute functions default to ``final_state`` and raise
         for animals that lack it, so this page always passes states explicitly."""
         std = self.project_root / "standard"
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always", UserWarning)
-            tables = (
-                compute_sleep_bins_df(d, states_by_animal=states_by_animal),
-                compute_sleep_bins_df_offset(
-                    d, std, tz=_RECORDING_TZ, states_by_animal=states_by_animal
-                ),
-                compute_sleep_bins_df_clock_aligned(
-                    d, std, tz=_RECORDING_TZ, states_by_animal=states_by_animal
-                ),
-                metrics_table(d, std, states_by_animal=states_by_animal),
-            )
+
+        def compute():
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", UserWarning)
+                tables = (
+                    compute_sleep_bins_df(d, states_by_animal=states_by_animal),
+                    compute_sleep_bins_df_offset(
+                        d, std, tz=_RECORDING_TZ, states_by_animal=states_by_animal
+                    ),
+                    compute_sleep_bins_df_clock_aligned(
+                        d, std, tz=_RECORDING_TZ, states_by_animal=states_by_animal
+                    ),
+                    metrics_table(d, std, states_by_animal=states_by_animal),
+                )
+            return tables, caught
+
+        tables, caught = run_keeping_gui_alive("Computing sleep metrics…", compute)
         if record_skips:  # same skips either way; report them once
             self._record_skip_warnings(caught)
         return tables
@@ -625,6 +744,7 @@ class SleepQCGridPage(QWidget):
         """Compute and cache the sleep metrics for the project combo."""
         self._data = None
         self._data_reclass = None
+        self._frac_cache = {}
         self._reclassed = set()
         self._mouse_ids = []
         self._data_sig = sig
@@ -996,6 +1116,9 @@ class SleepQCGridPage(QWidget):
         if self.btn_overview.isChecked():
             self._refresh_overview(selected=self._overview.selected)
             return
+        if self.btn_spindle.isChecked():
+            self._refresh_mask_view()
+            return
         if self._mode == "group":
             self._render_group()
         else:
@@ -1347,7 +1470,7 @@ class SleepQCGridPage(QWidget):
             self._flag_sleep_qc(animal, "needs_review")
 
     def _refresh_legend(self) -> None:
-        if self._mode == "group" and not self.btn_overview.isChecked():
+        if self._mode == "group" and self.btn_view_sleep.isChecked():
             mice = self._get_page_mice()
             self._update_legend_group(mice, self._build_mouse_color_map(mice), self._show_ref_median)
         else:

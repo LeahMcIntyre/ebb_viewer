@@ -235,7 +235,7 @@ def test_auto_flag_flags_only_undecided_animals_past_a_threshold(qapp, tmp_path:
 
     m = Manifest.load(tmp_path)
     assert m.get("AM002").sleep_qc == "needs_review"
-    assert m.get("AM002").flag_reasons == ["nrem_short"]
+    assert m.get("AM002").flag_reasons == ["nrem_short_h"]
     assert m.get("AM001").sleep_qc is None  # not past a threshold
     assert m.get("AM003").sleep_qc == "ok" and m.get("AM005").sleep_qc == "excluded"
     assert page._auto_flagged == ["AM002"] and emitted == [True]
@@ -563,9 +563,9 @@ def test_unreclassified_project_loads_original_states_without_error(qapp, tmp_pa
 
 
 def _flag_table() -> pd.DataFrame:
-    base = {"nrem_short": 100, "dark_bouts_h": 5, "pct_rem": 8, "pct_nrem": 50,
+    base = {"nrem_short_h": 2, "dark_bouts_h": 5, "pct_rem": 8, "pct_nrem": 50,
             "pct_wake": 42, "max_bin_rem": 10}
-    return pd.DataFrame({"AM001": base, "AM002": {**base, "nrem_short": 500}}).T.rename_axis("animal")
+    return pd.DataFrame({"AM001": base, "AM002": {**base, "nrem_short_h": 8}}).T.rename_axis("animal")
 
 
 def test_flagged_animals_uses_manifest_thresholds(qapp, tmp_path: Path):
@@ -573,15 +573,15 @@ def test_flagged_animals_uses_manifest_thresholds(qapp, tmp_path: Path):
     page = _make_page(qapp, tmp_path)
     page._data = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), _flag_table())
 
-    assert page._flagged_animals() == {"AM002": ["nrem_short"]}
+    assert page._flagged_animals() == {"AM002": ["nrem_short_h"]}
     assert "[short NREM bouts]" in page._flag_tag_html("AM002")
     assert page._flag_tooltip("AM002") == (
-        "Short (1-2 epoch) NREM bouts per file: 500.0 (above 400)"
+        "Short (1-2 epoch) NREM bouts per hour: 8.0 (above 6)"
     )
     assert page._flag_tooltip("AM001") == ""
     assert page._flag_tag_html("AM001") == ""
 
-    page._manifest.flag_thresholds["nrem_short"] = 600
+    page._manifest.flag_thresholds["nrem_short_h"] = 600
     assert page._flagged_animals() == {}
 
 
@@ -592,7 +592,7 @@ def test_overview_shows_flag_table_with_statuses(qapp, tmp_path: Path):
 
     page._refresh_overview()
 
-    assert page._overview.flagged_animals() == {"AM002": ["nrem_short"]}
+    assert page._overview.flagged_animals() == {"AM002": ["nrem_short_h"]}
     page._on_overview_animal_selected("AM002")
     assert page._overview.selected == "AM002"
 
@@ -601,10 +601,25 @@ def test_flag_tag_names_at_most_two_metrics_then_counts_the_rest(qapp, tmp_path:
     _seed_manifest(tmp_path, {"AM001": None})
     page = _make_page(qapp, tmp_path)
     table = _flag_table().loc[["AM001"]].astype(float)
-    table.loc["AM001", ["nrem_short", "pct_nrem", "pct_wake", "pct_rem"]] = [500, 20, 80, 12]
+    table.loc["AM001", ["nrem_short_h", "pct_nrem", "pct_wake", "pct_rem"]] = [8, 20, 80, 12]
     page._data = (pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), table)
 
     tag = page._flag_tag_html("AM001")
 
     assert "[short NREM bouts, high REM +2]" in tag  # METRICS order, capped at two names
     assert page._flag_tooltip("AM001").count("\n") == 3  # all four listed in the tooltip
+
+
+def test_overview_hint_counts_animals_without_a_decision(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"A1": "ok", "A2": None, "A3": "needs_review", "A4": "excluded"})
+    page = _make_page(qapp, tmp_path)
+    text = page.lbl_overview_hint.text()
+    assert "2 of 4" in text and "Sleep" in text
+    assert not page._overview_hint.isHidden()
+
+
+def test_overview_hint_hidden_once_every_animal_is_decided(qapp, tmp_path: Path):
+    _seed_manifest(tmp_path, {"A1": "ok", "A2": "excluded"})
+    page = _make_page(qapp, tmp_path)
+    assert page.lbl_overview_hint.text() == ""
+    assert page._overview_hint.isHidden()

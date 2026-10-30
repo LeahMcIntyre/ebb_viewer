@@ -1,7 +1,8 @@
-"""Helpers for ``psd_analysis.ipynb``: turn a sealed ``psds_final.pkl`` into tables and plots.
+"""Helpers for ``psd_analysis.ipynb`` and ``psd_analysis.py``: turn a sealed ``psds_final.pkl`` into
+tables and plots.
 
-Copy this file and ``psd_analysis.ipynb`` into your analysis folder, edit the Settings cell of the
-notebook, and Run All. The functions are small and each does one step, so the notebook reads as a
+Keep this file in the same folder as the notebook or script. Edit the notebook's Settings cell (or
+the script's SETTINGS block) and run it. The functions are small and each does one step, so the notebook reads as a
 recipe: load -> assign groups -> interpolate the line noise -> normalize -> plot -> band power ->
 export for Prism.
 
@@ -49,12 +50,12 @@ INVERSE_FILTER = np.array(
 )
 
 DEFAULT_BANDS = {
-    "1-4": (1, 4),
-    "4-8": (4, 8),
-    "8-12": (8, 12),
-    "12-30": (12, 30),
-    "30-70": (30, 70),
-    "70-100": (70, 100),
+    "1-4 Hz": (1, 4),
+    "4-8 Hz": (4, 8),
+    "8-12 Hz": (8, 12),
+    "12-30 Hz": (12, 30),
+    "30-70 Hz": (30, 70),
+    "70-100 Hz": (70, 100),
 }
 
 # Line noise bridged by interpolation, in Hz. The pipeline applies a 60 Hz notch filter by default
@@ -87,17 +88,21 @@ def load_psd_records(path: str | Path) -> list[dict]:
     return list(records)
 
 
-def default_output_dir(psds_final: str | Path) -> Path:
-    """Where results go when ``OUT_DIR`` is not set.
+def default_output_dir(*psds_final: str | Path) -> Path:
+    """Where results go when ``OUT_DIR`` is not set: a folder per analysed run.
 
-    For ``<project>/psd/<run>/psds_final.pkl`` that is ``<project>/psd_analysis``, next to the
-    ``psd/`` folder. For a pickle anywhere else it is a ``psd_analysis`` folder beside the file.
-    The notebook's own folder is never used.
+    For ``<project>/psd/<run>/psds_final.pkl`` that is ``<project>/psd_analysis/<run>``, so two
+    runs of the same project do not overwrite each other. For a pickle anywhere else it is
+    ``psd_analysis/<file name without .pkl>`` beside the file. The project (or folder) is the
+    first file's. Given several files (several time points) the folder is named after all of
+    them, joined with ``+``. The notebook's own folder is never used.
     """
-    path = Path(psds_final).expanduser().resolve()
-    if path.parent.parent.name == "psd":
-        return path.parent.parent.parent / "psd_analysis"
-    return path.parent / "psd_analysis"
+    paths = [Path(p).expanduser().resolve() for p in psds_final]
+    first = paths[0]
+    in_project = first.parent.parent.name == "psd"
+    base = (first.parent.parent.parent if in_project else first.parent) / "psd_analysis"
+    names = [p.parent.name if p.parent.parent.name == "psd" else p.stem for p in paths]
+    return base / "+".join(dict.fromkeys(names))
 
 
 def get_freqs(df: pd.DataFrame) -> np.ndarray:
