@@ -101,14 +101,12 @@ def _compute_artifact_masks(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Run commutator + SD-threshold on `rec`, returning both raw boolean arrays.
 
-    Centers each channel on its median before producer construction so the
-    SD-threshold's per-window stats aren't biased by DC offsets. SD's
+    Works on the raw signal of the three EEG channels, exactly as ``estimate_psd`` does with
+    its default channels, so the viewer flags the same samples as PSD Computation. SD's
     commutator-mask gating is controlled by `sd_meta["comm_mask"]` (default True).
     """
     chunksize = int(30e5)
-    eeg_data = rec.data[:3]
-    baseline = np.median(eeg_data, axis=1, keepdims=True)  # shape (3, 1)
-    pro = make_producer(eeg_data - baseline, chunksize=chunksize, axis=-1)
+    pro = make_producer(rec.data[:3], chunksize=chunksize, axis=-1)
 
     comm_mask, _ = masking.commutator_threshold(
         pro,

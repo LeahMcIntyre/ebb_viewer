@@ -51,3 +51,56 @@ def test_refuses_a_recording_too_large_to_hold_in_memory(tmp_path, monkeypatch):
     monkeypatch.setattr(eeg_viewer, "_MAX_RECORDING_BYTES", 1000)
     with pytest.raises(ValueError, match="Preprocess"):
         _load_recording(path)
+
+
+# ---------------------------------------------------------------------------
+# The viewer's artifact masks match PSD Computation's
+# ---------------------------------------------------------------------------
+
+
+def test_viewer_artifact_masks_match_the_psd_pipeline_on_a_signal_with_a_dc_offset():
+    """A channel with a DC offset flags the same samples in the viewer as in step 6.
+
+    The viewer once subtracted each channel's median first, which hid samples that step 6
+    (working on the raw signal) removes.
+    """
+    from datetime import datetime
+    from pathlib import Path
+
+    from openseize import producer
+
+    from ebb import masking
+    from ebb.masking.threshold import commutator_samples
+    from ebb_viewer.edf_viewer.mask_builder import _compute_artifact_masks, _default_comm_meta
+    from ebb_viewer.edf_viewer.recording import Recording
+
+    fs = 250
+    rng = np.random.default_rng(1)
+    data = rng.normal(0, 40, (4, fs * 60))
+    data[0] += 1900  # large DC offset on LFC
+    data[0, fs * 30 : fs * 30 + 5] += 300  # spikes that cross 2000 uV only in the raw signal
+    rec = Recording(
+        data=data,
+        fs=fs,
+        start_time=datetime(2026, 1, 1),
+        ch_names=("LFC", "RSC", "LSC", "EMG"),
+        edf_path=Path("AM001.edf"),
+    )
+
+    comm_meta = _default_comm_meta(fs)
+    sd_meta = {"nstd": 5, "winsize": 10, "radius": 0.5, "comm_mask": True}
+    comm_viewer, sd_viewer = _compute_artifact_masks(rec, comm_meta, sd_meta)
+
+    pro = producer(data[:3], chunksize=int(30e5), axis=-1)
+    comm_psd = masking.commutator_threshold(pro, value=2000, **commutator_samples(fs))[0]
+    sd_psd = masking.sd_threshold(
+        pro,
+        [5],
+        winsize=10 * fs,
+        radius=0.5 * fs,
+        mask_pro=producer(comm_psd, chunksize=int(4.5e4), axis=-1),
+    )[0]
+
+    assert not comm_psd.all()  # the spikes are flagged in the raw signal
+    np.testing.assert_array_equal(comm_viewer, comm_psd)
+    np.testing.assert_array_equal(sd_viewer, sd_psd)
