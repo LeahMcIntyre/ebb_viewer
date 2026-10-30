@@ -16,9 +16,7 @@ Working draft of the methods, in pipeline order. Each section is a set of bullet
 [7 PSD review and drink mask](#7-psd-review-and-drink-mask) ·
 [8 PSD analysis](#8-psd-analysis) ·
 [9 Sleep by hour](#9-sleep-by-hour) ·
-[10 Software](#10-software) ·
-[Numbers to report](#numbers-to-report-per-dataset) ·
-[Open TODOs](#open-todos)
+[10 Software](#10-software)
 
 ---
 
@@ -40,13 +38,13 @@ Working draft of the methods, in pipeline order. Each section is a set of bullet
 - Take the first 24 h of each chunk, joined in start-time order from the EDF header (2 chunks = 48 h, 3 chunks = 72 h).
 - Matching SWD and annotation files are shifted by 24 h per chunk.
 - Limits:
-  - Chunks shorter than 24 h are not handled.
+  - A chunk shorter than 24 h is joined whole in the EDF, but its SWD and annotation files are still shifted by a full 24 h, so their times no longer match the EDF after that chunk.
   - A chunk longer than 24 h loses its extra time (a 28 h chunk loses 4 h).
   - The gap between chunks is ignored, so clock time drifts by the restart offset.
 - **Combined recordings:** 4 animals from PHP.eB 6 weeks. Their chunks started at very similar times of day.
 
 ### Trim and downsample
-- **Trim:** to the largest of 48 h or 72 h that fits. The stop sample is rounded up to a whole second, and recordings under 48 h are rejected.
+- **Trim:** to the longest target length that fits (targets 48 h and 72 h; they can be changed in the app). The stop sample is rounded up to a whole second, and a recording shorter than the smallest target is rejected.
 - **Downsample:** 5000 Hz to 250 Hz (factor 20) with the openseize Kaiser low-pass anti-alias filter.
 
   | Filter setting | Value |
@@ -85,12 +83,12 @@ Working draft of the methods, in pipeline order. Each section is a set of bullet
 ### Scoring
 - SPINDLE, run through SleepyRat, scores 4 s epochs as wake, NREM or REM, with a noise probability per epoch.
 - Every animal is scored with **LFC + RSC + EMG**.
-- **Scored:** June/July 2026.
+- **Scored:** RNA KO and Characterization June/July 2026, PHP set July 2025
 - **Upload:** the 250 Hz preprocessed EDF is cut to a channel subset (the two EEG channels plus EMG) with no other signal processing, and uploaded to SleepyRat. Files already on the server are skipped, and the label CSVs are downloaded.
 
 ### Output
 - One CSV per animal with the state for each 4 s epoch, the noise probability and the class probabilities.
-- **Noise cutoff:** epochs with noise probability at or above 0.5 are artifacts (SleepyRat default; a file's own threshold is used when given).
+- **Noise cutoff:** epochs with noise probability at or above 0.5 are artifacts. Current SleepyRat files carry no threshold column; older files carried one (also 0.5), which Reclassify would use.
 - The untouched SPINDLE CSVs are kept in an `_original` folder.
 
 ### Validation against hand scoring
@@ -112,7 +110,7 @@ Working draft of the methods, in pipeline order. Each section is a set of bullet
 ### Procedure
 Per file, in 4 s epochs, starting from the original SPINDLE states:
 
-1. **Artifact epochs:** noise probability at or above the file threshold (default 0.5).
+1. **Artifact epochs:** noise probability at or above 0.5 (or the file's own threshold column, in older files).
 2. **Gap fill, radius 1:** an NREM epoch becomes wake if it is an artifact epoch, or if it is clean but has an artifact epoch (any state) within 1 epoch on both sides. Neighbors past the ends of the file count as clean.
 3. **Gate decision:** count the file's NREM bouts in the light period before and after gap fill. If the count rises by more than 10%, the gate is applied.
    - The light period is set by clock time from the EDF start time: 06:00–19:59 light, 20:00–05:59 dark.
@@ -121,15 +119,16 @@ Per file, in 4 s epochs, starting from the original SPINDLE states:
    - EMG is channel 4 of the preprocessed 250 Hz EDF, with RMS computed per 4 s epoch.
    - A flip is kept only if its epoch RMS is above median + 5 × MAD of the animal's EMG RMS over every epoch SPINDLE called NREM (artifact epochs included).
    - MAD is the plain, unscaled median absolute deviation.
-   - The gate only cancels flips and never creates new ones.
+   - The gate only cancels flips and never creates new ones. If the EDF is shorter than the CSV, the missing epochs cannot be checked and their flips are cancelled.
 5. **Output:** `reclass_state` (the gated state where the gate applied, otherwise the gap-filled state) and `final_state`, which all analysis reads.
    - The original SPINDLE columns are left untouched.
-   - The manifest records for each animal whether the gate was applied.
+   - An `emg_gate` column marks each gap-fill flip the gate ruled on as kept or cancelled (blank elsewhere; documentation only).
+   - The manifest records for each animal whether the gate was applied, and how many flips were kept and cancelled.
 
 ### Rationale and effect
-- **Light period for the gate decision:** it best predicted where reclassification was reclassifying too much. Bouts are not expected to become more fragmented in general, and especially not in the light period, when the movement artifacts being corrected are not really happening. (Spearman rho 0.83 for light hours vs 0.58 for dark hours, on the annotated animals.)
+- **Light period for the gate decision:** it best predicted where reclassification was reclassifying too much. Bouts are not expected to become more fragmented in general, and especially not in the light period, when the movement artifacts being corrected are not really happening. 
 - **Thresholds:** chosen by exploration, not formal optimization.
-- **Effect on validation:** gap fill +641 correct epochs, gate +68; NREM precision 90.1% to 94.1%.
+- **Effect on validation:** against two raters on random windows (49,025 epochs, 40 files), agreement rose from 89.4% to 90.8% (gap fill +641 correct epochs, gate +68). Wake recall rose from 91.7% to 94.3% and NREM precision from 90.1% to 94.1%; NREM recall fell slightly, from 85.4% to 85.2%.
 - **Report:** n animals gated.
 
 ---
@@ -172,7 +171,7 @@ Computed per animal from `final_state`. Cutoffs are screening aids, not validate
 | REM % of the file | above 10 |
 | NREM % of the file | below 30 |
 | Wake % of the file | above 70 |
-| Maximum REM % in any 2 h bin | at least 35 |
+| Maximum REM % in any 2 h bin (bins counted from the start of the recording, not clock-aligned; a final partial bin is ignored) | at least 35 |
 
 - The two bout metrics are rates per hour, so recordings of different lengths are comparable.
 
@@ -213,7 +212,7 @@ Per animal, in this order:
    | SPINDLE noise | Epochs with noise probability at or above 0.5 are dropped. |
    | SD | On the unfiltered signal: 180 s windows; each channel is z-scored; samples with \|z\| > 5 are flagged; flags within 0.5 s are merged. Commutator-masked samples are left out of the mean and SD (the only place one mask uses another). |
    | SWD | SWD intervals masked, no padding. |
-   | Annotation | Any Pinnacle annotation whose label contains "jerk" or "jump" masks the 2 s that follow it (jerks and jumps). |
+   | Annotation | Any Pinnacle annotation whose label contains "jerk" or "jump" masks the 2 s that follow it (jerks and jumps). Event times are the file's "Time From Start" values, counted from the recording start. |
    | Drink | Only for animals rerun with it (section 7). |
 
 2. **60 Hz notch**, applied only to the values that enter the PSD, after the commutator and SD masks have been computed (so those see unfiltered amplitudes): 8th-order Butterworth bandstop 57–63 Hz, zero-phase (forward-backward).
@@ -254,12 +253,14 @@ Per animal, in this order:
 - **Source:** video from the PVFS files, downsampled to 1 frame per second, is classified as drinking or not drinking by a network developed in the lab (unpublished). The output is a 1 Hz mask (True = drinking) saved as a `.npy` file.
 - **Alignment:** the video is aligned to the EEG by a manually annotated offset between EEG start and video start (no other clock correction).
 - **Offsets file:** a CSV with an animal ID and the offset in seconds (positive means the video started after the EEG).
-- **Drink mask:** each event ± 2 s, upsampled to 250 Hz, shifted by the offset.
+- **Drink mask:** each event ± 2 s (whole seconds), upsampled to 250 Hz, shifted by the offset.
+- **Limits:** only a positive offset is applied; a negative offset (video started before the EEG) is ignored without a message. **TODO:** confirm no dataset had a negative offset. A drink-event file more than 2 s longer or shorter than its recording gives a warning in the terminal and is cut or padded at the end.
 
 ### Rerun and verification
 - Flagged animals are recomputed with the same parameters plus the drink mask, then verified: **Mask worked** marks the animal ok, **Redo mask** sends it back for another try.
 - Reruns go to separate files and never overwrite the original PSDs. Finalize uses the drink-mask version where there is one.
 - Finalize waits until no animal is unreviewed, flagged or waiting for verification.
+- Finalize seals the drink-mask file whenever it exists and does not check its age. If a PSD run is recomputed after drink masks were applied, apply them again first.
 - The visualizer can show the inverse filter and the line-noise interpolation, but both are display-only; the stored PSDs do not include them.
 - **Report:** n animals needing drink mask.
 
@@ -308,9 +309,10 @@ Per animal, in this order:
 - **Whole-file values:** one number per animal and state over the whole recording (no rotation): fraction of time, bout count, mean bout duration and bouts per hour.
 
 ### Edge cases
-- **Bin edges:** bouts are counted within each bin on its own. A bout that crosses a bin edge is split and counted once in each bin, with only its in-bin length.
-- **Rotation seam:** the pre-6 AM part of the recording is appended to the end, so a bout of the same state on both sides of that join is counted as one.
+- **Bout counting:** bouts are found over the whole recording, so none is cut at a bin edge. Each bout is counted once, in the bin that holds most of its seconds (a tie goes to the earlier bin), with its full length. The bin counts therefore add up to the whole-recording count. Time in state is still measured inside each bin.
+- **Rotation seam:** bouts are found before rotating, so a run that crosses the first 6 AM stays one bout, and the two ends of the recording are not joined into one.
 - **Last bin:** if the rotated recording does not divide into whole bins, the last bin is shorter than 2 h (its time fraction uses its actual length).
+- **Earlier versions:** before this rule, bouts were counted within each bin on its own, so a bout across an edge was split and counted in both bins with only its in-bin length. Report which rule a dataset used.
 
 ### Folding and plots
 - **Folding:** bins are folded onto a 24 h day and averaged across days within each animal, so each animal has one value per ZT bin. The number of days averaged is recorded, and a mean bout duration averages only the days that had a bout.
@@ -349,32 +351,8 @@ Per animal, in this order:
 | matplotlib | 3.11.1 |
 | PyQt6 | 6.11.0 |
 | pyqtgraph | 0.14.0 |
+| specparam (line-noise interpolation) | 2.0.0rc7 |
+| openpyxl (Prism and Excel workbooks) | 3.1.5 |
+| seaborn (plots) | 0.13.2 |
 
 **TODO:** confirm the datasets were processed with these.
-
----
-
-## Numbers to report per dataset
-- Animals per group; 48 h vs 72 h; combined from restarts
-- Animals EMG-gated
-- Animals excluded (stage, reason)
-- Animals needing a drink mask
-- SWD epochs reviewed and changed
-- Whether processed before the 2026-05-12 cleanup sweep or before reclassification
-
-## Open TODOs
-
-| Section | TODO |
-|---|---|
-| 1 | Species, strain, ages, genotypes, electrode type and placement, surgery, housing |
-| 1 | Acquisition system, preamp, hardware high-pass cutoff |
-| 1 | Fill the recordings table |
-| 4 | SWD detector citation |
-| 4 | What to do when the states before and after an SWD differ |
-| 4 | Who reviewed; n epochs reviewed and changed |
-| 5 | Reviewer(s) |
-| 7 | Reviewer(s) |
-| 8 | How the correction coefficients were computed (Claudia) |
-| 8, 9 | Statistics |
-| 10 | Data availability |
-| 10 | Confirm the datasets were processed with the listed software versions |

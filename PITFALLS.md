@@ -131,7 +131,7 @@ is intentionally one-per-project.
 
 ## Sleep states / reclassification
 
-Full description: `docs/sleep_reclassification.md`.
+Full description: `docs/steps/04_reclassify.md`; the reasons are in `docs/decision_log.md`, section 3.
 
 ### Never add `final_state` to `STATE_COLUMNS`
 `STATE_COLUMNS` (`rawstate`, `state`) is the *input* to reclassification and the "original

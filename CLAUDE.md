@@ -45,7 +45,7 @@ Pages in pipeline order:
 9. `FinalizePage` — seals `psds_final.pkl`; keeps excluded animals and marks them (`excluded` / `exclusion_reason`, `excluded_animals.csv`). Sleep analysis is not a page: users copy `analysis/sleep_by_hour.ipynb` (settings + Run All) or `sleep_by_hour_walkthrough.ipynb` (the same calculation explained step by step); both compute in the open from `final_state` and leave out excluded animals
 10. `ExportMasksPage` — exports masks (includes excluded animals, unmarked: a known gap)
 
-How the states are produced and consumed is documented in `docs/sleep_reclassification.md`; how Sleep QC, PSD review, Finalize and exclusions fit together (statuses, queues, what each step does with an excluded animal, known gaps) is in `docs/sleep_qc_and_exclusion.md`. In short: **all analysis reads `final_state`** and raises `NotReclassifiedError` if it is missing; the original states are only for the "original" comparison views (`STATE_COLUMNS`).
+How the states are produced and consumed is documented in `docs/steps/04_reclassify.md` (the reasons and evidence are in `docs/decision_log.md`, section 3); how Sleep QC, PSD review, Finalize and exclusions fit together (statuses and rules in `docs/overview.md`; what each step does with an excluded animal and its known limitations in `docs/steps/05_sleep_qc.md`, `07_psd_visualizer.md` and `09_finalize.md`) is documented there too. In short: **all analysis reads `final_state`** and raises `NotReclassifiedError` if it is missing; the original states are only for the "original" comparison views (`STATE_COLUMNS`).
 
 ### Manifest
 
@@ -60,7 +60,7 @@ Key model:
 
 Valid statuses: `sleep_qc` ∈ `{None, "ok", "needs_review", "excluded"}`; `psd_status` ∈ `{None, "ok", "needs_drink_mask", "drink_mask_applied"}`.
 
-Exclusion rules (details in `docs/sleep_qc_and_exclusion.md`):
+Exclusion rules (details in `docs/overview.md` and `docs/steps/05_sleep_qc.md`):
 - `"excluded"` needs a reason (`Manifest.exclude_sleep_qc`), appended to `notes` as an `Excluded (<stage>): ...` line (stage = Sleep QC or PSD review).
 - `READY_STATUSES = {"ok", "excluded"}` ("Sleep QC decided") gate PSD compute and the exports, so an excluded animal is still computed.
 - Only `"ok"` animals are in PSD review: the review queues use `== "ok"`, `psd_status` / `drink_mask` exist only while `sleep_qc == "ok"` (any other status clears them), and `flag_psd` raises for a non-ok animal.

@@ -1,9 +1,9 @@
 # Methods outline
 
 A bulleted skeleton for the methods section, in pipeline order. Built from
-[decision_log.md](decision_log.md), [psd_methods.md](psd_methods.md),
-[sleep_reclassification.md](sleep_reclassification.md),
-[sleep_qc_and_exclusion.md](sleep_qc_and_exclusion.md) and the `analysis/` notebooks.
+[decision_log.md](decision_log.md), [the PSD Computation page](steps/06_psd_computation.md),
+[the Reclassify page](steps/04_reclassify.md),
+[the Sleep QC page](steps/05_sleep_qc.md) and the `analysis/` notebooks.
 Values are as documented there. **[TBD]** marks something to fill in or confirm; the
 numbers to report per dataset are collected at the end.
 
@@ -126,6 +126,6 @@ numbers to report per dataset are collected at the end.
 
 ## Gaps to close before drafting prose
 
-- The **[TBD]** items above (most already tracked in [open_items.md](open_items.md)).
+- The **[TBD]** items above.
 - Evidence still to link: artifact-masking notebook, drink-padding figure, bout counts before vs. after reclassification, SWD review counts.
 - Statistics are the largest gap: nothing in the repo documents the tests used.

@@ -1,6 +1,6 @@
 # Windows setup guide
 
-This guide gets `ebb-viewer` running on a Windows PC starting from nothing. You do not need to know
+This guide gets `ebb-viewer` running on a Windows PC starting from nothing. When it works, go on to the [quick start](quick_start.md). You do not need to know
 whether Miniconda, Git, or Python is already installed — Step 1 checks, and each step says what to do
 either way.
 
@@ -54,25 +54,11 @@ git --version
   (accept the default options). Close and reopen Anaconda Prompt, then run `git --version` again to
   confirm.
 
-  Use Git for Windows rather than `conda install git`: because the repository is private, you need the
-  browser sign-in that Git for Windows provides (Git Credential Manager). The conda version doesn't
-  include it, and GitHub no longer accepts account passwords on the command line.
+  The repository is public, so you do not need a GitHub account or to sign in to download it.
 
 ---
 
-## Step 4 — Get access to the GitHub repository
-
-The repository is at <https://github.com/LeahMcIntyre/ebb_viewer>.
-
-1. If you don't have a GitHub account, create one at <https://github.com/signup>.
-2. If the repository is **private**, ask Leah to add your GitHub username as a collaborator, then accept
-   the invitation email (or visit <https://github.com/notifications>).
-3. You will be asked to sign in the first time you clone (Step 5). A browser window opens for you to log
-   in — this is normal. No SSH keys are needed.
-
----
-
-## Step 5 — Download (clone) the code
+## Step 4 — Download (clone) the code
 
 Pick a folder to keep the project in. This example uses `C:\Users\<you>\Developer`:
 
@@ -83,15 +69,14 @@ git clone https://github.com/LeahMcIntyre/ebb_viewer.git
 cd ebb_viewer
 ```
 
-If a sign-in window appears, sign in to GitHub. If you see `repository not found`, you are either not
-signed in to the right account or haven't been given access (Step 4).
+If you see `repository not found`, check the address you typed.
 
-**Which branch?** The default branch (`main`) is the stable release. If Leah asks you to test newer
+**Which branch?** The default branch (`main`) is the stable release. If you are asked to test newer
 work, switch to it with `git checkout dev`.
 
 ---
 
-## Step 6 — Create the Python environment
+## Step 5 — Create the Python environment
 
 The repository includes an environment file listing every dependency. From inside the `ebb_viewer`
 folder:
@@ -114,7 +99,7 @@ The start of your prompt should change from `(base)` to `(ebb-dev)`.
 
 ---
 
-## Step 7 — Install ebb-viewer itself
+## Step 6 — Install ebb-viewer itself
 
 Still in the `ebb_viewer` folder with `(ebb-dev)` active:
 
@@ -126,15 +111,16 @@ pip install -e .
 
 ---
 
-## Step 8 — Run it
+## Step 7 — Run it
 
 ```bat
 ebb-viewer
 ```
 
-The ebb-viewer window should open. When you pick a project folder, it should contain your raw EDF
-files; the app creates the `standard/`, `spindle_edfs/`, and `psd/` folders and a `manifest.json`
-inside it.
+The ebb-viewer window should open and ask for a project folder. Choose a new folder that holds only your raw EDF
+files, named `AnimalID_anything.edf` with **no spaces in any name**; the app creates the `standard/`, `spindle_edfs/`,
+and `psd/` folders and a `manifest.json` inside it. The rules for the project folder are in Part 2 of the
+[quick start](quick_start.md).
 
 ### Every time after this
 
@@ -144,6 +130,8 @@ Open **Anaconda Prompt** and run:
 conda activate ebb-dev
 ebb-viewer
 ```
+
+Next: the [quick start](quick_start.md).
 
 ---
 
@@ -164,13 +152,21 @@ conda env update -f envs\ebb-dev.yml --prune
 
 ---
 
-## Verifying the install (optional)
+## macOS and Linux
 
-```bat
-pytest
+The steps are the same, typed into Terminal instead of Anaconda Prompt. Install Miniconda for your system (Step 2), check
+that `git --version` works (install Git if not), clone the repository (Step 4), then:
+
+```bash
+cd ebb_viewer
+conda env create -f envs/ebb-dev.yml
+conda activate ebb-dev
+pip install -e .
+ebb-viewer
 ```
 
-All tests should pass.
+These commands have not been tested on macOS or Linux. Paths use `/` instead of `\`, and the commands in the quick start that
+use `C:\path\to\project` take your own folder path instead.
 
 ---
 
@@ -180,10 +176,11 @@ All tests should pass.
 | --- | --- |
 | `'conda' is not recognized` | Use **Anaconda Prompt** from the Start menu, not Command Prompt/PowerShell. |
 | `'git' is not recognized` | Install Git for Windows (Step 3), then reopen Anaconda Prompt. |
-| Git asks for a username/password in the terminal instead of opening a browser | You have a Git without Credential Manager (e.g. from conda). Install Git for Windows (Step 3), reopen the prompt, and retry the clone. |
-| `repository not found` / `Authentication failed` | You're not signed in to the right GitHub account, or you haven't been added as a collaborator (Step 4). |
-| `EnvironmentNameNotFound` on `conda activate ebb-dev` | Step 6 didn't finish. Re-run `conda env create -f envs\ebb-dev.yml` from the `ebb_viewer` folder. |
-| `'ebb-viewer' is not recognized` | The environment isn't active (`(ebb-dev)` missing from the prompt) or Step 7 was skipped. |
+| `repository not found` when cloning | Check the address you typed: `https://github.com/LeahMcIntyre/ebb_viewer.git`. |
+| `EnvironmentNameNotFound` on `conda activate ebb-dev` | Step 5 didn't finish. Re-run `conda env create -f envs\ebb-dev.yml` from the `ebb_viewer` folder. |
+| `'ebb-viewer' is not recognized` | The environment isn't active (`(ebb-dev)` missing from the prompt) or Step 6 was skipped. |
 | Window never appears / Qt "platform plugin" error | Make sure you're in the `ebb-dev` environment, not `base`. Re-run `pip install -e .`. |
+| `ModuleNotFoundError` (for example `openseize`, `specparam` or `openpyxl`) | Step 6 did not finish or ran in the wrong environment. With `(ebb-dev)` active, re-run `pip install -e .` from the `ebb_viewer` folder. |
+| The EEG viewer is blank, glitchy or crashes when it opens a recording | Turn off OpenGL: run `set EBB_VIEWER_USE_OPENGL=0`, then `ebb-viewer`. It is slower on long recordings but works without OpenGL. |
 | PowerShell blocks `conda activate` | Use **Anaconda Prompt**, or run `conda init powershell` once and reopen PowerShell. |
-| Environment creation is very slow or fails on solving | Run `conda update -n base conda`, then retry Step 6. |
+| Environment creation is very slow or fails on solving | Run `conda update -n base conda`, then retry Step 5. |
