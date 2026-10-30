@@ -50,12 +50,12 @@ INVERSE_FILTER = np.array(
 )
 
 DEFAULT_BANDS = {
-    "1-4": (1, 4),
-    "4-8": (4, 8),
-    "8-12": (8, 12),
-    "12-30": (12, 30),
-    "30-70": (30, 70),
-    "70-100": (70, 100),
+    "1-4 Hz": (1, 4),
+    "4-8 Hz": (4, 8),
+    "8-12 Hz": (8, 12),
+    "12-30 Hz": (12, 30),
+    "30-70 Hz": (30, 70),
+    "70-100 Hz": (70, 100),
 }
 
 # Line noise bridged by interpolation, in Hz. The pipeline applies a 60 Hz notch filter by default

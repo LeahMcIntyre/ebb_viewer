@@ -191,11 +191,16 @@ def test_boxplot_band_power_labels_an_outlier(tmp_path: Path):
     df = u.assign_groups(df, {"WT": list(animals)})
     table = u.band_power_table(df, "spectra")
     fig, axs = u.boxplot_band_power(
-        table, "4-8", "Power", "t", x="group", save_path=tmp_path / "b.png"
+        table, "4-8 Hz", "Power", "t", x="group", save_path=tmp_path / "b.png"
     )
     texts = [t.get_text() for ax in axs.flat for t in ax.texts]
     assert "A0" in texts
     assert (tmp_path / "b.png").exists()
+
+
+def test_default_band_names_cannot_be_read_as_dates_by_excel():
+    # Excel turns a bare "1-4" or "12-30" header in a CSV into a date; a letter keeps it text.
+    assert all(any(c.isalpha() for c in name) for name in u.DEFAULT_BANDS)
 
 
 def test_prism_exports_have_a_sheet_per_channel_and_state(tmp_path: Path):
