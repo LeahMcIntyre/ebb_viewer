@@ -420,3 +420,53 @@ def test_build_masks_raises_on_fs_mismatch(tmp_path):
     with patch.object(me.edf, "Reader", return_value=reader):
         with pytest.raises(ValueError, match=r"file is 250 Hz but caller passed fs=500"):
             me._build_masks(paths, params={"fs": 500, "channels": [0, 1, 2]})
+
+
+# ---------------------------------------------------------------------------
+# commutator amplitude limit
+# ---------------------------------------------------------------------------
+
+
+class _StopAfterCommutator(Exception):
+    """Raised by the patched commutator mask to end ``_build_masks`` early."""
+
+
+def _commutator_value_used(tmp_path, params):
+    """The ``value`` that ``_build_masks`` passes to the commutator mask for ``params``."""
+    paths = me.ResolvedPaths(
+        edf=tmp_path / "AM001_PREPROCESSED.edf",
+        state=tmp_path / "AM001_states.csv",
+        drink=None,
+        swd=None,
+        offset_csv=None,
+    )
+    reader = MagicMock()
+    reader.__enter__ = MagicMock(return_value=reader)
+    reader.__exit__ = MagicMock(return_value=False)
+    pro = MagicMock()
+    pro.shape = (1000,)
+    seen = {}
+
+    def fake_commutator(_pro, **kwargs):
+        seen.update(kwargs)
+        raise _StopAfterCommutator
+
+    with (
+        patch.object(me.edf, "Reader", return_value=reader),
+        patch.object(me, "assert_fs_matches"),
+        patch.object(me, "parse_edf_start_datetime"),
+        patch.object(me, "producer", return_value=pro),
+        patch.object(me.masking, "state", return_value=np.ones(1000, dtype=bool)),
+        patch.object(me.masking, "commutator_threshold", side_effect=fake_commutator),
+    ):
+        with pytest.raises(_StopAfterCommutator):
+            me._build_masks(paths, params=params)
+    return seen["value"]
+
+
+def test_build_masks_uses_the_commutator_limit_from_the_params(tmp_path):
+    assert _commutator_value_used(tmp_path, {"comm_value": 3500}) == 3500
+
+
+def test_build_masks_commutator_limit_defaults_to_2000_uv(tmp_path):
+    assert _commutator_value_used(tmp_path, {}) == 2000

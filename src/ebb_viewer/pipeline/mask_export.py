@@ -236,6 +236,7 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
     sd_radius_s = float(_coerce_param(params, "radius", 0.5))
     nstd = float(_coerce_param(params, "nstd", 5))
     noise_thresh = float(_coerce_param(params, "noise_thresh", 0.5))
+    comm_value = int(_coerce_param(params, "comm_value", 2000))
     drink_pad = int(_coerce_param(params, "drink_pad", 2))
     chunksize = int(_coerce_param(params, "chunksize", int(30e5)))
     state_keys = params.get("states") or list(DEFAULT_STATES)
@@ -266,7 +267,7 @@ def _build_masks(paths: ResolvedPaths, params: dict[str, Any]) -> _BuiltMasks:
         # --- artifact masks (True = OK convention) ---
         comm_mask = masking.commutator_threshold(
             pro,
-            value=2000,
+            value=comm_value,
             **commutator_samples(fs),
         )[0]
         spindle_mask = masking.spindle_noise(
